@@ -9,6 +9,10 @@ import { createTerminalPanel } from './panels/terminal/TerminalPanel'
 const app = document.getElementById('app')!
 const channelRepo = new IptvOrgChannelRepository()
 
+// Registro de terminales activas para re-ajustarlas ante cambios de layout
+const terminalFits = new Set<() => void>()
+const fitAllTerminals = () => terminalFits.forEach(fit => fit())
+
 const api = createDockview(app, {
   createComponent({ name }) {
     if (name === 'tv') {
@@ -16,20 +20,27 @@ const api = createDockview(app, {
     }
 
     const handle = createTerminalPanel()
+    terminalFits.add(handle.fit)
     return {
       element: handle.element,
       init: params => {
-        // Re-ajustar el terminal cuando Dockview cambie sus dimensiones
-        // (split, cierre de hermano, resize de borde, cambio de tab)
         params.api.onDidDimensionsChange(() => handle.fit())
         params.api.onDidVisibilityChange(({ isVisible }) => {
           if (isVisible) handle.fit()
         })
       },
-      dispose: () => handle.dispose(),
+      dispose: () => {
+        terminalFits.delete(handle.fit)
+        handle.dispose()
+        // Tras cerrar, re-ajustar las terminales restantes
+        fitAllTerminals()
+      },
     }
   },
 })
+
+// Cualquier cambio de layout (cierre, split, drag) re-ajusta todas
+api.onDidLayoutChange(() => fitAllTerminals())
 
 const layout = createDefaultLayout()
 const [left, right] = layout.panels
