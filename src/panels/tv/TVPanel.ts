@@ -19,8 +19,14 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   const status = document.createElement('span')
   status.className = 'tv-status'
 
+  const pipButton = document.createElement('button')
+  pipButton.className = 'tv-pip'
+  pipButton.textContent = '⧉ PiP'
+  pipButton.title = 'Picture-in-Picture (flota sobre otras apps)'
+
   toolbar.appendChild(input)
   toolbar.appendChild(status)
+  toolbar.appendChild(pipButton)
 
   const grid = document.createElement('div')
   grid.className = 'tv-grid'
@@ -44,6 +50,7 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
     renderGrid(grid, filterChannels(allChannels, query), onSelect)
 
   input.addEventListener('input', () => refresh(input.value))
+  pipButton.addEventListener('click', () => player.togglePiP().catch(() => {}))
 
   status.textContent = 'Cargando...'
 

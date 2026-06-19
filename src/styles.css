@@ -36,6 +36,50 @@ html, body, #app {
   padding: 4px;
 }
 
+/* Barra de búsqueda del terminal */
+.terminal-search {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.terminal-search.hidden {
+  display: none;
+}
+
+.terminal-search-input {
+  padding: 2px 6px;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 12px;
+  outline: none;
+  width: 140px;
+}
+
+.terminal-search button {
+  padding: 2px 6px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.terminal-search button:hover {
+  background: #444;
+}
+
 /* Textarea transparente que captura el teclado encima del terminal */
 .terminal-sink {
   position: absolute;
@@ -75,6 +119,22 @@ html, body, #app {
   color: #888;
   white-space: nowrap;
   padding-left: 8px;
+}
+
+.tv-pip {
+  margin-left: auto;
+  padding: 3px 8px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tv-pip:hover {
+  background: #444;
 }
 
 .tv-toolbar {

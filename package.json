@@ -4,10 +4,15 @@
   "description": "Modular and open source desktop workspace",
   "type": "module",
   "dependencies": {
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "dockview-core": "^4.3.0",
+    "hls.js": "^1.4.0",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0",
-    "hls.js": "^1.4.0"
+    "xterm-addon-search": "^0.13.0",
+    "xterm-addon-unicode11": "^0.6.0",
+    "xterm-addon-web-links": "^0.9.0",
+    "xterm-addon-webgl": "^0.16.0"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2.0.0",

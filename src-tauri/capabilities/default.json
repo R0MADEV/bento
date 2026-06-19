@@ -8,6 +8,7 @@
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "core:event:allow-emit"
+    "core:event:allow-emit",
+    "shell:allow-open"
   ]
 }

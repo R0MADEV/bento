@@ -35,6 +35,21 @@ export class HLSPlayer {
     }
   }
 
+  async togglePiP(): Promise<void> {
+    const isSupported = 'pictureInPictureEnabled' in document
+    if (!isSupported) {
+      console.warn('[Player] PiP no soportado en este WebView')
+      return
+    }
+
+    if (document.pictureInPictureElement) {
+      await document.exitPictureInPicture()
+      return
+    }
+
+    await this.element.requestPictureInPicture()
+  }
+
   stop(): void {
     if (this.hls) {
       this.hls.destroy()

@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Bento default capabilities","local":true,"windows":["main"],"permissions":["core:default","core:event:default","core:event:allow-listen","core:event:allow-unlisten","core:event:allow-emit"]}}
+{"default":{"identifier":"default","description":"Bento default capabilities","local":true,"windows":["main"],"permissions":["core:default","core:event:default","core:event:allow-listen","core:event:allow-unlisten","core:event:allow-emit","shell:allow-open"]}}

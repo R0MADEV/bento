@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .manage(Arc::new(pty::PtyManager::default()))
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
