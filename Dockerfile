@@ -21,7 +21,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Instalar deps de Tauri para Linux + dbus + Mesa software GL
+# Instalar deps de Tauri para Linux + dbus + Mesa + GStreamer HLS
 RUN apt-get update && apt-get install -y \
     webkit2gtk-4.1 \
     libayatana-appindicator3-1 \
@@ -30,6 +30,12 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-dri \
     libgl1-mesa-glx \
     mesa-utils \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav \
+    gstreamer1.0-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar Tauri CLI

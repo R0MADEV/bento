@@ -14,16 +14,24 @@ export class HLSPlayer {
 
   play(channel: Channel): void {
     const url = channel.streamUrl
-    if (!url) return
+    if (!url) {
+      console.warn('[Player] canal sin stream:', channel.name)
+      return
+    }
 
     this.stop()
 
+    console.log('[Player] hls.isSupported:', Hls.isSupported(), '| url:', url)
+
     if (Hls.isSupported()) {
       this.hls = new Hls({ lowLatencyMode: false })
+      this.hls.on(Hls.Events.ERROR, (_e, data) => console.error('[HLS]', data))
       this.hls.loadSource(url)
       this.hls.attachMedia(this.element)
-    } else if (this.element.canPlayType('application/vnd.apple.mpegurl')) {
+    } else {
+      // WebKit2GTK soporta HLS nativo (como Safari) sin necesitar MSE
       this.element.src = url
+      this.element.load()
     }
   }
 

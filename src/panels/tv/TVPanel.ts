@@ -15,7 +15,12 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   input.type = 'text'
   input.placeholder = 'Buscar canal...'
   input.className = 'tv-search'
+
+  const status = document.createElement('span')
+  status.className = 'tv-status'
+
   toolbar.appendChild(input)
+  toolbar.appendChild(status)
 
   const grid = document.createElement('div')
   grid.className = 'tv-grid'
@@ -28,18 +33,29 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
 
   let allChannels: Channel[] = []
 
+  const onSelect = (ch: Channel) => {
+    const hasStream = ch.streamUrl !== undefined
+    status.textContent = hasStream ? `▶ ${ch.name}` : `⚠ ${ch.name} — sin stream`
+    console.log(`[TV] canal: ${ch.name}, url: ${ch.streamUrl}`)
+    player.play(ch)
+  }
+
   const refresh = (query: string) =>
-    renderGrid(grid, filterChannels(allChannels, query), ch => player.play(ch))
+    renderGrid(grid, filterChannels(allChannels, query), onSelect)
 
   input.addEventListener('input', () => refresh(input.value))
 
+  status.textContent = 'Cargando...'
+
   repo.fetchAll()
     .then(channels => {
-      allChannels = channels
+      allChannels = channels.filter(c => c.streamUrl !== undefined)
+      status.textContent = `${allChannels.length} canales`
       refresh('')
     })
-    .catch(() => {
-      grid.textContent = 'Error cargando canales.'
+    .catch(err => {
+      console.error('[TV] Error:', err)
+      status.textContent = `Error: ${err.message}`
     })
 
   return root

@@ -37,8 +37,20 @@ html, body, #app {
   border-bottom: 1px solid #333;
 }
 
+.tv-status {
+  font-size: 11px;
+  color: #888;
+  white-space: nowrap;
+  padding-left: 8px;
+}
+
+.tv-toolbar {
+  display: flex !important;
+  align-items: center;
+}
+
 .tv-search {
-  width: 100%;
+  flex: 1;
   padding: 4px 8px;
   background: #1e1e1e;
   border: 1px solid #444;
