@@ -1,17 +1,13 @@
 {
+  "productName": "Bento",
+  "version": "0.0.1",
+  "identifier": "com.bento.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devPath": "http://localhost:5173",
+    "devUrl": "http://localhost:5173",
     "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "Bento",
-    "version": "0.0.1"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": true
-    },
+  "app": {
     "windows": [
       {
         "fullscreen": false,
