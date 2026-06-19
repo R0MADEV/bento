@@ -1,0 +1,11 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Bento",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ]
+  }
+}

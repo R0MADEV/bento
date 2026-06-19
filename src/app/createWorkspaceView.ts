@@ -23,7 +23,14 @@ export interface WorkspaceOptions {
 // que se dividen y tabean igual. Splits y "+" operan a este nivel.
 export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOptions = {}): WorkspaceView {
   const element = document.createElement('div')
-  element.className = 'workspace-view'
+  // dockview-theme-dark aporta los estilos estructurales; nuestras --dv-*
+  // (en .workspace-view) sobreescriben los colores con el tema activo.
+  element.className = 'workspace-view dockview-theme-dark'
+
+  // Dockview se monta en un hijo para que no pise las clases del contenedor.
+  const dockHost = document.createElement('div')
+  dockHost.className = 'dv-host'
+  element.appendChild(dockHost)
 
   const fits = new Set<() => void>()
   const fitAll = () => fits.forEach(f => f())
@@ -55,7 +62,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const addInActiveGroup = (type: string): void =>
     addPanel(type, api.activeGroup ? { referenceGroup: api.activeGroup, direction: 'within' } : undefined)
 
-  api = createDockview(element, {
+  api = createDockview(dockHost, {
     createComponent({ id, name }) {
       const def = panels.get(name)
       if (!def) throw new Error(`Panel no registrado: ${name}`)

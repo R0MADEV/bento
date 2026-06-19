@@ -2,6 +2,9 @@ import type { PanelRegistry } from '../panels/registry'
 import type { WorkspaceStateRepository } from '../ports/WorkspaceStateRepository'
 import { createWorkspaceView, type WorkspaceView } from './createWorkspaceView'
 import { addSession, removeSession, setActiveSession, type SessionState } from '../core/session/sessionModel'
+import { createWindowControls } from '../ui/windowControls'
+
+const isMac = navigator.platform.toUpperCase().includes('MAC')
 
 // Sesiones que se ocultan entre sí; cada una es un workspace completo.
 // Persiste sesiones + layout de cada una para reabrir donde se dejó.
@@ -11,6 +14,14 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
   const bar = document.createElement('div')
   bar.className = 'session-bar'
+
+  // Zona de tabs (se redibuja) — los controles de ventana quedan fijos aparte
+  const tabsArea = document.createElement('div')
+  tabsArea.className = 'session-tabs'
+  bar.appendChild(tabsArea)
+
+  // Windows/Linux: controles de ventana propios (macOS usa los nativos)
+  if (!isMac) bar.appendChild(createWindowControls())
 
   const body = document.createElement('div')
   body.className = 'session-body'
@@ -66,9 +77,9 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   }
 
   function render(): void {
-    bar.innerHTML = ''
+    tabsArea.innerHTML = ''
     state.sessions.forEach(s => {
-      bar.appendChild(
+      tabsArea.appendChild(
         sessionTab(
           s.name,
           s.id === state.activeId,
@@ -83,7 +94,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     add.textContent = '+'
     add.title = 'Nueva sesión'
     add.addEventListener('click', () => { state = addSession(state); render() })
-    bar.appendChild(add)
+    tabsArea.appendChild(add)
 
     views.forEach((view, id) => view.element.classList.toggle('hidden', id !== state.activeId))
 

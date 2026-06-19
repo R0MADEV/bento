@@ -1,5 +1,6 @@
-import { DEFAULT_THEME, themeNames } from '../../core/terminal/themes'
+import { DEFAULT_THEME, themeNames, getTheme } from '../../core/terminal/themes'
 import { nextTheme } from '../../core/terminal/nextTheme'
+import { deriveAppVars } from '../../core/terminal/appVars'
 
 const KEY = 'bento.terminal.theme'
 const EVENT = 'bento:terminal-theme'
@@ -8,9 +9,17 @@ export function getThemeName(): string {
   return localStorage.getItem(KEY) ?? DEFAULT_THEME
 }
 
-// Aplica un tema y lo guarda; notifica a todas las terminales abiertas.
+// Aplica las variables CSS de la app (UI completa) según el tema.
+export function applyAppTheme(name: string): void {
+  const vars = deriveAppVars(getTheme(name))
+  const root = document.documentElement
+  Object.entries(vars).forEach(([key, value]) => root.style.setProperty(key, value))
+}
+
+// Aplica un tema y lo guarda; notifica a las terminales y tiñe la app.
 export function setTheme(name: string): void {
   localStorage.setItem(KEY, name)
+  applyAppTheme(name)
   window.dispatchEvent(new CustomEvent(EVENT, { detail: name }))
 }
 

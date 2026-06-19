@@ -1,3 +1,18 @@
+:root {
+  /* Valores por defecto (Tokyo Night); JS los sobreescribe según el tema */
+  --bg: #1a1b26;
+  --surface: #22232e;
+  --surface-2: #2a2b38;
+  --border: #353748;
+  --fg: #c0caf5;
+  --fg-dim: #565f89;
+  --accent: #7aa2f7;
+  --accent-fg: #1a1b26;
+  --selection: #33467c;
+  --gold: #e0af68;
+  --radius: 6px;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -8,12 +23,13 @@ html, body, #app {
   width: 100%;
   height: 100vh;
   overflow: hidden;
-  background: #1e1e1e;
-  color: #ccc;
+  background: var(--bg);
+  color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
 }
 
-/* Sesiones: barra superior + workspaces que se ocultan entre sí */
+/* Sesiones */
 .session-manager {
   display: flex;
   flex-direction: column;
@@ -23,13 +39,66 @@ html, body, #app {
 
 .session-bar {
   display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 4px 6px;
-  background: #141414;
-  border-bottom: 1px solid #2a2a2a;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
   flex-shrink: 0;
+  /* Arrastrar la ventana desde la barra (la barra de título es overlay) */
+  -webkit-app-region: drag;
+}
+
+/* Hueco para los semáforos de macOS (barra de título overlay) */
+.is-mac .session-bar {
+  padding-left: 82px;
+}
+
+.session-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* Los elementos interactivos no deben arrastrar la ventana */
+.session-tab,
+.session-add,
+.window-control {
+  -webkit-app-region: no-drag;
+}
+
+/* Controles de ventana propios (Windows/Linux) */
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding-left: 8px;
+}
+
+.window-control {
+  width: 30px;
+  height: 26px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.window-control:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.window-control.close:hover {
+  background: #e81123;
+  color: #fff;
 }
 
 .session-tab {
@@ -37,24 +106,30 @@ html, body, #app {
   align-items: center;
   gap: 8px;
   padding: 4px 12px;
-  background: #262626;
-  border: 1px solid #333;
-  border-radius: 6px;
-  color: #bbb;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--fg-dim);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+
+.session-tab:hover {
+  background: var(--surface-2);
+  color: var(--fg);
 }
 
 .session-tab.active {
-  background: #0a84ff;
-  border-color: #0a84ff;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
 }
 
 .session-tab-close {
   font-size: 10px;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 .session-tab-close:hover {
@@ -64,16 +139,17 @@ html, body, #app {
 .session-add {
   padding: 4px 12px;
   background: transparent;
-  border: 1px solid #333;
-  border-radius: 6px;
-  color: #999;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-dim);
   font-size: 14px;
   cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
 
 .session-add:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background: var(--surface-2);
+  color: var(--fg);
 }
 
 .session-body {
@@ -87,15 +163,68 @@ html, body, #app {
   inset: 0;
 }
 
-/* Sesión oculta: invisible pero SIGUE renderizada → el audio/vídeo no se para */
+/* Sesión oculta: invisible pero renderizada → el audio/vídeo no se para */
 .session-instance.hidden {
   visibility: hidden;
   pointer-events: none;
 }
 
+.dv-host {
+  width: 100%;
+  height: 100%;
+}
+
 .workspace-view {
   width: 100%;
   height: 100%;
+
+  /* Tema de Dockview (barra de tabs de paneles) ligado a nuestras variables */
+  --dv-background-color: var(--bg);
+  --dv-group-view-background-color: var(--bg);
+  --dv-tabs-and-actions-container-background-color: var(--surface);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--surface);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--surface-2);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--surface);
+  --dv-activegroup-visiblepanel-tab-color: var(--fg);
+  --dv-activegroup-hiddenpanel-tab-color: var(--fg-dim);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--fg);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--fg-dim);
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-paneview-active-outline-color: var(--accent);
+  --dv-icon-hover-background-color: var(--surface-2);
+  --dv-activegroup-visiblepanel-tab-border-top-color: var(--accent);
+}
+
+/* Override de Dockview con MÁS especificidad que sus reglas internas
+   (sus selectores tienen 5-6 clases; con .workspace-view delante ganamos). */
+.workspace-view .dv-groupview,
+.workspace-view .dv-content-container,
+.workspace-view .dv-void-container {
+  background: var(--bg);
+}
+
+.workspace-view .dv-groupview > .dv-tabs-and-actions-container {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-view .dv-groupview > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab {
+  border-right: 1px solid var(--border);
+}
+
+.workspace-view .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab,
+.workspace-view .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
+  background-color: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.workspace-view .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-inactive-tab,
+.workspace-view .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-inactive-tab {
+  background-color: var(--surface);
+  color: var(--fg-dim);
 }
 
 .panel-placeholder {
@@ -105,100 +234,15 @@ html, body, #app {
   width: 100%;
   height: 100%;
   font-size: 1.2rem;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--fg-dim);
 }
 
-/* Terminal Workspace: cajas (se ocultan entre sí) + tabs dentro */
-.term-workspace {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  background: #1e1e1e;
-  overflow: hidden;
-}
-
-.term-boxbar {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 3px 4px;
-  background: #1b1b1b;
-  border-bottom: 1px solid #333;
-  overflow-x: auto;
-  flex-shrink: 0;
-}
-
-.term-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  background: #2a2a2a;
-  border: 1px solid #333;
-  border-radius: 5px;
-  color: #aaa;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.term-tab.active {
-  background: #0a84ff;
-  border-color: #0a84ff;
-  color: #fff;
-}
-
-.term-tab-close {
-  font-size: 10px;
-  opacity: 0.6;
-}
-
-.term-tab-close:hover {
-  opacity: 1;
-}
-
-.term-add {
-  padding: 3px 10px;
-  background: transparent;
-  border: 1px solid #333;
-  border-radius: 5px;
-  color: #999;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.term-add:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-}
-
-.term-body {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-}
-
-.term-box-instance {
-  position: absolute;
-  inset: 0;
-}
-
-.term-box-instance.hidden {
-  display: none;
-}
-
-.term-box {
-  width: 100%;
-  height: 100%;
-}
-
-/* Terminal Panel */
+/* Terminal */
 .terminal-panel {
   position: relative;
   width: 100%;
   height: 100%;
-  background: #1a1b26;
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -215,9 +259,9 @@ html, body, #app {
   width: 26px;
   height: 26px;
   padding: 0;
-  background: rgba(40, 42, 60, 0.7);
-  border: 1px solid #333;
-  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   font-size: 13px;
   cursor: pointer;
   opacity: 0.35;
@@ -228,34 +272,34 @@ html, body, #app {
   opacity: 1;
 }
 
-/* Botón "+" en la cabecera de cada caja */
+/* Botón "+" en la cabecera de cada grupo */
 .group-add-tab {
   height: 100%;
   min-width: 28px;
   padding: 0 8px;
   background: transparent;
   border: none;
-  color: #999;
+  color: var(--fg-dim);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
 }
 
 .group-add-tab:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background: var(--surface-2);
+  color: var(--fg);
 }
 
 /* Menú contextual */
 .context-menu {
   position: fixed;
   z-index: 1000;
-  min-width: 160px;
+  min-width: 170px;
   padding: 4px;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   font-size: 13px;
   user-select: none;
 }
@@ -263,14 +307,14 @@ html, body, #app {
 .context-menu-item {
   padding: 6px 12px;
   border-radius: 4px;
-  color: #ddd;
+  color: var(--fg);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .context-menu-item:hover {
-  background: #0a84ff;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* Barra de búsqueda del terminal */
@@ -282,9 +326,9 @@ html, body, #app {
   display: flex;
   gap: 4px;
   padding: 4px;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
@@ -294,10 +338,10 @@ html, body, #app {
 
 .terminal-search-input {
   padding: 2px 6px;
-  background: #1e1e1e;
-  border: 1px solid #444;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #ccc;
+  color: var(--fg);
   font-size: 12px;
   outline: none;
   width: 140px;
@@ -305,36 +349,17 @@ html, body, #app {
 
 .terminal-search button {
   padding: 2px 6px;
-  background: #333;
-  border: 1px solid #444;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #ccc;
+  color: var(--fg);
   cursor: pointer;
   font-size: 12px;
 }
 
 .terminal-search button:hover {
-  background: #444;
-}
-
-/* Textarea transparente que captura el teclado encima del terminal */
-.terminal-sink {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: none;
-  outline: none;
-  resize: none;
-  z-index: 10;
-  background: transparent;
-  color: transparent;
-  caret-color: transparent;
-  cursor: text;
-  white-space: pre;
-  overflow: hidden;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* TV Panel */
@@ -342,7 +367,7 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1a1a1a;
+  background: var(--bg);
 }
 
 .tv-toolbar {
@@ -350,33 +375,33 @@ html, body, #app {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  background: #252525;
-  border-bottom: 1px solid #333;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 .tv-search {
   flex: 1;
   min-width: 80px;
-  padding: 4px 8px;
-  background: #1e1e1e;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #ccc;
+  padding: 5px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
   font-size: 13px;
   outline: none;
 }
 
 .tv-search:focus {
-  border-color: #666;
+  border-color: var(--accent);
 }
 
 .tv-select {
-  padding: 4px 6px;
-  background: #1e1e1e;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #ccc;
+  padding: 5px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
   font-size: 12px;
   outline: none;
   max-width: 150px;
@@ -384,27 +409,29 @@ html, body, #app {
 
 .tv-status {
   font-size: 11px;
-  color: #888;
+  color: var(--fg-dim);
   white-space: nowrap;
 }
 
 .tv-btn {
-  padding: 4px 8px;
-  background: #333;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #ccc;
+  padding: 5px 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
   cursor: pointer;
   font-size: 13px;
+  transition: background 0.12s;
 }
 
 .tv-btn:hover {
-  background: #444;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 .tv-btn.active {
-  background: #e5a50a;
-  border-color: #e5a50a;
+  background: var(--gold);
+  border-color: var(--gold);
   color: #1a1a1a;
 }
 
@@ -458,11 +485,11 @@ html, body, #app {
   gap: 6px;
   flex: 1;
   min-height: 0;
-  padding: 8px;
+  padding: 10px;
   overflow-y: auto;
   overflow-x: hidden;
-  background: #1a1a1a;
-  border-top: 1px solid #333;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
 }
 
 .tv-main.list-hidden .tv-grid {
@@ -475,55 +502,77 @@ html, body, #app {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  width: 96px;
+  gap: 5px;
+  width: 100px;
   flex-shrink: 0;
-  padding: 6px;
-  background: #2a2a2a;
-  border: 1px solid #333;
-  border-radius: 6px;
+  padding: 8px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   cursor: pointer;
   overflow: hidden;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+
+.tv-card:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  transform: translateY(-1px);
 }
 
 .tv-star {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: 3px;
+  right: 3px;
   padding: 0 3px;
   background: transparent;
   border: none;
-  color: #555;
+  color: var(--fg-dim);
   font-size: 13px;
   cursor: pointer;
   line-height: 1;
 }
 
 .tv-star:hover {
-  color: #aaa;
+  color: var(--fg);
 }
 
 .tv-star.active {
-  color: #e5a50a;
-}
-
-.tv-card:hover {
-  background: #3a3a3a;
-  border-color: #555;
+  color: var(--gold);
 }
 
 .tv-card img {
-  width: 44px;
-  height: 30px;
+  width: 46px;
+  height: 32px;
   object-fit: contain;
 }
 
 .tv-card span {
   font-size: 10px;
-  color: #ccc;
+  color: var(--fg);
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   width: 100%;
+}
+
+/* Scrollbars finas acorde al tema */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-dim);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
