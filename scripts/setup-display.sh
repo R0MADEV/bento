@@ -26,6 +26,23 @@ setup_macos() {
 
   xhost +127.0.0.1 &>/dev/null || true
   export DISPLAY=host.docker.internal:0
+
+  # Audio: PulseAudio con TCP para Docker
+  if ! command -v pulseaudio &>/dev/null; then
+    echo "Instalando PulseAudio para audio en Docker..."
+    brew install pulseaudio
+  fi
+
+  if ! pulseaudio --check &>/dev/null; then
+    pulseaudio --load="module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1" \
+               --exit-idle-time=-1 --daemon &>/dev/null || true
+    sleep 1
+  else
+    # Añadir módulo TCP si no está cargado
+    pactl load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 &>/dev/null || true
+  fi
+
+  export PULSE_SERVER=host.docker.internal
 }
 
 setup_linux() {
@@ -33,6 +50,8 @@ setup_linux() {
     export DISPLAY=:0
   fi
   xhost +local:docker &>/dev/null || true
+  # En Linux el socket de PulseAudio se puede montar directamente
+  export PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
 }
 
 case "$OS" in

@@ -22,7 +22,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     rm -rf /var/lib/apt/lists/*
 
 # Habilitar universe para GStreamer codecs
-RUN apt-get update && apt-get install -y software-properties-common \
+RUN apt-get update && apt-get install -y software-properties-common pulseaudio-utils \
     && add-apt-repository universe \
     && rm -rf /var/lib/apt/lists/*
 

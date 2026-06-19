@@ -20,6 +20,8 @@ services:
       - target-cache:/bento/src-tauri/target
       # X11 forwarding en Linux
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # PulseAudio socket (Linux)
+      - ${XDG_RUNTIME_DIR:-/tmp}/pulse:/tmp/pulse:rw
     environment:
       - DISPLAY=${DISPLAY}
       - GDK_BACKEND=x11
@@ -27,6 +29,7 @@ services:
       - LIBGL_ALWAYS_SOFTWARE=1
       - GALLIUM_DRIVER=llvmpipe
       - NO_AT_BRIDGE=1
+      - PULSE_SERVER=${PULSE_SERVER:-host.docker.internal}
     stdin_open: true
     tty: true
     working_dir: /bento

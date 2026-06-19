@@ -49,10 +49,11 @@ Además, según tu SO, necesitas un servidor X11:
 
 #### macOS
 
-Instala [XQuartz](https://www.xquartz.org/):
+Instala [XQuartz](https://www.xquartz.org/) (vídeo) y PulseAudio (audio):
 
 ```bash
 brew install --cask xquartz
+brew install pulseaudio
 ```
 
 Luego:
@@ -60,6 +61,8 @@ Luego:
 2. Ve a **XQuartz → Preferences → Security**
 3. Activa **"Allow connections from network clients"**
 4. Cierra y vuelve a abrir XQuartz
+
+`make dev` arranca PulseAudio automáticamente.
 
 #### Linux
 
