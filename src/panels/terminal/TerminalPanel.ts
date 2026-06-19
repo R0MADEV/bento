@@ -30,7 +30,8 @@ export function createTerminalPanel(): TerminalPanelHandle {
     cursorBlink: true,
     cursorStyle: 'bar',
     fontSize: 13,
-    fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace',
+    // Prefiere Nerd Fonts (iconos de Powerlevel10k/Starship); si no, mono normal
+    fontFamily: '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace',
     fontWeight: '400',
     fontWeightBold: '700',
     lineHeight: 1.25,

@@ -14,6 +14,10 @@ pub struct PtyManager {
     instances: Mutex<HashMap<String, PtyInstance>>,
 }
 
+fn dirs_home() -> Option<String> {
+    std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()
+}
+
 #[tauri::command]
 pub fn pty_spawn(
     id: String,
@@ -29,8 +33,20 @@ pub fn pty_spawn(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    let mut cmd = CommandBuilder::new(&shell);
+    // Usa el shell por defecto del usuario ($SHELL) para que cargue su config
+    // (zsh/bash con prompt, git, autocompletado). Fallback al pasado por el front.
+    let user_shell = std::env::var("SHELL").unwrap_or(shell);
+
+    let mut cmd = CommandBuilder::new(&user_shell);
+    // Login + interactivo: carga ~/.zprofile, ~/.zshrc, etc.
+    if !cfg!(target_os = "windows") {
+        cmd.arg("-l");
+    }
     cmd.env("TERM", "xterm-256color");
+    // Arranca en el home del usuario, como una terminal normal
+    if let Some(home) = dirs_home() {
+        cmd.cwd(home);
+    }
 
     let _child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
 
