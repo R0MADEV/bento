@@ -7,7 +7,8 @@ import { Unicode11Addon } from 'xterm-addon-unicode11'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { getTheme, DEFAULT_THEME } from '../../core/terminal/themes'
+import { getTheme } from '../../core/terminal/themes'
+import { getThemeName, onThemeChange } from './themePreference'
 import { createSearchBar } from './searchBar'
 import 'xterm/css/xterm.css'
 
@@ -25,12 +26,19 @@ export function createTerminalPanel(): TerminalPanelHandle {
 
   const term = new Terminal({
     cursorBlink: true,
-    fontSize: 14,
-    fontFamily: 'Menlo, Monaco, "Cascadia Code", "Fira Code", monospace',
+    cursorStyle: 'bar',
+    fontSize: 13,
+    fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace',
+    fontWeight: '400',
+    fontWeightBold: '700',
+    lineHeight: 1.25,
+    letterSpacing: 0.5,
     allowProposedApi: true,
     scrollback: 10000,
-    theme: getTheme(DEFAULT_THEME),
+    theme: getTheme(getThemeName()),
   })
+
+  const unsubscribeTheme = onThemeChange(name => { term.options.theme = getTheme(name) })
 
   const fitAddon = new FitAddon()
   const searchAddon = new SearchAddon()
@@ -112,6 +120,7 @@ export function createTerminalPanel(): TerminalPanelHandle {
 
   const dispose = () => {
     observer.disconnect()
+    unsubscribeTheme()
     invoke('pty_kill', { id }).catch(() => {})
     // Disponer WebGL antes que term y proteger: su dispose puede lanzar y
     // si la excepción llega a Dockview, rompe removePanel y no redistribuye.

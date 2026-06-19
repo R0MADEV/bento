@@ -1,7 +1,9 @@
+// Paleta completa de xterm ITheme para un look cuidado de dev.
 export interface TerminalTheme {
   background: string
   foreground: string
   cursor: string
+  cursorAccent: string
   selectionBackground: string
   black: string
   red: string
@@ -12,40 +14,65 @@ export interface TerminalTheme {
   cyan: string
   white: string
   brightBlack: string
+  brightRed: string
+  brightGreen: string
+  brightYellow: string
+  brightBlue: string
+  brightMagenta: string
+  brightCyan: string
+  brightWhite: string
 }
 
 export const DEFAULT_THEME = 'dark'
 
 const THEMES: Record<string, TerminalTheme> = {
+  // Tokyo Night
   dark: {
-    background: '#1e1e1e',
-    foreground: '#d4d4d4',
-    cursor: '#ffffff',
-    selectionBackground: '#264f78',
-    black: '#000000',
-    red: '#cd3131',
-    green: '#0dbc79',
-    yellow: '#e5e510',
-    blue: '#2472c8',
-    magenta: '#bc3fbc',
-    cyan: '#11a8cd',
-    white: '#e5e5e5',
-    brightBlack: '#666666',
+    background: '#1a1b26',
+    foreground: '#c0caf5',
+    cursor: '#c0caf5',
+    cursorAccent: '#1a1b26',
+    selectionBackground: '#33467c',
+    black: '#15161e',
+    red: '#f7768e',
+    green: '#9ece6a',
+    yellow: '#e0af68',
+    blue: '#7aa2f7',
+    magenta: '#bb9af7',
+    cyan: '#7dcfff',
+    white: '#a9b1d6',
+    brightBlack: '#414868',
+    brightRed: '#f7768e',
+    brightGreen: '#9ece6a',
+    brightYellow: '#e0af68',
+    brightBlue: '#7aa2f7',
+    brightMagenta: '#bb9af7',
+    brightCyan: '#7dcfff',
+    brightWhite: '#c0caf5',
   },
+  // Light (GitHub-ish)
   light: {
-    background: '#fffffe',
-    foreground: '#2e2e2e',
-    cursor: '#000000',
-    selectionBackground: '#add6ff',
-    black: '#000000',
-    red: '#cd3131',
-    green: '#107c10',
-    yellow: '#949800',
-    blue: '#0451a5',
-    magenta: '#bc05bc',
-    cyan: '#0598bc',
-    white: '#555555',
-    brightBlack: '#666666',
+    background: '#ffffff',
+    foreground: '#24292e',
+    cursor: '#24292e',
+    cursorAccent: '#ffffff',
+    selectionBackground: '#c8e1ff',
+    black: '#24292e',
+    red: '#d73a49',
+    green: '#22863a',
+    yellow: '#b08800',
+    blue: '#0366d6',
+    magenta: '#6f42c1',
+    cyan: '#1b7c83',
+    white: '#6a737d',
+    brightBlack: '#959da5',
+    brightRed: '#cb2431',
+    brightGreen: '#28a745',
+    brightYellow: '#dbab09',
+    brightBlue: '#2188ff',
+    brightMagenta: '#8a63d2',
+    brightCyan: '#3192aa',
+    brightWhite: '#d1d5da',
   },
 }
 

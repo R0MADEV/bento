@@ -1,6 +1,7 @@
 import { createDockview, type DockviewApi, type AddPanelOptions } from 'dockview-core'
 import type { PanelRegistry } from '../panels/registry'
 import { lowestAvailableNumber } from '../core/terminal/lowestAvailableNumber'
+import { cycleTheme } from '../panels/terminal/themePreference'
 import { showContextMenu } from '../ui/contextMenu'
 
 export type SplitDirection = 'within' | 'left' | 'right' | 'above' | 'below'
@@ -121,6 +122,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
 
   // Atajos, solo en el workspace enfocado:
   // Cmd/Ctrl+T nueva terminal · Cmd+D split derecha · Cmd+Shift+D split abajo
+  // Cmd/Ctrl+J cambia el tema de la terminal
   const onKeydown = (e: KeyboardEvent): void => {
     const mod = e.metaKey || e.ctrlKey
     if (!mod || !isFocused()) return
@@ -132,6 +134,9 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     } else if (e.key === 'd' && active) {
       e.preventDefault()
       splitFrom(active.id, e.shiftKey ? 'below' : 'right')
+    } else if (e.key === 'j') {
+      e.preventDefault()
+      cycleTheme()
     }
   }
   window.addEventListener('keydown', onKeydown)
