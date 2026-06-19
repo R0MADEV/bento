@@ -1,11 +1,13 @@
 import type { ChannelRepository } from '../../ports/ChannelRepository'
+import type { FavoritesRepository } from '../../ports/FavoritesRepository'
 import type { Channel } from '../../core/channel/Channel'
 import { applyFilters } from '../../core/channel/channelFilters'
 import { countryOptions, categoryOptions, type FilterOption } from '../../core/channel/filterOptions'
+import { toggleFavorite, isFavorite } from '../../core/channel/favorites'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
 
-export function createTVPanel(repo: ChannelRepository): HTMLElement {
+export function createTVPanel(repo: ChannelRepository, favoritesRepo: FavoritesRepository): HTMLElement {
   const root = document.createElement('div')
   root.className = 'tv-panel'
 
@@ -26,6 +28,11 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   const status = document.createElement('span')
   status.className = 'tv-status'
 
+  const favButton = document.createElement('button')
+  favButton.className = 'tv-btn'
+  favButton.textContent = '★'
+  favButton.title = 'Mostrar solo favoritos'
+
   const pipButton = document.createElement('button')
   pipButton.className = 'tv-btn'
   pipButton.textContent = '⧉'
@@ -36,9 +43,8 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   toggleButton.textContent = '☰'
   toggleButton.title = 'Mostrar/ocultar lista de canales'
 
-  toolbar.append(input, countrySelect, categorySelect, status, pipButton, toggleButton)
+  toolbar.append(input, countrySelect, categorySelect, status, favButton, pipButton, toggleButton)
 
-  // Escenario: vídeo grande a la izquierda, lista de canales a la derecha
   const main = document.createElement('div')
   main.className = 'tv-main'
 
@@ -54,6 +60,8 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   root.append(toolbar, main)
 
   let allChannels: Channel[] = []
+  let favorites = favoritesRepo.load()
+  let onlyFavorites = false
 
   const fillSelect = (select: HTMLSelectElement, placeholder: string, options: FilterOption[]) => {
     select.innerHTML = ''
@@ -76,18 +84,23 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
     else status.textContent = `⚠ ${current} — no disponible`
   }
 
-  const onSelect = (ch: Channel) => {
-    current = ch.name
-    player.play(ch)
-  }
-
   const refresh = () => {
-    const filtered = applyFilters(allChannels, {
+    let list = applyFilters(allChannels, {
       query: input.value,
       country: countrySelect.value,
       category: categorySelect.value,
     })
-    renderGrid(grid, filtered, onSelect)
+    if (onlyFavorites) list = list.filter(ch => isFavorite(favorites, ch.id))
+
+    renderGrid(grid, list, {
+      onSelect: ch => { current = ch.name; player.play(ch) },
+      isFavorite: ch => isFavorite(favorites, ch.id),
+      onToggleFavorite: ch => {
+        favorites = toggleFavorite(favorites, ch.id)
+        favoritesRepo.save(favorites)
+        refresh()
+      },
+    })
   }
 
   input.addEventListener('input', refresh)
@@ -95,6 +108,11 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   categorySelect.addEventListener('change', refresh)
   pipButton.addEventListener('click', () => player.togglePiP().catch(() => {}))
   toggleButton.addEventListener('click', () => main.classList.toggle('list-hidden'))
+  favButton.addEventListener('click', () => {
+    onlyFavorites = !onlyFavorites
+    favButton.classList.toggle('active', onlyFavorites)
+    refresh()
+  })
 
   status.textContent = 'Cargando...'
 

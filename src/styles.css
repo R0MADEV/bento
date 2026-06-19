@@ -380,6 +380,12 @@ html, body, #app {
   background: #444;
 }
 
+.tv-btn.active {
+  background: #e5a50a;
+  border-color: #e5a50a;
+  color: #1a1a1a;
+}
+
 /* Escenario: vídeo arriba, lista de canales abajo */
 .tv-main {
   display: flex;
@@ -423,6 +429,7 @@ html, body, #app {
 }
 
 .tv-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -436,6 +443,27 @@ html, body, #app {
   border-radius: 6px;
   cursor: pointer;
   overflow: hidden;
+}
+
+.tv-star {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  padding: 0 3px;
+  background: transparent;
+  border: none;
+  color: #555;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.tv-star:hover {
+  color: #aaa;
+}
+
+.tv-star.active {
+  color: #e5a50a;
 }
 
 .tv-card:hover {

@@ -19,19 +19,19 @@ const categories: Category[] = [
 ]
 
 describe('countryOptions', () => {
-  it('returns only countries present in channels, with flag and name, sorted', () => {
+  it('returns only present countries with flag and Spanish name, sorted', () => {
     expect(countryOptions(channels, countries)).toEqual([
-      { value: 'GB', label: '🇬🇧 United Kingdom' },
-      { value: 'US', label: '🇺🇸 United States' },
+      { value: 'US', label: '🇺🇸 Estados Unidos' },
+      { value: 'GB', label: '🇬🇧 Reino Unido' },
     ])
   })
 })
 
 describe('categoryOptions', () => {
-  it('returns only categories present in channels, by name, sorted', () => {
+  it('returns only present categories with Spanish name, sorted', () => {
     expect(categoryOptions(channels, categories)).toEqual([
-      { value: 'news', label: 'News' },
-      { value: 'sports', label: 'Sports' },
+      { value: 'sports', label: 'Deportes' },
+      { value: 'news', label: 'Noticias' },
     ])
   })
 })

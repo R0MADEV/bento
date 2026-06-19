@@ -1,6 +1,7 @@
 import Hls from 'hls.js'
 import type { Channel } from '../../core/channel/Channel'
 import { choosePlaybackMode } from '../../core/channel/playbackMode'
+import { pickSubtitleTrack } from '../../core/channel/pickSubtitleTrack'
 
 export type PlayerStatus = 'loading' | 'playing' | 'error'
 
@@ -17,6 +18,15 @@ export class HLSPlayer {
 
     this.element.addEventListener('playing', () => this.onStatus?.('playing'))
     this.element.addEventListener('error', () => this.onStatus?.('error'))
+    // Cuando el stream añade pistas de subtítulos, prefiere la española
+    this.element.textTracks.addEventListener('addtrack', () => this.preferSpanishSubtitles())
+  }
+
+  private preferSpanishSubtitles(): void {
+    const tracks = Array.from(this.element.textTracks)
+    const index = pickSubtitleTrack(tracks.map(t => t.language || ''), 'es')
+    if (index < 0) return
+    tracks.forEach((t, i) => { t.mode = i === index ? 'showing' : 'disabled' })
   }
 
   play(channel: Channel): void {
