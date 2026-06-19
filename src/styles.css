@@ -23,6 +23,39 @@ html, body, #app {
   color: rgba(255, 255, 255, 0.4);
 }
 
+/* Terminal Panel */
+.terminal-panel {
+  width: 100%;
+  height: 100%;
+  background: #1e1e1e;
+  overflow: hidden;
+}
+
+.terminal-panel .xterm {
+  height: 100%;
+  padding: 4px;
+}
+
+/* Textarea transparente que captura el teclado encima del terminal */
+.terminal-sink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  z-index: 10;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  cursor: text;
+  white-space: pre;
+  overflow: hidden;
+}
+
 /* TV Panel */
 .tv-panel {
   display: flex;

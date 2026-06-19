@@ -4,6 +4,7 @@ import './styles.css'
 import { createDefaultLayout } from './core/workspace/layout'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { createTVPanel } from './panels/tv/TVPanel'
+import { createTerminalPanel } from './panels/terminal/TerminalPanel'
 
 const app = document.getElementById('app')!
 const channelRepo = new IptvOrgChannelRepository()
@@ -14,10 +15,7 @@ const api = createDockview(app, {
       return { element: createTVPanel(channelRepo), init: () => {} }
     }
 
-    const el = document.createElement('div')
-    el.className = 'panel-placeholder'
-    el.textContent = '> Terminal Panel'
-    return { element: el, init: () => {} }
+    return { element: createTerminalPanel(), init: () => {} }
   },
 })
 

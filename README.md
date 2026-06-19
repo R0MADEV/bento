@@ -125,9 +125,17 @@ docker-compose run --rm bento sh -c 'dbus-run-session -- npm run tauri:dev'
 ### Otros comandos
 
 ```bash
-make build   # genera binarios de distribución
-make shell   # abre una shell dentro del contenedor
+make dev-native  # desarrollo nativo en el host (sin Docker)
+make build       # genera binarios de distribución
+make shell       # abre una shell dentro del contenedor
+make test        # ejecuta los tests
 ```
+
+> **Nota sobre el terminal**: dentro de Docker el WebView es WebKit2GTK
+> sobre X11, que no enruta el teclado al terminal embebido (xterm.js).
+> El resto de paneles funcionan. Para probar el terminal usa `make dev-native`
+> (requiere Rust + Node en el host) o el binario distribuido — en WKWebView
+> (macOS) y WebView2 (Windows) el teclado funciona con normalidad.
 
 **Los binarios para distribución** (`.AppImage`, `.dmg`, `.msi`) se generan automáticamente en **GitHub Actions** (matrix: Linux/macOS/Windows) en cada push a `main`.
 
