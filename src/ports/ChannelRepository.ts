@@ -1,5 +1,5 @@
-import type { Channel } from '../core/channel/Channel'
+import type { ChannelData } from '../core/channel/Channel'
 
 export interface ChannelRepository {
-  fetchAll(): Promise<Channel[]>
+  fetchAll(): Promise<ChannelData>
 }

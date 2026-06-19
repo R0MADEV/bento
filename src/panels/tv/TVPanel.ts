@@ -1,6 +1,7 @@
 import type { ChannelRepository } from '../../ports/ChannelRepository'
 import type { Channel } from '../../core/channel/Channel'
-import { applyFilters, availableCountries, availableCategories } from '../../core/channel/channelFilters'
+import { applyFilters } from '../../core/channel/channelFilters'
+import { countryOptions, categoryOptions, type FilterOption } from '../../core/channel/filterOptions'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
 
@@ -26,32 +27,45 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   status.className = 'tv-status'
 
   const pipButton = document.createElement('button')
-  pipButton.className = 'tv-pip'
-  pipButton.textContent = '⧉ PiP'
-  pipButton.title = 'Picture-in-Picture (flota sobre otras apps)'
+  pipButton.className = 'tv-btn'
+  pipButton.textContent = '⧉'
+  pipButton.title = 'Picture-in-Picture'
 
-  toolbar.append(input, countrySelect, categorySelect, status, pipButton)
+  const toggleButton = document.createElement('button')
+  toggleButton.className = 'tv-btn'
+  toggleButton.textContent = '☰'
+  toggleButton.title = 'Mostrar/ocultar lista de canales'
+
+  toolbar.append(input, countrySelect, categorySelect, status, pipButton, toggleButton)
+
+  // Escenario: vídeo grande a la izquierda, lista de canales a la derecha
+  const main = document.createElement('div')
+  main.className = 'tv-main'
+
+  const stage = document.createElement('div')
+  stage.className = 'tv-stage'
 
   const grid = document.createElement('div')
   grid.className = 'tv-grid'
 
   const player = new HLSPlayer()
-
-  root.append(toolbar, grid, player.element)
+  stage.appendChild(player.element)
+  main.append(stage, grid)
+  root.append(toolbar, main)
 
   let allChannels: Channel[] = []
 
-  const fillSelect = (select: HTMLSelectElement, label: string, options: string[]) => {
+  const fillSelect = (select: HTMLSelectElement, placeholder: string, options: FilterOption[]) => {
     select.innerHTML = ''
     const all = document.createElement('option')
     all.value = ''
-    all.textContent = label
+    all.textContent = placeholder
     select.appendChild(all)
-    options.forEach(opt => {
-      const o = document.createElement('option')
-      o.value = opt
-      o.textContent = opt
-      select.appendChild(o)
+    options.forEach(o => {
+      const opt = document.createElement('option')
+      opt.value = o.value
+      opt.textContent = o.label
+      select.appendChild(opt)
     })
   }
 
@@ -59,7 +73,7 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   player.onStatus = s => {
     if (s === 'loading') status.textContent = `⏳ ${current}`
     else if (s === 'playing') status.textContent = `▶ ${current}`
-    else status.textContent = `⚠ ${current} — stream no disponible`
+    else status.textContent = `⚠ ${current} — no disponible`
   }
 
   const onSelect = (ch: Channel) => {
@@ -73,7 +87,6 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
       country: countrySelect.value,
       category: categorySelect.value,
     })
-    status.textContent = `${filtered.length} canales`
     renderGrid(grid, filtered, onSelect)
   }
 
@@ -81,14 +94,16 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   countrySelect.addEventListener('change', refresh)
   categorySelect.addEventListener('change', refresh)
   pipButton.addEventListener('click', () => player.togglePiP().catch(() => {}))
+  toggleButton.addEventListener('click', () => main.classList.toggle('list-hidden'))
 
   status.textContent = 'Cargando...'
 
   repo.fetchAll()
-    .then(channels => {
+    .then(({ channels, countries, categories }) => {
       allChannels = channels
-      fillSelect(countrySelect, 'Todos los países', availableCountries(channels))
-      fillSelect(categorySelect, 'Todas las categorías', availableCategories(channels))
+      fillSelect(countrySelect, '🌍 País', countryOptions(channels, countries))
+      fillSelect(categorySelect, 'Categoría', categoryOptions(channels, categories))
+      status.textContent = `${channels.length} canales`
       refresh()
     })
     .catch(err => {

@@ -26,3 +26,21 @@ export interface Logo {
   channel: string | null
   url: string
 }
+
+export interface Country {
+  code: string
+  name: string
+  flag: string
+}
+
+export interface Category {
+  id: string
+  name: string
+}
+
+// Resultado completo del repositorio: canales + metadatos para los filtros
+export interface ChannelData {
+  channels: Channel[]
+  countries: Country[]
+  categories: Category[]
+}

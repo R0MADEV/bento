@@ -87,8 +87,10 @@ html, body, #app {
   inset: 0;
 }
 
+/* Sesión oculta: invisible pero SIGUE renderizada → el audio/vídeo no se para */
 .session-instance.hidden {
-  display: none;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .workspace-view {
@@ -322,52 +324,18 @@ html, body, #app {
 }
 
 .tv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 8px;
   background: #252525;
   border-bottom: 1px solid #333;
-}
-
-.tv-select {
-  padding: 3px 6px;
-  background: #1e1e1e;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #ccc;
-  font-size: 12px;
-  outline: none;
-  max-width: 130px;
-}
-
-.tv-status {
-  font-size: 11px;
-  color: #888;
-  white-space: nowrap;
-  padding-left: 8px;
-}
-
-.tv-pip {
-  margin-left: auto;
-  padding: 3px 8px;
-  background: #333;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #ccc;
-  cursor: pointer;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.tv-pip:hover {
-  background: #444;
-}
-
-.tv-toolbar {
-  display: flex !important;
-  align-items: center;
+  flex-shrink: 0;
 }
 
 .tv-search {
   flex: 1;
+  min-width: 80px;
   padding: 4px 8px;
   background: #1e1e1e;
   border: 1px solid #444;
@@ -381,14 +349,77 @@ html, body, #app {
   border-color: #666;
 }
 
+.tv-select {
+  padding: 4px 6px;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 12px;
+  outline: none;
+  max-width: 150px;
+}
+
+.tv-status {
+  font-size: 11px;
+  color: #888;
+  white-space: nowrap;
+}
+
+.tv-btn {
+  padding: 4px 8px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.tv-btn:hover {
+  background: #444;
+}
+
+/* Escenario: vídeo arriba, lista de canales abajo */
+.tv-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.tv-stage {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 100%;
+  background: #000;
+  flex-shrink: 0;
+}
+
+.tv-player {
+  width: 100%;
+  height: 100%;
+  background: #000;
+  object-fit: contain;
+}
+
 .tv-grid {
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
+  justify-content: center;
   gap: 6px;
-  padding: 8px;
-  overflow-y: auto;
   flex: 1;
   min-height: 0;
+  padding: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+}
+
+.tv-main.list-hidden .tv-grid {
+  display: none;
 }
 
 .tv-card {
@@ -396,15 +427,15 @@ html, body, #app {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 80px;
-  height: 64px;
-  padding: 4px;
+  gap: 4px;
+  width: 96px;
+  flex-shrink: 0;
+  padding: 6px;
   background: #2a2a2a;
   border: 1px solid #333;
   border-radius: 6px;
   cursor: pointer;
   overflow: hidden;
-  gap: 4px;
 }
 
 .tv-card:hover {
@@ -413,24 +444,17 @@ html, body, #app {
 }
 
 .tv-card img {
-  width: 40px;
-  height: 28px;
+  width: 44px;
+  height: 30px;
   object-fit: contain;
 }
 
 .tv-card span {
-  font-size: 9px;
-  color: #aaa;
+  font-size: 10px;
+  color: #ccc;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   width: 100%;
-}
-
-.tv-player {
-  width: 100%;
-  max-height: 200px;
-  background: #000;
-  flex-shrink: 0;
 }
