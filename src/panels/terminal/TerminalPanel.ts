@@ -15,6 +15,7 @@ let ptyCounter = 0
 
 export interface TerminalPanelHandle {
   element: HTMLElement
+  fit: () => void
   dispose: () => void
 }
 
@@ -97,10 +98,15 @@ export function createTerminalPanel(): TerminalPanelHandle {
   root.addEventListener('click', () => term.focus())
   setTimeout(() => term.focus(), 100)
 
-  const observer = new ResizeObserver(() => {
-    fitAddon.fit()
-    invoke('pty_resize', { id, rows: term.rows, cols: term.cols }).catch(() => {})
-  })
+  const fit = () => {
+    // requestAnimationFrame asegura que el contenedor ya tiene su tamaño final
+    requestAnimationFrame(() => {
+      fitAddon.fit()
+      invoke('pty_resize', { id, rows: term.rows, cols: term.cols }).catch(() => {})
+    })
+  }
+
+  const observer = new ResizeObserver(fit)
   observer.observe(root)
 
   const dispose = () => {
@@ -109,5 +115,5 @@ export function createTerminalPanel(): TerminalPanelHandle {
     term.dispose()
   }
 
-  return { element: root, dispose }
+  return { element: root, fit, dispose }
 }

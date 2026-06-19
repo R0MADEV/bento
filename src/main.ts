@@ -18,7 +18,14 @@ const api = createDockview(app, {
     const handle = createTerminalPanel()
     return {
       element: handle.element,
-      init: () => {},
+      init: params => {
+        // Re-ajustar el terminal cuando Dockview cambie sus dimensiones
+        // (split, cierre de hermano, resize de borde, cambio de tab)
+        params.api.onDidDimensionsChange(() => handle.fit())
+        params.api.onDidVisibilityChange(({ isVisible }) => {
+          if (isVisible) handle.fit()
+        })
+      },
       dispose: () => handle.dispose(),
     }
   },
