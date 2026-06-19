@@ -76,15 +76,6 @@ export class HLSPlayer {
     tracks.forEach((t, i) => { t.mode = i === index ? 'showing' : 'disabled' })
   }
 
-  async togglePiP(): Promise<void> {
-    if (!('pictureInPictureEnabled' in document)) return
-    if (document.pictureInPictureElement) {
-      await document.exitPictureInPicture()
-      return
-    }
-    await this.video.requestPictureInPicture()
-  }
-
   stop(): void {
     if (this.hls) {
       this.hls.destroy()

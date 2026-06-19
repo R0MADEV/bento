@@ -44,11 +44,6 @@ export function createTVPanel(
   favButton.textContent = '★'
   favButton.title = 'Mostrar solo favoritos'
 
-  const pipButton = document.createElement('button')
-  pipButton.className = 'tv-btn'
-  pipButton.textContent = '⧉'
-  pipButton.title = 'Picture-in-Picture'
-
   const toggleButton = document.createElement('button')
   toggleButton.className = 'tv-btn'
   toggleButton.textContent = '☰'
@@ -56,7 +51,7 @@ export function createTVPanel(
 
   toolbar.append(input, countrySelect, categorySelect, status)
   if (worldRepo) toolbar.append(worldButton)
-  toolbar.append(favButton, pipButton, toggleButton)
+  toolbar.append(favButton, toggleButton)
 
   const main = document.createElement('div')
   main.className = 'tv-main'
@@ -129,7 +124,6 @@ export function createTVPanel(
   input.addEventListener('input', refresh)
   countrySelect.addEventListener('change', refresh)
   categorySelect.addEventListener('change', refresh)
-  pipButton.addEventListener('click', () => player.togglePiP().catch(() => {}))
   toggleButton.addEventListener('click', () => main.classList.toggle('list-hidden'))
   favButton.addEventListener('click', () => {
     onlyFavorites = !onlyFavorites
