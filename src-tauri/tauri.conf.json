@@ -1,7 +1,4 @@
 {
-  "productName": "Bento",
-  "version": "0.0.1",
-  "identifier": "com.bento.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
@@ -10,12 +7,16 @@
   "app": {
     "windows": [
       {
-        "fullscreen": false,
-        "resizable": true,
         "title": "Bento",
         "width": 1200,
-        "height": 800
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
       }
     ]
+  },
+  "package": {
+    "productName": "bento",
+    "version": "0.0.1"
   }
 }
