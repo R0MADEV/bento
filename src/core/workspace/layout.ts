@@ -1,15 +1,4 @@
-import type { PanelType } from './types'
-
-interface PanelDef {
-  id: string
-  type: PanelType
-  title: string
-  position: 'left' | 'right'
-}
-
-interface LayoutDef {
-  panels: PanelDef[]
-}
+import type { LayoutDef } from './Workspace'
 
 export function createDefaultLayout(): LayoutDef {
   return {

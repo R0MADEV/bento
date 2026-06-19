@@ -1,26 +1,23 @@
 import { createDockview } from 'dockview-core'
 import 'dockview-core/dist/styles/dockview.css'
 import './styles.css'
-import { createDefaultLayout } from './workspace/layout'
+import { createDefaultLayout } from './core/workspace/layout'
+import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
+import { createTVPanel } from './panels/tv/TVPanel'
 
 const app = document.getElementById('app')!
+const channelRepo = new IptvOrgChannelRepository()
 
 const api = createDockview(app, {
   createComponent({ name }) {
+    if (name === 'tv') {
+      return { element: createTVPanel(channelRepo), init: () => {} }
+    }
+
     const el = document.createElement('div')
     el.className = 'panel-placeholder'
-
-    const labels: Record<string, string> = {
-      tv: '📺 TV Panel',
-      terminal: '> Terminal Panel',
-    }
-
-    el.textContent = labels[name] ?? name
-
-    return {
-      element: el,
-      init: () => {},
-    }
+    el.textContent = '> Terminal Panel'
+    return { element: el, init: () => {} }
   },
 })
 

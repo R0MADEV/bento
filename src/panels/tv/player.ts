@@ -1,18 +1,41 @@
-// HLS player wrapper — Fase 3
-// TODO: Integrate hls.js for IPTV streaming
+import Hls from 'hls.js'
+import type { Channel } from '../../core/channel/Channel'
 
 export class HLSPlayer {
-  private video: HTMLVideoElement
+  private hls: Hls | null = null
+  readonly element: HTMLVideoElement
 
-  constructor(videoElement: HTMLVideoElement) {
-    this.video = videoElement
+  constructor() {
+    this.element = document.createElement('video')
+    this.element.className = 'tv-player'
+    this.element.controls = true
+    this.element.autoplay = true
   }
 
-  play(url: string): void {
-    // TODO: load m3u8 and play with hls.js
+  play(channel: Channel): void {
+    const url = channel.streamUrl
+    if (!url) return
+
+    this.stop()
+
+    if (Hls.isSupported()) {
+      this.hls = new Hls({ lowLatencyMode: false })
+      this.hls.loadSource(url)
+      this.hls.attachMedia(this.element)
+    } else if (this.element.canPlayType('application/vnd.apple.mpegurl')) {
+      this.element.src = url
+    }
   }
 
   stop(): void {
-    this.video.pause()
+    if (this.hls) {
+      this.hls.destroy()
+      this.hls = null
+    }
+    this.element.src = ''
+  }
+
+  dispose(): void {
+    this.stop()
   }
 }

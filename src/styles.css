@@ -22,3 +22,86 @@ html, body, #app {
   font-size: 1.2rem;
   color: rgba(255, 255, 255, 0.4);
 }
+
+/* TV Panel */
+.tv-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1a1a1a;
+}
+
+.tv-toolbar {
+  padding: 6px 8px;
+  background: #252525;
+  border-bottom: 1px solid #333;
+}
+
+.tv-search {
+  width: 100%;
+  padding: 4px 8px;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 13px;
+  outline: none;
+}
+
+.tv-search:focus {
+  border-color: #666;
+}
+
+.tv-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.tv-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 64px;
+  padding: 4px;
+  background: #2a2a2a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  gap: 4px;
+}
+
+.tv-card:hover {
+  background: #3a3a3a;
+  border-color: #555;
+}
+
+.tv-card img {
+  width: 40px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.tv-card span {
+  font-size: 9px;
+  color: #aaa;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.tv-player {
+  width: 100%;
+  max-height: 200px;
+  background: #000;
+  flex-shrink: 0;
+}

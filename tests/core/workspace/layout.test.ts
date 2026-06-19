@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createDefaultLayout } from './layout'
+import { createDefaultLayout } from '../../../src/core/workspace/layout'
 
 describe('createDefaultLayout', () => {
   it('creates exactly two panels', () => {
