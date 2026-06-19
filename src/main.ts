@@ -15,7 +15,12 @@ const api = createDockview(app, {
       return { element: createTVPanel(channelRepo), init: () => {} }
     }
 
-    return { element: createTerminalPanel(), init: () => {} }
+    const handle = createTerminalPanel()
+    return {
+      element: handle.element,
+      init: () => {},
+      dispose: () => handle.dispose(),
+    }
   },
 })
 
@@ -28,4 +33,29 @@ api.addPanel({
   component: right.type,
   title: right.title,
   position: { referencePanel: left.id, direction: 'right' },
+})
+
+// Nueva terminal como tab junto a la última terminal activa
+let terminalCounter = 1
+
+function addTerminal(): void {
+  terminalCounter++
+  const id = `terminal-${terminalCounter}`
+  const lastTerminal = api.panels.find(p => p.id.startsWith('terminal-'))
+
+  api.addPanel({
+    id,
+    component: 'terminal',
+    title: `Terminal ${terminalCounter}`,
+    position: lastTerminal
+      ? { referencePanel: lastTerminal.id, direction: 'within' }
+      : undefined,
+  })
+}
+
+window.addEventListener('keydown', e => {
+  const isNewTerminal = (e.metaKey || e.ctrlKey) && e.key === 't'
+  if (!isNewTerminal) return
+  e.preventDefault()
+  addTerminal()
 })

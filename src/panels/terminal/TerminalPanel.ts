@@ -13,7 +13,12 @@ import 'xterm/css/xterm.css'
 
 let ptyCounter = 0
 
-export function createTerminalPanel(): HTMLElement {
+export interface TerminalPanelHandle {
+  element: HTMLElement
+  dispose: () => void
+}
+
+export function createTerminalPanel(): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -98,5 +103,11 @@ export function createTerminalPanel(): HTMLElement {
   })
   observer.observe(root)
 
-  return root
+  const dispose = () => {
+    observer.disconnect()
+    invoke('pty_kill', { id }).catch(() => {})
+    term.dispose()
+  }
+
+  return { element: root, dispose }
 }
