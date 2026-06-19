@@ -11,6 +11,7 @@ import { getTheme, themeNames, themeLabels } from '../../core/terminal/themes'
 import { getThemeName, onThemeChange, setTheme } from './themePreference'
 import { createSearchBar } from './searchBar'
 import { showContextMenu } from '../../ui/contextMenu'
+import { icon } from '../../ui/icons'
 import 'xterm/css/xterm.css'
 
 let ptyCounter = 0
@@ -74,7 +75,7 @@ export function createTerminalPanel(): TerminalPanelHandle {
   // Botón selector de tema
   const themeButton = document.createElement('button')
   themeButton.className = 'term-theme-btn'
-  themeButton.textContent = '🎨'
+  themeButton.innerHTML = icon('palette')
   themeButton.title = 'Tema de la terminal'
   themeButton.addEventListener('click', () => {
     const rect = themeButton.getBoundingClientRect()

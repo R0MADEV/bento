@@ -7,6 +7,7 @@ import { mergeChannelData } from '../../core/channel/mergeChannelData'
 import { toggleFavorite, isFavorite } from '../../core/channel/favorites'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
+import { icon } from '../../ui/icons'
 
 // repo = base ligera (M3U); worldRepo = fuente pesada cargada bajo demanda
 export function createTVPanel(
@@ -36,17 +37,17 @@ export function createTVPanel(
 
   const worldButton = document.createElement('button')
   worldButton.className = 'tv-btn'
-  worldButton.textContent = '🌍 Mundial'
+  worldButton.innerHTML = icon('globe')
   worldButton.title = 'Cargar canales de todo el mundo (más pesado)'
 
   const favButton = document.createElement('button')
   favButton.className = 'tv-btn'
-  favButton.textContent = '★'
+  favButton.innerHTML = icon('star')
   favButton.title = 'Mostrar solo favoritos'
 
   const toggleButton = document.createElement('button')
   toggleButton.className = 'tv-btn'
-  toggleButton.textContent = '☰'
+  toggleButton.innerHTML = icon('panel')
   toggleButton.title = 'Mostrar/ocultar lista de canales'
 
   toolbar.append(input, countrySelect, categorySelect, status)
@@ -63,7 +64,13 @@ export function createTVPanel(
   grid.className = 'tv-grid'
 
   const player = new HLSPlayer()
-  stage.appendChild(player.element)
+
+  // Estado vacío: antes de elegir un canal
+  const emptyState = document.createElement('div')
+  emptyState.className = 'tv-empty'
+  emptyState.innerHTML = `${icon('tv')}<p>Elige un canal para empezar</p>`
+
+  stage.append(player.element, emptyState)
   main.append(stage, grid)
   root.append(toolbar, main)
 
@@ -102,7 +109,7 @@ export function createTVPanel(
     if (onlyFavorites) list = list.filter(ch => isFavorite(favorites, ch.id))
 
     renderGrid(grid, list, {
-      onSelect: ch => { current = ch.name; player.play(ch) },
+      onSelect: ch => { current = ch.name; emptyState.classList.add('hidden'); player.play(ch) },
       isFavorite: ch => isFavorite(favorites, ch.id),
       onToggleFavorite: ch => {
         favorites = toggleFavorite(favorites, ch.id)
@@ -134,14 +141,14 @@ export function createTVPanel(
   worldButton.addEventListener('click', async () => {
     if (!worldRepo) return
     worldButton.disabled = true
-    worldButton.textContent = '⏳ Cargando...'
+    worldButton.classList.add('loading')
     try {
       const world = await worldRepo.fetchAll()
       applyData(mergeChannelData([data, world]))
       worldButton.remove()
     } catch {
       worldButton.disabled = false
-      worldButton.textContent = '🌍 Reintentar'
+      worldButton.classList.remove('loading')
     }
   })
 

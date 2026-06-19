@@ -3,6 +3,7 @@ import type { WorkspaceStateRepository } from '../ports/WorkspaceStateRepository
 import { createWorkspaceView, type WorkspaceView } from './createWorkspaceView'
 import { addSession, removeSession, setActiveSession, type SessionState } from '../core/session/sessionModel'
 import { createWindowControls } from '../ui/windowControls'
+import { icon } from '../ui/icons'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -70,7 +71,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     label.addEventListener('click', onSelect)
     const close = document.createElement('span')
     close.className = 'session-tab-close'
-    close.textContent = '✕'
+    close.innerHTML = icon('x')
     close.addEventListener('click', e => { e.stopPropagation(); onClose() })
     tab.append(label, close)
     return tab
@@ -91,7 +92,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
     const add = document.createElement('button')
     add.className = 'session-add'
-    add.textContent = '+'
+    add.innerHTML = icon('plus')
     add.title = 'Nueva sesión'
     add.addEventListener('click', () => { state = addSession(state); render() })
     tabsArea.appendChild(add)
