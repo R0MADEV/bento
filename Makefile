@@ -7,7 +7,7 @@ else
   XDISPLAY := $(DISPLAY)
 endif
 
-.PHONY: dev build shell setup
+.PHONY: dev build shell setup test
 
 # Arranca el entorno de desarrollo con GUI
 dev:
@@ -22,6 +22,10 @@ build:
 # Abre una shell interactiva dentro del contenedor
 shell:
 	docker-compose run --rm bento sh
+
+# Ejecuta los tests
+test:
+	npm test
 
 # Construye la imagen Docker (primera vez o tras cambiar Dockerfile)
 setup:

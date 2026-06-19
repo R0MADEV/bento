@@ -3,7 +3,7 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   build: {
     target: 'esnext',
-    minify: 'terser',
+    minify: 'esbuild',
   },
   server: {
     host: '0.0.0.0',
