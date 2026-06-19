@@ -5,6 +5,7 @@ import { createDefaultLayout } from './core/workspace/layout'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { createTVPanel } from './panels/tv/TVPanel'
 import { createTerminalPanel } from './panels/terminal/TerminalPanel'
+import { lowestAvailableNumber } from './core/terminal/lowestAvailableNumber'
 
 const app = document.getElementById('app')!
 const channelRepo = new IptvOrgChannelRepository()
@@ -56,17 +57,22 @@ api.addPanel({
 // Nueva terminal: 'within' = tab, 'right'/'below' = split
 type SplitDirection = 'within' | 'right' | 'below'
 
-let terminalCounter = 1
+function usedTerminalNumbers(): number[] {
+  return api.panels
+    .filter(p => p.id.startsWith('terminal-'))
+    .map(p => Number(p.id.slice('terminal-'.length)))
+    .filter(n => Number.isInteger(n))
+}
 
 function addTerminal(direction: SplitDirection): void {
-  terminalCounter++
-  const id = `terminal-${terminalCounter}`
+  const n = lowestAvailableNumber(usedTerminalNumbers())
+  const id = `terminal-${n}`
   const reference = api.activePanel ?? api.panels.find(p => p.id.startsWith('terminal-'))
 
   api.addPanel({
     id,
     component: 'terminal',
-    title: `Terminal ${terminalCounter}`,
+    title: `Terminal ${n}`,
     position: reference
       ? { referencePanel: reference.id, direction }
       : undefined,

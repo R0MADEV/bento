@@ -47,9 +47,10 @@ export function createTerminalPanel(): TerminalPanelHandle {
   term.open(root)
 
   // WebGL acelera el render; si falla (sin GPU en Docker) seguimos con canvas
+  let webgl: WebglAddon | undefined
   try {
-    const webgl = new WebglAddon()
-    webgl.onContextLoss(() => webgl.dispose())
+    webgl = new WebglAddon()
+    webgl.onContextLoss(() => webgl?.dispose())
     term.loadAddon(webgl)
   } catch {
     // canvas fallback automático
@@ -112,7 +113,18 @@ export function createTerminalPanel(): TerminalPanelHandle {
   const dispose = () => {
     observer.disconnect()
     invoke('pty_kill', { id }).catch(() => {})
-    term.dispose()
+    // Disponer WebGL antes que term y proteger: su dispose puede lanzar y
+    // si la excepción llega a Dockview, rompe removePanel y no redistribuye.
+    try {
+      webgl?.dispose()
+    } catch {
+      // ignorado
+    }
+    try {
+      term.dispose()
+    } catch {
+      // ignorado
+    }
   }
 
   return { element: root, fit, dispose }
