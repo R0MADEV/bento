@@ -8,14 +8,15 @@ export function getThemeName(): string {
   return localStorage.getItem(KEY) ?? DEFAULT_THEME
 }
 
-function setThemeName(name: string): void {
+// Aplica un tema y lo guarda; notifica a todas las terminales abiertas.
+export function setTheme(name: string): void {
   localStorage.setItem(KEY, name)
   window.dispatchEvent(new CustomEvent(EVENT, { detail: name }))
 }
 
-// Cicla al siguiente tema y lo aplica a todas las terminales abiertas.
+// Cicla al siguiente tema.
 export function cycleTheme(): void {
-  setThemeName(nextTheme(getThemeName(), themeNames))
+  setTheme(nextTheme(getThemeName(), themeNames))
 }
 
 // Suscribe un callback a los cambios de tema. Devuelve la función para desuscribir.

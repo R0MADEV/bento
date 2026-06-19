@@ -38,6 +38,16 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
 
   document.body.appendChild(menu)
 
+  // Ajustar al viewport: si se sale por abajo/derecha, reposicionar
+  const rect = menu.getBoundingClientRect()
+  const margin = 8
+  if (rect.bottom > window.innerHeight) {
+    menu.style.top = `${Math.max(margin, window.innerHeight - rect.height - margin)}px`
+  }
+  if (rect.right > window.innerWidth) {
+    menu.style.left = `${Math.max(margin, window.innerWidth - rect.width - margin)}px`
+  }
+
   setTimeout(() => {
     document.addEventListener('mousedown', onOutside, true)
     document.addEventListener('keydown', onKey, true)
