@@ -1,4 +1,5 @@
 {
-  "productName": "bento",
-  "version": "0.0.1"
+  "build": {
+    "beforeDevCommand": "npm run dev"
+  }
 }
