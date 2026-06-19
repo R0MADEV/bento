@@ -1,6 +1,6 @@
 import type { ChannelRepository } from '../../ports/ChannelRepository'
-import { filterChannels } from '../../core/channel/filterChannels'
 import type { Channel } from '../../core/channel/Channel'
+import { applyFilters, availableCountries, availableCategories } from '../../core/channel/channelFilters'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
 
@@ -13,8 +13,14 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
 
   const input = document.createElement('input')
   input.type = 'text'
-  input.placeholder = 'Buscar canal...'
+  input.placeholder = 'Buscar...'
   input.className = 'tv-search'
+
+  const countrySelect = document.createElement('select')
+  countrySelect.className = 'tv-select'
+
+  const categorySelect = document.createElement('select')
+  categorySelect.className = 'tv-select'
 
   const status = document.createElement('span')
   status.className = 'tv-status'
@@ -24,44 +30,61 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
   pipButton.textContent = '⧉ PiP'
   pipButton.title = 'Picture-in-Picture (flota sobre otras apps)'
 
-  toolbar.appendChild(input)
-  toolbar.appendChild(status)
-  toolbar.appendChild(pipButton)
+  toolbar.append(input, countrySelect, categorySelect, status, pipButton)
 
   const grid = document.createElement('div')
   grid.className = 'tv-grid'
 
   const player = new HLSPlayer()
 
-  root.appendChild(toolbar)
-  root.appendChild(grid)
-  root.appendChild(player.element)
+  root.append(toolbar, grid, player.element)
 
   let allChannels: Channel[] = []
 
+  const fillSelect = (select: HTMLSelectElement, label: string, options: string[]) => {
+    select.innerHTML = ''
+    const all = document.createElement('option')
+    all.value = ''
+    all.textContent = label
+    select.appendChild(all)
+    options.forEach(opt => {
+      const o = document.createElement('option')
+      o.value = opt
+      o.textContent = opt
+      select.appendChild(o)
+    })
+  }
+
   const onSelect = (ch: Channel) => {
-    const hasStream = ch.streamUrl !== undefined
-    status.textContent = hasStream ? `▶ ${ch.name}` : `⚠ ${ch.name} — sin stream`
-    console.log(`[TV] canal: ${ch.name}, url: ${ch.streamUrl}`)
+    status.textContent = `▶ ${ch.name}`
     player.play(ch)
   }
 
-  const refresh = (query: string) =>
-    renderGrid(grid, filterChannels(allChannels, query), onSelect)
+  const refresh = () => {
+    const filtered = applyFilters(allChannels, {
+      query: input.value,
+      country: countrySelect.value,
+      category: categorySelect.value,
+    })
+    status.textContent = `${filtered.length} canales`
+    renderGrid(grid, filtered, onSelect)
+  }
 
-  input.addEventListener('input', () => refresh(input.value))
+  input.addEventListener('input', refresh)
+  countrySelect.addEventListener('change', refresh)
+  categorySelect.addEventListener('change', refresh)
   pipButton.addEventListener('click', () => player.togglePiP().catch(() => {}))
 
   status.textContent = 'Cargando...'
 
   repo.fetchAll()
     .then(channels => {
-      allChannels = channels.filter(c => c.streamUrl !== undefined)
-      status.textContent = `${allChannels.length} canales`
-      refresh('')
+      allChannels = channels
+      fillSelect(countrySelect, 'Todos los países', availableCountries(channels))
+      fillSelect(categorySelect, 'Todas las categorías', availableCategories(channels))
+      refresh()
     })
     .catch(err => {
-      console.error('[TV] Error:', err)
       status.textContent = `Error: ${err.message}`
     })
 

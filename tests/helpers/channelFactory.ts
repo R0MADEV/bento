@@ -7,6 +7,7 @@ export function buildChannel(overrides: Partial<Channel> = {}): Channel {
     logo: '',
     country: 'US',
     categories: [],
+    streamUrl: 'https://stream.test/live.m3u8',
     ...overrides,
   }
 }
@@ -14,6 +15,7 @@ export function buildChannel(overrides: Partial<Channel> = {}): Channel {
 export function buildStream(overrides: Partial<Stream> = {}): Stream {
   return {
     channel: 'test-channel',
+    title: 'Test Channel',
     url: 'https://stream.test/live.m3u8',
     ...overrides,
   }
