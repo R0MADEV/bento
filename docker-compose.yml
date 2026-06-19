@@ -7,6 +7,7 @@ services:
       # Código fuente para hot-reload
       - ./src:/bento/src:cached
       - ./src-tauri/src:/bento/src-tauri/src:cached
+      - ./src-tauri/icons:/bento/src-tauri/icons:cached
       - ./src-tauri/Cargo.toml:/bento/src-tauri/Cargo.toml:cached
       - ./src-tauri/tauri.conf.json:/bento/src-tauri/tauri.conf.json:cached
       - ./src-tauri/build.rs:/bento/src-tauri/build.rs:cached
@@ -16,8 +17,7 @@ services:
       # X11 forwarding en Linux
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     environment:
-      # Linux: para visualizar la ventana Tauri
-      - DISPLAY=${DISPLAY}
+      - DISPLAY=${DISPLAY:-host.docker.internal:0}
     stdin_open: true
     tty: true
     working_dir: /bento

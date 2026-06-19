@@ -39,17 +39,34 @@ Un **workspace modular y personal** donde:
 
 ## 3. Desarrollo con Docker
 
-Para **desarrollar sin instalar Rust/Node localmente**, usa Docker:
+El entorno de desarrollo corre en Docker — no necesitas instalar Rust ni Node localmente.
+
+### Primera vez
 
 ```bash
-docker-compose build      # Primera vez
-docker-compose run --rm bento
-# Dentro del contenedor
-npm run tauri:dev         # Desarrollar
-npm run tauri:build       # Build
+make setup   # construye la imagen Docker
 ```
 
-**Los binarios compilados** para distribución se generan en **GitHub Actions** (matrix: Linux/macOS/Windows).
+### Desarrollar
+
+```bash
+make dev     # arranca Tauri + Vite con hot reload
+```
+
+`make dev` detecta tu SO automáticamente:
+
+- **Linux**: usa tu display directamente.
+- **macOS**: instala y configura XQuartz si no lo tienes (sigue las instrucciones en pantalla).
+- **Windows**: necesitas [VcXsrv](https://sourceforge.net/projects/vcxsrv/) instalado y corriendo.
+
+### Otros comandos
+
+```bash
+make build   # genera binarios de distribución
+make shell   # abre una shell dentro del contenedor
+```
+
+**Los binarios para distribución** (`.AppImage`, `.dmg`, `.msi`) se generan en **GitHub Actions** (matrix: Linux/macOS/Windows).
 
 ---
 
