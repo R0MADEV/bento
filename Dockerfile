@@ -40,5 +40,4 @@ RUN npm install
 # Copiar el resto del código
 COPY . .
 
-# Entrypoint: shell interactiva
-ENTRYPOINT ["/bin/sh"]
+# Sin entrypoint — docker-compose pasará los comandos directamente
