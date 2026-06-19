@@ -1,4 +1,7 @@
 {
+  "productName": "bento",
+  "version": "0.0.1",
+  "identifier": "com.bento.app",
   "build": {
     "beforeDevCommand": "npm run dev"
   }
