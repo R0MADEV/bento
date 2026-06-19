@@ -1,11 +1,19 @@
 SHELL := /bin/bash
+UNAME := $(shell uname -s)
+
+ifeq ($(UNAME), Darwin)
+  XDISPLAY := host.docker.internal:0
+else
+  XDISPLAY := $(DISPLAY)
+endif
 
 .PHONY: dev build shell setup
 
 # Arranca el entorno de desarrollo con GUI
 dev:
 	@bash scripts/setup-display.sh
-	DISPLAY=$${DISPLAY:-host.docker.internal:0} docker-compose run --rm bento npm run tauri:dev
+	DISPLAY=$(XDISPLAY) docker-compose run --rm bento \
+		sh -c 'dbus-run-session -- npm run tauri:dev'
 
 # Genera los binarios para distribución
 build:

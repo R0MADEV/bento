@@ -14,10 +14,24 @@ services:
       - ./index.html:/bento/index.html:cached
       - ./vite.config.ts:/bento/vite.config.ts:cached
       - ./tsconfig.json:/bento/tsconfig.json:cached
+      # Cache de Rust para no recompilar entre contenedores
+      - cargo-cache:/root/.cargo/registry
+      - cargo-git:/root/.cargo/git
+      - target-cache:/bento/src-tauri/target
       # X11 forwarding en Linux
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     environment:
-      - DISPLAY=${DISPLAY:-host.docker.internal:0}
+      - DISPLAY=${DISPLAY}
+      - GDK_BACKEND=x11
+      - WEBKIT_DISABLE_COMPOSITING_MODE=1
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - GALLIUM_DRIVER=llvmpipe
+      - NO_AT_BRIDGE=1
     stdin_open: true
     tty: true
     working_dir: /bento
+
+volumes:
+  cargo-cache:
+  cargo-git:
+  target-cache:
