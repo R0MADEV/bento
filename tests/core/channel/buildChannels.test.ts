@@ -31,7 +31,7 @@ describe('buildChannels', () => {
     const item = buildChannels(streams, channels, logos)[0]
     expect(item.logo).toBe('https://logo/bbc.png')
     expect(item.country).toBe('GB')
-    expect(item.categories).toEqual(['news'])
+    expect(item.categories).toEqual(['Noticias'])
   })
 
   it('leaves logo/country empty for unlinked streams', () => {

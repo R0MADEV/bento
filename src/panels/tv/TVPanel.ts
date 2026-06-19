@@ -1,13 +1,19 @@
 import type { ChannelRepository } from '../../ports/ChannelRepository'
 import type { FavoritesRepository } from '../../ports/FavoritesRepository'
-import type { Channel } from '../../core/channel/Channel'
+import type { Channel, ChannelData } from '../../core/channel/Channel'
 import { applyFilters } from '../../core/channel/channelFilters'
 import { countryOptions, categoryOptions, type FilterOption } from '../../core/channel/filterOptions'
+import { mergeChannelData } from '../../core/channel/mergeChannelData'
 import { toggleFavorite, isFavorite } from '../../core/channel/favorites'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
 
-export function createTVPanel(repo: ChannelRepository, favoritesRepo: FavoritesRepository): HTMLElement {
+// repo = base ligera (M3U); worldRepo = fuente pesada cargada bajo demanda
+export function createTVPanel(
+  repo: ChannelRepository,
+  favoritesRepo: FavoritesRepository,
+  worldRepo?: ChannelRepository
+): HTMLElement {
   const root = document.createElement('div')
   root.className = 'tv-panel'
 
@@ -28,6 +34,11 @@ export function createTVPanel(repo: ChannelRepository, favoritesRepo: FavoritesR
   const status = document.createElement('span')
   status.className = 'tv-status'
 
+  const worldButton = document.createElement('button')
+  worldButton.className = 'tv-btn'
+  worldButton.textContent = '🌍 Mundial'
+  worldButton.title = 'Cargar canales de todo el mundo (más pesado)'
+
   const favButton = document.createElement('button')
   favButton.className = 'tv-btn'
   favButton.textContent = '★'
@@ -43,7 +54,9 @@ export function createTVPanel(repo: ChannelRepository, favoritesRepo: FavoritesR
   toggleButton.textContent = '☰'
   toggleButton.title = 'Mostrar/ocultar lista de canales'
 
-  toolbar.append(input, countrySelect, categorySelect, status, favButton, pipButton, toggleButton)
+  toolbar.append(input, countrySelect, categorySelect, status)
+  if (worldRepo) toolbar.append(worldButton)
+  toolbar.append(favButton, pipButton, toggleButton)
 
   const main = document.createElement('div')
   main.className = 'tv-main'
@@ -59,6 +72,7 @@ export function createTVPanel(repo: ChannelRepository, favoritesRepo: FavoritesR
   main.append(stage, grid)
   root.append(toolbar, main)
 
+  let data: ChannelData = { channels: [], countries: [], categories: [] }
   let allChannels: Channel[] = []
   let favorites = favoritesRepo.load()
   let onlyFavorites = false
@@ -103,6 +117,15 @@ export function createTVPanel(repo: ChannelRepository, favoritesRepo: FavoritesR
     })
   }
 
+  const applyData = (next: ChannelData) => {
+    data = next
+    allChannels = next.channels
+    fillSelect(countrySelect, '🌍 País', countryOptions(next.channels, next.countries))
+    fillSelect(categorySelect, 'Categoría', categoryOptions(next.channels, next.categories))
+    status.textContent = `${next.channels.length} canales`
+    refresh()
+  }
+
   input.addEventListener('input', refresh)
   countrySelect.addEventListener('change', refresh)
   categorySelect.addEventListener('change', refresh)
@@ -114,19 +137,24 @@ export function createTVPanel(repo: ChannelRepository, favoritesRepo: FavoritesR
     refresh()
   })
 
-  status.textContent = 'Cargando...'
+  worldButton.addEventListener('click', async () => {
+    if (!worldRepo) return
+    worldButton.disabled = true
+    worldButton.textContent = '⏳ Cargando...'
+    try {
+      const world = await worldRepo.fetchAll()
+      applyData(mergeChannelData([data, world]))
+      worldButton.remove()
+    } catch {
+      worldButton.disabled = false
+      worldButton.textContent = '🌍 Reintentar'
+    }
+  })
 
+  status.textContent = 'Cargando...'
   repo.fetchAll()
-    .then(({ channels, countries, categories }) => {
-      allChannels = channels
-      fillSelect(countrySelect, '🌍 País', countryOptions(channels, countries))
-      fillSelect(categorySelect, 'Categoría', categoryOptions(channels, categories))
-      status.textContent = `${channels.length} canales`
-      refresh()
-    })
-    .catch(err => {
-      status.textContent = `Error: ${err.message}`
-    })
+    .then(applyData)
+    .catch(err => { status.textContent = `Error: ${err.message}` })
 
   return root
 }

@@ -1,7 +1,9 @@
 import type { Channel, RawChannel, Stream, Logo } from './Channel'
+import { translateCategory } from './translate'
 
 // Construye la lista reproducible a partir de los streams (siempre tienen url),
 // enriqueciendo con datos del canal (país, categorías) y su logo.
+// Las categorías se traducen a español para fusionarse con otras fuentes.
 export function buildChannels(streams: Stream[], channels: RawChannel[], logos: Logo[]): Channel[] {
   const channelById = new Map(channels.map(c => [c.id, c]))
   const logoByChannel = new Map(
@@ -17,7 +19,7 @@ export function buildChannels(streams: Stream[], channels: RawChannel[], logos: 
         name: s.title ?? channel?.name ?? s.channel ?? 'Sin nombre',
         logo: s.channel ? (logoByChannel.get(s.channel) ?? '') : '',
         country: channel?.country ?? '',
-        categories: channel?.categories ?? [],
+        categories: (channel?.categories ?? []).map(translateCategory),
         streamUrl: s.url,
       }
     })

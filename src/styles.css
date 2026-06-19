@@ -403,10 +403,29 @@ html, body, #app {
 }
 
 .tv-player {
+  position: relative;
   width: 100%;
   height: 100%;
   background: #000;
+}
+
+.tv-video,
+.tv-iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #000;
+}
+
+.tv-video {
   object-fit: contain;
+}
+
+.tv-video.hidden,
+.tv-iframe.hidden {
+  display: none;
 }
 
 .tv-grid {

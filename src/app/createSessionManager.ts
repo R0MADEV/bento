@@ -1,9 +1,11 @@
 import type { PanelRegistry } from '../panels/registry'
+import type { WorkspaceStateRepository } from '../ports/WorkspaceStateRepository'
 import { createWorkspaceView, type WorkspaceView } from './createWorkspaceView'
 import { addSession, removeSession, setActiveSession, type SessionState } from '../core/session/sessionModel'
 
 // Sesiones que se ocultan entre sí; cada una es un workspace completo.
-export function createSessionManager(panels: PanelRegistry): HTMLElement {
+// Persiste sesiones + layout de cada una para reabrir donde se dejó.
+export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
   root.className = 'session-manager'
 
@@ -16,12 +18,25 @@ export function createSessionManager(panels: PanelRegistry): HTMLElement {
   root.append(bar, body)
 
   const views = new Map<string, WorkspaceView>()
+  let savedLayouts: Record<string, unknown> = {}
   let state: SessionState = { sessions: [], activeId: null }
+
+  // Guardado debounced: los cambios de layout se disparan a ráfagas
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  const persist = (): void => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      const layouts: Record<string, unknown> = { ...savedLayouts }
+      views.forEach((view, id) => { layouts[id] = view.serialize() })
+      savedLayouts = layouts
+      stateRepo.save({ sessions: state.sessions, activeId: state.activeId, layouts })
+    }, 400)
+  }
 
   const ensureView = (id: string): WorkspaceView => {
     const existing = views.get(id)
     if (existing) return existing
-    const view = createWorkspaceView(panels)
+    const view = createWorkspaceView(panels, { savedLayout: savedLayouts[id], onChange: persist })
     view.element.classList.add('session-instance')
     body.appendChild(view.element)
     views.set(id, view)
@@ -77,15 +92,28 @@ export function createSessionManager(panels: PanelRegistry): HTMLElement {
       view.element.classList.remove('hidden')
       requestAnimationFrame(() => view.fit())
     }
+
+    persist()
   }
 
   function closeSession(id: string): void {
     disposeView(id)
+    delete savedLayouts[id]
     state = removeSession(state, id)
     render()
   }
 
-  state = addSession(state)
+  // Restaurar estado guardado o arrancar con una sesión nueva
+  const saved = stateRepo.load()
+  if (saved && saved.sessions.length > 0) {
+    savedLayouts = saved.layouts
+    const activeId = saved.sessions.some(s => s.id === saved.activeId)
+      ? saved.activeId
+      : saved.sessions[0].id
+    state = { sessions: saved.sessions, activeId }
+  } else {
+    state = addSession(state)
+  }
   render()
 
   return root

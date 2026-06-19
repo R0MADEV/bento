@@ -9,12 +9,18 @@ export interface WorkspaceView {
   element: HTMLElement
   fit: () => void
   isFocused: () => boolean
+  serialize: () => object
   dispose: () => void
+}
+
+export interface WorkspaceOptions {
+  savedLayout?: unknown
+  onChange?: () => void
 }
 
 // Un workspace = un Dockview con paneles uniformes (TV, terminal, radio...)
 // que se dividen y tabean igual. Splits y "+" operan a este nivel.
-export function createWorkspaceView(panels: PanelRegistry): WorkspaceView {
+export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOptions = {}): WorkspaceView {
   const element = document.createElement('div')
   element.className = 'workspace-view'
 
@@ -106,7 +112,10 @@ export function createWorkspaceView(panels: PanelRegistry): WorkspaceView {
     if (panel) api.removePanel(panel)
   }
 
-  api.onDidLayoutChange(fitAll)
+  api.onDidLayoutChange(() => {
+    fitAll()
+    options.onChange?.()
+  })
 
   const isFocused = (): boolean => element.contains(document.activeElement)
 
@@ -127,14 +136,28 @@ export function createWorkspaceView(panels: PanelRegistry): WorkspaceView {
   }
   window.addEventListener('keydown', onKeydown)
 
-  // Layout inicial: TV a la izquierda, terminal a la derecha
-  addPanel('tv')
-  addPanel('terminal', { referencePanel: 'tv-1', direction: 'right' })
+  // Restaurar el layout guardado o, si no hay, crear el inicial (TV + terminal)
+  const restored = tryRestore(options.savedLayout)
+  if (!restored) {
+    addPanel('tv')
+    addPanel('terminal', { referencePanel: 'tv-1', direction: 'right' })
+  }
+
+  function tryRestore(layout: unknown): boolean {
+    if (!layout || typeof layout !== 'object') return false
+    try {
+      api.fromJSON(layout as Parameters<typeof api.fromJSON>[0])
+      return api.panels.length > 0
+    } catch {
+      return false
+    }
+  }
 
   return {
     element,
     fit: fitAll,
     isFocused,
+    serialize: () => api.toJSON(),
     dispose: () => {
       window.removeEventListener('keydown', onKeydown)
       api.dispose()

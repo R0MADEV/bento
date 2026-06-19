@@ -13,7 +13,7 @@ export function countryOptions(channels: Channel[], countries: Country[]): Filte
     .filter(c => present.has(c.code))
     .map(c => ({ value: c.code, name: spanishCountryName(c.code, c.name), flag: c.flag }))
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(c => ({ value: c.value, label: `${c.flag} ${c.name}` }))
+    .map(c => ({ value: c.value, label: c.flag ? `${c.flag} ${c.name}` : c.name }))
 }
 
 export function categoryOptions(channels: Channel[], categories: Category[]): FilterOption[] {
