@@ -55,8 +55,15 @@ export function createTVPanel(repo: ChannelRepository): HTMLElement {
     })
   }
 
+  let current = ''
+  player.onStatus = s => {
+    if (s === 'loading') status.textContent = `⏳ ${current}`
+    else if (s === 'playing') status.textContent = `▶ ${current}`
+    else status.textContent = `⚠ ${current} — stream no disponible`
+  }
+
   const onSelect = (ch: Channel) => {
-    status.textContent = `▶ ${ch.name}`
+    current = ch.name
     player.play(ch)
   }
 

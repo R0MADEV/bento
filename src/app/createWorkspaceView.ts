@@ -75,7 +75,6 @@ export function createWorkspaceView(panels: PanelRegistry): WorkspaceView {
             params.api.onDidDimensionsChange(() => instance.fit!())
             params.api.onDidVisibilityChange(({ isVisible }) => { if (isVisible) instance.fit!() })
           }
-          instance.element.addEventListener('mousedown', () => params.api.setActive())
         },
         dispose: () => {
           if (instance.fit) fits.delete(instance.fit)

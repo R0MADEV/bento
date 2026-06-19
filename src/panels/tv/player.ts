@@ -1,15 +1,22 @@
 import Hls from 'hls.js'
 import type { Channel } from '../../core/channel/Channel'
+import { choosePlaybackMode } from '../../core/channel/playbackMode'
+
+export type PlayerStatus = 'loading' | 'playing' | 'error'
 
 export class HLSPlayer {
   private hls: Hls | null = null
   readonly element: HTMLVideoElement
+  onStatus?: (status: PlayerStatus) => void
 
   constructor() {
     this.element = document.createElement('video')
     this.element.className = 'tv-player'
     this.element.controls = true
     this.element.autoplay = true
+
+    this.element.addEventListener('playing', () => this.onStatus?.('playing'))
+    this.element.addEventListener('error', () => this.onStatus?.('error'))
   }
 
   play(channel: Channel): void {
@@ -17,30 +24,33 @@ export class HLSPlayer {
     if (!url) return
 
     this.stop()
+    this.onStatus?.('loading')
 
-    if (Hls.isSupported()) {
+    const canPlayNative = Boolean(this.element.canPlayType('application/vnd.apple.mpegurl'))
+    const mode = choosePlaybackMode(canPlayNative, Hls.isSupported())
+
+    if (mode === 'native') {
+      this.element.src = url
+      this.element.load()
+      this.element.play().catch(() => {})
+    } else if (mode === 'hls') {
       this.hls = new Hls({ lowLatencyMode: false })
+      this.hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (data.fatal) this.onStatus?.('error')
+      })
       this.hls.loadSource(url)
       this.hls.attachMedia(this.element)
     } else {
-      // WebKit2GTK soporta HLS nativo (como Safari) sin necesitar MSE
-      this.element.src = url
-      this.element.load()
+      this.onStatus?.('error')
     }
   }
 
   async togglePiP(): Promise<void> {
-    const isSupported = 'pictureInPictureEnabled' in document
-    if (!isSupported) {
-      console.warn('[Player] PiP no soportado en este WebView')
-      return
-    }
-
+    if (!('pictureInPictureEnabled' in document)) return
     if (document.pictureInPictureElement) {
       await document.exitPictureInPicture()
       return
     }
-
     await this.element.requestPictureInPicture()
   }
 
@@ -49,7 +59,8 @@ export class HLSPlayer {
       this.hls.destroy()
       this.hls = null
     }
-    this.element.src = ''
+    this.element.removeAttribute('src')
+    this.element.load()
   }
 
   dispose(): void {
