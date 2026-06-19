@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+  bento:
+    build: .
+    image: bento:dev
+    container_name: bento-dev
+    volumes:
+      # Monta el código local para hot-reload
+      - .:/bento
+      # X11 forwarding en Linux (para ver la app)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    environment:
+      # Linux: para visualizar la ventana Tauri
+      - DISPLAY=${DISPLAY}
+    stdin_open: true
+    tty: true
+    working_dir: /bento

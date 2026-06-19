@@ -1,0 +1,28 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "package": {
+    "productName": "Bento",
+    "version": "0.0.1"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "Bento",
+        "width": 1200,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

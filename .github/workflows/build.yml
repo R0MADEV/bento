@@ -1,0 +1,43 @@
+name: Build Bento
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        platform: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y webkit2gtk-4.1 libappindicator3-1 libayatana-appindicator3-1 libssl-dev libffi-dev python3 pkg-config
+
+      - name: Install frontend deps
+        run: npm install
+
+      - name: Build
+        run: npm run tauri:build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: bento-${{ matrix.platform }}
+          path: src-tauri/target/release/bundle/
