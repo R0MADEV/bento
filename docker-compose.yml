@@ -4,13 +4,15 @@ services:
     image: bento:dev
     container_name: bento-dev
     volumes:
-      # Código fuente para hot-reload (excepto build artifacts)
+      # Código fuente para hot-reload
       - ./src:/bento/src:cached
       - ./src-tauri/src:/bento/src-tauri/src:cached
       - ./src-tauri/Cargo.toml:/bento/src-tauri/Cargo.toml:cached
       - ./src-tauri/tauri.conf.json:/bento/src-tauri/tauri.conf.json:cached
       - ./src-tauri/build.rs:/bento/src-tauri/build.rs:cached
       - ./index.html:/bento/index.html:cached
+      - ./vite.config.ts:/bento/vite.config.ts:cached
+      - ./tsconfig.json:/bento/tsconfig.json:cached
       # X11 forwarding en Linux
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     environment:
