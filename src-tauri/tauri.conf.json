@@ -1,22 +1,4 @@
 {
-  "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5173",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "windows": [
-      {
-        "title": "Bento",
-        "width": 1200,
-        "height": 800,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ]
-  },
-  "package": {
-    "productName": "bento",
-    "version": "0.0.1"
-  }
+  "productName": "bento",
+  "version": "0.0.1"
 }
