@@ -35,27 +35,38 @@ api.addPanel({
   position: { referencePanel: left.id, direction: 'right' },
 })
 
-// Nueva terminal como tab junto a la última terminal activa
+// Nueva terminal: 'within' = tab, 'right'/'below' = split
+type SplitDirection = 'within' | 'right' | 'below'
+
 let terminalCounter = 1
 
-function addTerminal(): void {
+function addTerminal(direction: SplitDirection): void {
   terminalCounter++
   const id = `terminal-${terminalCounter}`
-  const lastTerminal = api.panels.find(p => p.id.startsWith('terminal-'))
+  const reference = api.activePanel ?? api.panels.find(p => p.id.startsWith('terminal-'))
 
   api.addPanel({
     id,
     component: 'terminal',
     title: `Terminal ${terminalCounter}`,
-    position: lastTerminal
-      ? { referencePanel: lastTerminal.id, direction: 'within' }
+    position: reference
+      ? { referencePanel: reference.id, direction }
       : undefined,
   })
 }
 
 window.addEventListener('keydown', e => {
-  const isNewTerminal = (e.metaKey || e.ctrlKey) && e.key === 't'
-  if (!isNewTerminal) return
-  e.preventDefault()
-  addTerminal()
+  const mod = e.metaKey || e.ctrlKey
+  if (!mod) return
+
+  if (e.key === 't') {
+    e.preventDefault()
+    addTerminal('within')
+  } else if (e.key === 'd' && !e.shiftKey) {
+    e.preventDefault()
+    addTerminal('right')
+  } else if (e.key === 'd' && e.shiftKey) {
+    e.preventDefault()
+    addTerminal('below')
+  }
 })
