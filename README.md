@@ -4,7 +4,7 @@
 
 Inspirado en VSCode, pero **genérico**: no asume que trabajas con código. Funciona en **Linux, macOS, Windows**. Paneles redimensionables, tabs, workspaces guardados, ventanas flotantes, multi-window.
 
-> **Estado**: Fase 1 (setup entorno + scaffold Tauri mínimo).
+> **Estado**: Fase 1 ✅ — ventana Tauri funcionando en Docker.
 
 ---
 
@@ -39,25 +39,85 @@ Un **workspace modular y personal** donde:
 
 ## 3. Desarrollo con Docker
 
-El entorno de desarrollo corre en Docker — no necesitas instalar Rust ni Node localmente.
+El entorno de desarrollo corre 100% en Docker. No necesitas instalar Rust, Node ni nada más — solo Docker Desktop y un servidor X11 para mostrar la ventana gráfica.
 
-### Primera vez
+### Prerrequisitos
+
+Instala [Docker Desktop](https://www.docker.com/products/docker-desktop/) para tu SO.
+
+Además, según tu SO, necesitas un servidor X11:
+
+#### macOS
+
+Instala [XQuartz](https://www.xquartz.org/):
 
 ```bash
-make setup   # construye la imagen Docker
+brew install --cask xquartz
 ```
+
+Luego:
+1. Abre XQuartz
+2. Ve a **XQuartz → Preferences → Security**
+3. Activa **"Allow connections from network clients"**
+4. Cierra y vuelve a abrir XQuartz
+
+#### Linux
+
+Ya tienes X11. No necesitas instalar nada extra.
+
+#### Windows
+
+Instala [VcXsrv](https://sourceforge.net/projects/vcxsrv/):
+
+1. Descarga e instala VcXsrv
+2. Lánzalo con **XLaunch**: selecciona "Multiple windows" → "Start no client" → activa **"Disable access control"**
+3. VcXsrv quedará corriendo en la bandeja del sistema
+
+---
+
+### Primer uso (solo la primera vez)
+
+```bash
+git clone <repo>
+cd bento
+make setup
+```
+
+`make setup` construye la imagen Docker con Rust, Node, Tauri CLI y todas las dependencias.
+
+---
 
 ### Desarrollar
 
+#### macOS
+
 ```bash
-make dev     # arranca Tauri + Vite con hot reload
+# 1. Abre XQuartz (si no está abierto)
+open -a XQuartz
+
+# 2. Autoriza conexiones desde Docker
+xhost +127.0.0.1
+
+# 3. Lanza la app
+make dev
 ```
 
-`make dev` detecta tu SO automáticamente:
+#### Linux
 
-- **Linux**: usa tu display directamente.
-- **macOS**: instala y configura XQuartz si no lo tienes (sigue las instrucciones en pantalla).
-- **Windows**: necesitas [VcXsrv](https://sourceforge.net/projects/vcxsrv/) instalado y corriendo.
+```bash
+make dev
+```
+
+#### Windows (PowerShell)
+
+```powershell
+# 1. Asegúrate de que VcXsrv está corriendo
+# 2. Lanza la app
+$env:DISPLAY = "host.docker.internal:0"
+docker-compose run --rm bento sh -c 'dbus-run-session -- npm run tauri:dev'
+```
+
+---
 
 ### Otros comandos
 
@@ -66,7 +126,7 @@ make build   # genera binarios de distribución
 make shell   # abre una shell dentro del contenedor
 ```
 
-**Los binarios para distribución** (`.AppImage`, `.dmg`, `.msi`) se generan en **GitHub Actions** (matrix: Linux/macOS/Windows).
+**Los binarios para distribución** (`.AppImage`, `.dmg`, `.msi`) se generan automáticamente en **GitHub Actions** (matrix: Linux/macOS/Windows) en cada push a `main`.
 
 ---
 
@@ -74,32 +134,38 @@ make shell   # abre una shell dentro del contenedor
 
 ```
 bento/
-├── Dockerfile / docker-compose.yml   ← dev environment
+├── Makefile                           ← comandos de desarrollo
+├── Dockerfile / docker-compose.yml    ← entorno Docker
+├── scripts/setup-display.sh          ← configura X11 por SO
 ├── package.json / tsconfig.json / vite.config.ts
 ├── index.html
-├── src/                              ← Frontend (TypeScript)
+├── src/                               ← Frontend (TypeScript)
 │   ├── main.ts
-│   ├── workspace/
-│   ├── panels/
-│   ├── floating/
+│   ├── workspace/                     ← tipos y manager de workspaces
+│   ├── panels/                        ← TV, terminal, notas
+│   ├── floating/                      ← ventanas flotantes
 │   └── styles.css
-├── src-tauri/                        ← Backend (Rust)
+├── src-tauri/                         ← Backend (Rust)
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
-│   └── src/main.rs
-├── .github/workflows/build.yml       ← CI/CD
+│   ├── icons/
+│   └── src/
+│       ├── main.rs
+│       ├── pty.rs                     ← terminal PTY (Fase 4)
+│       └── workspace_io.rs            ← persistencia (Fase 6)
+├── .github/workflows/build.yml        ← CI/CD
 └── README.md
 ```
 
 ---
 
-## 5. Plan de implementación (10 fases)
+## 5. Plan de implementación
 
 - **Fase 0**: Setup entorno ✅
-- **Fase 1**: Scaffold Tauri mínimo (en progreso)
-- **Fase 2**: Layout con dos paneles
-- **Fase 3**: Panel TV funcionando
-- **Fase 4**: Terminal embebida
+- **Fase 1**: Scaffold Tauri mínimo ✅ — ventana funcionando en Docker
+- **Fase 2**: Layout con dos paneles (Dockview)
+- **Fase 3**: Panel TV funcionando (IPTV + hls.js)
+- **Fase 4**: Terminal embebida (xterm.js + PTY)
 - **Fase 5**: Tabs dentro de paneles
 - **Fase 6**: Persistencia y workspaces
 - **Fase 7**: Ventanas flotantes

@@ -38,9 +38,19 @@ setup_linux() {
 case "$OS" in
   Darwin) setup_macos ;;
   Linux)  setup_linux ;;
-  *)
-    echo "Windows: usa WSLg o instala VcXsrv y ejecuta docker-compose run --rm bento npm run tauri:dev"
-    exit 1
+  MINGW*|MSYS*|CYGWIN*)
+    echo ""
+    echo "Windows detectado."
+    echo "Para mostrar la ventana Bento necesitas VcXsrv:"
+    echo "  1. Descarga e instala VcXsrv: https://sourceforge.net/projects/vcxsrv/"
+    echo "  2. Lánzalo con XLaunch:"
+    echo "     - Multiple windows"
+    echo "     - Start no client"
+    echo "     - Activa 'Disable access control'"
+    echo "  3. Ejecuta en PowerShell:"
+    echo '     $env:DISPLAY = "host.docker.internal:0"'
+    echo "     docker-compose run --rm bento sh -c 'dbus-run-session -- npm run tauri:dev'"
+    exit 0
     ;;
 esac
 
