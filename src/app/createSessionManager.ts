@@ -4,6 +4,10 @@ import { createWorkspaceView, type WorkspaceView } from './createWorkspaceView'
 import { addSession, removeSession, setActiveSession, type SessionState } from '../core/session/sessionModel'
 import { createWindowControls } from '../ui/windowControls'
 import { icon } from '../ui/icons'
+import { createCommandPalette } from '../ui/commandPalette'
+import type { Command } from '../core/command/command'
+import { themeNames, themeLabels } from '../core/terminal/themes'
+import { setTheme } from '../panels/terminal/themePreference'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -114,6 +118,26 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     state = removeSession(state, id)
     render()
   }
+
+  // Comandos para la paleta (Cmd/Ctrl+K), recalculados al abrirla
+  const buildCommands = (): Command[] => {
+    const active = state.activeId ? views.get(state.activeId) : undefined
+    const commands: Command[] = [
+      { id: 'new-terminal', label: 'Nueva terminal', keywords: ['terminal', 'shell'], run: () => active?.addPanel('terminal') },
+      { id: 'new-tv', label: 'Nuevo panel TV', keywords: ['tv', 'canal'], run: () => active?.addPanel('tv') },
+      { id: 'new-session', label: 'Nueva sesión', keywords: ['session', 'espacio'], run: () => { state = addSession(state); render() } },
+    ]
+    state.sessions.forEach(s => {
+      if (s.id !== state.activeId) {
+        commands.push({ id: `goto-${s.id}`, label: `Ir a ${s.name}`, keywords: ['sesión'], run: () => { state = setActiveSession(state, s.id); render() } })
+      }
+    })
+    themeNames.forEach(name => {
+      commands.push({ id: `theme-${name}`, label: `Tema: ${themeLabels[name] ?? name}`, keywords: ['theme', 'color'], run: () => setTheme(name) })
+    })
+    return commands
+  }
+  root.appendChild(createCommandPalette(buildCommands))
 
   // Restaurar estado guardado o arrancar con una sesión nueva
   const saved = stateRepo.load()

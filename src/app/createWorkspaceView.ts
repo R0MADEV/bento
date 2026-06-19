@@ -11,6 +11,7 @@ export interface WorkspaceView {
   fit: () => void
   isFocused: () => boolean
   serialize: () => object
+  addPanel: (type: string) => void
   dispose: () => void
 }
 
@@ -170,6 +171,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     fit: fitAll,
     isFocused,
     serialize: () => api.toJSON(),
+    addPanel: type => addInActiveGroup(type),
     dispose: () => {
       window.removeEventListener('keydown', onKeydown)
       api.dispose()
