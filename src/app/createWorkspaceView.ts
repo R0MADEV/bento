@@ -3,6 +3,7 @@ import type { PanelRegistry } from '../panels/registry'
 import { lowestAvailableNumber } from '../core/terminal/lowestAvailableNumber'
 import { cycleTheme } from '../panels/terminal/themePreference'
 import { showContextMenu } from '../ui/contextMenu'
+import { furthestEdgeIndex, type MoveDirection } from '../core/workspace/edge'
 
 export type SplitDirection = 'within' | 'left' | 'right' | 'above' | 'below'
 
@@ -60,6 +61,21 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const splitFrom = (refId: string, direction: SplitDirection): void =>
     addPanel(typeOf(refId), { referencePanel: refId, direction })
 
+  // Move a panel to the edge of the layout (alternative to dragging, which the
+  // macOS WebView doesn't support for HTML5 drag-and-drop). moveTo needs a
+  // target group: we pick the group at the requested edge (pure logic in core/edge).
+  const edgeOf = { right: 'right', left: 'left', above: 'top', below: 'bottom' } as const
+  const movePanel = (id: string, direction: MoveDirection): void => {
+    const panel = api.getPanel(id)
+    if (!panel) return
+    const groups = api.groups
+    const i = furthestEdgeIndex(groups.map(g => g.element.getBoundingClientRect()), direction)
+    const target = groups[i]
+    const movingIntoOwnLoneGroup = target === panel.group && target.panels.length === 1
+    if (movingIntoOwnLoneGroup) return
+    panel.api.moveTo({ group: target, position: edgeOf[direction] })
+  }
+
   const addInActiveGroup = (type: string): void =>
     addPanel(type, api.activeGroup ? { referenceGroup: api.activeGroup, direction: 'within' } : undefined)
 
@@ -71,10 +87,14 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       const instance = def.create({ panelId: id, removeSelf: () => removePanel(id) })
       fits.add(instance.fit ?? (() => {}))
 
-      // Menú contextual uniforme para cualquier panel: split o nuevo del tipo
+      // Context menu: split, move (HTML5 drag doesn't work in WKWebView)
       instance.element.addEventListener('contextmenu', e => {
         e.preventDefault()
         showContextMenu(e.clientX, e.clientY, [
+          { label: '↦ Mover a la derecha', onClick: () => movePanel(id, 'right') },
+          { label: '↤ Mover a la izquierda', onClick: () => movePanel(id, 'left') },
+          { label: '↥ Mover arriba', onClick: () => movePanel(id, 'above') },
+          { label: '↧ Mover abajo', onClick: () => movePanel(id, 'below') },
           { label: 'Dividir derecha', onClick: () => splitFrom(id, 'right') },
           { label: 'Dividir izquierda', onClick: () => splitFrom(id, 'left') },
           { label: 'Dividir arriba', onClick: () => splitFrom(id, 'above') },
