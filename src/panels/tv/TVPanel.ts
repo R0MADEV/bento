@@ -8,6 +8,7 @@ import { toggleFavorite, isFavorite } from '../../core/channel/favorites'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
 import { icon } from '../../ui/icons'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 // repo = base ligera (M3U); worldRepo = fuente pesada cargada bajo demanda
 export function createTVPanel(
@@ -45,6 +46,11 @@ export function createTVPanel(
   favButton.innerHTML = icon('star')
   favButton.title = 'Mostrar solo favoritos'
 
+  const fullscreenButton = document.createElement('button')
+  fullscreenButton.className = 'tv-btn'
+  fullscreenButton.innerHTML = icon('expand')
+  fullscreenButton.title = 'Pantalla completa'
+
   const toggleButton = document.createElement('button')
   toggleButton.className = 'tv-btn'
   toggleButton.innerHTML = icon('panel')
@@ -52,7 +58,7 @@ export function createTVPanel(
 
   toolbar.append(input, countrySelect, categorySelect, status)
   if (worldRepo) toolbar.append(worldButton)
-  toolbar.append(favButton, toggleButton)
+  toolbar.append(favButton, fullscreenButton, toggleButton)
 
   const main = document.createElement('div')
   main.className = 'tv-main'
@@ -132,6 +138,18 @@ export function createTVPanel(
   countrySelect.addEventListener('change', refresh)
   categorySelect.addEventListener('change', refresh)
   toggleButton.addEventListener('click', () => main.classList.toggle('list-hidden'))
+
+  // Pantalla completa: modo cine (el escenario cubre la app) + fullscreen real de ventana
+  let cinema = false
+  const setCinema = (on: boolean) => {
+    cinema = on
+    stage.classList.toggle('cinema', on)
+    getCurrentWindow().setFullscreen(on).catch(() => {})
+  }
+  fullscreenButton.addEventListener('click', () => setCinema(!cinema))
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && cinema) setCinema(false)
+  })
   favButton.addEventListener('click', () => {
     onlyFavorites = !onlyFavorites
     favButton.classList.toggle('active', onlyFavorites)

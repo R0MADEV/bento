@@ -598,6 +598,17 @@ html, body, #app {
   display: none;
 }
 
+/* Modo cine: el escenario cubre toda la app */
+.tv-stage.cinema {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: auto;
+  max-height: none;
+}
+
 .tv-grid {
   display: flex;
   flex-wrap: wrap;
@@ -696,4 +707,70 @@ html, body, #app {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ===== Minimalista: auto-hide de controles (aparecen al hover) ===== */
+
+/* Botón "+" de sesión y controles de ventana: ocultos hasta hover en la barra */
+.session-add,
+.window-controls {
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.session-bar:hover .session-add,
+.session-bar:hover .window-controls {
+  opacity: 1;
+}
+
+/* Cerrar sesión: solo al pasar por la pestaña */
+.session-tab-close {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.session-tab:hover .session-tab-close {
+  opacity: 0.6;
+}
+
+.session-tab:hover .session-tab-close:hover {
+  opacity: 1;
+}
+
+/* Botones de acción de la TV: ocultos hasta hover en la barra */
+.tv-btn {
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.tv-toolbar:hover .tv-btn {
+  opacity: 1;
+}
+
+/* "+" de cabecera de grupo (Dockview): solo al pasar por el grupo */
+.group-add-tab {
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.dv-groupview:hover .group-add-tab {
+  opacity: 1;
+}
+
+/* Botón de tema del terminal: solo al pasar por el panel */
+.term-theme-btn {
+  opacity: 0;
+}
+
+.terminal-panel:hover .term-theme-btn {
+  opacity: 1;
+}
+
+/* Barras más finas y discretas */
+.session-bar {
+  padding: 4px 8px;
+}
+
+.session-tab {
+  padding: 3px 10px;
 }
