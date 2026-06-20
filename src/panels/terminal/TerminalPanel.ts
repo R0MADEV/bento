@@ -7,11 +7,9 @@ import { Unicode11Addon } from 'xterm-addon-unicode11'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { getTheme, themeNames, themeLabels } from '../../core/terminal/themes'
-import { getThemeName, onThemeChange, setTheme } from './themePreference'
+import { getTheme } from '../../core/terminal/themes'
+import { getThemeName, onThemeChange } from './themePreference'
 import { createSearchBar } from './searchBar'
-import { showContextMenu } from '../../ui/contextMenu'
-import { icon } from '../../ui/icons'
 import 'xterm/css/xterm.css'
 
 let ptyCounter = 0
@@ -26,6 +24,9 @@ export function createTerminalPanel(): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
+  // Tema con fondo transparente: deja ver el degradado glass del panel detrás
+  const glassTheme = (name: string) => ({ ...getTheme(name), background: 'rgba(0,0,0,0)' })
+
   const term = new Terminal({
     cursorBlink: true,
     cursorStyle: 'bar',
@@ -37,11 +38,12 @@ export function createTerminalPanel(): TerminalPanelHandle {
     lineHeight: 1.25,
     letterSpacing: 0.5,
     allowProposedApi: true,
+    allowTransparency: true,
     scrollback: 10000,
-    theme: getTheme(getThemeName()),
+    theme: glassTheme(getThemeName()),
   })
 
-  const unsubscribeTheme = onThemeChange(name => { term.options.theme = getTheme(name) })
+  const unsubscribeTheme = onThemeChange(name => { term.options.theme = glassTheme(name) })
 
   const fitAddon = new FitAddon()
   const searchAddon = new SearchAddon()
@@ -72,21 +74,6 @@ export function createTerminalPanel(): TerminalPanelHandle {
   // Barra de búsqueda (Ctrl/Cmd+F)
   const searchBar = createSearchBar(searchAddon)
   root.appendChild(searchBar.element)
-
-  // Botón selector de tema
-  const themeButton = document.createElement('button')
-  themeButton.className = 'term-theme-btn'
-  themeButton.innerHTML = icon('palette')
-  themeButton.title = 'Tema de la terminal'
-  themeButton.addEventListener('click', () => {
-    const rect = themeButton.getBoundingClientRect()
-    const currentName = getThemeName()
-    showContextMenu(rect.right - 160, rect.bottom, themeNames.map(name => ({
-      label: (name === currentName ? '● ' : '   ') + (themeLabels[name] ?? name),
-      onClick: () => setTheme(name),
-    })))
-  })
-  root.appendChild(themeButton)
 
   const id = `pty-${++ptyCounter}`
   const shell = navigator.platform.includes('Win') ? 'powershell.exe' : '/bin/bash'

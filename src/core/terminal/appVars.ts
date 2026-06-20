@@ -17,5 +17,8 @@ export function deriveAppVars(theme: TerminalTheme): Record<string, string> {
     '--accent': theme.blue,
     '--accent-fg': theme.background,
     '--selection': theme.selectionBackground,
+    // Tonos para el degradado de fondo glassmorphism (azul vibrante)
+    '--bg-grad': mix(theme.background, theme.blue, 0.35),
+    '--glow': mix(theme.blue, '#ffffff', 0.1),
   }
 }
