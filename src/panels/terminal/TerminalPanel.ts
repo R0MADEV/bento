@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { getTheme } from '../../core/terminal/themes'
+import { dimsChanged, type Dims } from '../../core/terminal/dims'
 import { getThemeName, onThemeChange } from './themePreference'
 import { createSearchBar } from './searchBar'
 import 'xterm/css/xterm.css'
@@ -112,11 +113,17 @@ export function createTerminalPanel(): TerminalPanelHandle {
   root.addEventListener('click', () => term.focus())
   setTimeout(() => term.focus(), 100)
 
+  // Only forward a resize to the PTY when the cell size changes: a repeated
+  // SIGWINCH with the same size makes TUIs (Ink) flicker by fully repainting.
+  let lastDims: Dims = { rows: 0, cols: 0 }
   const fit = () => {
-    // requestAnimationFrame asegura que el contenedor ya tiene su tamaño final
+    // requestAnimationFrame ensures the container already has its final size
     requestAnimationFrame(() => {
       fitAddon.fit()
-      invoke('pty_resize', { id, rows: term.rows, cols: term.cols }).catch(() => {})
+      const dims: Dims = { rows: term.rows, cols: term.cols }
+      if (!dimsChanged(lastDims, dims)) return
+      lastDims = dims
+      invoke('pty_resize', { id, ...dims }).catch(() => {})
     })
   }
 
