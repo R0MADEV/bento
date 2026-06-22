@@ -18,6 +18,58 @@ fn dirs_home() -> Option<String> {
     std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()
 }
 
+/// Drains as much valid UTF-8 as possible from `pending`, returning it and
+/// keeping any incomplete trailing multi-byte sequence for the next read.
+/// PTY reads can split a multi-byte char across the 4096-byte buffer boundary;
+/// decoding each chunk lossily would corrupt box-drawing/Unicode glyphs, which
+/// shows up as flicker/tremble in TUIs (vim, top, catunes).
+fn drain_utf8(pending: &mut Vec<u8>) -> String {
+    let valid = match std::str::from_utf8(pending) {
+        Ok(_) => pending.len(),
+        // Leading invalid byte (genuine garbage, not a split): drop it so we
+        // don't stall forever waiting for a continuation that won't come.
+        Err(e) if e.valid_up_to() == 0 && e.error_len().is_some() => {
+            pending.remove(0);
+            0
+        }
+        Err(e) => e.valid_up_to(),
+    };
+    let rest = pending.split_off(valid);
+    String::from_utf8(std::mem::replace(pending, rest)).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drain_utf8;
+
+    #[test]
+    fn returns_complete_ascii() {
+        let mut p = b"hello".to_vec();
+        assert_eq!(drain_utf8(&mut p), "hello");
+        assert!(p.is_empty());
+    }
+
+    #[test]
+    fn keeps_split_multibyte_char() {
+        // "─" is 0xE2 0x94 0x80; arrives split across two reads.
+        let mut p = vec![0xE2, 0x94];
+        assert_eq!(drain_utf8(&mut p), "");
+        assert_eq!(p, vec![0xE2, 0x94]);
+
+        p.push(0x80);
+        assert_eq!(drain_utf8(&mut p), "─");
+        assert!(p.is_empty());
+    }
+
+    #[test]
+    fn emits_valid_prefix_and_keeps_partial_tail() {
+        // "a" + first two bytes of "─"
+        let mut p = vec![b'a', 0xE2, 0x94];
+        assert_eq!(drain_utf8(&mut p), "a");
+        assert_eq!(p, vec![0xE2, 0x94]);
+    }
+}
+
 #[tauri::command]
 pub fn pty_spawn(
     id: String,
@@ -58,12 +110,17 @@ pub fn pty_spawn(
 
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        // Holds bytes of a multi-byte char split across reads (see drain_utf8).
+        let mut pending: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_clone.emit(&format!("pty-output-{}", id_clone), data);
+                    pending.extend_from_slice(&buf[..n]);
+                    let data = drain_utf8(&mut pending);
+                    if !data.is_empty() {
+                        let _ = app_clone.emit(&format!("pty-output-{}", id_clone), data);
+                    }
                 }
             }
         }
