@@ -9,13 +9,14 @@ import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavorite
 import { LocalStorageWorkspaceStateRepository } from './adapters/LocalStorageWorkspaceStateRepository'
 import { createSessionManager } from './app/createSessionManager'
 import { getThemeName, applyAppTheme } from './panels/terminal/themePreference'
+import { isMac } from './ui/platform'
 import tvM3U from './assets/tv.m3u?raw'
 
 // Tiñe toda la UI con el tema guardado al arrancar
 applyAppTheme(getThemeName())
 
 // En macOS la barra de título es overlay: deja hueco para los semáforos
-if (navigator.platform.toUpperCase().includes('MAC')) {
+if (isMac) {
   document.body.classList.add('is-mac')
 }
 

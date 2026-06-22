@@ -11,6 +11,8 @@ export function tvPanelDefinition(
   return {
     type: 'tv',
     title: 'TV',
+    // Playing two TVs at once makes no sense; the user can unlock multiples.
+    singleton: true,
     create: () => ({ element: createTVPanel(repo, favoritesRepo, worldRepo) }),
   }
 }

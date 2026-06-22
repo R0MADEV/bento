@@ -4,6 +4,10 @@ import { lowestAvailableNumber } from '../core/terminal/lowestAvailableNumber'
 import { cycleTheme } from '../panels/terminal/themePreference'
 import { showContextMenu } from '../ui/contextMenu'
 import { furthestEdgeIndex, type MoveDirection } from '../core/workspace/edge'
+import { canAddPanel } from '../core/workspace/panelLimit'
+import { isUnlocked, setUnlocked, onUnlockChange } from '../panels/panelLockPreference'
+import { icon } from '../ui/icons'
+import { shortcutLabel } from '../ui/platform'
 
 export type SplitDirection = 'within' | 'left' | 'right' | 'above' | 'below'
 
@@ -12,6 +16,7 @@ export interface WorkspaceView {
   fit: () => void
   isFocused: () => boolean
   serialize: () => object
+  panelTitles: () => string[]
   addPanel: (type: string) => void
   dispose: () => void
 }
@@ -51,9 +56,21 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
 
   type Position = AddPanelOptions['position']
 
+  const existingOfType = (type: string) => api.panels.find(p => typeOf(p.id) === type)
+
   const addPanel = (type: string, position?: Position): void => {
     const def = panels.get(type)
     if (!def) return
+    const allowed = canAddPanel({
+      singleton: !!def.singleton,
+      unlocked: isUnlocked(type),
+      alreadyExists: !!existingOfType(type),
+    })
+    // Blocked singleton (e.g. a 2nd TV while locked): focus the existing one.
+    if (!allowed) {
+      existingOfType(type)?.api.setActive()
+      return
+    }
     const n = lowestAvailableNumber(usedNumbers(type))
     api.addPanel({ id: `${type}-${n}`, component: type, title: `${def.title} ${n}`, position })
   }
@@ -141,8 +158,57 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     if (panel) api.removePanel(panel)
   }
 
+  // Empty state: the workspace starts empty (no panels are auto-opened); show a
+  // card to add panels and to unlock multiples of singleton types (e.g. TV).
+  const emptyState = document.createElement('div')
+  emptyState.className = 'workspace-empty'
+  const card = document.createElement('div')
+  card.className = 'workspace-empty-card'
+
+  const emptyTitle = document.createElement('div')
+  emptyTitle.className = 'workspace-empty-title'
+  emptyTitle.textContent = 'Espacio vacío'
+
+  const actions = document.createElement('div')
+  actions.className = 'workspace-empty-actions'
+  panels.list().forEach(d => {
+    const btn = document.createElement('button')
+    btn.className = 'workspace-empty-btn'
+    btn.innerHTML = `${icon(d.type)}<span>${d.title}</span>`
+    btn.addEventListener('click', () => addInActiveGroup(d.type))
+    actions.appendChild(btn)
+  })
+
+  const hint = document.createElement('div')
+  hint.className = 'workspace-empty-hint'
+  hint.textContent = `${shortcutLabel('T')} terminal · ${shortcutLabel('K')} acciones`
+
+  card.append(emptyTitle, actions, hint)
+
+  // One checkbox per singleton type to allow multiple instances.
+  const unlockUnsubs: Array<() => void> = []
+  panels.list().filter(d => d.singleton).forEach(d => {
+    const label = document.createElement('label')
+    label.className = 'workspace-empty-option'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = isUnlocked(d.type)
+    cb.addEventListener('change', () => setUnlocked(d.type, cb.checked))
+    unlockUnsubs.push(onUnlockChange(() => { cb.checked = isUnlocked(d.type) }))
+    const span = document.createElement('span')
+    span.textContent = `Permitir varias ${d.title}`
+    label.append(cb, span)
+    card.appendChild(label)
+  })
+
+  emptyState.appendChild(card)
+  element.appendChild(emptyState)
+
+  const updateEmpty = (): void => { emptyState.classList.toggle('hidden', api.panels.length > 0) }
+
   api.onDidLayoutChange(() => {
     fitAll()
+    updateEmpty()
     options.onChange?.()
   })
 
@@ -169,12 +235,10 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   }
   window.addEventListener('keydown', onKeydown)
 
-  // Restaurar el layout guardado o, si no hay, crear el inicial (TV + terminal)
-  const restored = tryRestore(options.savedLayout)
-  if (!restored) {
-    addPanel('tv')
-    addPanel('terminal', { referencePanel: 'tv-1', direction: 'right' })
-  }
+  // Restaurar el layout guardado; si no hay, el workspace queda vacío y se
+  // muestra el empty state (el usuario abre los paneles que quiera).
+  tryRestore(options.savedLayout)
+  updateEmpty()
 
   function tryRestore(layout: unknown): boolean {
     if (!layout || typeof layout !== 'object') return false
@@ -191,9 +255,11 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     fit: fitAll,
     isFocused,
     serialize: () => api.toJSON(),
+    panelTitles: () => api.panels.map(p => p.title ?? p.id),
     addPanel: type => addInActiveGroup(type),
     dispose: () => {
       window.removeEventListener('keydown', onKeydown)
+      unlockUnsubs.forEach(unsub => unsub())
       api.dispose()
     },
   }
