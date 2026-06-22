@@ -395,8 +395,9 @@ html, body, #app {
   position: relative;
   width: 100%;
   height: 100%;
-  background: color-mix(in srgb, var(--surface) 28%, transparent);
-  backdrop-filter: blur(18px);
+  /* Opaque to match the opaque terminal: a translucent panel + backdrop blur
+     re-rasterizes every frame when a fullscreen TUI animates on top → flicker. */
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -408,6 +409,14 @@ html, body, #app {
 
 .terminal-panel .xterm .xterm-viewport {
   background: transparent !important;
+}
+
+/* Hide the viewport scrollbar so its width never changes: a classic scrollbar
+   appearing/disappearing would change the column count on every TUI repaint,
+   causing a SIGWINCH feedback loop (flicker). Wheel/keyboard scroll still work. */
+.terminal-panel .xterm .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .term-theme-btn {
