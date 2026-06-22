@@ -1,6 +1,7 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 mod pty;
+mod traffic_lights;
 
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ fn main() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            traffic_lights::set_traffic_lights_visible,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

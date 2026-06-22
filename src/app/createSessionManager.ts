@@ -10,6 +10,7 @@ import { themeNames, themeLabels } from '../core/terminal/themes'
 import { setTheme } from '../panels/terminal/themePreference'
 import { isUnlocked, toggleUnlocked } from '../panels/panelLockPreference'
 import { isMac } from '../ui/platform'
+import { invoke } from '@tauri-apps/api/core'
 import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition } from '../ui/sessionBarPreference'
 import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
 
@@ -22,12 +23,6 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   // macOS: la barra de título es overlay. Cuando la barra de sesiones no está
   // arriba, esta franja superior reserva el hueco de los semáforos y permite
   // arrastrar la ventana (en CSS solo se muestra si la barra no está arriba).
-  if (isMac) {
-    const macStrip = document.createElement('div')
-    macStrip.className = 'mac-title-strip'
-    root.appendChild(macStrip)
-  }
-
   // La barra y el cuerpo viven en un contenedor cuya dirección define la
   // posición de la barra (arriba/abajo/izquierda/derecha).
   const content = document.createElement('div')
@@ -44,13 +39,34 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   // Windows/Linux: controles de ventana propios (macOS usa los nativos)
   if (!isMac) bar.appendChild(createWindowControls())
 
+  if (isMac) {
+    // Strip above the session content: invisible hover zone (4px) that reveals
+    // the traffic lights when the bar is NOT at the top.
+    // When the bar IS at top, CSS hides this strip and the bar itself is the
+    // title bar — hovering the bar shows the traffic lights instead.
+    const macStrip = document.createElement('div')
+    macStrip.className = 'mac-title-strip'
+    root.appendChild(macStrip)
+
+    invoke('set_traffic_lights_visible', { visible: false }).catch(() => {})
+
+    const showLights = () => invoke('set_traffic_lights_visible', { visible: true }).catch(() => {})
+    const hideLights = () => invoke('set_traffic_lights_visible', { visible: false }).catch(() => {})
+
+    macStrip.addEventListener('mouseenter', showLights)
+    macStrip.addEventListener('mouseleave', hideLights)
+
+    bar.addEventListener('mouseenter', () => { if (getBarPosition() === 'top') showLights() })
+    bar.addEventListener('mouseleave', () => { if (getBarPosition() === 'top') hideLights() })
+  }
+
   const body = document.createElement('div')
   body.className = 'session-body'
 
   content.append(bar, body)
   root.appendChild(content)
 
-  // Posición configurable de la barra; reacciona a cambios desde la paleta.
+  // Posición; las barras laterales se auto-expanden al hover (CSS puro).
   const applyBarPosition = (): void => { root.dataset.barPos = getBarPosition() }
   applyBarPosition()
   onBarPositionChange(applyBarPosition)
@@ -106,6 +122,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       ? titles.map(t => `<div class="session-popover-item">${t}</div>`).join('')
       : '<div class="session-popover-empty">(vacía)</div>'
     popover.innerHTML = `<div class="session-popover-title">${name}</div>${items}`
+    // Show first so getBoundingClientRect returns real dimensions.
     popover.classList.remove('hidden')
 
     const a = anchor.getBoundingClientRect()
@@ -114,12 +131,13 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     const gap = 8
     let left = a.left
     let top = a.bottom + gap
-    if (pos === 'left') { left = a.right + gap; top = a.top }
-    else if (pos === 'right') { left = a.left - p.width - gap; top = a.top }
-    else if (pos === 'bottom') { top = a.top - p.height - gap }
-    const clamp = (v: number, max: number) => Math.max(8, Math.min(v, max - 8))
-    popover.style.left = `${clamp(left, window.innerWidth - p.width)}px`
-    popover.style.top = `${clamp(top, window.innerHeight - p.height)}px`
+    if (pos === 'left')   { left = a.right + gap;          top = a.top }
+    if (pos === 'right')  { left = a.left - p.width - gap; top = a.top }
+    if (pos === 'bottom') { top = a.top - p.height - gap }
+    const clampX = (v: number) => Math.max(8, Math.min(v, window.innerWidth  - p.width  - 8))
+    const clampY = (v: number) => Math.max(8, Math.min(v, window.innerHeight - p.height - 8))
+    popover.style.left = `${clampX(left)}px`
+    popover.style.top  = `${clampY(top)}px`
   }
 
   const hidePopover = (): void => popover.classList.add('hidden')

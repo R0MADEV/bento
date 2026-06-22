@@ -25,3 +25,26 @@ export function onBarPositionChange(handler: () => void): () => void {
   window.addEventListener(EVENT, handler)
   return () => window.removeEventListener(EVENT, handler)
 }
+
+// ── Collapsed state ──────────────────────────────────────────────────────────
+
+const KEY_COLLAPSED = 'bento.sessionBar.collapsed'
+const EVENT_COLLAPSED = 'bento:session-bar-collapsed'
+
+export function getBarCollapsed(): boolean {
+  return localStorage.getItem(KEY_COLLAPSED) === '1'
+}
+
+export function setBarCollapsed(on: boolean): void {
+  localStorage.setItem(KEY_COLLAPSED, on ? '1' : '0')
+  window.dispatchEvent(new CustomEvent(EVENT_COLLAPSED))
+}
+
+export function toggleBarCollapsed(): void {
+  setBarCollapsed(!getBarCollapsed())
+}
+
+export function onBarCollapsedChange(handler: () => void): () => void {
+  window.addEventListener(EVENT_COLLAPSED, handler)
+  return () => window.removeEventListener(EVENT_COLLAPSED, handler)
+}
