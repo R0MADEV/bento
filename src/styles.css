@@ -144,7 +144,8 @@ html, body, #app {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 8px;
+  padding: 4px 8px;
+  min-height: 36px;
   /* Fondo glass sutil + borde: que se lea como chrome, no como un panel */
   background: color-mix(in srgb, var(--surface) 35%, transparent);
   backdrop-filter: blur(12px);
@@ -160,8 +161,9 @@ html, body, #app {
 .session-manager[data-bar-pos="left"] .session-bar { border-right: 1px solid var(--border); }
 .session-manager[data-bar-pos="right"] .session-bar { border-left: 1px solid var(--border); }
 
-/* Hueco para los semáforos de macOS solo cuando la barra está arriba; en otras
-   posiciones los reserva .mac-title-strip (ver sección de posición). */
+/* macOS: the mac-title-strip sits above the session bar in all positions and
+   handles the vertical space for the traffic lights. The bar only needs the
+   horizontal gap (82px) when it's at the top so tabs don't overlap the strip. */
 .is-mac .session-manager[data-bar-pos="top"] .session-bar {
   padding-left: 82px;
 }
@@ -275,15 +277,15 @@ html, body, #app {
    pegado a la barra lleva un gap menor (ver reglas por posición más abajo). */
 .session-instance {
   position: absolute;
-  top: 2px;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
+  inset: 10px;
 }
 
-/* Sesión oculta: invisible pero renderizada → el audio/vídeo no se para */
+/* Sesión oculta: invisible pero renderizada → el audio/vídeo no se para.
+   opacity:0 además de visibility:hidden porque WebKit deja colar algunos
+   elementos hijos (ej. botones × de Dockview) con solo visibility:hidden. */
 .session-instance.hidden {
   visibility: hidden;
+  opacity: 0;
   pointer-events: none;
 }
 
@@ -348,12 +350,16 @@ html, body, #app {
   overflow: hidden;
   border: 2px solid transparent;
   transition: border-color 0.15s, box-shadow 0.15s;
+  /* Gap between panels: box-shadow spread in the background color creates the
+     visual gap without affecting layout (margin would cause scrollbars because
+     Dockview sizes slots via JavaScript and doesn't account for margin). */
+  box-shadow: 0 0 0 5px var(--bg);
 }
 
 /* Ventana activa con borde de acento redondeado + glow (estilo Hyprland) */
 .workspace-view .dv-groupview.dv-active-group {
   border-color: var(--accent);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 0 0 5px var(--bg), 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 /* Icono "+" (añadir terminal) fijo a la derecha, alejado de la esquina
@@ -818,11 +824,11 @@ html, body, #app {
   transition: opacity 0.15s ease;
 }
 
-.session-tab:hover .session-tab-close {
+.session-tab.active:hover .session-tab-close {
   opacity: 0.6;
 }
 
-.session-tab:hover .session-tab-close:hover {
+.session-tab.active:hover .session-tab-close:hover {
   opacity: 1;
 }
 
@@ -945,6 +951,9 @@ html, body, #app {
   display: flex;
   min-width: 0;
   min-height: 0;
+  /* Positioning context for the absolute lateral bar so it stays below
+     the mac-title-strip and never overlaps the traffic lights. */
+  position: relative;
 }
 
 .session-manager[data-bar-pos="top"] .session-content { flex-direction: column; }
@@ -952,21 +961,40 @@ html, body, #app {
 .session-manager[data-bar-pos="left"] .session-content { flex-direction: row; }
 .session-manager[data-bar-pos="right"] .session-content { flex-direction: row-reverse; }
 
-/* Barra vertical en los laterales: tabs y controles apilados */
+/* Barra vertical en los laterales: franja de 4px por defecto, se expande al
+   hover empujando los paneles (flujo normal, sin overlay). */
 .session-manager[data-bar-pos="left"] .session-bar,
 .session-manager[data-bar-pos="right"] .session-bar {
   flex-direction: column;
   align-items: stretch;
-  overflow-x: visible;
-  overflow-y: auto;
-  padding: 8px 6px;
+  overflow: hidden;
+  padding: 0;
+  width: 4px;
+  min-width: 4px;
+  max-width: 4px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  backdrop-filter: none;
+  border: none;
+  transition: width 0.2s ease, min-width 0.2s ease, max-width 0.2s ease,
+              padding 0.2s ease, background 0.2s ease, backdrop-filter 0.2s ease;
+}
+
+/* Al pasar el ratón: empuja los paneles (no overlay) */
+.session-manager[data-bar-pos="left"] .session-bar:hover,
+.session-manager[data-bar-pos="right"] .session-bar:hover {
+  width: 160px;
+  min-width: 160px;
+  max-width: 160px;
+  padding: 8px 4px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  backdrop-filter: blur(12px);
 }
 
 .session-manager[data-bar-pos="left"] .session-tabs,
 .session-manager[data-bar-pos="right"] .session-tabs {
   flex-direction: column;
   align-items: stretch;
-  overflow-x: visible;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -979,24 +1007,69 @@ html, body, #app {
 }
 
 /* Gap menor en el lado pegado a la barra */
-.session-manager[data-bar-pos="bottom"] .session-instance { top: 12px; bottom: 2px; }
-.session-manager[data-bar-pos="left"] .session-instance { top: 12px; left: 2px; }
-.session-manager[data-bar-pos="right"] .session-instance { top: 12px; right: 2px; }
+/* Gap between session bar and workspace is handled by inset: 10px on all sides. */
 
 /* macOS: franja superior para los semáforos cuando la barra no está arriba */
 .mac-title-strip {
   display: none;
 }
 
-.is-mac .session-manager:not([data-bar-pos="top"]) .mac-title-strip {
+.is-mac .mac-title-strip {
   display: block;
-  height: 28px;
   flex-shrink: 0;
   -webkit-app-region: drag;
+  /* Thin invisible hover zone when bar is NOT at top */
+  height: 4px;
+  overflow: hidden;
+  transition: height 0.18s ease;
 }
 
-/* Barra lateral plegada: solo el número de la sesión; el nombre y los paneles
-   se ven en el popover al pasar el ratón. */
+.is-mac .mac-title-strip:hover {
+  height: 36px;
+}
+
+/* When bar is at top, the bar itself IS the title bar — hide the strip */
+.is-mac .session-manager[data-bar-pos="top"] .mac-title-strip {
+  display: none;
+}
+
+/* Top/bottom on macOS: thin 4px strip by default, expands on hover to show
+   sessions. Content hidden with opacity so nothing leaks through the 4px gap. */
+.is-mac .session-manager[data-bar-pos="top"] .session-bar,
+.is-mac .session-manager[data-bar-pos="bottom"] .session-bar {
+  height: 4px;
+  min-height: 4px;
+  padding: 0;
+  overflow: hidden;
+  transition: height 0.18s ease, min-height 0.18s ease, padding 0.18s ease,
+              opacity 0.18s ease;
+}
+
+.is-mac .session-manager[data-bar-pos="top"] .session-bar:not(:hover) .session-tabs,
+.is-mac .session-manager[data-bar-pos="top"] .session-bar:not(:hover) .session-add,
+.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .session-tabs,
+.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .session-add,
+.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .window-controls {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.is-mac .session-manager[data-bar-pos="top"] .session-bar:hover {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 8px 0 82px;
+  align-items: center;
+}
+
+.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:hover {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 8px;
+  align-items: center;
+}
+
+/* ── Barra lateral: estrecha por defecto, se expande al hover ─────────────
+   Solo en left/right. Top/bottom no tienen este comportamiento.           */
 .session-tab-badge {
   display: none;
   width: 22px;
@@ -1008,26 +1081,35 @@ html, body, #app {
 
 .session-manager[data-bar-pos="left"] .session-tab,
 .session-manager[data-bar-pos="right"] .session-tab {
-  position: relative;
-  justify-content: center;
-  padding: 9px 8px;
+  padding: 8px 6px;
+  width: 100%;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Contenido oculto mientras la barra está colapsada (4px) */
+.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .session-tabs,
+.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .session-tabs,
+.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .window-controls,
+.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .window-controls,
+.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .session-add,
+.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .session-add {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Badge y nombre visibles al expandir */
+.session-manager[data-bar-pos="left"] .session-tab-badge,
+.session-manager[data-bar-pos="right"] .session-tab-badge {
+  display: flex;
+  flex-shrink: 0;
 }
 
 .session-manager[data-bar-pos="left"] .session-tab-label,
 .session-manager[data-bar-pos="right"] .session-tab-label {
-  display: none;
-}
-
-.session-manager[data-bar-pos="left"] .session-tab-badge,
-.session-manager[data-bar-pos="right"] .session-tab-badge {
-  display: flex;
-}
-
-.session-manager[data-bar-pos="left"] .session-tab-close,
-.session-manager[data-bar-pos="right"] .session-tab-close {
-  position: absolute;
-  top: 1px;
-  right: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Popover informativo de sesión (nombre + paneles abiertos) */
