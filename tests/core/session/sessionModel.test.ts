@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { addSession, removeSession, setActiveSession, renameSession, duplicateSession, type SessionState } from '../../../src/core/session/sessionModel'
+import { addSession, removeSession, setActiveSession, renameSession, duplicateSession, setSessionProject, type SessionState } from '../../../src/core/session/sessionModel'
 
 const empty: SessionState = { sessions: [], activeId: null }
 
@@ -79,5 +79,25 @@ describe('sessionModel', () => {
   it('duplicateSession with unknown id returns state unchanged', () => {
     const one = addSession(empty)
     expect(duplicateSession(one, 'session-999')).toEqual(one)
+  })
+
+  it('setSessionProject sets the projectPath and names the session after the folder', () => {
+    const one = addSession(empty)
+    const id = one.sessions[0].id
+    const s = setSessionProject(one, id, '/Users/r/Desktop/bento')
+    expect(s.sessions[0].projectPath).toBe('/Users/r/Desktop/bento')
+    expect(s.sessions[0].name).toBe('bento')
+  })
+
+  it('setSessionProject does not touch other sessions', () => {
+    const two = addSession(addSession(empty))
+    const [a, b] = two.sessions
+    const s = setSessionProject(two, a.id, '/x/proj')
+    expect(s.sessions.find(x => x.id === b.id)?.projectPath).toBeUndefined()
+  })
+
+  it('setSessionProject with unknown id returns state unchanged', () => {
+    const one = addSession(empty)
+    expect(setSessionProject(one, 'session-999', '/x')).toEqual(one)
   })
 })

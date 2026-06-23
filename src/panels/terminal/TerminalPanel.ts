@@ -43,11 +43,12 @@ export interface TerminalPanelHandle {
   dispose: () => void
   onTitleChange: (cb: (title: string) => void) => () => void
   onReady: (api: PanelApi) => void
+  getCwd: () => string | undefined
 }
 
 const DEFAULT_FONT_FAMILY = '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace'
 
-export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
+export function createTerminalPanel(panelId = '', projectPath = ''): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -237,7 +238,8 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
 
   // Restore the directory the terminal was in last session, so the (restored)
   // prompt matches reality and `lexis ask` / commands run in the right project.
-  let lastCwd = (panelId && localStorage.getItem(CWD_KEY(panelId))) || ''
+  // Saved cwd (restored terminal) wins; else the session's project folder.
+  let lastCwd = (panelId && localStorage.getItem(CWD_KEY(panelId))) || projectPath || ''
 
   const spawnShell = (shellPath: string) => {
     const resolved = shellPath === 'auto' ? (isWin ? 'powershell.exe' : '/bin/sh') : shellPath
@@ -487,5 +489,5 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
 
   root.appendChild(maxBtn)
 
-  return { element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady }
+  return { element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady, getCwd: () => lastCwd || undefined }
 }

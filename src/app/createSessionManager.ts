@@ -1,7 +1,7 @@
 import type { PanelRegistry } from '../panels/registry'
 import type { WorkspaceStateRepository } from '../ports/WorkspaceStateRepository'
 import { createWorkspaceView, type WorkspaceView } from './createWorkspaceView'
-import { addSession, removeSession, setActiveSession, renameSession, duplicateSession, type SessionState } from '../core/session/sessionModel'
+import { addSession, removeSession, setActiveSession, renameSession, duplicateSession, setSessionProject, type SessionState } from '../core/session/sessionModel'
 import { createWindowControls } from '../ui/windowControls'
 import { icon } from '../ui/icons'
 import { createCommandPalette } from '../ui/commandPalette'
@@ -87,7 +87,11 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const ensureView = (id: string): WorkspaceView => {
     const existing = views.get(id)
     if (existing) return existing
-    const view = createWorkspaceView(panels, { savedLayout: savedLayouts[id], onChange: persist })
+    const view = createWorkspaceView(panels, {
+      savedLayout: savedLayouts[id],
+      onChange: persist,
+      projectPath: () => state.sessions.find(s => s.id === id)?.projectPath,
+    })
     view.element.classList.add('session-instance')
     body.appendChild(view.element)
     views.set(id, view)
@@ -264,6 +268,16 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-tv', label: 'Nuevo panel TV', keywords: ['tv', 'canal'], run: () => active?.addPanel('tv') },
       { id: 'new-web', label: 'Nuevo panel Web', keywords: ['web', 'navegador', 'url'], run: () => active?.addPanel('web') },
       { id: 'new-notes', label: 'Nuevas notas', keywords: ['notas', 'notes', 'texto'], run: () => active?.addPanel('notes') },
+      {
+        id: 'bind-project', label: 'Atar sesión a la carpeta de la terminal activa',
+        keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],
+        run: () => {
+          const cwd = active?.activeCwd()
+          if (!state.activeId || !cwd) return
+          state = setSessionProject(state, state.activeId, cwd)
+          render()
+        },
+      },
       { id: 'new-session', label: 'Nueva sesión', keywords: ['session', 'espacio'], run: () => { state = addSession(state); render() } },
       {
         id: 'export-workspace', label: 'Exportar workspace', keywords: ['exportar', 'guardar', 'json'],

@@ -19,12 +19,15 @@ export interface WorkspaceView {
   serialize: () => object
   panelTitles: () => string[]
   addPanel: (type: string) => void
+  activeCwd: () => string | undefined
   dispose: () => void
 }
 
 export interface WorkspaceOptions {
   savedLayout?: unknown
   onChange?: () => void
+  // The session's project folder, read when each panel is created.
+  projectPath?: () => string | undefined
 }
 
 export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOptions = {}): WorkspaceView {
@@ -102,7 +105,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       const def = panels.get(name)
       if (!def) throw new Error(`Panel no registrado: ${name}`)
 
-      const instance = def.create({ panelId: id, removeSelf: () => removePanel(id) })
+      const instance = def.create({ panelId: id, removeSelf: () => removePanel(id), projectPath: options.projectPath?.() })
       instanceMap.set(id, instance)
       fits.add(instance.fit ?? (() => {}))
 
@@ -345,6 +348,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     serialize: () => api.toJSON(),
     panelTitles: () => api.panels.map(p => p.title ?? p.id),
     addPanel: type => addInActiveGroup(type),
+    activeCwd: () => (api.activePanel ? instanceMap.get(api.activePanel.id)?.getCwd?.() : undefined),
     dispose: () => {
       window.removeEventListener('keydown', onKeydown)
       window.removeEventListener('keydown', onCyclePanelKeydown)

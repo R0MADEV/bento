@@ -6,6 +6,8 @@ export interface PanelContext {
   panelId: string
   // Quita este panel del layout (p. ej. cuando se queda vacío)
   removeSelf: () => void
+  // Carpeta del proyecto de la sesión; las terminales nuevas arrancan aquí
+  projectPath?: string
 }
 
 export interface PanelApi {
@@ -21,6 +23,8 @@ export interface PanelInstance {
   dispose?: () => void
   onTitleChange?: (cb: (title: string) => void) => () => void
   onReady?: (api: PanelApi) => void
+  // Current working directory (terminals report it via OSC 7)
+  getCwd?: () => string | undefined
 }
 
 export interface PanelDefinition {

@@ -1,8 +1,11 @@
 import { lowestAvailableNumber } from '../terminal/lowestAvailableNumber'
+import { projectName } from './project'
 
 export interface Session {
   id: string
   name: string
+  // Absolute path of the project this session is bound to; terminals start here.
+  projectPath?: string
 }
 
 export interface SessionState {
@@ -33,6 +36,13 @@ export function setActiveSession(state: SessionState, id: string): SessionState 
 
 export function renameSession(state: SessionState, id: string, name: string): SessionState {
   const sessions = state.sessions.map(s => s.id === id ? { ...s, name } : s)
+  return { ...state, sessions }
+}
+
+// Bind a session to a project folder; the session is renamed to the folder name.
+export function setSessionProject(state: SessionState, id: string, projectPath: string): SessionState {
+  const sessions = state.sessions.map(s =>
+    s.id === id ? { ...s, projectPath, name: projectName(projectPath) } : s)
   return { ...state, sessions }
 }
 
