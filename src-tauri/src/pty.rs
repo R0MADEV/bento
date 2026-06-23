@@ -76,6 +76,7 @@ pub fn pty_spawn(
     shell: String,
     rows: u16,
     cols: u16,
+    cwd: Option<String>,
     state: tauri::State<Arc<PtyManager>>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -103,13 +104,24 @@ pub fn pty_spawn(
         cmd.env(crate::ai_keys::env_var(provider), key);
     }
     // Default lexis to the first provider that has a key, so bare `lexis ask` works.
-    if let Some((provider, _)) = stored.first() {
+    if let Some((provider, key)) = stored.first() {
         cmd.env("LEXIS_PROVIDER", provider);
+        // lexis picks its LLM by the presence of OPENAI_API_KEY / ANTHROPIC_API_KEY.
+        // For OpenAI-compatible providers (deepseek/groq/gemini) we set OPENAI_API_KEY
+        // as a gate so lexis takes the openai path; LEXIS_PROVIDER routes the real call.
+        let is_openai_compatible = provider != "anthropic" && provider != "openai";
+        if is_openai_compatible {
+            cmd.env("OPENAI_API_KEY", key);
+        }
     }
 
-    // Arranca en el home del usuario, como una terminal normal
-    if let Some(home) = dirs_home() {
-        cmd.cwd(home);
+    // Restore the saved cwd if it still exists (so a reopened terminal lands where
+    // it was), else start in the user's home like a normal terminal.
+    let start_dir = cwd
+        .filter(|d| !d.is_empty() && std::path::Path::new(d).is_dir())
+        .or_else(dirs_home);
+    if let Some(dir) = start_dir {
+        cmd.cwd(dir);
     }
 
     let _child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;

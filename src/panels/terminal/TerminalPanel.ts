@@ -14,12 +14,14 @@ import { getThemeName, onThemeChange } from './themePreference'
 import { nextTheme } from '../../core/terminal/nextTheme'
 import { loadProfiles, addProfile, removeProfile } from '../../core/terminal/profiles'
 import { createActivityTracker } from '../../core/terminal/activityTracker'
+import { parseOsc7Path, toDisplayPath } from '../../core/terminal/osc7'
 import { createSearchBar } from './searchBar'
 import { icon } from '../../ui/icons'
 import type { PanelApi } from '../registry'
 import 'xterm/css/xterm.css'
 
 const HISTORY_KEY = (id: string) => `bento.terminal.history.${id}`
+const CWD_KEY = (id: string) => `bento.terminal.cwd.${id}`
 const HISTORY_LIMIT = 80_000
 
 let ptyCounter = 0
@@ -233,9 +235,13 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
 
   let historyBuffer = ''
 
+  // Restore the directory the terminal was in last session, so the (restored)
+  // prompt matches reality and `lexis ask` / commands run in the right project.
+  let lastCwd = (panelId && localStorage.getItem(CWD_KEY(panelId))) || ''
+
   const spawnShell = (shellPath: string) => {
     const resolved = shellPath === 'auto' ? (isWin ? 'powershell.exe' : '/bin/sh') : shellPath
-    invoke('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols })
+    invoke('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null })
       .catch(err => term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`))
   }
 
@@ -378,6 +384,9 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
     if (panelId && historyBuffer) {
       try { localStorage.setItem(HISTORY_KEY(panelId), historyBuffer.slice(-HISTORY_LIMIT)) } catch { /* storage lleno */ }
     }
+    if (panelId && lastCwd) {
+      try { localStorage.setItem(CWD_KEY(panelId), lastCwd) } catch { /* storage lleno */ }
+    }
     observer.disconnect()
     unsubscribeTheme()
     root.removeEventListener('focusin', onRootFocus)
@@ -390,10 +399,11 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
     const d1 = term.onTitleChange(title => { if (title) tracker.setBase(title) })
 
     const d2 = term.parser.registerOscHandler(7, data => {
-      try {
-        const path = decodeURIComponent(new URL(data).pathname)
-        if (path) tracker.setBase(path.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~'))
-      } catch { /* URL inválida, ignorar */ }
+      const path = parseOsc7Path(data)
+      if (path) {
+        lastCwd = path
+        tracker.setBase(toDisplayPath(path))
+      }
       return true
     })
 
