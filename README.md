@@ -4,7 +4,7 @@
 
 Inspirado en VSCode, pero **genérico**: no asume que trabajas con código. Funciona en **Linux, macOS, Windows**. Paneles redimensionables, tabs, workspaces guardados, ventanas flotantes, multi-window.
 
-> **Estado**: Fase 1 ✅ — ventana Tauri funcionando en Docker.
+> **Estado**: paneles Terminal, TV y Web funcionando, con sesiones, temas, layout tile/tabs y persistencia. Pendiente: ventanas flotantes y multi-window.
 
 ---
 
@@ -145,26 +145,27 @@ make test        # ejecuta los tests
 
 ```
 bento/
-├── Makefile                           ← comandos de desarrollo
-├── Dockerfile / docker-compose.yml    ← entorno Docker
-├── scripts/setup-display.sh          ← configura X11 por SO
 ├── package.json / tsconfig.json / vite.config.ts
 ├── index.html
 ├── src/                               ← Frontend (TypeScript)
-│   ├── main.ts
-│   ├── workspace/                     ← tipos y manager de workspaces
-│   ├── panels/                        ← TV, terminal, notas
-│   ├── floating/                      ← ventanas flotantes
+│   ├── main.ts                        ← composition root: registra paneles, monta la app
+│   ├── app/                           ← createSessionManager, createWorkspaceView
+│   ├── core/                          ← lógica pura testeada (session, terminal, channel, web, workspace)
+│   ├── panels/                        ← terminal/, tv/, web/ + registry
+│   ├── ui/                            ← commandPalette, contextMenu, icons, preferencias
+│   ├── adapters/ · ports/             ← repos (canales, favoritos, estado) e interfaces
+│   ├── assets/                        ← M3U bundled, etc.
 │   └── styles.css
 ├── src-tauri/                         ← Backend (Rust)
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   ├── icons/
+│   ├── Cargo.toml · tauri.conf.json · icons/
 │   └── src/
-│       ├── main.rs
-│       ├── pty.rs                     ← terminal PTY (Fase 4)
-│       └── workspace_io.rs            ← persistencia (Fase 6)
-├── .github/workflows/build.yml        ← CI/CD
+│       ├── main.rs                    ← comandos + arranque Tauri
+│       ├── pty.rs                     ← terminal PTY (+ restaura cwd)
+│       ├── web_panel.rs               ← webview nativo embebido
+│       ├── traffic_lights.rs          ← semáforos macOS
+│       ├── window_prefs.rs            ← decoraciones de ventana
+│       └── workspace_io.rs            ← persistencia
+├── tests/                             ← Vitest (núcleo puro)
 └── README.md
 ```
 
@@ -173,15 +174,16 @@ bento/
 ## 5. Plan de implementación
 
 - **Fase 0**: Setup entorno ✅
-- **Fase 1**: Scaffold Tauri mínimo ✅ — ventana funcionando en Docker
-- **Fase 2**: Layout con dos paneles (Dockview)
-- **Fase 3**: Panel TV funcionando (IPTV + hls.js)
-- **Fase 4**: Terminal embebida (xterm.js + PTY)
-- **Fase 5**: Tabs dentro de paneles
-- **Fase 6**: Persistencia y workspaces
-- **Fase 7**: Ventanas flotantes
-- **Fase 8**: Multi-window
-- **Fase 9**: Pulido y distribución
+- **Fase 1**: Scaffold Tauri mínimo ✅
+- **Fase 2**: Layout con paneles (Dockview: splits, mover, maximizar) ✅
+- **Fase 3**: Panel TV (IPTV + hls.js, favoritos, embeds) ✅
+- **Fase 4**: Terminal embebida (xterm.js + PTY, temas, perfiles, búsqueda) ✅
+- **Fase 5**: Tabs dentro de paneles ✅
+- **Fase 6**: Persistencia y sesiones (renombrar, duplicar, export/import) ✅
+- **Fase 7**: Panel Web (webview nativo, bookmarks, historial) ✅
+- **Fase 8**: Ventanas flotantes — pendiente
+- **Fase 9**: Multi-window (varios windows del SO) — pendiente
+- **Fase 10**: Pulido y distribución — en curso
 
 ---
 
