@@ -1,5 +1,6 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod notes;
 mod pty;
 mod traffic_lights;
 mod web_panel;
@@ -36,6 +37,9 @@ fn main() {
             web_panel::web_panel_set_visible,
             web_panel::web_panel_close,
             web_panel::web_panel_close_all,
+            notes::notes_list,
+            notes::notes_write,
+            notes::notes_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -893,6 +893,121 @@ html, body, #app {
   height: 100%;
   background: var(--bg);
 }
+.notes-sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.notes-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  margin: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.notes-add:hover { color: var(--fg); border-color: var(--accent); }
+.notes-add .icon { width: 14px; height: 14px; }
+.notes-search {
+  margin: 0 6px 6px;
+  padding: 5px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+}
+.notes-search:focus { border-color: var(--accent); }
+.notes-list { overflow-y: auto; padding: 0 6px 6px; display: flex; flex-direction: column; gap: 1px; }
+.notes-group {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-dim);
+  padding: 8px 8px 3px;
+}
+.notes-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  text-align: left;
+}
+.notes-item:hover { background: var(--surface-2); color: var(--fg); }
+.notes-item.active { background: var(--surface-2); color: var(--fg); }
+.notes-item-title { flex: 1; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.notes-item-del { display: flex; opacity: 0; flex-shrink: 0; }
+.notes-item-del .icon { width: 13px; height: 13px; }
+.notes-item:hover .notes-item-del { opacity: 0.5; }
+.notes-item-del:hover { opacity: 1 !important; color: var(--accent); }
+.notes-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.notes-header { display: flex; align-items: center; }
+.notes-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 8px 10px 0 0;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.notes-toggle:hover { background: var(--surface-2); color: var(--fg); }
+.notes-toggle.active { color: var(--accent); }
+.notes-title {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 18px;
+  font-weight: 600;
+  padding: 14px 16px 4px;
+}
+.notes-title::placeholder { color: var(--fg-dim); }
+.notes-meta {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.notes-meta-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  padding: 2px 0;
+}
+.notes-meta-input:focus { color: var(--fg); }
+.notes-meta-input::placeholder { color: var(--fg-dim); }
 .notes-textarea {
   flex: 1;
   width: 100%;
@@ -907,6 +1022,31 @@ html, body, #app {
   line-height: 1.6;
 }
 .notes-textarea::placeholder { color: var(--fg-dim); }
+.notes-textarea:disabled { background: transparent; }
+.notes-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.notes-preview.hidden { display: none; }
+.notes-preview h1, .notes-preview h2, .notes-preview h3 { margin: 0.6em 0 0.3em; line-height: 1.3; }
+.notes-preview h1 { font-size: 1.5em; }
+.notes-preview h2 { font-size: 1.3em; }
+.notes-preview h3 { font-size: 1.1em; }
+.notes-preview p { margin: 0.5em 0; }
+.notes-preview ul { margin: 0.5em 0; padding-left: 1.4em; }
+.notes-preview li { margin: 0.2em 0; }
+.notes-preview code {
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+.notes-preview a { color: var(--accent); }
 
 /* ── TV panel ───────────────────────────────────────────────────────────── */
 .tv-panel {
