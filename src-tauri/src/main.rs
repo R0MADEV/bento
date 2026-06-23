@@ -2,6 +2,7 @@
 
 mod pty;
 mod traffic_lights;
+mod window_prefs;
 
 use std::sync::Arc;
 
@@ -27,6 +28,7 @@ fn main() {
             pty::pty_resize,
             pty::pty_kill,
             traffic_lights::set_traffic_lights_visible,
+            window_prefs::set_decorations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
