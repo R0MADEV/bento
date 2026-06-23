@@ -262,6 +262,8 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         run: () => active?.addPanel('terminal'),
       })),
       { id: 'new-tv', label: 'Nuevo panel TV', keywords: ['tv', 'canal'], run: () => active?.addPanel('tv') },
+      { id: 'new-web', label: 'Nuevo panel Web', keywords: ['web', 'navegador', 'url'], run: () => active?.addPanel('web') },
+      { id: 'new-notes', label: 'Nuevas notas', keywords: ['notas', 'notes', 'texto'], run: () => active?.addPanel('notes') },
       { id: 'new-session', label: 'Nueva sesión', keywords: ['session', 'espacio'], run: () => { state = addSession(state); render() } },
       {
         id: 'export-workspace', label: 'Exportar workspace', keywords: ['exportar', 'guardar', 'json'],

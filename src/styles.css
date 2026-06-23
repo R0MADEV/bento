@@ -887,6 +887,27 @@ html, body, #app {
 }
 .web-empty-tile:hover { border-color: var(--accent); }
 
+/* ── Notes panel ────────────────────────────────────────────────────────── */
+.notes-panel {
+  display: flex;
+  height: 100%;
+  background: var(--bg);
+}
+.notes-textarea {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  padding: 14px 16px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.notes-textarea::placeholder { color: var(--fg-dim); }
+
 /* ── TV panel ───────────────────────────────────────────────────────────── */
 .tv-panel {
   display: flex;
