@@ -97,24 +97,6 @@ pub fn pty_spawn(
     }
     cmd.env("TERM", "xterm-256color");
 
-    // Inject the AI provider keys (from the keychain) so `lexis ask` works in any
-    // bento terminal with no manual setup. lexis reads <PROVIDER>_API_KEY from env.
-    let stored = crate::ai_keys::all_keys();
-    for (provider, key) in &stored {
-        cmd.env(crate::ai_keys::env_var(provider), key);
-    }
-    // Default lexis to the first provider that has a key, so bare `lexis ask` works.
-    if let Some((provider, key)) = stored.first() {
-        cmd.env("LEXIS_PROVIDER", provider);
-        // lexis picks its LLM by the presence of OPENAI_API_KEY / ANTHROPIC_API_KEY.
-        // For OpenAI-compatible providers (deepseek/groq/gemini) we set OPENAI_API_KEY
-        // as a gate so lexis takes the openai path; LEXIS_PROVIDER routes the real call.
-        let is_openai_compatible = provider != "anthropic" && provider != "openai";
-        if is_openai_compatible {
-            cmd.env("OPENAI_API_KEY", key);
-        }
-    }
-
     // Restore the saved cwd if it still exists (so a reopened terminal lands where
     // it was), else start in the user's home like a normal terminal.
     let start_dir = cwd

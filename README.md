@@ -187,30 +187,17 @@ bento/
 
 ## 6. Asistente de IA (opcional)
 
-bento **no trae IA empaquetada**. En su lugar te da la infraestructura para que
-uses un agente de IA en sus terminales: gestiona tus **API keys** (en el llavero
-del SO) y las inyecta como variables de entorno en cada terminal que abre. El
-agente y el motor de contexto son herramientas externas que instalas tú.
+bento **no trae IA empaquetada**: es un workspace, no un agente. Pero como sus
+terminales son reales, puedes correr ahí cualquier agente de IA. Lo único que
+bento aporta es que **al reabrir, la terminal vuelve al proyecto donde estaba**
+(vía OSC 7), así el agente trabaja sobre el código correcto.
 
-### Qué pone bento
-
-- **Keys en el llavero**: `Cmd/Ctrl+K → "Configurar IA"` → pega tu key (DeepSeek,
-  Groq, Gemini, OpenAI, Anthropic). Se guarda cifrada en el llavero del sistema,
-  nunca en texto plano.
-- **Inyección automática**: cada terminal nueva recibe `DEEPSEEK_API_KEY`,
-  `GROQ_API_KEY`, etc. + `LEXIS_PROVIDER`. No tienes que tocar `.zshrc`.
-- **Restaura el directorio**: al reabrir, la terminal vuelve al proyecto donde
-  estaba (vía OSC 7), así el agente trabaja sobre el código correcto.
-
-> La key **siempre la pones tú** (gratis vale). bento no incluye ninguna key
-> compartida — sería tu cuota y un riesgo de seguridad.
-
-### Herramientas recomendadas (las instalas tú)
+El motor de contexto y el agente los instalas tú:
 
 | Pieza | Rol | Instalación |
 |-------|-----|-------------|
 | [**lexis**](https://github.com/R0MADEV/lexis) | Motor de contexto: indexa el código y se lo da "masticado" al agente vía MCP | `cd lexis && npm link` |
-| [**OpenCode**](https://opencode.ai) (o aider, cline…) | Agente que edita el código, multi-proveedor (gratis y de pago) | ver su web |
+| [**OpenCode**](https://opencode.ai) (o aider, cline, Claude Code…) | Agente que edita el código, multi-proveedor (gratis y de pago) | ver su web |
 
 ### Puesta en marcha
 
@@ -218,22 +205,20 @@ agente y el motor de contexto son herramientas externas que instalas tú.
 # 1. lexis disponible como comando (una vez)
 cd /ruta/a/lexis && npm link
 
-# 2. Conecta lexis como MCP a tu agente (ej. OpenCode/Claude Code)
+# 2. Conecta lexis como MCP a tu agente
 lexis setup --client opencode --global    # o claude-code, cursor, cline…
 
-# 3. En bento: Cmd/Ctrl+K → Configurar IA → pega tu API key
-
-# 4. En una terminal de bento, dentro de tu proyecto:
+# 3. En una terminal de bento, dentro de tu proyecto:
 cd ~/mi-proyecto
 lexis index .                 # indexa el proyecto (una vez)
-opencode                      # o claude — el agente ya tiene contexto + tu key
+opencode                      # o claude — el agente ya tiene el contexto de lexis
 ```
 
-El flujo: **lexis** da el contexto preciso → el **agente** (con tu key, inyectada
-por bento) implementa los cambios. bento es el espacio donde todo ocurre.
+El flujo: **lexis** da el contexto preciso → el **agente** (con su propia key)
+implementa los cambios. bento es el espacio donde todo ocurre.
 
-> Para preguntas rápidas sin agente: `lexis ask "qué hace X"` usa tu modelo barato
-> (DeepSeek/Groq) directamente.
+> La API key la gestiona cada agente con su propio login (`opencode auth`, etc.).
+> Para preguntas rápidas: `lexis ask "qué hace X"` con tu modelo configurado.
 
 ---
 

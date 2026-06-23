@@ -15,7 +15,6 @@ import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition }
 import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
 import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
-import { openAiKeysDialog } from '../ui/aiKeysDialog'
 
 export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
@@ -263,7 +262,6 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         run: () => active?.addPanel('terminal'),
       })),
       { id: 'new-tv', label: 'Nuevo panel TV', keywords: ['tv', 'canal'], run: () => active?.addPanel('tv') },
-      { id: 'configure-ai', label: 'Configurar IA (API keys)', keywords: ['ia', 'ai', 'apikey', 'deepseek', 'lexis', 'clave'], run: () => openAiKeysDialog() },
       { id: 'new-session', label: 'Nueva sesión', keywords: ['session', 'espacio'], run: () => { state = addSession(state); render() } },
       {
         id: 'export-workspace', label: 'Exportar workspace', keywords: ['exportar', 'guardar', 'json'],
