@@ -75,7 +75,9 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
 
   let titleCallback: ((title: string) => void) | undefined
   const tracker = createActivityTracker(t => titleCallback?.(t))
-  const focusDisposable = term.onFocus(() => tracker.onFocus())
+  // focusin bubbles from xterm's internal textarea — public API has no onFocus
+  const onRootFocus = () => tracker.onFocus()
+  root.addEventListener('focusin', onRootFocus)
 
   const applyLocalTheme = (name: string) => {
     const t = getTheme(name)
@@ -378,7 +380,7 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
     }
     observer.disconnect()
     unsubscribeTheme()
-    focusDisposable.dispose()
+    root.removeEventListener('focusin', onRootFocus)
     invoke('pty_kill', { id }).catch(() => {})
     try { term.dispose() } catch { /* ignorar */ }
   }
