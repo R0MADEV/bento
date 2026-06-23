@@ -36,6 +36,7 @@ function showCommandDoneToast(termRoot: HTMLElement): void {
 export interface TerminalPanelHandle {
   element: HTMLElement
   fit: () => void
+  focus: () => void
   dispose: () => void
   onTitleChange: (cb: (title: string) => void) => () => void
   onReady: (api: PanelApi) => void
