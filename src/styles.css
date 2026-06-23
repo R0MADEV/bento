@@ -743,6 +743,19 @@ html, body, #app {
   flex-shrink: 0;
 }
 .web-bar-btn:hover { background: var(--surface-2); color: var(--fg); }
+.web-ua-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  padding: 0 4px;
+  height: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+  outline: none;
+}
+.web-ua-select:hover { color: var(--fg); }
 .web-content {
   flex: 1;
   width: 100%;

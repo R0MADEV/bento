@@ -11,7 +11,11 @@ import { LocalStorageWorkspaceStateRepository } from './adapters/LocalStorageWor
 import { createSessionManager } from './app/createSessionManager'
 import { getThemeName, applyAppTheme } from './panels/terminal/themePreference'
 import { isMac } from './ui/platform'
+import { invoke } from '@tauri-apps/api/core'
 import tvM3U from './assets/tv.m3u?raw'
+
+// Web panels live in Rust state and survive a frontend reload as orphans — clean them up
+invoke('web_panel_close_all').catch(() => {})
 
 // Tiñe toda la UI con el tema guardado al arrancar
 applyAppTheme(getThemeName())

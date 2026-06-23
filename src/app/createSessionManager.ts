@@ -111,6 +111,12 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     return view ? view.panelTitles() : panelTitlesFromLayout(savedLayouts[id])
   }
 
+  // Native web-panel webviews paint above the DOM, so suppress them while an
+  // overlay (this popover) needs to show on top.
+  const setWebOverlay = (on: boolean): void => {
+    window.dispatchEvent(new CustomEvent('bento:web-overlay', { detail: on }))
+  }
+
   const showPopover = (anchor: HTMLElement, name: string, titles: string[]): void => {
     const items = titles.length
       ? titles.map(t => `<div class="session-popover-item">${t}</div>`).join('')
@@ -118,6 +124,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     popover.innerHTML = `<div class="session-popover-title">${name}</div>${items}`
     // Show first so getBoundingClientRect returns real dimensions.
     popover.classList.remove('hidden')
+    setWebOverlay(true)
 
     const a = anchor.getBoundingClientRect()
     const p = popover.getBoundingClientRect()
@@ -134,7 +141,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     popover.style.top  = `${clampY(top)}px`
   }
 
-  const hidePopover = (): void => popover.classList.add('hidden')
+  const hidePopover = (): void => { popover.classList.add('hidden'); setWebOverlay(false) }
 
   const sessionTab = (
     name: string,

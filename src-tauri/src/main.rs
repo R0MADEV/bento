@@ -35,6 +35,7 @@ fn main() {
             web_panel::web_panel_set_bounds,
             web_panel::web_panel_set_visible,
             web_panel::web_panel_close,
+            web_panel::web_panel_close_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
