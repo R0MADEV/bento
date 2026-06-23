@@ -2,6 +2,7 @@
 
 mod pty;
 mod traffic_lights;
+mod web_panel;
 mod window_prefs;
 
 use std::sync::Arc;
@@ -21,6 +22,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(Arc::new(pty::PtyManager::default()))
+        .manage(web_panel::WebPanelState::default())
         .invoke_handler(tauri::generate_handler![
             http_get,
             pty::pty_spawn,
@@ -29,6 +31,10 @@ fn main() {
             pty::pty_kill,
             traffic_lights::set_traffic_lights_visible,
             window_prefs::set_decorations,
+            web_panel::web_panel_navigate,
+            web_panel::web_panel_set_bounds,
+            web_panel::web_panel_set_visible,
+            web_panel::web_panel_close,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

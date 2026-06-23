@@ -743,11 +743,10 @@ html, body, #app {
   flex-shrink: 0;
 }
 .web-bar-btn:hover { background: var(--surface-2); color: var(--fg); }
-.web-frame {
+.web-content {
   flex: 1;
-  border: none;
   width: 100%;
-  background: #fff;
+  background: transparent;
 }
 
 /* ── TV panel ───────────────────────────────────────────────────────────── */
