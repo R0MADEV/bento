@@ -38,6 +38,7 @@ fn main() {
             web_panel::web_panel_close,
             web_panel::web_panel_close_all,
             ai_keys::ai_key_set,
+            ai_keys::ai_key_get,
             ai_keys::ai_key_delete,
             ai_keys::ai_key_list,
         ])

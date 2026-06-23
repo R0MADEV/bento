@@ -51,6 +51,17 @@ export function openAiKeysDialog(): void {
       input.type = 'password'
       input.placeholder = isSet ? '•••••••• (guardada)' : 'Pega tu API key'
 
+      const reveal = document.createElement('button')
+      reveal.className = 'ai-keys-btn'
+      reveal.title = 'Mostrar'
+      reveal.innerHTML = icon('eye')
+      reveal.disabled = !isSet
+      reveal.addEventListener('click', async () => {
+        if (input.type === 'text') { input.type = 'password'; input.value = ''; return }
+        const key = await invoke<string | null>('ai_key_get', { provider: p.id }).catch(() => null)
+        if (key) { input.value = key; input.type = 'text' }
+      })
+
       const save = document.createElement('button')
       save.className = 'ai-keys-btn'
       save.title = 'Guardar'
@@ -75,7 +86,7 @@ export function openAiKeysDialog(): void {
 
       input.addEventListener('keydown', e => { if (e.key === 'Enter') save.click() })
 
-      row.append(name, input, save, del)
+      row.append(name, input, reveal, save, del)
       list.appendChild(row)
     })
   }

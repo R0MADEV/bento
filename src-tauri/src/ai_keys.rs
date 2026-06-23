@@ -20,6 +20,17 @@ pub fn ai_key_set(provider: String, key: String) -> Result<(), String> {
     entry(&provider)?.set_password(&key).map_err(|e| e.to_string())
 }
 
+// Reveals the stored secret for one provider (the user asked to see it). Returns
+// None if no key is stored.
+#[tauri::command]
+pub fn ai_key_get(provider: String) -> Result<Option<String>, String> {
+    match entry(&provider)?.get_password() {
+        Ok(key) => Ok(Some(key)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[tauri::command]
 pub fn ai_key_delete(provider: String) -> Result<(), String> {
     match entry(&provider)?.delete_credential() {
