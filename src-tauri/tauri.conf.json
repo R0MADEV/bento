@@ -8,6 +8,9 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "security": {
+      "csp": "default-src 'self' tauri: asset: 'unsafe-inline'; frame-src *; media-src * blob:; connect-src ipc: http://ipc.localhost tauri: https://*"
+    },
     "windows": [
       {
         "title": "Bento",

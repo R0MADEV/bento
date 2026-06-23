@@ -3,6 +3,7 @@ import './styles.css'
 import { createPanelRegistry } from './panels/registry'
 import { tvPanelDefinition } from './panels/tv/definition'
 import { terminalPanelDefinition } from './panels/terminal/definition'
+import { webPanelDefinition } from './panels/web/definition'
 import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
@@ -30,6 +31,7 @@ const stateRepo = new LocalStorageWorkspaceStateRepository()
 const panels = createPanelRegistry()
 panels.register(tvPanelDefinition(channelRepo, favoritesRepo, worldRepo))
 panels.register(terminalPanelDefinition)
+panels.register(webPanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))

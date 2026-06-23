@@ -705,6 +705,52 @@ html, body, #app {
 }
 
 /* TV Panel */
+/* ── Web panel ──────────────────────────────────────────────────────────── */
+.web-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+.web-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.web-url-input {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+  font-family: inherit;
+}
+.web-url-input:focus { border-color: var(--accent); }
+.web-bar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.web-bar-btn:hover { background: var(--surface-2); color: var(--fg); }
+.web-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+  background: #fff;
+}
+
+/* ── TV panel ───────────────────────────────────────────────────────────── */
 .tv-panel {
   display: flex;
   flex-direction: column;
