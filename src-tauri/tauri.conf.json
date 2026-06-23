@@ -4,6 +4,7 @@
   "identifier": "com.bento.app",
   "build": {
     "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:8080",
     "frontendDist": "../dist"
   },
