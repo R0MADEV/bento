@@ -1,7 +1,7 @@
 import type { PanelRegistry } from '../panels/registry'
 import type { WorkspaceStateRepository } from '../ports/WorkspaceStateRepository'
 import { createWorkspaceView, type WorkspaceView } from './createWorkspaceView'
-import { addSession, removeSession, setActiveSession, type SessionState } from '../core/session/sessionModel'
+import { addSession, removeSession, setActiveSession, renameSession, duplicateSession, type SessionState } from '../core/session/sessionModel'
 import { createWindowControls } from '../ui/windowControls'
 import { icon } from '../ui/icons'
 import { createCommandPalette } from '../ui/commandPalette'
@@ -13,9 +13,9 @@ import { isMac } from '../ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition } from '../ui/sessionBarPreference'
 import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
+import { loadProfiles } from '../core/terminal/profiles'
+import { getDecorations, setDecorations } from '../ui/decorationsPreference'
 
-// Sesiones que se ocultan entre sí; cada una es un workspace completo.
-// Persiste sesiones + layout de cada una para reabrir donde se dejó.
 export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
   root.className = 'session-manager'
@@ -31,12 +31,10 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const bar = document.createElement('div')
   bar.className = 'session-bar'
 
-  // Zona de tabs (se redibuja) — los controles de ventana quedan fijos aparte
   const tabsArea = document.createElement('div')
   tabsArea.className = 'session-tabs'
   bar.appendChild(tabsArea)
 
-  // Windows/Linux: controles de ventana propios (macOS usa los nativos)
   if (!isMac) bar.appendChild(createWindowControls())
 
   if (isMac) {
@@ -66,7 +64,6 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   content.append(bar, body)
   root.appendChild(content)
 
-  // Posición; las barras laterales se auto-expanden al hover (CSS puro).
   const applyBarPosition = (): void => { root.dataset.barPos = getBarPosition() }
   applyBarPosition()
   onBarPositionChange(applyBarPosition)
@@ -105,9 +102,6 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     views.delete(id)
   }
 
-  // Popover (solo informativo, no captura el ratón): al pasar por una sesión
-  // muestra su nombre y los paneles abiertos. Útil sobre todo con la barra
-  // lateral plegada (donde solo se ve el número de la sesión).
   const popover = document.createElement('div')
   popover.className = 'session-popover hidden'
   root.appendChild(popover)
@@ -148,25 +142,53 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     active: boolean,
     onSelect: () => void,
     onClose: () => void,
+    onRename: (newName: string) => void,
+    onDuplicate: () => void,
     getTitles: () => string[],
   ) => {
     const tab = document.createElement('div')
     tab.className = active ? 'session-tab active' : 'session-tab'
 
-    const badge = document.createElement('span')
-    badge.className = 'session-tab-badge'
-    badge.textContent = String(index)
-
     const label = document.createElement('span')
     label.className = 'session-tab-label'
     label.textContent = name
+
+    label.addEventListener('dblclick', e => {
+      e.stopPropagation()
+      hidePopover()
+      const input = document.createElement('input')
+      input.className = 'session-tab-rename'
+      input.value = name
+      label.replaceWith(input)
+      input.select()
+      input.focus()
+      const save = () => {
+        const next = input.value.trim() || name
+        onRename(next)
+      }
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur() }
+        if (e.key === 'Escape') { input.value = name; input.blur() }
+        e.stopPropagation()
+      })
+      input.addEventListener('blur', save)
+    })
+
+    const duplicate = document.createElement('span')
+    duplicate.className = 'session-tab-duplicate'
+    duplicate.title = 'Duplicar sesión'
+    duplicate.textContent = '⧉'
+    duplicate.addEventListener('click', e => { e.stopPropagation(); onDuplicate() })
 
     const close = document.createElement('span')
     close.className = 'session-tab-close'
     close.innerHTML = icon('x')
     close.addEventListener('click', e => { e.stopPropagation(); onClose() })
 
-    tab.append(badge, label, close)
+    const actions = document.createElement('span')
+    actions.className = 'session-tab-actions'
+    actions.append(duplicate, close)
+    tab.append(label, actions)
     tab.addEventListener('click', onSelect)
     tab.addEventListener('mouseenter', () => showPopover(tab, name, getTitles()))
     tab.addEventListener('mouseleave', hidePopover)
@@ -182,8 +204,16 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
           s.name,
           i + 1,
           s.id === state.activeId,
-          () => { state = setActiveSession(state, s.id); render() },
+          () => { const next = setActiveSession(state, s.id); if (next.activeId !== state.activeId) { state = next; render() } },
           () => closeSession(s.id),
+          (newName) => { state = renameSession(state, s.id, newName); render() },
+          () => {
+            const layout = views.get(s.id)?.serialize() ?? savedLayouts[s.id]
+            state = duplicateSession(state, s.id)
+            const newId = state.activeId!
+            if (layout) savedLayouts[newId] = layout
+            render()
+          },
           () => panelTitlesFor(s.id),
         )
       )
@@ -214,13 +244,55 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     render()
   }
 
-  // Comandos para la paleta (Cmd/Ctrl+K), recalculados al abrirla
   const buildCommands = (): Command[] => {
     const active = state.activeId ? views.get(state.activeId) : undefined
     const commands: Command[] = [
       { id: 'new-terminal', label: 'Nueva terminal', keywords: ['terminal', 'shell'], run: () => active?.addPanel('terminal') },
+      ...loadProfiles().map(p => ({
+        id: `profile-${p.id}`,
+        label: `Terminal: ${p.name}`,
+        keywords: ['terminal', 'perfil', 'profile', p.shell, p.theme],
+        run: () => active?.addPanel('terminal'),
+      })),
       { id: 'new-tv', label: 'Nuevo panel TV', keywords: ['tv', 'canal'], run: () => active?.addPanel('tv') },
       { id: 'new-session', label: 'Nueva sesión', keywords: ['session', 'espacio'], run: () => { state = addSession(state); render() } },
+      {
+        id: 'export-workspace', label: 'Exportar workspace', keywords: ['exportar', 'guardar', 'json'],
+        run: () => {
+          const layouts: Record<string, unknown> = { ...savedLayouts }
+          views.forEach((view, id) => { layouts[id] = view.serialize() })
+          const data = JSON.stringify({ sessions: state.sessions, activeId: state.activeId, layouts }, null, 2)
+          const a = document.createElement('a')
+          a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
+          a.download = 'bento-workspace.json'
+          a.click()
+        },
+      },
+      {
+        id: 'import-workspace', label: 'Importar workspace', keywords: ['importar', 'abrir', 'json'],
+        run: () => {
+          const input = document.createElement('input')
+          input.type = 'file'
+          input.accept = '.json,application/json'
+          input.addEventListener('change', () => {
+            const file = input.files?.[0]
+            if (!file) return
+            file.text().then(text => {
+              try {
+                const parsed = JSON.parse(text)
+                if (!Array.isArray(parsed.sessions)) throw new Error('Formato inválido')
+                views.forEach((_, id) => disposeView(id))
+                savedLayouts = parsed.layouts ?? {}
+                state = { sessions: parsed.sessions, activeId: parsed.activeId }
+                render()
+              } catch (e) {
+                alert(`Error al importar: ${e}`)
+              }
+            })
+          })
+          input.click()
+        },
+      },
     ]
     state.sessions.forEach(s => {
       if (s.id !== state.activeId) {
@@ -254,17 +326,28 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     themeNames.forEach(name => {
       commands.push({ id: `theme-${name}`, label: `Tema: ${themeLabels[name] ?? name}`, keywords: ['theme', 'color'], run: () => setTheme(name) })
     })
+    const decorated = getDecorations()
+    commands.push({
+      id: 'toggle-decorations',
+      label: `${decorated ? '✓' : '○'} Bordes de ventana`,
+      keywords: ['decoraciones', 'bordes', 'frameless', 'tiling', 'wayland', 'ventana'],
+      run: () => {
+        const next = !getDecorations()
+        setDecorations(next)
+        invoke('set_decorations', { enabled: next }).catch(() => {})
+      },
+    })
     return commands
   }
   root.appendChild(createCommandPalette(buildCommands))
 
-  // Restaurar estado guardado o arrancar con una sesión nueva
+  invoke('set_decorations', { enabled: getDecorations() }).catch(() => {})
+
   const saved = stateRepo.load()
   if (saved && saved.sessions.length > 0) {
     savedLayouts = saved.layouts
-    const activeId = saved.sessions.some(s => s.id === saved.activeId)
-      ? saved.activeId
-      : saved.sessions[0].id
+    const savedActiveExists = saved.sessions.some(s => s.id === saved.activeId)
+    const activeId = savedActiveExists ? saved.activeId : saved.sessions[0].id
     state = { sessions: saved.sessions, activeId }
   } else {
     state = addSession(state)
