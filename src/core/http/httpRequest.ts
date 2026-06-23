@@ -21,6 +21,11 @@ export function prettyBody(body: string): string {
   }
 }
 
+// Unfilled {param} placeholders in a URL (reqwest can't build a URL with braces).
+export function urlParams(url: string): string[] {
+  return [...url.matchAll(/\{([^}]+)\}/g)].map(m => m[1])
+}
+
 // Append a "Key: Value" header line, skipping it if the key already exists.
 export function addHeaderLine(text: string, line: string): string {
   const key = line.slice(0, line.indexOf(':')).trim().toLowerCase()

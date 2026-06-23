@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseHeaders, prettyBody, addHeaderLine } from '../../../src/core/http/httpRequest'
+import { parseHeaders, prettyBody, addHeaderLine, urlParams } from '../../../src/core/http/httpRequest'
 
 describe('parseHeaders', () => {
   it('parses "Key: Value" lines into pairs', () => {
@@ -48,5 +48,15 @@ describe('addHeaderLine', () => {
   it('does not duplicate a header that already exists (case-insensitive key)', () => {
     expect(addHeaderLine('content-type: text/plain', 'Content-Type: application/json'))
       .toBe('content-type: text/plain')
+  })
+})
+
+describe('urlParams', () => {
+  it('finds unfilled {param} placeholders', () => {
+    expect(urlParams('https://x.com/pet/{petId}/img/{imgId}')).toEqual(['petId', 'imgId'])
+  })
+
+  it('returns [] when there are none', () => {
+    expect(urlParams('https://x.com/pets')).toEqual([])
   })
 })

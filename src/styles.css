@@ -1057,7 +1057,97 @@ html, body, #app {
 .notes-preview a { color: var(--accent); }
 
 /* ── HTTP client panel ──────────────────────────────────────────────────── */
-.http-panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
+.http-panel { display: flex; height: 100%; background: var(--bg); }
+.http-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.http-sidebar {
+  width: 210px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.http-sidebar.hidden { display: none; }
+.http-col-search {
+  margin: 6px;
+  padding: 5px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+  flex-shrink: 0;
+}
+.http-col-search:focus { border-color: var(--accent); }
+.http-col-list { flex: 1; overflow-y: auto; padding: 0 6px 6px; display: flex; flex-direction: column; gap: 1px; }
+.http-col-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 4px 4px;
+  cursor: pointer;
+}
+.http-col-chevron { display: flex; flex-shrink: 0; color: var(--fg-dim); transition: transform 0.12s; }
+.http-col-chevron.open { transform: rotate(90deg); }
+.http-col-chevron .icon { width: 12px; height: 12px; }
+.http-col-rename {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 11px;
+  padding: 1px 4px;
+  outline: none;
+}
+.http-col-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.http-col-del { display: flex; opacity: 0; cursor: pointer; flex-shrink: 0; }
+.http-col-del .icon { width: 12px; height: 12px; }
+.http-col-header:hover .http-col-del { opacity: 0.5; }
+.http-col-del:hover { opacity: 1; color: var(--accent); }
+.http-ep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  text-align: left;
+}
+.http-ep:hover { background: var(--surface-2); color: var(--fg); }
+.http-ep-method { font-size: 9px; font-weight: 700; flex-shrink: 0; width: 38px; }
+.http-ep-method.get { color: #4caf50; }
+.http-ep-method.post { color: var(--gold); }
+.http-ep-method.put, .http-ep-method.patch { color: var(--accent); }
+.http-ep-method.delete { color: #f44336; }
+.http-ep-name { flex: 1; min-width: 0; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.http-import {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--fg-dim);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 0 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.http-import:hover { color: var(--fg); border-color: var(--accent); }
 .http-bar { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .http-method {
   background: var(--surface-2);
@@ -1094,8 +1184,15 @@ html, body, #app {
   flex-shrink: 0;
 }
 .http-send:hover { filter: brightness(1.1); }
-.http-req { display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.http-req { display: flex; gap: 8px; padding: 8px; height: 180px; flex-shrink: 0; overflow: hidden; }
 .http-field { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.http-divider {
+  height: 6px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: var(--border);
+}
+.http-divider:hover { background: var(--accent); }
 .http-label-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .http-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-dim); }
 .http-action {
@@ -1109,8 +1206,9 @@ html, body, #app {
 }
 .http-action:hover { color: var(--fg); border-color: var(--accent); }
 .http-area {
-  height: 90px;
-  resize: vertical;
+  flex: 1;
+  min-height: 0;
+  resize: none;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 6px;
