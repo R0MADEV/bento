@@ -30,3 +30,16 @@ export function removeSession(state: SessionState, id: string): SessionState {
 export function setActiveSession(state: SessionState, id: string): SessionState {
   return state.sessions.some(s => s.id === id) ? { ...state, activeId: id } : state
 }
+
+export function renameSession(state: SessionState, id: string, name: string): SessionState {
+  const sessions = state.sessions.map(s => s.id === id ? { ...s, name } : s)
+  return { ...state, sessions }
+}
+
+export function duplicateSession(state: SessionState, id: string): SessionState {
+  const source = state.sessions.find(s => s.id === id)
+  if (!source) return state
+  const n = lowestAvailableNumber(sessionNumbers(state.sessions))
+  const copy: Session = { id: `session-${n}`, name: `${source.name} (copia)` }
+  return { sessions: [...state.sessions, copy], activeId: copy.id }
+}
