@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeUrl } from '../../../src/core/web/normalizeUrl'
+import { normalizeUrl, resolveTargetUrl } from '../../../src/core/web/normalizeUrl'
 
 describe('normalizeUrl', () => {
   it('returns https:// URLs unchanged', () => {
@@ -20,5 +20,19 @@ describe('normalizeUrl', () => {
 
   it('handles paths without scheme', () => {
     expect(normalizeUrl('github.com/user/repo')).toBe('https://github.com/user/repo')
+  })
+})
+
+describe('resolveTargetUrl', () => {
+  it('prefers the loaded url', () => {
+    expect(resolveTargetUrl('https://loaded.com', 'typed.com')).toBe('https://loaded.com')
+  })
+
+  it('falls back to the normalized typed value when nothing is loaded', () => {
+    expect(resolveTargetUrl('', 'example.com')).toBe('https://example.com')
+  })
+
+  it('returns empty string when nothing is loaded and the input is blank', () => {
+    expect(resolveTargetUrl('', '   ')).toBe('')
   })
 })
