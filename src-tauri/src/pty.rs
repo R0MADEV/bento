@@ -95,6 +95,18 @@ pub fn pty_spawn(
         cmd.arg("-l");
     }
     cmd.env("TERM", "xterm-256color");
+
+    // Inject the AI provider keys (from the keychain) so `lexis ask` works in any
+    // bento terminal with no manual setup. lexis reads <PROVIDER>_API_KEY from env.
+    let stored = crate::ai_keys::all_keys();
+    for (provider, key) in &stored {
+        cmd.env(crate::ai_keys::env_var(provider), key);
+    }
+    // Default lexis to the first provider that has a key, so bare `lexis ask` works.
+    if let Some((provider, _)) = stored.first() {
+        cmd.env("LEXIS_PROVIDER", provider);
+    }
+
     // Arranca en el home del usuario, como una terminal normal
     if let Some(home) = dirs_home() {
         cmd.cwd(home);

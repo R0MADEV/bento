@@ -1,5 +1,6 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod ai_keys;
 mod pty;
 mod traffic_lights;
 mod web_panel;
@@ -36,6 +37,9 @@ fn main() {
             web_panel::web_panel_set_visible,
             web_panel::web_panel_close,
             web_panel::web_panel_close_all,
+            ai_keys::ai_key_set,
+            ai_keys::ai_key_delete,
+            ai_keys::ai_key_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
