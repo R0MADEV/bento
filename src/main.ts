@@ -5,6 +5,7 @@ import { tvPanelDefinition } from './panels/tv/definition'
 import { terminalPanelDefinition } from './panels/terminal/definition'
 import { webPanelDefinition } from './panels/web/definition'
 import { notesPanelDefinition } from './panels/notes/definition'
+import { httpPanelDefinition } from './panels/http/definition'
 import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
@@ -38,6 +39,7 @@ panels.register(tvPanelDefinition(channelRepo, favoritesRepo, worldRepo))
 panels.register(terminalPanelDefinition)
 panels.register(webPanelDefinition)
 panels.register(notesPanelDefinition)
+panels.register(httpPanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))

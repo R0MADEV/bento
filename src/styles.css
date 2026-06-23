@@ -1056,6 +1056,92 @@ html, body, #app {
 }
 .notes-preview a { color: var(--accent); }
 
+/* ── HTTP client panel ──────────────────────────────────────────────────── */
+.http-panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
+.http-bar { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.http-method {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 6px;
+  outline: none;
+  cursor: pointer;
+}
+.http-url {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+}
+.http-url:focus { border-color: var(--accent); }
+.http-send {
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.http-send:hover { filter: brightness(1.1); }
+.http-req { display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.http-field { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.http-label-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.http-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-dim); }
+.http-action {
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.http-action:hover { color: var(--fg); border-color: var(--accent); }
+.http-area {
+  height: 90px;
+  resize: vertical;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: monospace;
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+}
+.http-area:focus { border-color: var(--accent); }
+.http-res { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px; }
+.http-status { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--fg-dim); }
+.http-status.ok { color: #4caf50; }
+.http-status.warn { color: var(--gold); }
+.http-status.err { color: #f44336; }
+.http-response {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── TV panel ───────────────────────────────────────────────────────────── */
 .tv-panel {
   display: flex;
