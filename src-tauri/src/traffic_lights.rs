@@ -30,18 +30,3 @@ fn set_visible_macos(window: &tauri::WebviewWindow, visible: bool) {
         }
     }
 }
-
-// Pure logic: traffic lights start hidden and only appear on hover.
-pub fn initial_visibility() -> bool {
-    false
-}
-
-#[cfg(test)]
-mod tests {
-    use super::initial_visibility;
-
-    #[test]
-    fn starts_hidden() {
-        assert!(!initial_visibility());
-    }
-}
