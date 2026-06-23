@@ -7,7 +7,8 @@ import { furthestEdgeIndex, type MoveDirection } from '../core/workspace/edge'
 import { canAddPanel } from '../core/workspace/panelLimit'
 import { isUnlocked, setUnlocked, onUnlockChange } from '../panels/panelLockPreference'
 import { icon } from '../ui/icons'
-import { shortcutLabel } from '../ui/platform'
+import { isMac, shortcutLabel } from '../ui/platform'
+import { currentPanelIndex } from '../core/workspace/currentPanel'
 
 export type SplitDirection = 'within' | 'left' | 'right' | 'above' | 'below'
 
@@ -26,15 +27,12 @@ export interface WorkspaceOptions {
   onChange?: () => void
 }
 
-// Un workspace = un Dockview con paneles uniformes (TV, terminal, radio...)
-// que se dividen y tabean igual. Splits y "+" operan a este nivel.
 export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOptions = {}): WorkspaceView {
   const element = document.createElement('div')
   // dockview-theme-dark aporta los estilos estructurales; nuestras --dv-*
   // (en .workspace-view) sobreescriben los colores con el tema activo.
   element.className = 'workspace-view dockview-theme-dark'
 
-  // Dockview se monta en un hijo para que no pise las clases del contenedor.
   const dockHost = document.createElement('div')
   dockHost.className = 'dv-host'
   element.appendChild(dockHost)
@@ -57,6 +55,9 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   type Position = AddPanelOptions['position']
 
   const existingOfType = (type: string) => api.panels.find(p => typeOf(p.id) === type)
+
+  // Mapa panel id → instancia, para poder llamar focus() tras ciclar paneles
+  const instanceMap = new Map<string, import('../panels/registry').PanelInstance>()
 
   const addPanel = (type: string, position?: Position): void => {
     const def = panels.get(type)
@@ -102,6 +103,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       if (!def) throw new Error(`Panel no registrado: ${name}`)
 
       const instance = def.create({ panelId: id, removeSelf: () => removePanel(id) })
+      instanceMap.set(id, instance)
       fits.add(instance.fit ?? (() => {}))
 
       // Context menu: split, move (HTML5 drag doesn't work in WKWebView)
@@ -127,15 +129,21 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
             params.api.onDidDimensionsChange(() => instance.fit!())
             params.api.onDidVisibilityChange(({ isVisible }) => { if (isVisible) instance.fit!() })
           }
+          instance.onTitleChange?.(title => params.api.setTitle(title))
+          instance.onReady?.({
+            maximize: () => params.api.maximize(),
+            exitMaximized: () => params.api.exitMaximized(),
+            isMaximized: () => params.api.isMaximized(),
+          })
         },
         dispose: () => {
           if (instance.fit) fits.delete(instance.fit)
+          instanceMap.delete(id)
           instance.dispose?.()
           fitAll()
         },
       }
     },
-    // "+" en la cabecera: menú con todos los tipos de panel registrados
     createRightHeaderActionComponent: () => {
       const btn = document.createElement('button')
       btn.className = 'group-add-tab'
@@ -158,8 +166,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     if (panel) api.removePanel(panel)
   }
 
-  // Empty state: the workspace starts empty (no panels are auto-opened); show a
-  // card to add panels and to unlock multiples of singleton types (e.g. TV).
   const emptyState = document.createElement('div')
   emptyState.className = 'workspace-empty'
   const card = document.createElement('div')
@@ -169,6 +175,27 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   emptyTitle.className = 'workspace-empty-title'
   emptyTitle.textContent = 'Espacio vacío'
 
+  const mod = isMac ? '⌘' : 'Ctrl'
+
+  const panelHints: Record<string, [string, string][]> = {
+    terminal: [
+      [shortcutLabel('T'), 'Nueva terminal'],
+      [shortcutLabel('D'), 'Split derecha'],
+      [isMac ? '⌘⇧D' : 'Ctrl+Shift+D', 'Split abajo'],
+      [shortcutLabel('F'), 'Buscar'],
+      [shortcutLabel('J'), 'Cambiar tema'],
+      ['Ctrl+Tab', 'Panel siguiente'],
+    [`${mod}+scroll`, 'Zoom'],
+    ],
+    tv: [
+      ['Click', 'Abrir TV'],
+      [shortcutLabel('K'), 'Buscar canal'],
+    ],
+  }
+
+  const hintsEl = document.createElement('div')
+  hintsEl.className = 'workspace-empty-hints hidden'
+
   const actions = document.createElement('div')
   actions.className = 'workspace-empty-actions'
   panels.list().forEach(d => {
@@ -176,14 +203,25 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     btn.className = 'workspace-empty-btn'
     btn.innerHTML = `${icon(d.type)}<span>${d.title}</span>`
     btn.addEventListener('click', () => addInActiveGroup(d.type))
+
+    const hints = panelHints[d.type] ?? []
+    btn.addEventListener('mouseenter', () => {
+      hintsEl.innerHTML = ''
+      hints.forEach(([key, label]) => {
+        const kbd = document.createElement('kbd')
+        kbd.textContent = key
+        const desc = document.createElement('span')
+        desc.textContent = label
+        hintsEl.append(kbd, desc)
+      })
+      hintsEl.classList.remove('hidden')
+    })
+    btn.addEventListener('mouseleave', () => hintsEl.classList.add('hidden'))
+
     actions.appendChild(btn)
   })
 
-  const hint = document.createElement('div')
-  hint.className = 'workspace-empty-hint'
-  hint.textContent = `${shortcutLabel('T')} terminal · ${shortcutLabel('K')} acciones`
-
-  card.append(emptyTitle, actions, hint)
+  card.append(emptyTitle, actions, hintsEl)
 
   // One checkbox per singleton type to allow multiple instances.
   const unlockUnsubs: Array<() => void> = []
@@ -214,13 +252,12 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
 
   const isFocused = (): boolean => element.contains(document.activeElement)
 
-  // Atajos, solo en el workspace enfocado:
-  // Cmd/Ctrl+T nueva terminal · Cmd+D split derecha · Cmd+Shift+D split abajo
-  // Cmd/Ctrl+J cambia el tema de la terminal
   const onKeydown = (e: KeyboardEvent): void => {
+    if (!isFocused()) return
     const mod = e.metaKey || e.ctrlKey
-    if (!mod || !isFocused()) return
     const active = api.activePanel
+
+    if (!mod) return
 
     if (e.key === 't') {
       e.preventDefault()
@@ -228,15 +265,66 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     } else if (e.key === 'd' && active) {
       e.preventDefault()
       splitFrom(active.id, e.shiftKey ? 'below' : 'right')
-    } else if (e.key === 'j') {
-      e.preventDefault()
-      cycleTheme()
     }
   }
   window.addEventListener('keydown', onKeydown)
 
-  // Restaurar el layout guardado; si no hay, el workspace queda vacío y se
-  // muestra el empty state (el usuario abre los paneles que quiera).
+  const cyclePanel = (reverse: boolean) => {
+    const all = api.panels
+    if (all.length < 2) return
+    const idx = currentPanelIndex(
+      all,
+      document.activeElement,
+      id => instanceMap.get(id)?.element,
+      api.activePanel?.id ?? null,
+    )
+    const next = all[(idx + (reverse ? -1 : 1) + all.length) % all.length]
+    next.api.setActive()
+    requestAnimationFrame(() => instanceMap.get(next.id)?.focus?.())
+  }
+
+  // Ctrl+Tab desde terminales (xterm intercepta el keydown y lo re-despacha)
+  const onCyclePanel = (e: Event) => {
+    if (!isFocused()) return
+    cyclePanel((e as CustomEvent<{ reverse: boolean }>).detail.reverse)
+  }
+  window.addEventListener('bento:cycle-panel', onCyclePanel)
+
+  const onCyclePanelKeydown = (e: KeyboardEvent) => {
+    const isCycleShortcut = e.ctrlKey && e.key === 'Tab' && isFocused()
+    if (!isCycleShortcut) return
+    e.preventDefault()
+    cyclePanel(e.shiftKey)
+  }
+  window.addEventListener('keydown', onCyclePanelKeydown)
+
+  dockHost.addEventListener('dblclick', e => {
+    const tabContent = (e.target as HTMLElement).closest<HTMLElement>('.dv-default-tab-content')
+    if (!tabContent) return
+    const title = tabContent.textContent?.trim() ?? ''
+    const panel = api.panels.find(p => p.title === title)
+    if (!panel) return
+
+    const input = document.createElement('input')
+    input.className = 'dv-tab-rename'
+    input.value = title
+    tabContent.textContent = ''
+    tabContent.appendChild(input)
+    input.select()
+    input.focus()
+
+    const save = () => {
+      const next = input.value.trim() || title
+      panel.api.setTitle(next)
+    }
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur() }
+      if (e.key === 'Escape') { input.value = title; input.blur() }
+      e.stopPropagation()
+    })
+    input.addEventListener('blur', save)
+  })
+
   tryRestore(options.savedLayout)
   updateEmpty()
 
@@ -259,6 +347,8 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     addPanel: type => addInActiveGroup(type),
     dispose: () => {
       window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('keydown', onCyclePanelKeydown)
+      window.removeEventListener('bento:cycle-panel', onCyclePanel)
       unlockUnsubs.forEach(unsub => unsub())
       api.dispose()
     },
