@@ -40,10 +40,15 @@ export function createWebPanel() {
   input.placeholder = 'https://…'
   input.spellcheck = false
 
+  const reloadBtn = document.createElement('button')
+  reloadBtn.className = 'web-bar-btn'
+  reloadBtn.title = 'Recargar'
+  reloadBtn.innerHTML = icon('refresh')
+
   const goBtn = document.createElement('button')
   goBtn.className = 'web-bar-btn'
   goBtn.title = 'Navegar'
-  goBtn.innerHTML = icon('refresh')
+  goBtn.innerHTML = icon('arrow-right')
 
   // Per-site engine: Chrome UA (WhatsApp etc.) vs native Safari (Google login).
   const uaSelect = document.createElement('select')
@@ -64,9 +69,9 @@ export function createWebPanel() {
   const bmBtn = document.createElement('button')
   bmBtn.className = 'web-bar-btn'
   bmBtn.title = 'Favoritos'
-  bmBtn.innerHTML = icon('list')
+  bmBtn.innerHTML = icon('bookmark')
 
-  bar.append(input, uaSelect, starBtn, bmBtn, goBtn)
+  bar.append(input, uaSelect, starBtn, bmBtn, reloadBtn, goBtn)
 
   // Autocomplete from history, anchored under the URL input.
   const suggest = document.createElement('div')
@@ -255,6 +260,7 @@ export function createWebPanel() {
     e.stopPropagation()
   })
   goBtn.addEventListener('click', () => { if (input.value) navigate(input.value) })
+  reloadBtn.addEventListener('click', () => { if (currentUrl) navigate(currentUrl) })
 
   // The native webview floats above the DOM, immune to CSS — it must be hidden
   // explicitly when the panel isn't visible. checkVisibility is computed from the

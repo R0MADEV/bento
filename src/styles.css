@@ -739,8 +739,11 @@ html, body, #app {
   justify-content: center;
   width: 26px;
   height: 26px;
+  border: none;
+  background: none;
   border-radius: 5px;
   color: var(--fg-dim);
+  cursor: pointer;
   flex-shrink: 0;
 }
 .web-bar-btn:hover { background: var(--surface-2); color: var(--fg); }
@@ -777,6 +780,9 @@ html, body, #app {
   display: block;
   width: 100%;
   text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
   padding: 6px 10px;
   font-size: 12px;
   color: var(--fg-dim);
