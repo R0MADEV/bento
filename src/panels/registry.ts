@@ -8,12 +8,19 @@ export interface PanelContext {
   removeSelf: () => void
 }
 
+export interface PanelApi {
+  maximize(): void
+  exitMaximized(): void
+  isMaximized(): boolean
+}
+
 export interface PanelInstance {
   element: HTMLElement
-  // Re-ajuste al cambiar de tamaño/visibilidad (opcional)
   fit?: () => void
-  // Limpieza de recursos al cerrar (opcional)
+  focus?: () => void
   dispose?: () => void
+  onTitleChange?: (cb: (title: string) => void) => () => void
+  onReady?: (api: PanelApi) => void
 }
 
 export interface PanelDefinition {

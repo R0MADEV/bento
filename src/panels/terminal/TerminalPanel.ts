@@ -6,22 +6,42 @@ import { Unicode11Addon } from 'xterm-addon-unicode11'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { getTheme } from '../../core/terminal/themes'
+import { getTheme, themeNames, themeLabels } from '../../core/terminal/themes'
+import { mix, isDark } from '../../core/terminal/color'
 import { dimsChanged, type Dims } from '../../core/terminal/dims'
 import { splitAtSyncBoundary } from '../../core/terminal/syncOutput'
 import { getThemeName, onThemeChange } from './themePreference'
+import { nextTheme } from '../../core/terminal/nextTheme'
+import { loadProfiles, addProfile, removeProfile } from '../../core/terminal/profiles'
 import { createSearchBar } from './searchBar'
+import { icon } from '../../ui/icons'
+import type { PanelApi } from '../registry'
 import 'xterm/css/xterm.css'
 
+const HISTORY_KEY = (id: string) => `bento.terminal.history.${id}`
+const HISTORY_LIMIT = 80_000
+
 let ptyCounter = 0
+
+function showCommandDoneToast(termRoot: HTMLElement): void {
+  const existing = termRoot.querySelector('.term-toast')
+  if (existing) return
+  const toast = document.createElement('div')
+  toast.className = 'term-toast'
+  toast.textContent = '✓ Comando terminado'
+  termRoot.appendChild(toast)
+  setTimeout(() => toast.remove(), 3000)
+}
 
 export interface TerminalPanelHandle {
   element: HTMLElement
   fit: () => void
   dispose: () => void
+  onTitleChange: (cb: (title: string) => void) => () => void
+  onReady: (api: PanelApi) => void
 }
 
-export function createTerminalPanel(): TerminalPanelHandle {
+export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -29,7 +49,6 @@ export function createTerminalPanel(): TerminalPanelHandle {
     cursorBlink: true,
     cursorStyle: 'bar',
     fontSize: 13,
-    // Prefiere Nerd Fonts (iconos de Powerlevel10k/Starship); si no, mono normal
     fontFamily: '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace',
     fontWeight: '400',
     fontWeightBold: '700',
@@ -45,7 +64,119 @@ export function createTerminalPanel(): TerminalPanelHandle {
     theme: getTheme(getThemeName()),
   })
 
-  const unsubscribeTheme = onThemeChange(name => { term.options.theme = getTheme(name) })
+  let localTheme = getThemeName()
+  let followGlobal = true
+
+  const applyLocalTheme = (name: string) => {
+    const t = getTheme(name)
+    term.options.theme = t
+
+    // xterm DOM renderer: actualizar el viewport directamente (no espera actividad)
+    const viewport = root.querySelector<HTMLElement>('.xterm-viewport')
+    if (viewport) viewport.style.backgroundColor = t.background
+    root.style.backgroundColor = t.background
+    term.refresh(0, term.rows - 1)
+
+    // La barra de tabs del grupo usa --surface (derivada del tema global).
+    // Al cambiar el tema local hay que sobreescribirla en el .dv-groupview
+    // para que la cabecera refleje el color del nuevo tema de esta terminal.
+    const groupView = root.closest<HTMLElement>('.dv-groupview')
+    if (groupView) {
+      const shade = isDark(t.background) ? '#ffffff' : '#000000'
+      groupView.style.setProperty('--surface', mix(t.background, shade, 0.05))
+    }
+  }
+
+  const unsubscribeTheme = onThemeChange(name => {
+    if (followGlobal) { localTheme = name; applyLocalTheme(name) }
+  })
+
+  const cycleLocalTheme = () => {
+    followGlobal = false
+    localTheme = nextTheme(localTheme, themeNames)
+    applyLocalTheme(localTheme)
+  }
+
+  const applyCustomBackground = (bg: string) => {
+    followGlobal = false
+    const base = getTheme(localTheme)
+    const custom = { ...base, background: bg, cursorAccent: bg }
+    term.options.theme = custom
+    const viewport = root.querySelector<HTMLElement>('.xterm-viewport')
+    if (viewport) viewport.style.backgroundColor = bg
+    root.style.backgroundColor = bg
+    term.refresh(0, term.rows - 1)
+    const groupView = root.closest<HTMLElement>('.dv-groupview')
+    if (groupView) {
+      const shade = isDark(bg) ? '#ffffff' : '#000000'
+      groupView.style.setProperty('--surface', mix(bg, shade, 0.05))
+    }
+  }
+
+  const popover = document.createElement('div')
+  popover.className = 'term-theme-popover hidden'
+
+  const swatches = document.createElement('div')
+  swatches.className = 'term-theme-swatches'
+  themeNames.forEach(name => {
+    const t = getTheme(name)
+    const swatch = document.createElement('button')
+    swatch.className = 'term-theme-swatch'
+    swatch.title = themeLabels[name] ?? name
+    swatch.style.background = t.background
+    swatch.style.borderColor = t.blue
+    swatch.addEventListener('click', () => {
+      followGlobal = false
+      localTheme = name
+      applyLocalTheme(name)
+      popover.classList.add('hidden')
+    })
+    swatches.appendChild(swatch)
+  })
+
+  const colorRow = document.createElement('label')
+  colorRow.className = 'term-theme-color-row'
+  colorRow.textContent = 'Color personalizado'
+  const colorInput = document.createElement('input')
+  colorInput.type = 'color'
+  colorInput.value = getTheme(localTheme).background
+  colorInput.addEventListener('input', () => applyCustomBackground(colorInput.value))
+  colorRow.appendChild(colorInput)
+
+  const isWin = navigator.platform.includes('Win')
+  const shellOptions = isWin
+    ? [['auto', 'Auto (SHELL)'], ['powershell.exe', 'PowerShell'], ['cmd.exe', 'CMD']]
+    : [['auto', 'Auto (SHELL)'], ['/bin/zsh', 'zsh'], ['/bin/bash', 'bash'], ['fish', 'fish'], ['/bin/sh', 'sh']]
+
+  const shellRow = document.createElement('div')
+  shellRow.className = 'term-theme-color-row'
+  const shellLabel = document.createElement('span')
+  shellLabel.textContent = 'Shell'
+  const shellSelect = document.createElement('select')
+  shellSelect.className = 'term-shell-select'
+  shellOptions.forEach(([val, label]) => {
+    const opt = document.createElement('option')
+    opt.value = val
+    opt.textContent = label
+    shellSelect.appendChild(opt)
+  })
+  shellRow.append(shellLabel, shellSelect)
+
+  popover.append(swatches, colorRow, shellRow)
+  popover.addEventListener('click', e => e.stopPropagation())
+  root.appendChild(popover)
+
+  const themeBtn = document.createElement('button')
+  themeBtn.className = 'term-theme-btn'
+  themeBtn.title = 'Cambiar tema de esta terminal'
+  themeBtn.innerHTML = icon('palette')
+  themeBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    popover.classList.toggle('hidden')
+  })
+  root.appendChild(themeBtn)
+
+  root.addEventListener('click', () => popover.classList.add('hidden'))
 
   const fitAddon = new FitAddon()
   const searchAddon = new SearchAddon()
@@ -54,28 +185,55 @@ export function createTerminalPanel(): TerminalPanelHandle {
   term.loadAddon(new Unicode11Addon())
   term.unicode.activeVersion = '11'
 
-  // Links clicables → abrir en el navegador del SO
   term.loadAddon(new WebLinksAddon((_event, uri) => {
     openUrl(uri).catch(() => {})
   }))
 
   term.open(root)
 
-  // Default DOM renderer (no WebGL/canvas): it updates cells incrementally and
-  // never clears a whole canvas, so fullscreen redraws don't blank/flicker in
-  // WKWebView. Fast enough for a single terminal.
-
   fitAddon.fit()
 
-  // Barra de búsqueda (Ctrl/Cmd+F)
+  const savedHistory = panelId ? localStorage.getItem(HISTORY_KEY(panelId)) : null
+  if (savedHistory) {
+    term.write(savedHistory)
+    term.write('\r\n\x1b[2m— historial restaurado —\x1b[0m\r\n')
+  }
+
   const searchBar = createSearchBar(searchAddon)
   root.appendChild(searchBar.element)
 
   const id = `pty-${++ptyCounter}`
-  const shell = navigator.platform.includes('Win') ? 'powershell.exe' : '/bin/bash'
 
-  invoke('pty_spawn', { id, shell, rows: term.rows, cols: term.cols })
-    .catch(err => term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`))
+  let historyBuffer = ''
+
+  const spawnShell = (shellPath: string) => {
+    const resolved = shellPath === 'auto' ? (isWin ? 'powershell.exe' : '/bin/sh') : shellPath
+    invoke('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols })
+      .catch(err => term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`))
+  }
+
+  spawnShell('auto')
+
+  shellSelect.addEventListener('change', () => {
+    invoke('pty_kill', { id }).catch(() => {})
+    term.reset()
+    spawnShell(shellSelect.value)
+    popover.classList.add('hidden')
+  })
+
+  // OSC 133;C = command start, 133;D = command end (shell integration)
+  let commandRunning = false
+  term.parser.registerOscHandler(133, data => {
+    if (data.startsWith('C')) commandRunning = true
+    const isCommandEnd = commandRunning && data.startsWith('D')
+    if (isCommandEnd) {
+      commandRunning = false
+      const groupView = root.closest<HTMLElement>('.dv-groupview')
+      const isVisible = groupView?.classList.contains('dv-active-group') ?? false
+      if (!isVisible) showCommandDoneToast(root)
+    }
+    return true
+  })
 
   // Respect DEC mode 2026 (Synchronized Output): catunes (Ink) brackets each
   // frame in ESC[?2026h..l so terminals show whole frames. xterm.js 5.3 ignores
@@ -87,7 +245,11 @@ export function createTerminalPanel(): TerminalPanelHandle {
     pending += event.payload
     const { flush, keep } = splitAtSyncBoundary(pending)
     pending = keep
-    if (flush) term.write(flush)
+    if (flush) {
+      term.write(flush)
+      historyBuffer += flush
+      if (historyBuffer.length > HISTORY_LIMIT) historyBuffer = historyBuffer.slice(-HISTORY_LIMIT)
+    }
     if (safety) clearTimeout(safety)
     // Never hold an unterminated frame indefinitely (spec uses a ~150ms cap).
     safety = pending ? setTimeout(() => { term.write(pending); pending = '' }, 150) : undefined
@@ -97,12 +259,29 @@ export function createTerminalPanel(): TerminalPanelHandle {
     invoke('pty_write', { id, data }).catch(() => {})
   })
 
-  // Copiar/pegar
+  const BASE_FONT_SIZE = 13
+  const MIN_FONT_SIZE = 8
+  const MAX_FONT_SIZE = 32
+
+  const setFontSize = (size: number) => {
+    term.options.fontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, size))
+    fit()
+  }
+
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
     const mod = e.metaKey || e.ctrlKey
 
-    if (mod && e.key === 'c' && term.hasSelection()) {
+    // Ctrl+Tab reaches xterm before window — re-dispatch so the workspace can cycle panels.
+    // stopPropagation prevents the native keydown from also reaching onCyclePanelKeydown.
+    if (e.ctrlKey && e.key === 'Tab') {
+      e.stopPropagation()
+      window.dispatchEvent(new CustomEvent('bento:cycle-panel', { detail: { reverse: e.shiftKey } }))
+      return false
+    }
+
+    const isCopy = mod && e.key === 'c' && term.hasSelection()
+    if (isCopy) {
       navigator.clipboard.writeText(term.getSelection()).catch(() => {})
       return false
     }
@@ -116,8 +295,32 @@ export function createTerminalPanel(): TerminalPanelHandle {
       searchBar.toggle()
       return false
     }
+    if (mod && e.key === 'j') {
+      cycleLocalTheme()
+      return false
+    }
+    if (mod && (e.key === '=' || e.key === '+')) {
+      setFontSize((term.options.fontSize ?? BASE_FONT_SIZE) + 1)
+      return false
+    }
+    if (mod && e.key === '-') {
+      setFontSize((term.options.fontSize ?? BASE_FONT_SIZE) - 1)
+      return false
+    }
+    if (mod && e.key === '0') {
+      setFontSize(BASE_FONT_SIZE)
+      return false
+    }
     return true
   })
+
+  // capture:true prevents xterm from scrolling instead of zooming
+  root.addEventListener('wheel', e => {
+    if (!e.metaKey && !e.ctrlKey) return
+    e.preventDefault()
+    const delta = e.deltaY < 0 ? 1 : -1
+    setFontSize((term.options.fontSize ?? BASE_FONT_SIZE) + delta)
+  }, { passive: false, capture: true })
 
   root.addEventListener('click', () => term.focus())
   setTimeout(() => term.focus(), 100)
@@ -140,17 +343,99 @@ export function createTerminalPanel(): TerminalPanelHandle {
   observer.observe(root)
 
   const dispose = () => {
+    if (panelId && historyBuffer) {
+      try { localStorage.setItem(HISTORY_KEY(panelId), historyBuffer.slice(-HISTORY_LIMIT)) } catch { /* storage lleno */ }
+    }
     observer.disconnect()
     unsubscribeTheme()
     invoke('pty_kill', { id }).catch(() => {})
-    // Guard term.dispose: if it throws and the exception reaches Dockview, it
-    // breaks removePanel and the layout doesn't redistribute.
-    try {
-      term.dispose()
-    } catch {
-      // ignored
-    }
+    try { term.dispose() } catch { /* ignorar */ }
   }
 
-  return { element: root, fit, dispose }
+  const onTitleChange = (cb: (title: string) => void): (() => void) => {
+    const d1 = term.onTitleChange(title => { if (title) cb(title) })
+
+    const d2 = term.parser.registerOscHandler(7, data => {
+      try {
+        const path = decodeURIComponent(new URL(data).pathname)
+        if (path) cb(path.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~'))
+      } catch { /* URL inválida, ignorar */ }
+      return true
+    })
+
+    return () => { d1.dispose(); d2.dispose() }
+  }
+
+  const maxBtn = document.createElement('button')
+  maxBtn.className = 'term-theme-btn term-max-btn'
+  maxBtn.title = 'Maximizar / restaurar'
+  maxBtn.innerHTML = icon('expand')
+
+  const onReady = (panelApi: PanelApi) => {
+    maxBtn.addEventListener('click', () => {
+      if (panelApi.isMaximized()) panelApi.exitMaximized()
+      else panelApi.maximize()
+    })
+
+    const profilesSection = document.createElement('div')
+    profilesSection.className = 'term-profiles-section'
+
+    const renderProfiles = () => {
+      profilesSection.innerHTML = ''
+      const profiles = loadProfiles()
+
+      if (profiles.length) {
+        const list = document.createElement('div')
+        list.className = 'term-profile-list'
+        profiles.forEach(p => {
+          const row = document.createElement('div')
+          row.className = 'term-profile-row'
+          const nameBtn = document.createElement('button')
+          nameBtn.className = 'term-profile-name'
+          nameBtn.textContent = p.name
+          nameBtn.title = `Shell: ${p.shell} · Tema: ${p.theme} · ${p.fontSize}px`
+          nameBtn.addEventListener('click', () => {
+            followGlobal = false
+            localTheme = p.theme
+            applyLocalTheme(p.theme)
+            setFontSize(p.fontSize)
+            invoke('pty_kill', { id }).catch(() => {})
+            term.reset()
+            spawnShell(p.shell)
+            popover.classList.add('hidden')
+          })
+          const delBtn = document.createElement('button')
+          delBtn.className = 'term-profile-del'
+          delBtn.textContent = '×'
+          delBtn.addEventListener('click', () => { removeProfile(p.id); renderProfiles() })
+          row.append(nameBtn, delBtn)
+          list.appendChild(row)
+        })
+        profilesSection.appendChild(list)
+      }
+
+      const saveBtn = document.createElement('button')
+      saveBtn.className = 'term-profile-save'
+      saveBtn.textContent = '+ Guardar perfil actual'
+      saveBtn.addEventListener('click', () => {
+        const name = prompt('Nombre del perfil:')
+        if (!name?.trim()) return
+        addProfile({
+          name: name.trim(),
+          shell: shellSelect.value,
+          theme: localTheme,
+          fontSize: term.options.fontSize ?? BASE_FONT_SIZE,
+        })
+        renderProfiles()
+      })
+      profilesSection.appendChild(saveBtn)
+    }
+
+    renderProfiles()
+    popover.appendChild(profilesSection)
+  }
+
+  root.appendChild(maxBtn)
+
+  return { element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady }
 }

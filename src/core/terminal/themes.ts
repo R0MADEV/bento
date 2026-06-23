@@ -115,6 +115,15 @@ const THEMES: Record<string, TerminalTheme> = {
     brightBlack: '#959da5', brightRed: '#cb2431', brightGreen: '#28a745', brightYellow: '#dbab09',
     brightBlue: '#2188ff', brightMagenta: '#8a63d2', brightCyan: '#3192aa', brightWhite: '#d1d5da',
   },
+  // Negro puro
+  black: {
+    background: '#000000', foreground: '#e0e0e0', cursor: '#ffffff', cursorAccent: '#000000',
+    selectionBackground: '#333333',
+    black: '#000000', red: '#ff5f57', green: '#27c93f', yellow: '#ffbd2e',
+    blue: '#4fc3f7', magenta: '#ce88ff', cyan: '#5af7e9', white: '#e0e0e0',
+    brightBlack: '#686868', brightRed: '#ff5f57', brightGreen: '#27c93f', brightYellow: '#ffbd2e',
+    brightBlue: '#4fc3f7', brightMagenta: '#ce88ff', brightCyan: '#5af7e9', brightWhite: '#ffffff',
+  },
 }
 
 export const themeNames = Object.keys(THEMES)
@@ -129,6 +138,7 @@ export const themeLabels: Record<string, string> = {
   monokai: 'Monokai',
   solarized: 'Solarized',
   light: 'Claro',
+  black: 'Negro',
 }
 
 export function getTheme(name: string): TerminalTheme {
