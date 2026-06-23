@@ -4,7 +4,22 @@
 
 Inspirado en VSCode, pero **genérico**: no asume que trabajas con código. Funciona en **Linux, macOS, Windows**. Paneles redimensionables, tabs, workspaces guardados, ventanas flotantes, multi-window.
 
-> **Estado**: paneles Terminal, TV y Web funcionando, con sesiones, temas, layout tile/tabs y persistencia. Pendiente: ventanas flotantes y multi-window.
+> **Estado**: paneles **Terminal, TV, Web, Notas y HTTP** funcionando, con sesiones
+> atadas a proyecto, temas, layout tile/tabs, persistencia y un asistente de IA
+> opcional vía terminal. Pendiente: ventanas flotantes y multi-window.
+
+## Paneles disponibles
+
+| Panel | Qué hace |
+|-------|----------|
+| **Terminal** | Shell real (xterm + PTY): temas por terminal, perfiles, búsqueda, historial, zoom, restaura el directorio al reabrir |
+| **TV** | IPTV con HLS.js: lista de canales (M3U + iptv-org), favoritos, embeds (YouTube/Twitch…) |
+| **Web** | Navegador embebido (webview nativo): bookmarks por proyecto, historial, user-agent por sitio |
+| **Notas** | Editor markdown en archivos `.md` (`~/.config/bento/notes/`): frontmatter (categoría, tags), vista previa, undo propio |
+| **HTTP** | Cliente tipo Postman: métodos, cabeceras, body, plantillas, e **importa OpenAPI/Swagger** como colecciones navegables |
+
+**Sesiones = proyectos**: una sesión se ata a la carpeta de la terminal activa, y las
+terminales nuevas arrancan ahí.
 
 ---
 
@@ -150,8 +165,8 @@ bento/
 ├── src/                               ← Frontend (TypeScript)
 │   ├── main.ts                        ← composition root: registra paneles, monta la app
 │   ├── app/                           ← createSessionManager, createWorkspaceView
-│   ├── core/                          ← lógica pura testeada (session, terminal, channel, web, workspace)
-│   ├── panels/                        ← terminal/, tv/, web/ + registry
+│   ├── core/                          ← lógica pura testeada (session, terminal, channel, web, notes, http…)
+│   ├── panels/                        ← terminal/, tv/, web/, notes/, http/ + registry
 │   ├── ui/                            ← commandPalette, contextMenu, icons, preferencias
 │   ├── adapters/ · ports/             ← repos (canales, favoritos, estado) e interfaces
 │   ├── assets/                        ← M3U bundled, etc.
@@ -159,12 +174,12 @@ bento/
 ├── src-tauri/                         ← Backend (Rust)
 │   ├── Cargo.toml · tauri.conf.json · icons/
 │   └── src/
-│       ├── main.rs                    ← comandos + arranque Tauri
+│       ├── main.rs                    ← comandos (http_request…) + menú + arranque
 │       ├── pty.rs                     ← terminal PTY (+ restaura cwd)
 │       ├── web_panel.rs               ← webview nativo embebido
+│       ├── notes.rs                   ← notas como archivos .md
 │       ├── traffic_lights.rs          ← semáforos macOS
-│       ├── window_prefs.rs            ← decoraciones de ventana
-│       └── workspace_io.rs            ← persistencia
+│       └── window_prefs.rs            ← decoraciones de ventana
 ├── tests/                             ← Vitest (núcleo puro)
 └── README.md
 ```
@@ -181,9 +196,12 @@ bento/
 - **Fase 5**: Tabs dentro de paneles ✅
 - **Fase 6**: Persistencia y sesiones (renombrar, duplicar, export/import) ✅
 - **Fase 7**: Panel Web (webview nativo, bookmarks, historial) ✅
-- **Fase 8**: Ventanas flotantes — pendiente
-- **Fase 9**: Multi-window (varios windows del SO) — pendiente
-- **Fase 10**: Pulido y distribución — en curso
+- **Fase 8**: Panel Notas (archivos `.md`, frontmatter, vista previa) ✅
+- **Fase 9**: Sesiones atadas a proyecto ✅
+- **Fase 10**: Panel HTTP (cliente REST + import OpenAPI/Swagger) ✅
+- **Fase 11**: Ventanas flotantes — pendiente
+- **Fase 12**: Multi-window (varios windows del SO) — pendiente
+- **Fase 13**: Pulido y distribución — en curso
 
 ---
 
