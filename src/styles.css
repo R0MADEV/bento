@@ -984,6 +984,18 @@ html, body, #app {
   outline: none;
 }
 
+.term-font-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 11px;
+  padding: 2px 4px;
+  outline: none;
+  width: 120px;
+}
+.term-font-input:focus { border-color: var(--accent); }
+
 /* Toast de comando terminado */
 .term-toast {
   position: absolute;

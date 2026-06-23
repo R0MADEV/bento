@@ -4,6 +4,7 @@ export interface TerminalProfile {
   shell: string
   theme: string
   fontSize: number
+  fontFamily?: string
 }
 
 const KEY = 'bento.terminal.profiles'

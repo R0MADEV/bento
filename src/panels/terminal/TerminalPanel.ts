@@ -13,6 +13,7 @@ import { splitAtSyncBoundary } from '../../core/terminal/syncOutput'
 import { getThemeName, onThemeChange } from './themePreference'
 import { nextTheme } from '../../core/terminal/nextTheme'
 import { loadProfiles, addProfile, removeProfile } from '../../core/terminal/profiles'
+import { createActivityTracker } from '../../core/terminal/activityTracker'
 import { createSearchBar } from './searchBar'
 import { icon } from '../../ui/icons'
 import type { PanelApi } from '../registry'
@@ -42,15 +43,19 @@ export interface TerminalPanelHandle {
   onReady: (api: PanelApi) => void
 }
 
+const DEFAULT_FONT_FAMILY = '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace'
+
 export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
+
+  let localFontFamily = DEFAULT_FONT_FAMILY
 
   const term = new Terminal({
     cursorBlink: true,
     cursorStyle: 'bar',
     fontSize: 13,
-    fontFamily: '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace',
+    fontFamily: localFontFamily,
     fontWeight: '400',
     fontWeightBold: '700',
     // Keep defaults (1.0 / 0): box-drawing and block chars must tile without
@@ -67,6 +72,10 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
 
   let localTheme = getThemeName()
   let followGlobal = true
+
+  let titleCallback: ((title: string) => void) | undefined
+  const tracker = createActivityTracker(t => titleCallback?.(t))
+  const focusDisposable = term.onFocus(() => tracker.onFocus())
 
   const applyLocalTheme = (name: string) => {
     const t = getTheme(name)
@@ -163,7 +172,22 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
   })
   shellRow.append(shellLabel, shellSelect)
 
-  popover.append(swatches, colorRow, shellRow)
+  const fontRow = document.createElement('div')
+  fontRow.className = 'term-theme-color-row'
+  const fontLabel = document.createElement('span')
+  fontLabel.textContent = 'Fuente'
+  const fontInput = document.createElement('input')
+  fontInput.className = 'term-font-input'
+  fontInput.type = 'text'
+  fontInput.placeholder = 'monospace'
+  fontInput.addEventListener('change', () => {
+    localFontFamily = fontInput.value.trim() || DEFAULT_FONT_FAMILY
+    term.options.fontFamily = localFontFamily
+    fit()
+  })
+  fontRow.append(fontLabel, fontInput)
+
+  popover.append(swatches, colorRow, shellRow, fontRow)
   popover.addEventListener('click', e => e.stopPropagation())
   root.appendChild(popover)
 
@@ -250,6 +274,7 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
       term.write(flush)
       historyBuffer += flush
       if (historyBuffer.length > HISTORY_LIMIT) historyBuffer = historyBuffer.slice(-HISTORY_LIMIT)
+      tracker.onOutput(root.contains(document.activeElement))
     }
     if (safety) clearTimeout(safety)
     // Never hold an unterminated frame indefinitely (spec uses a ~150ms cap).
@@ -312,6 +337,10 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
       setFontSize(BASE_FONT_SIZE)
       return false
     }
+    if (mod && e.key === 'k') {
+      term.clear()
+      return false
+    }
     return true
   })
 
@@ -349,22 +378,24 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
     }
     observer.disconnect()
     unsubscribeTheme()
+    focusDisposable.dispose()
     invoke('pty_kill', { id }).catch(() => {})
     try { term.dispose() } catch { /* ignorar */ }
   }
 
   const onTitleChange = (cb: (title: string) => void): (() => void) => {
-    const d1 = term.onTitleChange(title => { if (title) cb(title) })
+    titleCallback = cb
+    const d1 = term.onTitleChange(title => { if (title) tracker.setBase(title) })
 
     const d2 = term.parser.registerOscHandler(7, data => {
       try {
         const path = decodeURIComponent(new URL(data).pathname)
-        if (path) cb(path.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~'))
+        if (path) tracker.setBase(path.replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~'))
       } catch { /* URL inválida, ignorar */ }
       return true
     })
 
-    return () => { d1.dispose(); d2.dispose() }
+    return () => { titleCallback = undefined; d1.dispose(); d2.dispose() }
   }
 
   const maxBtn = document.createElement('button')
@@ -394,12 +425,17 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
           const nameBtn = document.createElement('button')
           nameBtn.className = 'term-profile-name'
           nameBtn.textContent = p.name
-          nameBtn.title = `Shell: ${p.shell} · Tema: ${p.theme} · ${p.fontSize}px`
+          nameBtn.title = `Shell: ${p.shell} · Tema: ${p.theme} · ${p.fontSize}px${p.fontFamily ? ` · ${p.fontFamily}` : ''}`
           nameBtn.addEventListener('click', () => {
             followGlobal = false
             localTheme = p.theme
             applyLocalTheme(p.theme)
             setFontSize(p.fontSize)
+            if (p.fontFamily) {
+              localFontFamily = p.fontFamily
+              fontInput.value = p.fontFamily
+              term.options.fontFamily = p.fontFamily
+            }
             invoke('pty_kill', { id }).catch(() => {})
             term.reset()
             spawnShell(p.shell)
@@ -426,6 +462,7 @@ export function createTerminalPanel(panelId = ''): TerminalPanelHandle {
           shell: shellSelect.value,
           theme: localTheme,
           fontSize: term.options.fontSize ?? BASE_FONT_SIZE,
+          fontFamily: localFontFamily !== DEFAULT_FONT_FAMILY ? localFontFamily : undefined,
         })
         renderProfiles()
       })
