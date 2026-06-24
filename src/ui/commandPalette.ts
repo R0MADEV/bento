@@ -21,6 +21,10 @@ export function createCommandPalette(getCommands: () => Command[]): HTMLElement 
 
   let results: Command[] = []
   let selected = 0
+  // scrollIntoView triggers a synthetic mousemove (same coords) that would hijack
+  // the keyboard selection; we only honour a mousemove when the pointer truly moves.
+  let lastX = -1
+  let lastY = -1
 
   const close = (): void => {
     overlay.classList.add('hidden')
@@ -43,14 +47,23 @@ export function createCommandPalette(getCommands: () => Command[]): HTMLElement 
       row.className = i === selected ? 'cmdk-item selected' : 'cmdk-item'
       row.innerHTML = `<span>${cmd.label}</span>${cmd.hint ? `<kbd>${cmd.hint}</kbd>` : ''}`
       row.addEventListener('click', () => run(cmd))
-      row.addEventListener('mousemove', () => { selected = i; highlight() })
+      row.addEventListener('mousemove', e => {
+        if (e.clientX === lastX && e.clientY === lastY) return
+        lastX = e.clientX
+        lastY = e.clientY
+        selected = i
+        highlight()
+      })
       list.appendChild(row)
     })
   }
 
   const highlight = (): void => {
-    list.querySelectorAll('.cmdk-item').forEach((el, i) =>
-      el.classList.toggle('selected', i === selected))
+    list.querySelectorAll('.cmdk-item').forEach((el, i) => {
+      const isSelected = i === selected
+      el.classList.toggle('selected', isSelected)
+      if (isSelected) el.scrollIntoView({ block: 'nearest' })
+    })
   }
 
   const open = (): void => {
