@@ -4,6 +4,7 @@
   "description": "Modular and open source desktop workspace",
   "type": "module",
   "dependencies": {
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "dockview-core": "^4.3.0",
     "hls.js": "^1.4.0",

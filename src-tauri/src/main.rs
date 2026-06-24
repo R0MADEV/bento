@@ -1,7 +1,9 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod db;
 mod notes;
 mod pty;
+mod scripts;
 mod traffic_lights;
 mod web_panel;
 mod window_prefs;
@@ -97,6 +99,7 @@ fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             install_menu(app)?;
@@ -121,6 +124,30 @@ fn main() {
             notes::notes_list,
             notes::notes_write,
             notes::notes_delete,
+            scripts::list_scripts,
+            db::db_docker_ps,
+            db::db_inspect_env,
+            db::db_check_ports,
+            db::db_docker_list_mysql,
+            db::db_docker_list_mongo,
+            db::db_docker_mysql_tables,
+            db::db_docker_mysql_rows,
+            db::db_docker_mysql_pk,
+            db::db_docker_mysql_update,
+            db::db_docker_mysql_delete,
+            db::db_docker_mongo_collections,
+            db::db_docker_mongo_docs,
+            db::db_docker_mongo_update,
+            db::db_docker_mongo_delete,
+            db::db_docker_pg_databases,
+            db::db_docker_pg_tables,
+            db::db_docker_pg_rows,
+            db::db_docker_pg_pk,
+            db::db_docker_pg_update,
+            db::db_docker_pg_delete,
+            db::db_docker_redis_dbs,
+            db::db_docker_redis_keys,
+            db::db_docker_redis_value,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
