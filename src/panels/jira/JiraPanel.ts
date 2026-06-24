@@ -3,6 +3,7 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { basicAuth } from '../../core/jira/auth'
 import { apiUrl, browseUrl } from '../../core/jira/urls'
 import { parseIssues, type JiraIssue } from '../../core/jira/issues'
+import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
 import { icon } from '../../ui/icons'
 
@@ -205,10 +206,49 @@ export function createJiraPanel(): { element: HTMLElement } {
         status.textContent = String(e)
       }
     })
+    const bulkLink = document.createElement('a')
+    bulkLink.className = 'jira-hint-link'
+    bulkLink.textContent = 'Importar varias →'
+    bulkLink.addEventListener('click', () => renderBulk())
     const body = document.createElement('div')
     body.className = 'jira-config'
-    body.append(project.row, type.row, summary.row, descLabel, create, status)
+    body.append(project.row, type.row, summary.row, descLabel, create, bulkLink, status)
     show(header('Nueva tarjeta', back), body)
+  }
+
+  const renderBulk = (): void => {
+    const back = iconBtn('arrow-left', 'Volver', () => renderCreate())
+    const project = field('Proyecto (clave, ej. KAN)')
+    const type = field('Tipo', 'Task')
+    const taLabel = document.createElement('label')
+    taLabel.className = 'jira-field'
+    taLabel.textContent = 'Una tarjeta por línea — formato: resumen | descripción'
+    const ta = document.createElement('textarea')
+    ta.className = 'jira-textarea'
+    ta.placeholder = 'Panel Docker | gestionar contenedores\nSQL runner | ejecutar queries propias'
+    taLabel.appendChild(ta)
+    const status = note('')
+    const create = document.createElement('button')
+    create.className = 'jira-primary'
+    create.textContent = 'Crear todas'
+    create.addEventListener('click', async () => {
+      const p = project.input.value.trim()
+      const t = type.input.value.trim() || 'Task'
+      const issues = parseBulkIssues(ta.value)
+      if (!p || !issues.length) { status.textContent = 'Proyecto y al menos una línea son obligatorios.'; return }
+      let ok = 0
+      const errors: string[] = []
+      for (const it of issues) {
+        status.textContent = `Creando ${ok + errors.length + 1}/${issues.length}…`
+        try { await createIssue(p, t, it.summary, it.description); ok++ }
+        catch (e) { errors.push(`${it.summary}: ${String(e).slice(0, 80)}`) }
+      }
+      status.textContent = `Creadas ${ok}/${issues.length}.${errors.length ? ' Errores: ' + errors.join(' · ') : ''}`
+    })
+    const body = document.createElement('div')
+    body.className = 'jira-config'
+    body.append(project.row, type.row, taLabel, create, status)
+    show(header('Importar tarjetas', back), body)
   }
 
   // ---- boot ----
