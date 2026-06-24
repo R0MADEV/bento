@@ -34,14 +34,6 @@ export function createDockerPanel(): { element: HTMLElement } {
     return b
   }
 
-  const action = async (cmd: string, c: Container): Promise<void> => {
-    try {
-      await invoke(cmd, { id: c.name })
-      renderList()
-    } catch (e) {
-      alert(String(e))
-    }
-  }
 
   const renderLogs = async (c: Container): Promise<void> => {
     const back = iconBtn('arrow-left', 'Volver', () => renderList())
@@ -78,13 +70,22 @@ export function createDockerPanel(): { element: HTMLElement } {
 
     const actions = document.createElement('div')
     actions.className = 'docker-actions'
+
+    // Run a lifecycle command with visible feedback — restart/stop take seconds.
+    const run = async (cmd: string, label: string): Promise<void> => {
+      meta.textContent = `${label}…`
+      actions.querySelectorAll('button').forEach(b => { (b as HTMLButtonElement).disabled = true })
+      try { await invoke(cmd, { id: c.name }) } catch (e) { alert(String(e)) }
+      renderList()
+    }
+
     if (isRunning(c)) {
       actions.append(
-        iconBtn('stop', 'Parar', () => action('docker_stop', c)),
-        iconBtn('refresh', 'Reiniciar', () => action('docker_restart', c)),
+        iconBtn('stop', 'Parar', () => run('docker_stop', 'Parando')),
+        iconBtn('power', 'Reiniciar (para y arranca)', () => run('docker_restart', 'Reiniciando')),
       )
     } else {
-      actions.append(iconBtn('play', 'Arrancar', () => action('docker_start', c)))
+      actions.append(iconBtn('play', 'Arrancar', () => run('docker_start', 'Arrancando')))
     }
     actions.append(iconBtn('list', 'Logs', () => renderLogs(c)))
 

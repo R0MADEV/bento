@@ -2305,3 +2305,4 @@ html, body, #app {
 .docker-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .docker-actions .docker-action { padding: 4px 5px; }
 .docker-logs { flex: 1; margin: 0; overflow: auto; padding: 10px; background: var(--surface-2); font-size: 11px; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+.docker-action:disabled { opacity: 0.4; cursor: default; }

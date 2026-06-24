@@ -33,6 +33,7 @@ const ICONS: Record<string, string> = {
   jira: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7v10"/><path d="M12 7v6"/><path d="M17 7v8"/>',
   docker: '<rect width="18" height="12" x="3" y="8" rx="2"/><path d="M3 12h18"/><path d="M7 8V6"/><path d="M11 8V6"/><path d="M15 8V6"/>',
   stop: '<rect width="12" height="12" x="6" y="6" rx="1"/>',
+  power: '<path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>',
 }
 
 export function icon(name: string): string {

@@ -42,9 +42,17 @@ pub fn is_safe_container(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
+// These shell out to docker, which can take seconds (restart stops + starts the
+// container). They're `async` + run on a blocking pool so the UI thread never
+// freezes while waiting.
+
 #[tauri::command]
-pub fn docker_list() -> String {
-    docker_output(&["ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}"]).unwrap_or_default()
+pub async fn docker_list() -> String {
+    tauri::async_runtime::spawn_blocking(|| {
+        docker_output(&["ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}"]).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 fn docker_action(action: &str, id: &str) -> Result<(), String> {
@@ -59,31 +67,41 @@ fn docker_action(action: &str, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub fn docker_start(id: String) -> Result<(), String> {
-    docker_action("start", &id)
+async fn run_action(action: &'static str, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || docker_action(action, &id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn docker_stop(id: String) -> Result<(), String> {
-    docker_action("stop", &id)
+pub async fn docker_start(id: String) -> Result<(), String> {
+    run_action("start", id).await
 }
 
 #[tauri::command]
-pub fn docker_restart(id: String) -> Result<(), String> {
-    docker_action("restart", &id)
+pub async fn docker_stop(id: String) -> Result<(), String> {
+    run_action("stop", id).await
 }
 
 #[tauri::command]
-pub fn docker_logs(id: String, tail: u32) -> Result<String, String> {
-    if !is_safe_container(&id) {
-        return Err("contenedor inválido".into());
-    }
-    let bin = docker_bin().ok_or("docker no encontrado")?;
-    let tail = tail.to_string();
-    let out = Command::new(bin).args(["logs", "--tail", &tail, &id]).output().map_err(|e| e.to_string())?;
-    // docker writes container logs to both stdout and stderr; show both.
-    let mut combined = String::from_utf8_lossy(&out.stdout).to_string();
-    combined.push_str(&String::from_utf8_lossy(&out.stderr));
-    Ok(combined)
+pub async fn docker_restart(id: String) -> Result<(), String> {
+    run_action("restart", id).await
+}
+
+#[tauri::command]
+pub async fn docker_logs(id: String, tail: u32) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_safe_container(&id) {
+            return Err("contenedor inválido".to_string());
+        }
+        let bin = docker_bin().ok_or("docker no encontrado")?;
+        let tail = tail.to_string();
+        let out = Command::new(bin).args(["logs", "--tail", &tail, &id]).output().map_err(|e| e.to_string())?;
+        // docker writes container logs to both stdout and stderr; show both.
+        let mut combined = String::from_utf8_lossy(&out.stdout).to_string();
+        combined.push_str(&String::from_utf8_lossy(&out.stderr));
+        Ok(combined)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
