@@ -5,46 +5,10 @@
 // One runner (`run_client`) serves both targets: a Docker container (run the
 // client inside it) and a local server (run the host's own client with -h/-p).
 
+use crate::docker::{docker_bin, docker_output, is_safe_container};
 use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::Duration;
-
-// macOS GUI apps don't inherit the shell PATH, so `docker` may not be on PATH.
-// Resolve it through a login shell (Unix only; returns None on Windows).
-fn login_shell_output(cmd: &str) -> Option<String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let out = Command::new(shell).arg("-lc").arg(cmd).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).to_string())
-}
-
-// The docker executable: bare `docker` when it's on PATH (Linux/Windows GUI apps
-// inherit it), else the path resolved via a login shell (the macOS case).
-fn docker_bin() -> Option<String> {
-    let on_path = Command::new("docker").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
-    if on_path {
-        return Some("docker".into());
-    }
-    let path = login_shell_output("command -v docker")?;
-    let path = path.trim().to_string();
-    if path.is_empty() { None } else { Some(path) }
-}
-
-fn docker_output(args: &[&str]) -> Option<String> {
-    let bin = docker_bin()?;
-    let out = Command::new(bin).args(args).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).to_string())
-}
-
-fn is_safe_container(name: &str) -> bool {
-    !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
-}
 
 // Per-client flags to connect to a local (non-Docker) server over TCP.
 fn host_flags(client: &str, host: &str, port: u16) -> Vec<String> {

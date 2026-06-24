@@ -77,6 +77,9 @@ pub fn pty_spawn(
     rows: u16,
     cols: u16,
     cwd: Option<String>,
+    // When set, run this argv directly (e.g. `docker exec -it <c> sh`) instead of
+    // the user's login shell — used by the Docker panel's exec terminal.
+    command: Option<Vec<String>>,
     state: tauri::State<Arc<PtyManager>>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -86,15 +89,26 @@ pub fn pty_spawn(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| e.to_string())?;
 
-    // Usa el shell por defecto del usuario ($SHELL) para que cargue su config
-    // (zsh/bash con prompt, git, autocompletado). Fallback al pasado por el front.
-    let user_shell = std::env::var("SHELL").unwrap_or(shell);
-
-    let mut cmd = CommandBuilder::new(&user_shell);
-    // Login + interactivo: carga ~/.zprofile, ~/.zshrc, etc.
-    if !cfg!(target_os = "windows") {
-        cmd.arg("-l");
-    }
+    let mut cmd = match command.filter(|c| !c.is_empty()) {
+        Some(argv) => {
+            let mut c = CommandBuilder::new(&argv[0]);
+            for arg in &argv[1..] {
+                c.arg(arg);
+            }
+            c
+        }
+        None => {
+            // Usa el shell por defecto del usuario ($SHELL) para que cargue su config
+            // (zsh/bash con prompt, git, autocompletado). Fallback al pasado por el front.
+            let user_shell = std::env::var("SHELL").unwrap_or(shell);
+            let mut c = CommandBuilder::new(&user_shell);
+            // Login + interactivo: carga ~/.zprofile, ~/.zshrc, etc.
+            if !cfg!(target_os = "windows") {
+                c.arg("-l");
+            }
+            c
+        }
+    };
     cmd.env("TERM", "xterm-256color");
 
     // Restore the saved cwd if it still exists (so a reopened terminal lands where

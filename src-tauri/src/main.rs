@@ -1,6 +1,7 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 mod db;
+mod docker;
 mod jira;
 mod notes;
 mod pty;
@@ -108,6 +109,7 @@ fn main() {
         })
         .manage(Arc::new(pty::PtyManager::default()))
         .manage(web_panel::WebPanelState::default())
+        .manage(docker::LogStreams::default())
         .invoke_handler(tauri::generate_handler![
             http_get,
             http_request,
@@ -151,6 +153,14 @@ fn main() {
             db::db_docker_redis_value,
             jira::jira_config_get,
             jira::jira_config_set,
+            docker::docker_list,
+            docker::docker_start,
+            docker::docker_stop,
+            docker::docker_restart,
+            docker::docker_logs,
+            docker::docker_logs_follow,
+            docker::docker_logs_stop,
+            docker::docker_exec_argv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
