@@ -128,8 +128,6 @@ fn main() {
             db::db_docker_ps,
             db::db_inspect_env,
             db::db_check_ports,
-            db::db_list_mysql,
-            db::db_list_mongo,
             db::db_docker_list_mysql,
             db::db_docker_list_mongo,
             db::db_docker_mysql_tables,

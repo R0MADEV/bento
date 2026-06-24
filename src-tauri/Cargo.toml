@@ -17,8 +17,6 @@ tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["full"] }
 portable-pty = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-mysql_async = { version = "0.34", default-features = false, features = ["default-rustls"] }
-mongodb = "2.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

@@ -19,6 +19,8 @@ const envValue = (env: string[], key: string): string => env.find(e => e.startsW
 // SQL engines share the same grid logic; only the command prefix differs.
 const sqlCmd = (s: DbServer, op: string): string => `db_docker_${isPg(s) ? 'pg' : 'mysql'}_${op}`
 const creds = (s: DbServer): { user: string; password: string } => ({ user: s.user ?? '', password: s.password ?? '' })
+// Where to run: a Docker container, or a local server (empty container → host:port).
+const target = (s: DbServer): { container: string; host: string; port: number } => ({ container: s.container ?? '', host: s.host, port: s.port })
 
 const note = (text: string, cls = 'db-note'): HTMLElement => {
   const el = document.createElement('div')
@@ -94,28 +96,25 @@ export function createDbPanel(): { element: HTMLElement } {
       }
       return
     }
-    s.user = isMongo(s) ? '' : 'root'
+    // Local (non-Docker): sensible default users per engine; no env to read.
     s.password = ''
+    if (isPg(s)) { s.user = 'postgres'; s.connectDb = 'postgres' }
+    else if (isMongo(s) || isRedis(s)) { s.user = '' }
+    else { s.user = 'root' }
   }
 
-  // ---- data access (Docker only for table browsing) ----
+  // ---- data access (Docker via exec, local via the host's own client) ----
   const listDatabases = (s: DbServer): Promise<string[]> => {
-    if (s.source === 'docker' && s.container) {
-      if (isRedis(s)) return invoke<string[]>('db_docker_redis_dbs', { container: s.container, password: s.password ?? '' })
-      if (isMongo(s)) return invoke<string[]>('db_docker_list_mongo', { container: s.container, ...creds(s) })
-      if (isPg(s)) return invoke<string[]>('db_docker_pg_databases', { container: s.container, db: s.connectDb ?? 'postgres', ...creds(s) })
-      return invoke<string[]>('db_docker_list_mysql', { container: s.container, ...creds(s) })
-    }
-    if (isPg(s) || isRedis(s)) return Promise.reject(`${KIND_LABEL[s.kind]}: solo Docker por ahora.`)
-    const cmd = isMongo(s) ? 'db_list_mongo' : 'db_list_mysql'
-    return invoke<string[]>(cmd, { host: s.host, port: s.port, ...creds(s) })
+    if (isRedis(s)) return invoke<string[]>('db_docker_redis_dbs', { ...target(s), password: s.password ?? '' })
+    if (isMongo(s)) return invoke<string[]>('db_docker_list_mongo', { ...target(s), ...creds(s) })
+    if (isPg(s)) return invoke<string[]>('db_docker_pg_databases', { ...target(s), db: s.connectDb ?? 'postgres', ...creds(s) })
+    return invoke<string[]>('db_docker_list_mysql', { ...target(s), ...creds(s) })
   }
 
   const listTables = (s: DbServer, db: string): Promise<string[]> => {
-    if (s.source !== 'docker' || !s.container) return Promise.reject('Explorar: solo Docker por ahora.')
-    if (isRedis(s)) return invoke<string[]>('db_docker_redis_keys', { container: s.container, db, password: s.password ?? '' })
+    if (isRedis(s)) return invoke<string[]>('db_docker_redis_keys', { ...target(s), db, password: s.password ?? '' })
     const cmd = isMongo(s) ? 'db_docker_mongo_collections' : sqlCmd(s, 'tables')
-    return invoke<string[]>(cmd, { container: s.container, db, ...creds(s) })
+    return invoke<string[]>(cmd, { ...target(s), db, ...creds(s) })
   }
 
   const renderRedisValue = (db: string, key: string, v: { kind: string; value: string }): void => {
@@ -132,17 +131,17 @@ export function createDbPanel(): { element: HTMLElement } {
     showDetail(note('Cargando…', 'db-detail-loading'))
     try {
       if (isRedis(s)) {
-        const v = await invoke<{ kind: string; value: string }>('db_docker_redis_value', { container: s.container, db, key: name, password: s.password ?? '' })
+        const v = await invoke<{ kind: string; value: string }>('db_docker_redis_value', { ...target(s), db, key: name, password: s.password ?? '' })
         renderRedisValue(db, name, v)
         return
       }
       if (isMongo(s)) {
-        const docs = await invoke<string[]>('db_docker_mongo_docs', { container: s.container, db, collection: name, ...creds(s) })
+        const docs = await invoke<string[]>('db_docker_mongo_docs', { ...target(s), db, collection: name, ...creds(s) })
         renderDocs(s, db, name, docs)
       } else {
         const [data, pk] = await Promise.all([
-          invoke<TableData>(sqlCmd(s, 'rows'), { container: s.container, db, table: name, ...creds(s) }),
-          invoke<string[]>(sqlCmd(s, 'pk'), { container: s.container, db, table: name, ...creds(s) }).catch(() => [] as string[]),
+          invoke<TableData>(sqlCmd(s, 'rows'), { ...target(s), db, table: name, ...creds(s) }),
+          invoke<string[]>(sqlCmd(s, 'pk'), { ...target(s), db, table: name, ...creds(s) }).catch(() => [] as string[]),
         ])
         renderGrid(s, db, name, data, pk)
       }
@@ -188,7 +187,7 @@ export function createDbPanel(): { element: HTMLElement } {
       const summary = `UPDATE ${table}\nSET ${column} = '${value}'\nWHERE ${wheres.map(([c, v]) => `${c}=${v}`).join(' AND ')}`
       if (!confirm(summary)) { restore(); return }
       try {
-        await invoke(sqlCmd(s, 'update'), { container: s.container, db, table, column, value, wheres, ...creds(s) })
+        await invoke(sqlCmd(s, 'update'), { ...target(s), db, table, column, value, wheres, ...creds(s) })
         row[colIdx] = value
         td.textContent = value
         td.classList.remove('db-null')
@@ -211,7 +210,7 @@ export function createDbPanel(): { element: HTMLElement } {
     const wheres = pkIdx.map(i => [columns[i], row[i]] as [string, string])
     if (!confirm(`DELETE FROM ${table}\nWHERE ${wheres.map(([c, v]) => `${c}=${v}`).join(' AND ')}`)) return
     try {
-      await invoke(sqlCmd(s, 'delete'), { container: s.container, db, table, wheres, ...creds(s) })
+      await invoke(sqlCmd(s, 'delete'), { ...target(s), db, table, wheres, ...creds(s) })
       tr.remove()
     } catch (e) {
       alert(String(e))
@@ -300,7 +299,7 @@ export function createDbPanel(): { element: HTMLElement } {
     save.addEventListener('click', async () => {
       if (!confirm('Reemplazar el documento (por _id)?')) return
       try {
-        await invoke('db_docker_mongo_update', { container: s.container, db, collection: coll, doc: ta.value, ...creds(s) })
+        await invoke('db_docker_mongo_update', { ...target(s), db, collection: coll, doc: ta.value, ...creds(s) })
         restore(prettyJson(ta.value))
       } catch (e) {
         alert(String(e))
@@ -311,7 +310,7 @@ export function createDbPanel(): { element: HTMLElement } {
   const deleteDoc = async (s: DbServer, db: string, coll: string, item: HTMLElement, current: string): Promise<void> => {
     if (!confirm('¿Borrar este documento?')) return
     try {
-      await invoke('db_docker_mongo_delete', { container: s.container, db, collection: coll, doc: current, ...creds(s) })
+      await invoke('db_docker_mongo_delete', { ...target(s), db, collection: coll, doc: current, ...creds(s) })
       item.remove()
     } catch (e) {
       alert(String(e))
