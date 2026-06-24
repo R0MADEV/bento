@@ -168,5 +168,10 @@ pub fn docker_exec_argv(container: String) -> Result<Vec<String>, String> {
         return Err("contenedor inválido".into());
     }
     let bin = docker_bin().ok_or("docker no encontrado")?;
-    Ok(vec![bin, "exec".into(), "-it".into(), container, "sh".into()])
+    // Prefer bash (Tab completion via readline); fall back to sh when it's absent.
+    Ok(vec![
+        bin, "exec".into(), "-it".into(), container,
+        "sh".into(), "-c".into(),
+        "command -v bash >/dev/null 2>&1 && exec bash || exec sh".into(),
+    ])
 }
