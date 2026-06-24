@@ -87,9 +87,14 @@ export function createDockerPanel(): { element: HTMLElement; dispose: () => void
       pre.textContent += text
       pre.scrollTop = pre.scrollHeight
     }
+    const setLiveBtn = (): void => {
+      liveBtn.innerHTML = icon(live ? 'stop' : 'play')
+      liveBtn.title = live ? 'Parar el seguimiento' : 'Seguir logs en vivo'
+      liveBtn.classList.toggle('active', live)
+    }
     const startLive = async (): Promise<void> => {
       live = true
-      liveBtn.classList.add('active')
+      setLiveBtn()
       rawLogs = ''
       pre.textContent = ''
       try {
@@ -102,13 +107,13 @@ export function createDockerPanel(): { element: HTMLElement; dispose: () => void
     const stopLive = (): void => {
       if (!live) return
       live = false
-      liveBtn.classList.remove('active')
+      setLiveBtn()
       invoke('docker_logs_stop', { id: c.name }).catch(() => {})
       unlisten?.()
       unlisten = null
     }
 
-    const liveBtn = iconBtn('power', 'Logs en vivo', () => (live ? stopLive() : startLive()))
+    const liveBtn = iconBtn('play', 'Seguir logs en vivo', () => (live ? stopLive() : startLive()))
     const errBtn = iconBtn('alert', 'Solo errores', () => {
       errorsOnly = !errorsOnly
       errBtn.classList.toggle('active', errorsOnly)
