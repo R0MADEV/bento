@@ -1,6 +1,7 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 mod db;
+mod jira;
 mod notes;
 mod pty;
 mod scripts;
@@ -148,6 +149,8 @@ fn main() {
             db::db_docker_redis_dbs,
             db::db_docker_redis_keys,
             db::db_docker_redis_value,
+            jira::jira_config_get,
+            jira::jira_config_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

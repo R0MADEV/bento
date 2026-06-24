@@ -2248,3 +2248,37 @@ html, body, #app {
 .db-doc-item { position: relative; }
 .db-doc-del { position: absolute; top: 6px; right: 6px; opacity: 0; }
 .db-doc-item:hover .db-doc-del { opacity: 1; }
+
+/* Jira panel: connect with a personal API token, list/detail/create issues */
+.jira-panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); overflow: hidden; }
+.jira-header { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.jira-title { flex: 1; font-size: 12px; font-weight: 600; color: var(--fg); }
+.jira-action { display: flex; padding: 4px 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); cursor: pointer; }
+.jira-action:hover { color: var(--fg); border-color: var(--accent); }
+.jira-action .icon { width: 13px; height: 13px; }
+.jira-search { margin: 8px 10px; padding: 6px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; font-family: monospace; outline: none; flex-shrink: 0; }
+.jira-search:focus { border-color: var(--accent); }
+.jira-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 3px; }
+.jira-note, .jira-error { padding: 10px; font-size: 12px; color: var(--fg-dim); font-style: italic; }
+.jira-error { color: #f7768e; word-break: break-word; }
+.jira-issue { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; text-align: left; cursor: pointer; }
+.jira-issue:hover { border-color: var(--accent); }
+.jira-key { font-weight: 600; color: var(--accent); flex-shrink: 0; font-size: 11px; }
+.jira-summary { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jira-status { flex-shrink: 0; font-size: 10px; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
+.jira-st-todo { background: var(--surface); color: var(--fg-dim); border: 1px solid var(--border); }
+.jira-st-progress { background: color-mix(in srgb, #7aa2f7 22%, transparent); color: #7aa2f7; }
+.jira-st-done { background: color-mix(in srgb, #9ece6a 22%, transparent); color: #9ece6a; }
+.jira-config { display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; }
+.jira-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--fg-dim); }
+.jira-input, .jira-textarea { padding: 6px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; outline: none; }
+.jira-input:focus, .jira-textarea:focus { border-color: var(--accent); }
+.jira-textarea { min-height: 120px; resize: vertical; font-family: inherit; }
+.jira-hint-link { font-size: 11px; color: var(--accent); cursor: pointer; }
+.jira-hint-link:hover { text-decoration: underline; }
+.jira-primary { align-self: flex-start; padding: 7px 16px; background: var(--accent); border: none; border-radius: 6px; color: var(--bg); font-size: 12px; font-weight: 600; cursor: pointer; }
+.jira-detail { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.jira-detail-meta { display: flex; align-items: center; gap: 8px; }
+.jira-type { font-size: 11px; color: var(--fg-dim); }
+.jira-detail-summary { font-size: 14px; font-weight: 600; color: var(--fg); }
+.jira-detail-desc { margin: 0; padding: 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--fg); white-space: pre-wrap; word-break: break-word; font-family: inherit; }
