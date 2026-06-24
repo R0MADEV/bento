@@ -28,6 +28,18 @@ describe('isErrorLine', () => {
   it('avoids substring false positives', () => {
     expect(isErrorLine('terror movie at the mirror')).toBe(false)
   })
+
+  it('respects an explicit log level over the message text', () => {
+    // real traefik line: debug level, but the message mentions "error"
+    expect(isErrorLine('time="..." level=debug msg="http: TLS handshake error from x"')).toBe(false)
+    expect(isErrorLine('time="..." level=error msg="boom"')).toBe(true)
+    expect(isErrorLine('{"level":"info","msg":"connection error code"}')).toBe(false)
+    expect(isErrorLine('{"level":"error","msg":"x"}')).toBe(true)
+    expect(isErrorLine('[DEBUG] error while parsing (ignored)')).toBe(false)
+    // no declared level → fall back to keyword (postgres / keycloak style)
+    expect(isErrorLine('2026-06-22 [1497] ERROR:  column "id" does not exist')).toBe(true)
+    expect(isErrorLine('2026 ERROR [org.keycloak.events] something')).toBe(true)
+  })
 })
 
 describe('errorLines', () => {
