@@ -1,7 +1,11 @@
 // Shared Docker plumbing (used by the Docker panel and the DB panel) plus the
 // container-management commands: list, start/stop/restart, logs.
 
-use std::process::Command;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter};
 
 // macOS GUI apps don't inherit the shell PATH, so `docker` may not be on PATH.
 // Resolve it through a login shell (Unix only; returns None on Windows).
@@ -104,4 +108,65 @@ pub async fn docker_logs(id: String, tail: u32) -> Result<String, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// --- Live logs: `docker logs -f` streamed to the frontend via events ---
+
+// Running follow processes, keyed by container, so they can be stopped.
+#[derive(Default)]
+pub struct LogStreams(Mutex<HashMap<String, Child>>);
+
+fn pipe_lines(reader: impl Read + Send + 'static, app: AppHandle, event: String) {
+    std::thread::spawn(move || {
+        for line in BufReader::new(reader).lines().map_while(Result::ok) {
+            let _ = app.emit(&event, format!("{}\n", line));
+        }
+    });
+}
+
+#[tauri::command]
+pub fn docker_logs_follow(id: String, tail: u32, app: AppHandle, state: tauri::State<LogStreams>) -> Result<(), String> {
+    if !is_safe_container(&id) {
+        return Err("contenedor inválido".into());
+    }
+    // Replace any existing stream for this container.
+    if let Some(mut child) = state.0.lock().unwrap().remove(&id) {
+        let _ = child.kill();
+    }
+    let bin = docker_bin().ok_or("docker no encontrado")?;
+    let tail = tail.to_string();
+    let mut child = Command::new(bin)
+        .args(["logs", "-f", "--tail", &tail, &id])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let event = format!("docker-logs-{}", id);
+    if let Some(o) = child.stdout.take() {
+        pipe_lines(o, app.clone(), event.clone());
+    }
+    if let Some(e) = child.stderr.take() {
+        pipe_lines(e, app.clone(), event.clone());
+    }
+    state.0.lock().unwrap().insert(id, child);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn docker_logs_stop(id: String, state: tauri::State<LogStreams>) -> Result<(), String> {
+    if let Some(mut child) = state.0.lock().unwrap().remove(&id) {
+        let _ = child.kill();
+    }
+    Ok(())
+}
+
+// --- Exec terminal: argv to open a shell inside a container (run in a PTY) ---
+
+#[tauri::command]
+pub fn docker_exec_argv(container: String) -> Result<Vec<String>, String> {
+    if !is_safe_container(&container) {
+        return Err("contenedor inválido".into());
+    }
+    let bin = docker_bin().ok_or("docker no encontrado")?;
+    Ok(vec![bin, "exec".into(), "-it".into(), container, "sh".into()])
 }

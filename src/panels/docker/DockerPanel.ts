@@ -1,11 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
-import { errorLines } from '../../core/docker/logFilter'
+import { errorLines, isErrorLine } from '../../core/docker/logFilter'
+import { createTerminalPanel } from '../terminal/TerminalPanel'
 import { createMasterDetail, type MdItem } from '../../ui/masterDetail'
 import { icon } from '../../ui/icons'
 
-export function createDockerPanel(): { element: HTMLElement } {
+export function createDockerPanel(): { element: HTMLElement; dispose: () => void } {
   let containers: Container[] = []
+  // Teardown for the current detail's body (live stream / exec terminal).
+  let bodyCleanup: () => void = () => {}
 
   const iconBtn = (name: string, title: string, onClick: () => void): HTMLButtonElement => {
     const b = document.createElement('button')
@@ -37,7 +41,7 @@ export function createDockerPanel(): { element: HTMLElement } {
     collapsibleGroups: true,
     emptyText: 'No hay contenedores. ¿Está Docker corriendo?',
     headerActions: [iconBtn('refresh', 'Recargar', () => load())],
-    groupBadge: (_project, ids) => `${runningCount(ids.map(find).filter(Boolean) as Container[])}/${ids.length}`,
+    groupBadge: (_p, ids) => `${runningCount(ids.map(find).filter(Boolean) as Container[])}/${ids.length}`,
     groupActions: project => {
       const group = byProject(project)
       const running = runningCount(group)
@@ -55,12 +59,106 @@ export function createDockerPanel(): { element: HTMLElement } {
     return d
   }
 
-  function renderDetail(name: string): void {
-    const c = find(name)
-    if (!c) {
-      md.detail.replaceChildren()
+  // ---- logs (static + live follow) ----
+  function showLogs(body: HTMLElement, c: Container): void {
+    bodyCleanup()
+    const pre = document.createElement('pre')
+    pre.className = 'docker-logs'
+    let rawLogs = ''
+    let errorsOnly = false
+    let live = false
+    let unlisten: (() => void) | null = null
+
+    const applyStatic = (): void => {
+      pre.textContent = errorsOnly
+        ? (errorLines(rawLogs).join('\n') || '(sin errores en los últimos logs)')
+        : (rawLogs || '(sin logs)')
+      pre.scrollTop = pre.scrollHeight
+    }
+    const loadStatic = async (): Promise<void> => {
+      pre.textContent = 'Cargando…'
+      try { rawLogs = await invoke<string>('docker_logs', { id: c.name, tail: 500 }) } catch (e) { rawLogs = String(e) }
+      applyStatic()
+    }
+    const onChunk = (chunk: string): void => {
+      rawLogs += chunk
+      const text = errorsOnly ? chunk.split('\n').filter(isErrorLine).map(l => `${l}\n`).join('') : chunk
+      if (!text) return
+      pre.textContent += text
+      pre.scrollTop = pre.scrollHeight
+    }
+    const startLive = async (): Promise<void> => {
+      live = true
+      liveBtn.classList.add('active')
+      rawLogs = ''
+      pre.textContent = ''
+      try {
+        await invoke('docker_logs_follow', { id: c.name, tail: 200 })
+        unlisten = await listen<string>(`docker-logs-${c.name}`, e => onChunk(e.payload))
+      } catch (e) {
+        pre.textContent = String(e)
+      }
+    }
+    const stopLive = (): void => {
+      if (!live) return
+      live = false
+      liveBtn.classList.remove('active')
+      invoke('docker_logs_stop', { id: c.name }).catch(() => {})
+      unlisten?.()
+      unlisten = null
+    }
+
+    const liveBtn = iconBtn('power', 'Logs en vivo', () => (live ? stopLive() : startLive()))
+    const errBtn = iconBtn('alert', 'Solo errores', () => {
+      errorsOnly = !errorsOnly
+      errBtn.classList.toggle('active', errorsOnly)
+      if (!live) applyStatic()
+    })
+    const refreshBtn = iconBtn('refresh', 'Recargar', () => { if (live) { stopLive(); startLive() } else loadStatic() })
+
+    const logsHead = document.createElement('div')
+    logsHead.className = 'docker-logs-head'
+    const t = document.createElement('span')
+    t.textContent = 'Logs'
+    logsHead.append(t, liveBtn, errBtn, refreshBtn)
+
+    body.replaceChildren(logsHead, pre)
+    bodyCleanup = stopLive
+    loadStatic()
+  }
+
+  // ---- exec terminal (shell inside the container) ----
+  async function showTerminal(body: HTMLElement, c: Container, backToLogs: () => void): Promise<void> {
+    bodyCleanup()
+    const argv = await invoke<string[]>('docker_exec_argv', { container: c.name }).catch(() => null)
+    if (!argv) {
+      body.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: 'No se pudo abrir la terminal.' }))
       return
     }
+    const term = createTerminalPanel('', '', backToLogs, argv)
+    const wrap = document.createElement('div')
+    wrap.className = 'docker-term'
+    wrap.appendChild(term.element)
+    body.replaceChildren(wrap)
+    requestAnimationFrame(() => term.fit())
+    bodyCleanup = () => term.dispose()
+  }
+
+  function renderDetail(name: string): void {
+    bodyCleanup()
+    bodyCleanup = () => {}
+    const c = find(name)
+    if (!c) {
+      md.detail.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: 'Selecciona un contenedor para ver sus detalles y logs.' }))
+      return
+    }
+
+    const body = document.createElement('div')
+    body.className = 'docker-body'
+    let mode: 'logs' | 'terminal' = 'logs'
+    const goLogs = (): void => { mode = 'logs'; modeBtn.innerHTML = icon('terminal'); modeBtn.title = 'Abrir terminal'; showLogs(body, c) }
+    const goTerminal = (): void => { mode = 'terminal'; modeBtn.innerHTML = icon('list'); modeBtn.title = 'Ver logs'; showTerminal(body, c, goLogs) }
+    const modeBtn = iconBtn('terminal', 'Abrir terminal', () => (mode === 'logs' ? goTerminal() : goLogs()))
 
     const head = document.createElement('div')
     head.className = 'docker-detail-head'
@@ -76,6 +174,7 @@ export function createDockerPanel(): { element: HTMLElement } {
       actions.append(
         iconBtn('stop', 'Parar', () => run('docker_stop', c.name)),
         iconBtn('power', 'Reiniciar (para y arranca)', () => run('docker_restart', c.name)),
+        modeBtn,
       )
     } else {
       actions.append(iconBtn('play', 'Arrancar', () => run('docker_start', c.name)))
@@ -88,38 +187,8 @@ export function createDockerPanel(): { element: HTMLElement } {
       `<span>${c.image}</span><span class="docker-detail-status">${c.status}</span>` +
       (c.ports ? `<span class="docker-detail-ports">${c.ports}</span>` : '')
 
-    const logsHead = document.createElement('div')
-    logsHead.className = 'docker-logs-head'
-    const logsTitle = document.createElement('span')
-    logsTitle.textContent = 'Logs'
-    const pre = document.createElement('pre')
-    pre.className = 'docker-logs'
-
-    let rawLogs = ''
-    let errorsOnly = false
-    const applyLogs = (): void => {
-      if (errorsOnly) {
-        const errs = errorLines(rawLogs)
-        pre.textContent = errs.length ? errs.join('\n') : '(sin errores en los últimos logs)'
-      } else {
-        pre.textContent = rawLogs || '(sin logs)'
-      }
-      pre.scrollTop = pre.scrollHeight
-    }
-    const loadLogs = async (): Promise<void> => {
-      pre.textContent = 'Cargando…'
-      try { rawLogs = await invoke<string>('docker_logs', { id: c.name, tail: 500 }) } catch (e) { rawLogs = String(e) }
-      applyLogs()
-    }
-    const errToggle = iconBtn('alert', 'Solo errores', () => {
-      errorsOnly = !errorsOnly
-      errToggle.classList.toggle('active', errorsOnly)
-      applyLogs()
-    })
-    logsHead.append(logsTitle, errToggle, iconBtn('refresh', 'Recargar logs', loadLogs))
-
-    md.detail.replaceChildren(head, info, logsHead, pre)
-    loadLogs()
+    md.detail.replaceChildren(head, info, body)
+    showLogs(body, c)
   }
 
   const toItems = (): MdItem[] =>
@@ -138,5 +207,5 @@ export function createDockerPanel(): { element: HTMLElement } {
   }
 
   load()
-  return { element: md.element }
+  return { element: md.element, dispose: () => bodyCleanup() }
 }

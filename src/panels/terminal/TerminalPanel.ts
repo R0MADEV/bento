@@ -47,7 +47,7 @@ export interface TerminalPanelHandle {
 
 const DEFAULT_FONT_FAMILY = '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace'
 
-export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void): TerminalPanelHandle {
+export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void, execCommand?: string[]): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -235,7 +235,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const spawnShell = (shellPath: string) => {
     const resolved = shellPath === 'auto' ? (isWin ? 'powershell.exe' : '/bin/sh') : shellPath
-    invoke('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null })
+    invoke('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null, command: execCommand ?? null })
       .catch(err => term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`))
   }
 

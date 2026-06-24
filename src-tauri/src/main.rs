@@ -109,6 +109,7 @@ fn main() {
         })
         .manage(Arc::new(pty::PtyManager::default()))
         .manage(web_panel::WebPanelState::default())
+        .manage(docker::LogStreams::default())
         .invoke_handler(tauri::generate_handler![
             http_get,
             http_request,
@@ -157,6 +158,9 @@ fn main() {
             docker::docker_stop,
             docker::docker_restart,
             docker::docker_logs,
+            docker::docker_logs_follow,
+            docker::docker_logs_stop,
+            docker::docker_exec_argv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
