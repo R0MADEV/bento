@@ -271,6 +271,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-http', label: 'Nuevo cliente HTTP', keywords: ['http', 'api', 'rest', 'postman', 'request'], run: () => active?.addPanel('http') },
       { id: 'new-scripts', label: 'Nuevo panel Scripts', keywords: ['scripts', 'script', 'comandos', 'sh'], run: () => active?.addPanel('scripts') },
       { id: 'new-db', label: 'Nuevo panel Bases de datos', keywords: ['db', 'base de datos', 'database', 'mysql', 'mongo', 'docker'], run: () => active?.addPanel('db') },
+      { id: 'new-jira', label: 'Nuevo panel Jira', keywords: ['jira', 'tickets', 'tareas', 'atlassian', 'issues'], run: () => active?.addPanel('jira') },
       {
         id: 'bind-project', label: 'Atar sesión a la carpeta de la terminal activa',
         keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],
