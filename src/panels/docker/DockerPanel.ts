@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { parseContainers, isRunning, type Container } from '../../core/docker/containers'
+import { parseContainers, isRunning, groupByProject, runningCount, type Container, type ProjectGroup } from '../../core/docker/containers'
 import { icon } from '../../ui/icons'
 
 export function createDockerPanel(): { element: HTMLElement } {
@@ -33,7 +33,6 @@ export function createDockerPanel(): { element: HTMLElement } {
     b.addEventListener('click', e => { e.stopPropagation(); onClick() })
     return b
   }
-
 
   const renderLogs = async (c: Container): Promise<void> => {
     const back = iconBtn('arrow-left', 'Volver', () => renderList())
@@ -70,15 +69,12 @@ export function createDockerPanel(): { element: HTMLElement } {
 
     const actions = document.createElement('div')
     actions.className = 'docker-actions'
-
-    // Run a lifecycle command with visible feedback — restart/stop take seconds.
     const run = async (cmd: string, label: string): Promise<void> => {
       meta.textContent = `${label}…`
       actions.querySelectorAll('button').forEach(b => { (b as HTMLButtonElement).disabled = true })
       try { await invoke(cmd, { id: c.name }) } catch (e) { alert(String(e)) }
       renderList()
     }
-
     if (isRunning(c)) {
       actions.append(
         iconBtn('stop', 'Parar', () => run('docker_stop', 'Parando')),
@@ -93,14 +89,49 @@ export function createDockerPanel(): { element: HTMLElement } {
     return card
   }
 
-  const group = (title: string, items: Container[]): HTMLElement => {
+  // Start or stop every container in a project at once.
+  const projectAction = async (cmd: string, containers: Container[], head: HTMLElement): Promise<void> => {
+    head.querySelectorAll('button').forEach(b => { (b as HTMLButtonElement).disabled = true })
+    const targets = containers.filter(c => cmd === 'docker_start' ? !isRunning(c) : isRunning(c))
+    for (const c of targets) {
+      try { await invoke(cmd, { id: c.name }) } catch { /* sigue con los demás */ }
+    }
+    renderList()
+  }
+
+  const renderProject = (g: ProjectGroup): HTMLElement => {
     const wrap = document.createElement('div')
     wrap.className = 'docker-group'
-    const h = document.createElement('div')
-    h.className = 'docker-group-title'
-    h.textContent = `${title} (${items.length})`
-    wrap.appendChild(h)
-    items.forEach(c => wrap.appendChild(renderContainer(c)))
+    const head = document.createElement('div')
+    head.className = 'docker-group-head'
+
+    const chevron = document.createElement('span')
+    chevron.className = 'docker-chevron'
+    chevron.innerHTML = icon('chevron')
+    const title = document.createElement('span')
+    title.className = 'docker-group-name'
+    title.textContent = g.project || 'Sin proyecto'
+    const running = runningCount(g.containers)
+    const count = document.createElement('span')
+    count.className = 'docker-count'
+    count.textContent = `${running}/${g.containers.length}`
+
+    const children = document.createElement('div')
+    children.className = 'docker-children'
+
+    const acts = document.createElement('span')
+    acts.className = 'docker-group-actions'
+    if (running < g.containers.length) acts.append(iconBtn('play', 'Arrancar todo el proyecto', () => projectAction('docker_start', g.containers, head)))
+    if (running > 0) acts.append(iconBtn('stop', 'Parar todo el proyecto', () => projectAction('docker_stop', g.containers, head)))
+
+    head.append(chevron, title, count, acts)
+    head.addEventListener('click', () => {
+      const open = children.classList.toggle('hidden')
+      head.classList.toggle('collapsed', open)
+    })
+
+    g.containers.forEach(c => children.appendChild(renderContainer(c)))
+    wrap.append(head, children)
     return wrap
   }
 
@@ -117,10 +148,7 @@ export function createDockerPanel(): { element: HTMLElement } {
         list.append(note('No hay contenedores. ¿Está Docker corriendo?', 'docker-hint'))
         return
       }
-      const running = containers.filter(isRunning)
-      const stopped = containers.filter(c => !isRunning(c))
-      if (running.length) list.append(group('En marcha', running))
-      if (stopped.length) list.append(group('Parados', stopped))
+      groupByProject(containers).forEach(g => list.appendChild(renderProject(g)))
     } catch (e) {
       list.replaceChildren(note(String(e), 'docker-error'))
     }

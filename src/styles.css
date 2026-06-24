@@ -2290,12 +2290,30 @@ html, body, #app {
 .docker-action { display: flex; padding: 4px 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); cursor: pointer; }
 .docker-action:hover { color: var(--fg); border-color: var(--accent); }
 .docker-action .icon { width: 13px; height: 13px; }
-.docker-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
+.docker-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .docker-note, .docker-hint, .docker-error { padding: 10px; font-size: 12px; color: var(--fg-dim); font-style: italic; }
 .docker-error { color: #f7768e; word-break: break-word; }
-.docker-group { display: flex; flex-direction: column; gap: 3px; }
-.docker-group-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-dim); padding: 2px 4px; }
-.docker-item { display: flex; align-items: center; gap: 9px; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; }
+.docker-group { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.docker-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  user-select: none;
+}
+.docker-group-head:hover { background: var(--surface); }
+.docker-chevron { display: flex; flex-shrink: 0; transition: transform 0.15s; }
+.docker-chevron .icon { width: 12px; height: 12px; color: var(--fg-dim); }
+.docker-group-head.collapsed .docker-chevron { transform: rotate(-90deg); }
+.docker-group-name { flex: 1; font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.docker-count { font-size: 10px; color: var(--fg-dim); padding: 1px 7px; border-radius: 10px; background: var(--bg); flex-shrink: 0; }
+.docker-group-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.docker-children { display: flex; flex-direction: column; gap: 1px; padding: 4px; }
+.docker-children.hidden { display: none; }
+.docker-item { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 6px; }
+.docker-item:hover { background: var(--surface-2); }
 .docker-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .docker-up { background: #9ece6a; box-shadow: 0 0 6px #9ece6a; }
 .docker-down { background: var(--fg-dim); }

@@ -49,7 +49,7 @@ pub fn is_safe_container(name: &str) -> bool {
 #[tauri::command]
 pub async fn docker_list() -> String {
     tauri::async_runtime::spawn_blocking(|| {
-        docker_output(&["ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}"]).unwrap_or_default()
+        docker_output(&["ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}|{{.Ports}}|{{.Label \"com.docker.compose.project\"}}"]).unwrap_or_default()
     })
     .await
     .unwrap_or_default()
