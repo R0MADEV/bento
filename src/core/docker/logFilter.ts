@@ -51,6 +51,29 @@ export function isErrorLine(line: string): boolean {
   return ERROR_RE.test(line)
 }
 
+// Lines that belong to a preceding error: stack frames (indented, `at …`),
+// require-stack bullets (`- /path`), and block headers — so the error keeps its
+// trace/context instead of just the headline.
+function isContinuation(line: string): boolean {
+  return /^\s+/.test(line)
+    || /^\s*at\s/i.test(line)
+    || /^\s*-\s/.test(line)
+    || /^(require stack|caused by|traceback|stack ?trace|\.\.\.)/i.test(line)
+}
+
+// Error lines plus the continuation block that follows each one.
 export function errorLines(text: string): string[] {
-  return text.split('\n').filter(isErrorLine)
+  const out: string[] = []
+  let inError = false
+  for (const line of text.split('\n')) {
+    if (isErrorLine(line)) {
+      out.push(line)
+      inError = true
+    } else if (inError && isContinuation(line)) {
+      out.push(line)
+    } else {
+      inError = false
+    }
+  }
+  return out
 }

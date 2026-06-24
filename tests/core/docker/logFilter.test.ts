@@ -51,4 +51,25 @@ describe('errorLines', () => {
   it('returns empty when there are no errors', () => {
     expect(errorLines('all good\nfine')).toEqual([])
   })
+
+  it('keeps the stack trace / context that follows an error (real Vite case)', () => {
+    const log = [
+      'Node.js v25.9.0',
+      'failed to load config from /opt/x/vite.config.ts',
+      'error when starting dev server:',
+      "Error: Cannot find module '../tokenizer/marker'",
+      'Require stack:',
+      '- /opt/x/split.js',
+      '    at Module._resolveFilename (node:internal/modules/cjs/loader:1475:15)',
+      'INFO server ready',
+    ].join('\n')
+    expect(errorLines(log)).toEqual([
+      'failed to load config from /opt/x/vite.config.ts',
+      'error when starting dev server:',
+      "Error: Cannot find module '../tokenizer/marker'",
+      'Require stack:',
+      '- /opt/x/split.js',
+      '    at Module._resolveFilename (node:internal/modules/cjs/loader:1475:15)',
+    ])
+  })
 })
