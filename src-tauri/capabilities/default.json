@@ -15,6 +15,7 @@
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "shell:allow-open",
+    "dialog:allow-open",
     "core:window:allow-set-closable",
     "core:window:allow-set-minimizable",
     "core:window:allow-set-maximizable",

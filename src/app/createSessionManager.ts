@@ -269,6 +269,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-web', label: 'Nuevo panel Web', keywords: ['web', 'navegador', 'url'], run: () => active?.addPanel('web') },
       { id: 'new-notes', label: 'Nuevas notas', keywords: ['notas', 'notes', 'texto'], run: () => active?.addPanel('notes') },
       { id: 'new-http', label: 'Nuevo cliente HTTP', keywords: ['http', 'api', 'rest', 'postman', 'request'], run: () => active?.addPanel('http') },
+      { id: 'new-scripts', label: 'Nuevo panel Scripts', keywords: ['scripts', 'script', 'comandos', 'sh'], run: () => active?.addPanel('scripts') },
       {
         id: 'bind-project', label: 'Atar sesión a la carpeta de la terminal activa',
         keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],

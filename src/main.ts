@@ -6,6 +6,7 @@ import { terminalPanelDefinition } from './panels/terminal/definition'
 import { webPanelDefinition } from './panels/web/definition'
 import { notesPanelDefinition } from './panels/notes/definition'
 import { httpPanelDefinition } from './panels/http/definition'
+import { scriptsPanelDefinition } from './panels/scripts/definition'
 import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
@@ -18,6 +19,9 @@ import tvM3U from './assets/tv.m3u?raw'
 
 // Web panels live in Rust state and survive a frontend reload as orphans — clean them up
 invoke('web_panel_close_all').catch(() => {})
+
+// Terminal scrollback is no longer persisted; drop any old history keys to free localStorage.
+Object.keys(localStorage).filter(k => k.startsWith('bento.terminal.history.')).forEach(k => localStorage.removeItem(k))
 
 // Tiñe toda la UI con el tema guardado al arrancar
 applyAppTheme(getThemeName())
@@ -40,6 +44,7 @@ panels.register(terminalPanelDefinition)
 panels.register(webPanelDefinition)
 panels.register(notesPanelDefinition)
 panels.register(httpPanelDefinition)
+panels.register(scriptsPanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))

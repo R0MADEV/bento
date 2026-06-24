@@ -2,6 +2,7 @@
 
 mod notes;
 mod pty;
+mod scripts;
 mod traffic_lights;
 mod web_panel;
 mod window_prefs;
@@ -97,6 +98,7 @@ fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             install_menu(app)?;
@@ -121,6 +123,7 @@ fn main() {
             notes::notes_list,
             notes::notes_write,
             notes::notes_delete,
+            scripts::list_scripts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
