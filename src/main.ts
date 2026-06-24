@@ -9,6 +9,7 @@ import { httpPanelDefinition } from './panels/http/definition'
 import { scriptsPanelDefinition } from './panels/scripts/definition'
 import { dbPanelDefinition } from './panels/db/definition'
 import { jiraPanelDefinition } from './panels/jira/definition'
+import { dockerPanelDefinition } from './panels/docker/definition'
 import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
@@ -49,6 +50,7 @@ panels.register(httpPanelDefinition)
 panels.register(scriptsPanelDefinition)
 panels.register(dbPanelDefinition)
 panels.register(jiraPanelDefinition)
+panels.register(dockerPanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))
