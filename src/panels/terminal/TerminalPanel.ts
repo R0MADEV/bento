@@ -20,9 +20,7 @@ import { icon } from '../../ui/icons'
 import type { PanelApi } from '../registry'
 import 'xterm/css/xterm.css'
 
-const HISTORY_KEY = (id: string) => `bento.terminal.history.${id}`
 const CWD_KEY = (id: string) => `bento.terminal.cwd.${id}`
-const HISTORY_LIMIT = 80_000
 
 let ptyCounter = 0
 
@@ -44,11 +42,12 @@ export interface TerminalPanelHandle {
   onTitleChange: (cb: (title: string) => void) => () => void
   onReady: (api: PanelApi) => void
   getCwd: () => string | undefined
+  sendInput: (text: string) => void
 }
 
 const DEFAULT_FONT_FAMILY = '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace'
 
-export function createTerminalPanel(panelId = '', projectPath = ''): TerminalPanelHandle {
+export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -223,18 +222,11 @@ export function createTerminalPanel(panelId = '', projectPath = ''): TerminalPan
 
   fitAddon.fit()
 
-  const savedHistory = panelId ? localStorage.getItem(HISTORY_KEY(panelId)) : null
-  if (savedHistory) {
-    term.write(savedHistory)
-    term.write('\r\n\x1b[2m— historial restaurado —\x1b[0m\r\n')
-  }
-
   const searchBar = createSearchBar(searchAddon)
   root.appendChild(searchBar.element)
 
   const id = `pty-${++ptyCounter}`
-
-  let historyBuffer = ''
+  let disposed = false
 
   // Restore the directory the terminal was in last session, so the (restored)
   // prompt matches reality and `lexis ask` / commands run in the right project.
@@ -248,6 +240,21 @@ export function createTerminalPanel(panelId = '', projectPath = ''): TerminalPan
   }
 
   spawnShell('auto')
+
+  // A freshly-spawned shell discards input written during its startup, so
+  // sendInput (Scripts panel) queues commands until the shell is ready —
+  // marked ~150ms after its first output (the prompt), with a safety fallback.
+  let shellReady = false
+  const queuedInput: string[] = []
+  const writeInput = (text: string) => invoke('pty_write', { id, data: `${text}\r` }).catch(() => {})
+  const markShellReady = () => {
+    if (shellReady) return
+    shellReady = true
+    queuedInput.forEach(writeInput)
+    queuedInput.length = 0
+  }
+  let firstOutputSeen = false
+  setTimeout(markShellReady, 1500)
 
   shellSelect.addEventListener('change', () => {
     invoke('pty_kill', { id }).catch(() => {})
@@ -277,19 +284,22 @@ export function createTerminalPanel(panelId = '', projectPath = ''): TerminalPan
   let pending = ''
   let safety: ReturnType<typeof setTimeout> | undefined
   listen<string>(`pty-output-${id}`, event => {
+    if (!firstOutputSeen) { firstOutputSeen = true; setTimeout(markShellReady, 150) }
     pending += event.payload
     const { flush, keep } = splitAtSyncBoundary(pending)
     pending = keep
     if (flush) {
       term.write(flush)
-      historyBuffer += flush
-      if (historyBuffer.length > HISTORY_LIMIT) historyBuffer = historyBuffer.slice(-HISTORY_LIMIT)
       tracker.onOutput(root.contains(document.activeElement))
     }
     if (safety) clearTimeout(safety)
     // Never hold an unterminated frame indefinitely (spec uses a ~150ms cap).
     safety = pending ? setTimeout(() => { term.write(pending); pending = '' }, 150) : undefined
   })
+
+  // The shell exited on its own (the user typed `exit`): close the panel. Skip
+  // if we're already disposing (closing the panel kills the PTY, firing this too).
+  listen(`pty-exit-${id}`, () => { if (!disposed) onExit?.() })
 
   term.onData(data => {
     invoke('pty_write', { id, data }).catch(() => {})
@@ -383,9 +393,7 @@ export function createTerminalPanel(panelId = '', projectPath = ''): TerminalPan
   observer.observe(root)
 
   const dispose = () => {
-    if (panelId && historyBuffer) {
-      try { localStorage.setItem(HISTORY_KEY(panelId), historyBuffer.slice(-HISTORY_LIMIT)) } catch { /* storage lleno */ }
-    }
+    disposed = true
     if (panelId && lastCwd) {
       try { localStorage.setItem(CWD_KEY(panelId), lastCwd) } catch { /* storage lleno */ }
     }
@@ -489,5 +497,13 @@ export function createTerminalPanel(panelId = '', projectPath = ''): TerminalPan
 
   root.appendChild(maxBtn)
 
-  return { element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady, getCwd: () => lastCwd || undefined }
+  // Run a command here: focus and write it + Enter. If the shell is still
+  // starting up, queue it (early writes get discarded) and flush when ready.
+  const sendInput = (text: string) => {
+    term.focus()
+    if (shellReady) writeInput(text)
+    else queuedInput.push(text)
+  }
+
+  return { element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady, getCwd: () => lastCwd || undefined, sendInput }
 }

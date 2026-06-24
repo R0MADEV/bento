@@ -130,6 +130,9 @@ pub fn pty_spawn(
                 }
             }
         }
+        // EOF: the shell exited (e.g. the user typed `exit`); tell the frontend
+        // so it can close the panel instead of leaving a dead terminal.
+        let _ = app_clone.emit(&format!("pty-exit-{}", id_clone), ());
     });
 
     state.instances.lock().unwrap().insert(
