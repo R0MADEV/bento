@@ -1,29 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import { parseContainers, isRunning, groupByProject, runningCount, type Container, type ProjectGroup } from '../../core/docker/containers'
+import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
+import { createMasterDetail, type MdItem } from '../../ui/masterDetail'
 import { icon } from '../../ui/icons'
 
 export function createDockerPanel(): { element: HTMLElement } {
-  const root = document.createElement('div')
-  root.className = 'docker-panel'
-
-  const show = (...nodes: HTMLElement[]): void => root.replaceChildren(...nodes)
-
-  const note = (text: string, cls = 'docker-note'): HTMLElement => {
-    const el = document.createElement('div')
-    el.className = cls
-    el.textContent = text
-    return el
-  }
-
-  const header = (title: string, ...actions: HTMLElement[]): HTMLElement => {
-    const bar = document.createElement('div')
-    bar.className = 'docker-header'
-    const h = document.createElement('span')
-    h.className = 'docker-title'
-    h.textContent = title
-    bar.append(h, ...actions)
-    return bar
-  }
+  let containers: Container[] = []
 
   const iconBtn = (name: string, title: string, onClick: () => void): HTMLButtonElement => {
     const b = document.createElement('button')
@@ -34,12 +15,85 @@ export function createDockerPanel(): { element: HTMLElement } {
     return b
   }
 
-  const renderLogs = async (c: Container): Promise<void> => {
-    const back = iconBtn('arrow-left', 'Volver', () => renderList())
+  const find = (name: string): Container | undefined => containers.find(c => c.name === name)
+  const byProject = (project: string): Container[] => containers.filter(c => (c.project || 'Sin proyecto') === project)
+
+  const run = async (cmd: string, name: string): Promise<void> => {
+    try { await invoke(cmd, { id: name }) } catch (e) { alert(String(e)) }
+    load()
+  }
+
+  const projectAction = async (cmd: string, project: string): Promise<void> => {
+    const targets = byProject(project).filter(c => cmd === 'docker_start' ? !isRunning(c) : isRunning(c))
+    for (const c of targets) {
+      try { await invoke(cmd, { id: c.name }) } catch { /* sigue */ }
+    }
+    load()
+  }
+
+  const md = createMasterDetail({
+    title: 'Contenedores',
+    emptyText: 'No hay contenedores. ¿Está Docker corriendo?',
+    headerActions: [iconBtn('refresh', 'Recargar', () => load())],
+    groupBadge: (_project, ids) => `${runningCount(ids.map(find).filter(Boolean) as Container[])}/${ids.length}`,
+    groupActions: project => {
+      const group = byProject(project)
+      const running = runningCount(group)
+      const acts: HTMLElement[] = []
+      if (running < group.length) acts.push(iconBtn('play', 'Arrancar el proyecto', () => projectAction('docker_start', project)))
+      if (running > 0) acts.push(iconBtn('stop', 'Parar el proyecto', () => projectAction('docker_stop', project)))
+      return acts
+    },
+    onSelect: renderDetail,
+  })
+
+  const dot = (c: Container): HTMLElement => {
+    const d = document.createElement('span')
+    d.className = `docker-dot ${isRunning(c) ? 'docker-up' : 'docker-down'}`
+    return d
+  }
+
+  function renderDetail(name: string): void {
+    const c = find(name)
+    if (!c) {
+      md.detail.replaceChildren()
+      return
+    }
+
+    const head = document.createElement('div')
+    head.className = 'docker-detail-head'
+    const titleWrap = document.createElement('div')
+    titleWrap.className = 'docker-detail-title-wrap'
+    const title = document.createElement('span')
+    title.className = 'docker-detail-title'
+    title.textContent = c.name
+    titleWrap.append(dot(c), title)
+    const actions = document.createElement('div')
+    actions.className = 'docker-detail-actions'
+    if (isRunning(c)) {
+      actions.append(
+        iconBtn('stop', 'Parar', () => run('docker_stop', c.name)),
+        iconBtn('power', 'Reiniciar (para y arranca)', () => run('docker_restart', c.name)),
+      )
+    } else {
+      actions.append(iconBtn('play', 'Arrancar', () => run('docker_start', c.name)))
+    }
+    head.append(titleWrap, actions)
+
+    const info = document.createElement('div')
+    info.className = 'docker-detail-info'
+    info.innerHTML =
+      `<span>${c.image}</span><span class="docker-detail-status">${c.status}</span>` +
+      (c.ports ? `<span class="docker-detail-ports">${c.ports}</span>` : '')
+
+    const logsHead = document.createElement('div')
+    logsHead.className = 'docker-logs-head'
+    const logsTitle = document.createElement('span')
+    logsTitle.textContent = 'Logs'
     const pre = document.createElement('pre')
     pre.className = 'docker-logs'
-    pre.textContent = 'Cargando logs…'
-    const load = async (): Promise<void> => {
+    const loadLogs = async (): Promise<void> => {
+      pre.textContent = 'Cargando…'
       try {
         const out = await invoke<string>('docker_logs', { id: c.name, tail: 300 })
         pre.textContent = out || '(sin logs)'
@@ -48,112 +102,27 @@ export function createDockerPanel(): { element: HTMLElement } {
         pre.textContent = String(e)
       }
     }
-    show(header(c.name, iconBtn('refresh', 'Recargar', load), back), pre)
-    load()
+    logsHead.append(logsTitle, iconBtn('refresh', 'Recargar logs', loadLogs))
+
+    md.detail.replaceChildren(head, info, logsHead, pre)
+    loadLogs()
   }
 
-  const renderContainer = (c: Container): HTMLElement => {
-    const card = document.createElement('div')
-    card.className = 'docker-item'
-    const dot = document.createElement('span')
-    dot.className = `docker-dot ${isRunning(c) ? 'docker-up' : 'docker-down'}`
-    const info = document.createElement('div')
-    info.className = 'docker-info'
-    const name = document.createElement('div')
-    name.className = 'docker-name'
-    name.textContent = c.name
-    const meta = document.createElement('div')
-    meta.className = 'docker-meta'
-    meta.textContent = `${c.image} · ${c.status}`
-    info.append(name, meta)
+  const toItems = (): MdItem[] =>
+    groupByProject(containers).flatMap(g =>
+      g.containers.map(c => ({ id: c.name, label: c.name, group: g.project || 'Sin proyecto', leading: dot(c) })),
+    )
 
-    const actions = document.createElement('div')
-    actions.className = 'docker-actions'
-    const run = async (cmd: string, label: string): Promise<void> => {
-      meta.textContent = `${label}…`
-      actions.querySelectorAll('button').forEach(b => { (b as HTMLButtonElement).disabled = true })
-      try { await invoke(cmd, { id: c.name }) } catch (e) { alert(String(e)) }
-      renderList()
-    }
-    if (isRunning(c)) {
-      actions.append(
-        iconBtn('stop', 'Parar', () => run('docker_stop', 'Parando')),
-        iconBtn('power', 'Reiniciar (para y arranca)', () => run('docker_restart', 'Reiniciando')),
-      )
-    } else {
-      actions.append(iconBtn('play', 'Arrancar', () => run('docker_start', 'Arrancando')))
-    }
-    actions.append(iconBtn('list', 'Logs', () => renderLogs(c)))
-
-    card.append(dot, info, actions)
-    return card
-  }
-
-  // Start or stop every container in a project at once.
-  const projectAction = async (cmd: string, containers: Container[], head: HTMLElement): Promise<void> => {
-    head.querySelectorAll('button').forEach(b => { (b as HTMLButtonElement).disabled = true })
-    const targets = containers.filter(c => cmd === 'docker_start' ? !isRunning(c) : isRunning(c))
-    for (const c of targets) {
-      try { await invoke(cmd, { id: c.name }) } catch { /* sigue con los demás */ }
-    }
-    renderList()
-  }
-
-  const renderProject = (g: ProjectGroup): HTMLElement => {
-    const wrap = document.createElement('div')
-    wrap.className = 'docker-group'
-    const head = document.createElement('div')
-    head.className = 'docker-group-head'
-
-    const chevron = document.createElement('span')
-    chevron.className = 'docker-chevron'
-    chevron.innerHTML = icon('chevron')
-    const title = document.createElement('span')
-    title.className = 'docker-group-name'
-    title.textContent = g.project || 'Sin proyecto'
-    const running = runningCount(g.containers)
-    const count = document.createElement('span')
-    count.className = 'docker-count'
-    count.textContent = `${running}/${g.containers.length}`
-
-    const children = document.createElement('div')
-    children.className = 'docker-children'
-
-    const acts = document.createElement('span')
-    acts.className = 'docker-group-actions'
-    if (running < g.containers.length) acts.append(iconBtn('play', 'Arrancar todo el proyecto', () => projectAction('docker_start', g.containers, head)))
-    if (running > 0) acts.append(iconBtn('stop', 'Parar todo el proyecto', () => projectAction('docker_stop', g.containers, head)))
-
-    head.append(chevron, title, count, acts)
-    head.addEventListener('click', () => {
-      const open = children.classList.toggle('hidden')
-      head.classList.toggle('collapsed', open)
-    })
-
-    g.containers.forEach(c => children.appendChild(renderContainer(c)))
-    wrap.append(head, children)
-    return wrap
-  }
-
-  const renderList = async (): Promise<void> => {
-    const refresh = iconBtn('refresh', 'Recargar', () => renderList())
-    const list = document.createElement('div')
-    list.className = 'docker-list'
-    list.append(note('Cargando…'))
-    show(header('Docker', refresh), list)
+  const load = async (): Promise<void> => {
     try {
-      const containers = parseContainers(await invoke<string>('docker_list'))
-      list.replaceChildren()
-      if (!containers.length) {
-        list.append(note('No hay contenedores. ¿Está Docker corriendo?', 'docker-hint'))
-        return
-      }
-      groupByProject(containers).forEach(g => list.appendChild(renderProject(g)))
-    } catch (e) {
-      list.replaceChildren(note(String(e), 'docker-error'))
+      containers = parseContainers(await invoke<string>('docker_list'))
+    } catch {
+      containers = []
     }
+    md.setItems(toItems())
+    if (md.selected()) renderDetail(md.selected())
   }
 
-  renderList()
-  return { element: root }
+  load()
+  return { element: md.element }
 }
