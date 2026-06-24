@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
+import { errorLines } from '../../core/docker/logFilter'
 import { createMasterDetail, type MdItem } from '../../ui/masterDetail'
 import { icon } from '../../ui/icons'
 
@@ -93,17 +94,29 @@ export function createDockerPanel(): { element: HTMLElement } {
     logsTitle.textContent = 'Logs'
     const pre = document.createElement('pre')
     pre.className = 'docker-logs'
+
+    let rawLogs = ''
+    let errorsOnly = false
+    const applyLogs = (): void => {
+      if (errorsOnly) {
+        const errs = errorLines(rawLogs)
+        pre.textContent = errs.length ? errs.join('\n') : '(sin errores en los últimos logs)'
+      } else {
+        pre.textContent = rawLogs || '(sin logs)'
+      }
+      pre.scrollTop = pre.scrollHeight
+    }
     const loadLogs = async (): Promise<void> => {
       pre.textContent = 'Cargando…'
-      try {
-        const out = await invoke<string>('docker_logs', { id: c.name, tail: 300 })
-        pre.textContent = out || '(sin logs)'
-        pre.scrollTop = pre.scrollHeight
-      } catch (e) {
-        pre.textContent = String(e)
-      }
+      try { rawLogs = await invoke<string>('docker_logs', { id: c.name, tail: 500 }) } catch (e) { rawLogs = String(e) }
+      applyLogs()
     }
-    logsHead.append(logsTitle, iconBtn('refresh', 'Recargar logs', loadLogs))
+    const errToggle = iconBtn('alert', 'Solo errores', () => {
+      errorsOnly = !errorsOnly
+      errToggle.classList.toggle('active', errorsOnly)
+      applyLogs()
+    })
+    logsHead.append(logsTitle, errToggle, iconBtn('refresh', 'Recargar logs', loadLogs))
 
     md.detail.replaceChildren(head, info, logsHead, pre)
     loadLogs()

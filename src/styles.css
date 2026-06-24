@@ -2325,3 +2325,4 @@ html, body, #app {
 .docker-logs-head { display: flex; align-items: center; gap: 8px; padding: 8px 14px; flex-shrink: 0; }
 .docker-logs-head span { flex: 1; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-dim); }
 .docker-logs { flex: 1; margin: 0; overflow: auto; padding: 10px 14px; background: var(--surface-2); font-size: 11px; line-height: 1.5; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+.docker-action.active { color: #f7768e; border-color: #f7768e; }
