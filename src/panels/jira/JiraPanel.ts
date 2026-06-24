@@ -194,6 +194,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     const project = field('Proyecto (clave, ej. BEN)')
     const type = field('Tipo', 'Task')
     const summary = field('Resumen')
+    const assignee = field('Asignar a (email, opcional)', cfg.email)
     const descLabel = document.createElement('label')
     descLabel.className = 'jira-field'
     descLabel.textContent = 'Descripción'
@@ -210,7 +211,10 @@ export function createJiraPanel(): { element: HTMLElement } {
       if (!p || !s) { status.textContent = 'Proyecto y resumen son obligatorios.'; return }
       status.textContent = 'Creando…'
       try {
-        const res = await createIssue(p, type.input.value.trim() || 'Task', s, desc.value) as { key?: string }
+        const email = assignee.input.value.trim()
+        const accountId = email ? await resolveAccountId(email).catch(() => null) : null
+        if (email && !accountId) { status.textContent = `No se encontró el usuario "${email}" en Jira.`; return }
+        const res = await createIssue(p, type.input.value.trim() || 'Task', s, desc.value, accountId ?? undefined) as { key?: string }
         status.textContent = `Creada: ${res?.key ?? 'ok'}`
       } catch (e) {
         status.textContent = String(e)
@@ -222,7 +226,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     bulkLink.addEventListener('click', () => renderBulk())
     const body = document.createElement('div')
     body.className = 'jira-config'
-    body.append(project.row, type.row, summary.row, descLabel, create, bulkLink, status)
+    body.append(project.row, type.row, summary.row, assignee.row, descLabel, create, bulkLink, status)
     show(header('Nueva tarjeta', back), body)
   }
 
