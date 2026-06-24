@@ -49,8 +49,18 @@ export function createJiraPanel(): { element: HTMLElement } {
     return json?.fields?.description ?? ''
   }
 
-  const createIssue = (project: string, type: string, summary: string, description: string): Promise<unknown> =>
-    api('POST', 'api/2/issue', { fields: { project: { key: project }, issuetype: { name: type }, summary, description } })
+  const createIssue = (project: string, type: string, summary: string, description: string, accountId?: string): Promise<unknown> => {
+    const fields: Record<string, unknown> = { project: { key: project }, issuetype: { name: type }, summary, description }
+    if (accountId) fields.assignee = { accountId }
+    return api('POST', 'api/2/issue', { fields })
+  }
+
+  // Jira assigns by accountId, not email (privacy). Resolve an email → accountId.
+  const resolveAccountId = async (email: string): Promise<string | null> => {
+    if (!email) return null
+    const users = await api('GET', `api/2/user/search?query=${encodeURIComponent(email)}`) as Array<{ accountId?: string }>
+    return Array.isArray(users) && users[0]?.accountId ? users[0].accountId : null
+  }
 
   // ---- views ----
   const show = (...nodes: HTMLElement[]): void => root.replaceChildren(...nodes)
@@ -220,6 +230,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     const back = iconBtn('arrow-left', 'Volver', () => renderCreate())
     const project = field('Proyecto (clave, ej. KAN)')
     const type = field('Tipo', 'Task')
+    const assignee = field('Asignar a (email, opcional)', cfg.email)
     const taLabel = document.createElement('label')
     taLabel.className = 'jira-field'
     taLabel.textContent = 'Una tarjeta por línea — formato: resumen | descripción'
@@ -236,18 +247,25 @@ export function createJiraPanel(): { element: HTMLElement } {
       const t = type.input.value.trim() || 'Task'
       const issues = parseBulkIssues(ta.value)
       if (!p || !issues.length) { status.textContent = 'Proyecto y al menos una línea son obligatorios.'; return }
+      let accountId: string | null = null
+      const email = assignee.input.value.trim()
+      if (email) {
+        status.textContent = 'Resolviendo asignado…'
+        accountId = await resolveAccountId(email).catch(() => null)
+        if (!accountId) { status.textContent = `No se encontró el usuario "${email}" en Jira.`; return }
+      }
       let ok = 0
       const errors: string[] = []
       for (const it of issues) {
         status.textContent = `Creando ${ok + errors.length + 1}/${issues.length}…`
-        try { await createIssue(p, t, it.summary, it.description); ok++ }
+        try { await createIssue(p, t, it.summary, it.description, accountId ?? undefined); ok++ }
         catch (e) { errors.push(`${it.summary}: ${String(e).slice(0, 80)}`) }
       }
       status.textContent = `Creadas ${ok}/${issues.length}.${errors.length ? ' Errores: ' + errors.join(' · ') : ''}`
     })
     const body = document.createElement('div')
     body.className = 'jira-config'
-    body.append(project.row, type.row, taLabel, create, status)
+    body.append(project.row, type.row, assignee.row, taLabel, create, status)
     show(header('Importar tarjetas', back), body)
   }
 
