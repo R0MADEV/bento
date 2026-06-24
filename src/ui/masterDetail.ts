@@ -2,6 +2,8 @@
 // detail pane on the right. Shared by panels that show "a list + the selected
 // item's detail" (Docker, and — pending migration — Notes and DB).
 
+import { icon } from './icons'
+
 export interface MdItem {
   id: string
   label: string
@@ -18,6 +20,8 @@ export interface MasterDetailOptions {
   groupActions?: (group: string, ids: string[]) => HTMLElement[]
   // Small badge next to the group name (e.g. "5/9").
   groupBadge?: (group: string, ids: string[]) => string
+  // Make group headers collapsible (a chevron toggles their items).
+  collapsibleGroups?: boolean
   emptyText?: string
 }
 
@@ -51,6 +55,7 @@ export function createMasterDetail(opts: MasterDetailOptions): MasterDetail {
 
   let items: MdItem[] = []
   let selectedId = ''
+  const collapsed = new Set<string>()
 
   // Group preserving first-seen order, so the consumer controls ordering.
   const grouped = (): { name: string; items: MdItem[] }[] => {
@@ -76,8 +81,20 @@ export function createMasterDetail(opts: MasterDetailOptions): MasterDetail {
     }
     for (const g of grouped()) {
       const ids = g.items.map(i => i.id)
+      const isCollapsed = collapsed.has(g.name)
       const cat = document.createElement('div')
-      cat.className = 'md-cat'
+      cat.className = opts.collapsibleGroups ? 'md-cat md-cat-toggle' : 'md-cat'
+      if (opts.collapsibleGroups) {
+        const chevron = document.createElement('span')
+        chevron.className = isCollapsed ? 'md-cat-chevron collapsed' : 'md-cat-chevron'
+        chevron.innerHTML = icon('chevron')
+        cat.append(chevron)
+        cat.addEventListener('click', () => {
+          if (collapsed.has(g.name)) collapsed.delete(g.name)
+          else collapsed.add(g.name)
+          render()
+        })
+      }
       const name = document.createElement('span')
       name.className = 'md-cat-name'
       name.textContent = g.name
@@ -98,6 +115,7 @@ export function createMasterDetail(opts: MasterDetailOptions): MasterDetail {
       }
       list.append(cat)
 
+      if (isCollapsed) continue
       for (const it of g.items) {
         const item = document.createElement('button')
         item.className = it.id === selectedId ? 'md-item active' : 'md-item'

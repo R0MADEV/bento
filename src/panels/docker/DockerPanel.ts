@@ -33,6 +33,7 @@ export function createDockerPanel(): { element: HTMLElement } {
 
   const md = createMasterDetail({
     title: 'Contenedores',
+    collapsibleGroups: true,
     emptyText: 'No hay contenedores. ¿Está Docker corriendo?',
     headerActions: [iconBtn('refresh', 'Recargar', () => load())],
     groupBadge: (_project, ids) => `${runningCount(ids.map(find).filter(Boolean) as Container[])}/${ids.length}`,
