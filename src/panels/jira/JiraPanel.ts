@@ -6,6 +6,7 @@ import { apiUrl, browseUrl } from '../../core/jira/urls'
 import { parseIssues, type JiraIssue } from '../../core/jira/issues'
 import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
+import { groupByCategory, boardCategory, parseAgileBoards, parseAgileColumns, mapToAgileColumns, type AgileBoard, type AgileColumn } from '../../core/jira/board'
 import { icon } from '../../ui/icons'
 import { createMasterDetail } from '../../ui/masterDetail'
 
@@ -23,7 +24,15 @@ export function createJiraPanel(): { element: HTMLElement } {
     title: 'Jira',
     headerActions: [addBtn],
     onSelect: id => {
-      activeAccount = accounts.find(a => a.id === id) ?? null
+      const next = accounts.find(a => a.id === id) ?? null
+      const isAccountSwitch = next?.id !== activeAccount?.id
+      if (isAccountSwitch) {
+        agileBoards = []
+        selectedBoardId = null
+        agileColumns = []
+        cachedIssues = []
+      }
+      activeAccount = next
       if (activeAccount) showIssues()
     },
     groupActions: (group) => [mkBtn('trash', 'Eliminar cuenta', async () => {
@@ -148,53 +157,300 @@ export function createJiraPanel(): { element: HTMLElement } {
     showDetail(detailHeader(existing ? 'Editar cuenta' : 'Añadir cuenta'), body)
   }
 
-  // ---- issue list ----
+
+  // ---- shared helpers ----
   const statusClass = (cat: string): string =>
     cat === 'done' ? 'jira-st-done' : cat === 'indeterminate' ? 'jira-st-progress' : 'jira-st-todo'
 
-  const showIssues = (jql = MY_OPEN_ISSUES): void => {
+  let viewMode: 'list' | 'board' = 'board'
+  let lastJql = MY_OPEN_ISSUES
+  let cachedIssues: JiraIssue[] = []
+  let agileBoards: AgileBoard[] = []
+  let selectedBoardId: number | null = null
+  let agileColumns: AgileColumn[] = []
+
+  // ---- Agile board API ----
+  const fetchAgileBoards = async (nameFilter = ''): Promise<AgileBoard[]> => {
+    const q = nameFilter ? `&name=${encodeURIComponent(nameFilter)}` : ''
+    const json = await api('GET', `agile/1.0/board?maxResults=100${q}`)
+    return parseAgileBoards(json)
+  }
+
+  const fetchBoardColumns = async (boardId: number): Promise<AgileColumn[]> => {
+    const json = await api('GET', `agile/1.0/board/${boardId}/configuration`)
+    return parseAgileColumns(json)
+  }
+
+  // For scrum boards: fetch active sprint issues; for kanban: fetch board issues.
+  const fetchBoardIssues = async (boardId: number): Promise<JiraIssue[]> => {
+    // Try active sprint first (scrum boards)
+    try {
+      const sprintRes = await api('GET', `agile/1.0/board/${boardId}/sprint?state=active&maxResults=1`) as { values?: Array<{ id: number }> }
+      const sprintId = sprintRes?.values?.[0]?.id
+      if (sprintId) {
+        const json = await api('GET', `agile/1.0/sprint/${sprintId}/issue?fields=summary,status,issuetype,assignee&maxResults=100`)
+        return parseIssues(json)
+      }
+    } catch { /* not a scrum board or no active sprint — fall through */ }
+    const json = await api('GET', `agile/1.0/board/${boardId}/issue?fields=summary,status,issuetype,assignee&maxResults=100`)
+    return parseIssues(json)
+  }
+
+  // ---- issue list / board ----
+  const showIssues = (jql = lastJql): void => {
+    lastJql = jql
     if (!activeAccount) return
+
+    const content = document.createElement('div')
+    content.className = 'jira-view-content'
+
+    const toggleBtn = mkBtn(
+      viewMode === 'list' ? 'kanban' : 'list',
+      viewMode === 'list' ? 'Vista tablero' : 'Vista lista',
+      () => { viewMode = viewMode === 'list' ? 'board' : 'list'; showIssues(search.value) },
+    )
+
+    // Board search input with live suggestions — only shown in board mode
+    const boardWrap = document.createElement('div')
+    boardWrap.className = 'jira-board-search-wrap'
+    const boardInput = document.createElement('input')
+    boardInput.className = 'jira-board-select'
+    boardInput.placeholder = 'Buscar tablero…'
+    const boardDropdown = document.createElement('div')
+    boardDropdown.className = 'jira-board-dropdown'
+    boardWrap.append(boardInput, boardDropdown)
+
     const search = document.createElement('input')
     search.className = 'jira-search'
     search.value = jql
-    search.placeholder = i18nT('jira.jqlPlaceholder')
-    const list = document.createElement('div')
-    list.className = 'jira-list'
+    search.placeholder = 'JQL…'
 
-    const load = async (q: string): Promise<void> => {
-      list.replaceChildren(note(i18nT('common.loading')))
-      try {
-        const issues = await searchIssues(q)
-        list.replaceChildren()
-        if (!issues.length) { list.append(note(i18nT('jira.noResults'))); return }
-        issues.forEach(it => {
-          const row = document.createElement('button')
-          row.className = 'jira-issue'
-          row.innerHTML =
-            `<span class="jira-key">${it.key}</span>` +
-            `<span class="jira-summary"></span>` +
-            `<span class="jira-status ${statusClass(it.statusCategory)}">${it.status}</span>`
-          row.querySelector('.jira-summary')!.textContent = it.summary
-          row.addEventListener('click', () => showIssueDetail(it))
-          list.appendChild(row)
-        })
-      } catch (e) {
-        list.replaceChildren(note(String(e), 'jira-error'))
+    const headerEl = detailHeader(
+      activeAccount.id,
+      mkBtn('plus', 'Nueva tarjeta', () => showCreate()),
+      mkBtn('refresh', 'Recargar', () => load()),
+      toggleBtn,
+      mkBtn('settings', 'Editar cuenta', () => showConfig(activeAccount!)),
+    )
+
+    const renderContent = (issues: JiraIssue[]): void => {
+      cachedIssues = issues
+      content.replaceChildren()
+      if (viewMode === 'board') {
+        const cols = agileColumns.length ? agileColumns : null
+        renderBoard(issues, content, cols)
+      } else {
+        renderList(issues, content)
       }
     }
 
-    search.addEventListener('keydown', e => { if (e.key === 'Enter') load(search.value) })
-    showDetail(
-      detailHeader(
-        activeAccount.id,
-        mkBtn('plus', 'Nueva tarjeta', () => showCreate()),
-        mkBtn('refresh', 'Recargar', () => load(search.value)),
-        mkBtn('settings', 'Editar cuenta', () => showConfig(activeAccount!)),
-      ),
-      search,
-      list,
-    )
-    load(jql)
+    const loadBoard = async (boardId: number): Promise<void> => {
+      content.replaceChildren(note('Cargando tablero…'))
+      try {
+        agileColumns = await fetchBoardColumns(boardId)
+        renderContent(await fetchBoardIssues(boardId))
+      } catch (e) {
+        content.replaceChildren(note(String(e), 'jira-error'))
+      }
+    }
+
+    const loadList = async (q: string): Promise<void> => {
+      content.replaceChildren(note('Cargando…'))
+      try {
+        renderContent(await searchIssues(q))
+      } catch (e) {
+        content.replaceChildren(note(String(e), 'jira-error'))
+      }
+    }
+
+    const load = (): void => {
+      if (viewMode === 'board' && selectedBoardId) loadBoard(selectedBoardId)
+      else loadList(search.value)
+    }
+
+    // Board search with live suggestions
+    const renderBoardDropdown = (boards: AgileBoard[]): void => {
+      boardDropdown.replaceChildren()
+      const q = boardInput.value.trim().toLowerCase()
+      const visible = q ? boards.filter(b => b.name.toLowerCase().includes(q)) : boards
+      if (!visible.length) { boardDropdown.classList.remove('open'); return }
+      for (const b of visible) {
+        const item = document.createElement('button')
+        item.className = b.id === selectedBoardId ? 'jira-board-option active' : 'jira-board-option'
+        item.textContent = b.name
+        item.addEventListener('click', () => {
+          selectedBoardId = b.id
+          boardInput.value = b.name
+          boardDropdown.classList.remove('open')
+          loadBoard(b.id)
+        })
+        boardDropdown.append(item)
+      }
+      boardDropdown.classList.add('open')
+    }
+
+    const initBoardSearch = async (): Promise<void> => {
+      boardInput.placeholder = 'Cargando tableros…'
+      if (!agileBoards.length) {
+        agileBoards = await fetchAgileBoards().catch(() => [])
+      }
+      boardInput.placeholder = 'Buscar tablero…'
+      const current = agileBoards.find(b => b.id === selectedBoardId)
+      if (current) boardInput.value = current.name
+
+      let searchTimer: ReturnType<typeof setTimeout>
+      boardInput.addEventListener('input', () => {
+        clearTimeout(searchTimer)
+        searchTimer = setTimeout(async () => {
+          const q = boardInput.value.trim()
+          if (q.length >= 2) {
+            const fresh = await fetchAgileBoards(q).catch(() => [] as AgileBoard[])
+            agileBoards = [...new Map([...agileBoards, ...fresh].map(b => [b.id, b])).values()]
+          }
+          renderBoardDropdown(agileBoards)
+        }, 250)
+      })
+      boardInput.addEventListener('focus', () => renderBoardDropdown(agileBoards))
+      boardInput.addEventListener('blur', () => setTimeout(() => boardDropdown.classList.remove('open'), 150))
+
+      if (selectedBoardId) loadBoard(selectedBoardId)
+      else content.replaceChildren(note('Busca y selecciona un tablero.'))
+    }
+
+    search.addEventListener('keydown', e => { if (e.key === 'Enter') loadList(search.value) })
+
+    if (viewMode === 'board') {
+      showDetail(headerEl, boardWrap, content)
+      initBoardSearch()
+    } else {
+      showDetail(headerEl, search, content)
+      loadList(jql)
+    }
+  }
+
+  const renderList = (issues: JiraIssue[], container: HTMLElement): void => {
+    if (!issues.length) { container.append(note('Sin resultados.')); return }
+    const list = document.createElement('div')
+    list.className = 'jira-list'
+    issues.forEach(it => {
+      const row = document.createElement('button')
+      row.className = 'jira-issue'
+      row.innerHTML =
+        `<span class="jira-key">${it.key}</span>` +
+        `<span class="jira-summary"></span>` +
+        `<span class="jira-status ${statusClass(it.statusCategory)}">${it.status}</span>`
+      row.querySelector('.jira-summary')!.textContent = it.summary
+      row.addEventListener('click', () => showIssueDetail(it))
+      list.appendChild(row)
+    })
+    container.append(list)
+  }
+
+  // ---- board view ----
+  const renderBoard = (issues: JiraIssue[], container: HTMLElement, cols: AgileColumn[] | null): void => {
+    const board = document.createElement('div')
+    board.className = 'jira-board'
+
+    // Use real board columns if available, otherwise fall back to the 3 generic ones
+    const columns: { name: string; issues: JiraIssue[] }[] = cols
+      ? [...mapToAgileColumns(issues, cols).entries()].map(([name, iss]) => ({ name, issues: iss }))
+      : (() => {
+          const g = groupByCategory(issues)
+          return [
+            { name: 'Por hacer', issues: g.todo },
+            { name: 'En progreso', issues: g.inProgress },
+            { name: 'Hecho', issues: g.done },
+          ]
+        })()
+
+    for (const col of columns) {
+      const colEl = document.createElement('div')
+      colEl.className = 'jira-board-col'
+
+      const colHeader = document.createElement('div')
+      colHeader.className = 'jira-board-col-header'
+      const colTitle = document.createElement('span')
+      colTitle.textContent = col.name
+      const colCount = document.createElement('span')
+      colCount.className = 'jira-board-col-count'
+      colCount.textContent = String(col.issues.length)
+      colHeader.append(colTitle, colCount)
+
+      const cards = document.createElement('div')
+      cards.className = 'jira-board-cards'
+      for (const issue of col.issues) cards.append(makeCard(issue, col.name))
+
+      colEl.addEventListener('dragover', e => { e.preventDefault(); colEl.classList.add('drag-over') })
+      colEl.addEventListener('dragleave', () => colEl.classList.remove('drag-over'))
+      colEl.addEventListener('drop', async e => {
+        e.preventDefault()
+        colEl.classList.remove('drag-over')
+        const key = e.dataTransfer?.getData('text/plain')
+        const fromCol = e.dataTransfer?.getData('jira-from-col')
+        if (!key || fromCol === col.name) return
+        const card = board.querySelector(`[data-issue-key="${key}"]`) as HTMLElement | null
+        if (card) card.classList.add('jira-card-moving')
+        try {
+          // Find transition: prefer by statusId match, fallback to statusCategory
+          const targetCols = cols
+          await doTransitionByColumn(key, col.name, targetCols)
+          // Optimistic update
+          const issue = cachedIssues.find(i => i.key === key)
+          if (issue) issue.status = col.name
+          renderBoard(cachedIssues, container, cols)
+        } catch {
+          if (card) card.classList.remove('jira-card-moving')
+        }
+      })
+
+      colEl.append(colHeader, cards)
+      board.append(colEl)
+    }
+
+    container.replaceChildren(board)
+  }
+
+  const makeCard = (issue: JiraIssue, colName: string): HTMLElement => {
+    const card = document.createElement('div')
+    card.className = 'jira-board-card'
+    card.draggable = true
+    card.dataset.issueKey = issue.key
+    const keyEl = document.createElement('span')
+    keyEl.className = 'jira-key'
+    keyEl.textContent = issue.key
+    const summary = document.createElement('p')
+    summary.className = 'jira-board-card-summary'
+    summary.textContent = issue.summary
+    if (issue.assignee) {
+      const assignee = document.createElement('span')
+      assignee.className = 'jira-board-card-assignee'
+      assignee.textContent = issue.assignee
+      card.append(keyEl, summary, assignee)
+    } else {
+      card.append(keyEl, summary)
+    }
+    card.addEventListener('click', () => showIssueDetail(issue))
+    card.addEventListener('dragstart', e => {
+      card.classList.add('dragging')
+      e.dataTransfer?.setData('text/plain', issue.key)
+      e.dataTransfer?.setData('jira-from-col', colName)
+    })
+    card.addEventListener('dragend', () => card.classList.remove('dragging'))
+    return card
+  }
+
+  // Find and execute the right Jira transition to move an issue to a target column.
+  const doTransitionByColumn = async (issueKey: string, targetColName: string, cols: AgileColumn[] | null): Promise<void> => {
+    const res = await api('GET', `api/2/issue/${issueKey}/transitions`) as { transitions?: Array<{ id: string; name: string; to: { id: string; name: string; statusCategory: { key: string } } }> }
+    const transitions = res?.transitions ?? []
+    let match = transitions.find(t => t.to.name === targetColName || t.name === targetColName)
+    if (!match && cols) {
+      const targetCol = cols.find(c => c.name === targetColName)
+      match = transitions.find(t => targetCol?.statusIds.includes(t.to.id))
+    }
+    if (!match) match = transitions.find(t => boardCategory(t.to.statusCategory.key) === boardCategory(agileColumns.find(c => c.name === targetColName)?.statusIds[0] ? 'indeterminate' : 'new'))
+    if (!match) throw new Error(`No hay transición disponible hacia "${targetColName}"`)
+    await api('POST', `api/2/issue/${issueKey}/transitions`, { transition: { id: match.id } })
   }
 
   // ---- issue detail ----

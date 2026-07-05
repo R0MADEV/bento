@@ -40,13 +40,13 @@ describe('parseIssues', () => {
 
   it('maps the search response to flat issues', () => {
     expect(parseIssues(sample)).toEqual([
-      { key: 'BEN-1', summary: 'Add Docker panel', status: 'In Progress', statusCategory: 'indeterminate', type: 'Task', assignee: 'Roman' },
+      { key: 'BEN-1', summary: 'Add Docker panel', status: 'In Progress', statusId: '', statusCategory: 'indeterminate', type: 'Task', assignee: 'Roman' },
     ])
   })
 
   it('tolerates missing fields and non-arrays', () => {
     expect(parseIssues({ issues: [{ key: 'X-1', fields: {} }] })).toEqual([
-      { key: 'X-1', summary: '', status: '', statusCategory: '', type: '', assignee: '' },
+      { key: 'X-1', summary: '', status: '', statusId: '', statusCategory: '', type: '', assignee: '' },
     ])
     expect(parseIssues({})).toEqual([])
     expect(parseIssues(null)).toEqual([])

@@ -50,6 +50,7 @@ const ICONS: Record<string, string> = {
   'chevron-down': '<path d="m6 9 6 6 6-6"/>',
   edit: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>',
   'git-merge': '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+  kanban: '<path d="M6 3v12"/><path d="M18 9v12"/><rect width="4" height="6" x="4" y="7" rx="1"/><rect width="4" height="6" x="16" y="3" rx="1"/>',
 }
 
 export function icon(name: string): string {
