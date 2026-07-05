@@ -7,32 +7,57 @@ import { parseIssues, type JiraIssue } from '../../core/jira/issues'
 import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
 import { icon } from '../../ui/icons'
+import { createMasterDetail } from '../../ui/masterDetail'
 
-interface JiraConfig { site: string; email: string; token: string }
+interface JiraAccount { id: string; site: string; email: string; token: string }
 interface HttpResponse { status: number; body: string }
 
-const isConfigured = (c: JiraConfig): boolean => !!(c.site && c.email && c.token)
-
 export function createJiraPanel(): { element: HTMLElement } {
-  const root = document.createElement('div')
-  root.className = 'jira-panel'
-  let cfg: JiraConfig = { site: '', email: '', token: '' }
+  let accounts: JiraAccount[] = []
+  let activeAccount: JiraAccount | null = null
 
-  // ---- API (reuses the existing http_request Rust command) ----
+  // ---- build master-detail shell ----
+  const addBtn = mkBtn('plus', 'Añadir cuenta', () => showConfig())
+
+  const md = createMasterDetail({
+    title: 'Jira',
+    headerActions: [addBtn],
+    onSelect: id => {
+      activeAccount = accounts.find(a => a.id === id) ?? null
+      if (activeAccount) showIssues()
+    },
+    groupActions: (group) => [mkBtn('trash', 'Eliminar cuenta', async () => {
+      await invoke('jira_account_delete', { id: group }).catch(() => {})
+      await loadAccounts()
+    })],
+    emptyText: 'Sin cuentas. Usa + para añadir una.',
+  })
+
+  // Accounts live one-per-group so the trash button appears per account.
+  const loadAccounts = async (): Promise<void> => {
+    accounts = await invoke<JiraAccount[]>('jira_accounts_get').catch(() => [] as JiraAccount[])
+    md.setItems(accounts.map(a => ({ id: a.id, label: a.email, group: a.id })))
+    if (!accounts.length) {
+      showHint('Sin cuentas. Usa + para añadir una.')
+    } else if (!activeAccount || !accounts.find(a => a.id === activeAccount!.id)) {
+      showHint('Selecciona una cuenta.')
+    }
+  }
+
+  // ---- API ----
   const api = async (method: string, path: string, body?: unknown): Promise<unknown> => {
+    if (!activeAccount) throw new Error('No account selected')
     const res = await invoke<HttpResponse>('http_request', {
       method,
-      url: apiUrl(cfg.site, path),
+      url: apiUrl(activeAccount.site, path),
       headers: [
-        ['Authorization', basicAuth(cfg.email, cfg.token)],
+        ['Authorization', basicAuth(activeAccount.email, activeAccount.token)],
         ['Accept', 'application/json'],
         ['Content-Type', 'application/json'],
       ],
       body: body !== undefined ? JSON.stringify(body) : null,
     })
-    if (res.status >= 400) {
-      throw new Error(`HTTP ${res.status} — ${res.body.slice(0, 300)}`)
-    }
+    if (res.status >= 400) throw new Error(`HTTP ${res.status} — ${res.body.slice(0, 300)}`)
     return res.body ? JSON.parse(res.body) : null
   }
 
@@ -56,17 +81,18 @@ export function createJiraPanel(): { element: HTMLElement } {
     return api('POST', 'api/2/issue', { fields })
   }
 
-  // Jira assigns by accountId, not email (privacy). Resolve an email → accountId.
   const resolveAccountId = async (email: string): Promise<string | null> => {
     if (!email) return null
     const users = await api('GET', `api/2/user/search?query=${encodeURIComponent(email)}`) as Array<{ accountId?: string }>
     return Array.isArray(users) && users[0]?.accountId ? users[0].accountId : null
   }
 
-  // ---- views ----
-  const show = (...nodes: HTMLElement[]): void => root.replaceChildren(...nodes)
+  // ---- detail-pane helpers ----
+  const showDetail = (...nodes: HTMLElement[]): void => { md.detail.replaceChildren(...nodes) }
 
-  const header = (title: string, ...actions: HTMLElement[]): HTMLElement => {
+  const showHint = (text: string): void => showDetail(note(text, 'jira-detail-hint'))
+
+  const detailHeader = (title: string, ...actions: HTMLElement[]): HTMLElement => {
     const bar = document.createElement('div')
     bar.className = 'jira-header'
     const h = document.createElement('span')
@@ -74,15 +100,6 @@ export function createJiraPanel(): { element: HTMLElement } {
     h.textContent = title
     bar.append(h, ...actions)
     return bar
-  }
-
-  const iconBtn = (name: string, title: string, onClick: () => void): HTMLButtonElement => {
-    const b = document.createElement('button')
-    b.className = 'jira-action'
-    b.title = title
-    b.innerHTML = icon(name)
-    b.addEventListener('click', onClick)
-    return b
   }
 
   const field = (label: string, value = '', type = 'text'): { row: HTMLElement; input: HTMLInputElement } => {
@@ -97,34 +114,46 @@ export function createJiraPanel(): { element: HTMLElement } {
     return { row, input }
   }
 
-  const renderConfig = (): void => {
-    const site = field(i18nT('jira.sitePlaceholder'), cfg.site)
-    const email = field(i18nT('jira.email'), cfg.email)
-    const token = field(i18nT('jira.apiToken'), cfg.token, 'password')
+  // ---- config form (shown in detail pane) ----
+  const showConfig = (existing?: JiraAccount): void => {
+    const siteF = field('Site (https://tuorg.atlassian.net)', existing?.site ?? '')
+    const emailF = field('Email', existing?.email ?? '')
+    const tokenF = field('API token', existing?.token ?? '', 'password')
     const hint = document.createElement('a')
     hint.className = 'jira-hint-link'
     hint.textContent = i18nT('jira.generateApiToken')
     hint.addEventListener('click', () => openUrl('https://id.atlassian.com/manage-profile/security/api-tokens').catch(() => {}))
     const save = document.createElement('button')
     save.className = 'jira-primary'
-    save.textContent = i18nT('common.connect')
+    save.textContent = 'Guardar'
+    const status = note('')
     save.addEventListener('click', async () => {
-      const next = { site: site.input.value.trim(), email: email.input.value.trim(), token: token.input.value.trim() }
-      if (!isConfigured(next)) return
-      await invoke('jira_config_set', next).catch(() => {})
-      cfg = next
-      renderList()
+      const s = siteF.input.value.trim()
+      const e = emailF.input.value.trim()
+      const t = tokenF.input.value.trim()
+      if (!s || !e || !t) { status.textContent = 'Todos los campos son obligatorios.'; return }
+      try {
+        const acc = await invoke<JiraAccount>('jira_account_set', { site: s, email: e, token: t })
+        await loadAccounts()
+        activeAccount = acc
+        md.select(acc.id)
+        showIssues()
+      } catch (err) {
+        status.textContent = String(err)
+      }
     })
     const body = document.createElement('div')
     body.className = 'jira-config'
-    body.append(site.row, email.row, token.row, hint, save)
-    show(header(i18nT('jira.connectJira')), body)
+    body.append(siteF.row, emailF.row, tokenF.row, hint, save, status)
+    showDetail(detailHeader(existing ? 'Editar cuenta' : 'Añadir cuenta'), body)
   }
 
+  // ---- issue list ----
   const statusClass = (cat: string): string =>
     cat === 'done' ? 'jira-st-done' : cat === 'indeterminate' ? 'jira-st-progress' : 'jira-st-todo'
 
-  const renderList = async (jql = MY_OPEN_ISSUES): Promise<void> => {
+  const showIssues = (jql = MY_OPEN_ISSUES): void => {
+    if (!activeAccount) return
     const search = document.createElement('input')
     search.className = 'jira-search'
     search.value = jql
@@ -141,17 +170,12 @@ export function createJiraPanel(): { element: HTMLElement } {
         issues.forEach(it => {
           const row = document.createElement('button')
           row.className = 'jira-issue'
-          const key = document.createElement('span')
-          key.className = 'jira-key'
-          key.textContent = it.key
-          const summary = document.createElement('span')
-          summary.className = 'jira-summary'
-          summary.textContent = it.summary
-          const status = document.createElement('span')
-          status.className = `jira-status ${statusClass(it.statusCategory)}`
-          status.textContent = it.status
-          row.append(key, summary, status)
-          row.addEventListener('click', () => renderDetail(it))
+          row.innerHTML =
+            `<span class="jira-key">${it.key}</span>` +
+            `<span class="jira-summary"></span>` +
+            `<span class="jira-status ${statusClass(it.statusCategory)}">${it.status}</span>`
+          row.querySelector('.jira-summary')!.textContent = it.summary
+          row.addEventListener('click', () => showIssueDetail(it))
           list.appendChild(row)
         })
       } catch (e) {
@@ -160,11 +184,12 @@ export function createJiraPanel(): { element: HTMLElement } {
     }
 
     search.addEventListener('keydown', e => { if (e.key === 'Enter') load(search.value) })
-    show(
-      header(i18nT('jira.panelTitle'),
-        iconBtn('plus', i18nT('jira.newIssue'), () => renderCreate()),
-        iconBtn('refresh', i18nT('common.reload'), () => load(search.value)),
-        iconBtn('settings', i18nT('common.connection'), () => renderConfig()),
+    showDetail(
+      detailHeader(
+        activeAccount.id,
+        mkBtn('plus', 'Nueva tarjeta', () => showCreate()),
+        mkBtn('refresh', 'Recargar', () => load(search.value)),
+        mkBtn('settings', 'Editar cuenta', () => showConfig(activeAccount!)),
       ),
       search,
       list,
@@ -172,9 +197,10 @@ export function createJiraPanel(): { element: HTMLElement } {
     load(jql)
   }
 
-  const renderDetail = async (it: JiraIssue): Promise<void> => {
-    const back = iconBtn('arrow-left', i18nT('common.back'), () => renderList())
-    const openBtn = iconBtn('globe', i18nT('jira.openInJira'), () => openUrl(browseUrl(cfg.site, it.key)).catch(() => {}))
+  // ---- issue detail ----
+  const showIssueDetail = async (it: JiraIssue): Promise<void> => {
+    const openBtn = mkBtn('globe', 'Abrir en Jira', () => openUrl(browseUrl(activeAccount!.site, it.key)).catch(() => {}))
+    const backBtn = mkBtn('arrow-left', 'Volver', () => showIssues())
     const meta = document.createElement('div')
     meta.className = 'jira-detail-meta'
     const key = document.createElement('span')
@@ -192,21 +218,20 @@ export function createJiraPanel(): { element: HTMLElement } {
     summary.textContent = it.summary
     const desc = document.createElement('pre')
     desc.className = 'jira-detail-desc'
-    desc.textContent = i18nT('jira.loadingDescription')
-    fetchDescription(it.key).then(d => { desc.textContent = d || i18nT('jira.noDescription') }).catch(() => { desc.textContent = '' })
-
+    desc.textContent = 'Cargando descripción…'
+    fetchDescription(it.key).then(d => { desc.textContent = d || '(sin descripción)' }).catch(() => { desc.textContent = '' })
     const body = document.createElement('div')
     body.className = 'jira-detail'
     body.append(meta, summary, desc)
-    show(header(i18nT('common.details'), openBtn, back), body)
+    showDetail(detailHeader('Detalle', openBtn, backBtn), body)
   }
 
-  const renderCreate = (): void => {
-    const back = iconBtn('arrow-left', i18nT('common.back'), () => renderList())
-    const project = field(i18nT('jira.projectKeyEGBen'))
-    const type = field(i18nT('common.type'), i18nT('jira.taskIssueType'))
-    const summary = field(i18nT('common.summary'))
-    const assignee = field(i18nT('jira.assignToEmailOptional'), cfg.email)
+  // ---- create ----
+  const showCreate = (): void => {
+    const project = field('Proyecto (clave, ej. BEN)')
+    const type = field('Tipo', 'Task')
+    const summary = field('Resumen')
+    const assignee = field('Asignar a (email, opcional)', activeAccount?.email ?? '')
     const descLabel = document.createElement('label')
     descLabel.className = 'jira-field'
     descLabel.textContent = i18nT('jira.description')
@@ -234,19 +259,19 @@ export function createJiraPanel(): { element: HTMLElement } {
     })
     const bulkLink = document.createElement('a')
     bulkLink.className = 'jira-hint-link'
-    bulkLink.textContent = i18nT('jira.importMultiple')
-    bulkLink.addEventListener('click', () => renderBulk())
+    bulkLink.textContent = 'Importar varias →'
+    bulkLink.addEventListener('click', () => showBulk())
     const body = document.createElement('div')
     body.className = 'jira-config'
     body.append(project.row, type.row, summary.row, assignee.row, descLabel, create, bulkLink, status)
-    show(header(i18nT('jira.newIssue'), back), body)
+    showDetail(detailHeader('Nueva tarjeta', mkBtn('arrow-left', 'Volver', () => showIssues())), body)
   }
 
-  const renderBulk = (): void => {
-    const back = iconBtn('arrow-left', i18nT('common.back'), () => renderCreate())
-    const project = field(i18nT('jira.projectKeyEGKan'))
-    const type = field(i18nT('common.type'), i18nT('jira.taskIssueType'))
-    const assignee = field(i18nT('jira.assignToEmailOptional'), cfg.email)
+  // ---- bulk import ----
+  const showBulk = (): void => {
+    const project = field('Proyecto (clave, ej. KAN)')
+    const type = field('Tipo', 'Task')
+    const assignee = field('Asignar a (email, opcional)', activeAccount?.email ?? '')
     const taLabel = document.createElement('label')
     taLabel.className = 'jira-field'
     taLabel.textContent = i18nT('jira.oneIssuePerLineFormatSummaryDescription')
@@ -282,15 +307,19 @@ export function createJiraPanel(): { element: HTMLElement } {
     const body = document.createElement('div')
     body.className = 'jira-config'
     body.append(project.row, type.row, assignee.row, taLabel, create, status)
-    show(header(i18nT('jira.importIssues'), back), body)
+    showDetail(detailHeader('Importar tarjetas', mkBtn('arrow-left', 'Volver', () => showCreate())), body)
   }
 
   // ---- boot ----
-  invoke<JiraConfig>('jira_config_get')
-    .then(c => { cfg = c; if (isConfigured(c)) renderList(); else renderConfig() })
-    .catch(() => renderConfig())
+  loadAccounts().then(() => {
+    if (accounts.length === 1) {
+      activeAccount = accounts[0]
+      md.select(accounts[0].id)
+      showIssues()
+    }
+  })
 
-  return { element: root }
+  return { element: md.element }
 }
 
 function note(text: string, cls = 'jira-note'): HTMLElement {
@@ -298,4 +327,13 @@ function note(text: string, cls = 'jira-note'): HTMLElement {
   el.className = cls
   el.textContent = text
   return el
+}
+
+function mkBtn(iconName: string, title: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.className = 'jira-action'
+  b.title = title
+  b.innerHTML = icon(iconName)
+  b.addEventListener('click', onClick)
+  return b
 }
