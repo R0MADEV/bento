@@ -88,6 +88,33 @@ async fn http_request(
     })
 }
 
+// Fetch a URL with auth headers and return the body as a base64-encoded data URL.
+// Used for binary assets (images) that require authentication and can't be loaded
+// via a plain <img src> tag in the WebView.
+#[tauri::command]
+async fn http_fetch_base64(
+    url: String,
+    headers: Vec<(String, String)>,
+) -> Result<String, String> {
+    let mut req = reqwest::Client::new().get(&url);
+    for (k, v) in &headers {
+        if !k.is_empty() {
+            req = req.header(k.as_str(), v.as_str());
+        }
+    }
+    let res = req.send().await.map_err(|e| e.to_string())?;
+    let mime = res.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .split(';').next().unwrap_or("image/jpeg")
+        .to_string();
+    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
 // macOS binds Cmd+Z to the native Edit > Undo menu item, whose undo is broken in
 // the WebView (collapses all typing). We build a menu WITHOUT Undo/Redo so Cmd+Z
 // falls through to the DOM, where the notes panel handles undo itself.
@@ -157,6 +184,7 @@ fn main() {
             http_get,
             http_request,
             app_identifier,
+            http_fetch_base64,
             workspace_io::workspace_load,
             workspace_io::workspace_save,
             workspace_io::workspace_reset,

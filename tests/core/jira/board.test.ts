@@ -3,7 +3,7 @@ import { boardCategory, groupByCategory, parseAgileBoards, parseAgileColumns, ma
 import type { JiraIssue } from '../../../src/core/jira/issues'
 
 const issue = (key: string, statusId: string, statusCategory = ''): JiraIssue =>
-  ({ key, summary: '', status: '', statusId, statusCategory, type: '', assignee: '' })
+  ({ key, summary: '', status: '', statusId, statusCategory, type: '', assignee: '', assigneeId: '', assigneeAvatar: '' })
 
 describe('boardCategory', () => {
   it('maps jira statusCategory keys to board columns', () => {

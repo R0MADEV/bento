@@ -6,6 +6,8 @@ export interface JiraIssue {
   statusCategory: string
   type: string
   assignee: string
+  assigneeId: string
+  assigneeAvatar: string
 }
 
 // Flatten Jira's /search response (issues[].fields.*) into a simple list.
@@ -22,6 +24,8 @@ export function parseIssues(json: unknown): JiraIssue[] {
       statusCategory: f.status?.statusCategory?.key ?? '',
       type: f.issuetype?.name ?? '',
       assignee: f.assignee?.displayName ?? '',
+      assigneeId: f.assignee?.accountId ?? '',
+      assigneeAvatar: f.assignee?.avatarUrls?.['48x48'] ?? '',
     }
   })
 }
