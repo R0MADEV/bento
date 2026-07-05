@@ -7,6 +7,7 @@ mod notes;
 mod pty;
 mod scripts;
 mod traffic_lights;
+mod vault;
 mod web_panel;
 mod window_prefs;
 
@@ -110,6 +111,7 @@ fn main() {
         .manage(Arc::new(pty::PtyManager::default()))
         .manage(web_panel::WebPanelState::default())
         .manage(docker::LogStreams::default())
+        .manage(vault::VaultState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             http_get,
             http_request,
@@ -153,6 +155,17 @@ fn main() {
             db::db_docker_redis_value,
             jira::jira_config_get,
             jira::jira_config_set,
+            vault::vault_exists,
+            vault::vault_is_unlocked,
+            vault::vault_setup,
+            vault::vault_unlock,
+            vault::vault_lock,
+            vault::vault_list,
+            vault::vault_add,
+            vault::vault_delete,
+            vault::vault_get_password,
+            vault::vault_verify_password,
+            vault::vault_update,
             docker::docker_list,
             docker::docker_start,
             docker::docker_stop,
