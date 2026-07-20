@@ -435,6 +435,13 @@ html, body, #app {
   color: var(--fg-dim);
 }
 
+/* Contenedor de un panel de carga diferida: transparente para el layout
+   (los roots de panel ya son 100% x 100%) hasta que su módulo monta dentro. */
+.panel-lazy {
+  width: 100%;
+  height: 100%;
+}
+
 /* Terminal */
 .terminal-panel {
   position: relative;

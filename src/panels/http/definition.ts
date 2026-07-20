@@ -1,8 +1,11 @@
 import type { PanelDefinition } from '../registry'
-import { createHttpPanel } from './HttpPanel'
+import { lazyPanel } from '../lazyPanel'
 
 export const httpPanelDefinition: PanelDefinition = {
   type: 'http',
   title: 'HTTP',
-  create: ctx => createHttpPanel(ctx.panelId),
+  create: ctx => lazyPanel(async () => {
+    const { createHttpPanel } = await import('./HttpPanel')
+    return createHttpPanel(ctx.panelId)
+  }),
 }

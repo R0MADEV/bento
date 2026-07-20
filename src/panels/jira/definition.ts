@@ -1,8 +1,11 @@
 import type { PanelDefinition } from '../registry'
-import { createJiraPanel } from './JiraPanel'
+import { lazyPanel } from '../lazyPanel'
 
 export const jiraPanelDefinition: PanelDefinition = {
   type: 'jira',
   title: 'Jira',
-  create: () => createJiraPanel(),
+  create: () => lazyPanel(async () => {
+    const { createJiraPanel } = await import('./JiraPanel')
+    return createJiraPanel()
+  }),
 }

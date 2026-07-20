@@ -1,8 +1,11 @@
 import type { PanelDefinition } from '../registry'
-import { createTerminalPanel } from './TerminalPanel'
+import { lazyPanel } from '../lazyPanel'
 
 export const terminalPanelDefinition: PanelDefinition = {
   type: 'terminal',
   title: 'Terminal',
-  create: (ctx) => createTerminalPanel(ctx.panelId, ctx.projectPath, ctx.removeSelf),
+  create: (ctx) => lazyPanel(async () => {
+    const { createTerminalPanel } = await import('./TerminalPanel')
+    return createTerminalPanel(ctx.panelId, ctx.projectPath, ctx.removeSelf)
+  }),
 }

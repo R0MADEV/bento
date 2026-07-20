@@ -1,8 +1,11 @@
 import type { PanelDefinition } from '../registry'
-import { createNotesPanel } from './NotesPanel'
+import { lazyPanel } from '../lazyPanel'
 
 export const notesPanelDefinition: PanelDefinition = {
   type: 'notes',
   title: 'Notas',
-  create: () => createNotesPanel(),
+  create: () => lazyPanel(async () => {
+    const { createNotesPanel } = await import('./NotesPanel')
+    return createNotesPanel()
+  }),
 }

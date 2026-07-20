@@ -1,9 +1,12 @@
 import type { PanelDefinition } from '../registry'
-import { createVaultPanel } from './VaultPanel'
+import { lazyPanel } from '../lazyPanel'
 
 export const vaultPanelDefinition: PanelDefinition = {
   type: 'vault',
   title: 'Vault',
   singleton: true,
-  create: () => createVaultPanel(),
+  create: () => lazyPanel(async () => {
+    const { createVaultPanel } = await import('./VaultPanel')
+    return createVaultPanel()
+  }),
 }
