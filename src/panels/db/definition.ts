@@ -1,8 +1,11 @@
 import type { PanelDefinition } from '../registry'
-import { createDbPanel } from './DbPanel'
+import { lazyPanel } from '../lazyPanel'
 
 export const dbPanelDefinition: PanelDefinition = {
   type: 'db',
   title: 'Bases de datos',
-  create: () => createDbPanel(),
+  create: () => lazyPanel(async () => {
+    const { createDbPanel } = await import('./DbPanel')
+    return createDbPanel()
+  }),
 }

@@ -1,8 +1,11 @@
 import type { PanelDefinition } from '../registry'
-import { createScriptsPanel } from './ScriptsPanel'
+import { lazyPanel } from '../lazyPanel'
 
 export const scriptsPanelDefinition: PanelDefinition = {
   type: 'scripts',
   title: 'Scripts',
-  create: ctx => createScriptsPanel(ctx.projectPath),
+  create: ctx => lazyPanel(async () => {
+    const { createScriptsPanel } = await import('./ScriptsPanel')
+    return createScriptsPanel(ctx.projectPath)
+  }),
 }
