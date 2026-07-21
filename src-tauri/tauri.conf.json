@@ -5,7 +5,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:8080",
+    "devUrl": "http://localhost:5280",
     "frontendDist": "../dist"
   },
   "bundle": {
@@ -29,7 +29,9 @@
         "width": 1200,
         "height": 800,
         "resizable": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ]
   }

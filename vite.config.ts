@@ -7,9 +7,11 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 8080,
+    port: 5280,
+    strictPort: true,
   },
   test: {
     include: ['tests/**/*.test.ts'],
   },
 })
+
