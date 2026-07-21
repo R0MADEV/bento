@@ -268,6 +268,12 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     } else if (e.key === 'd' && active) {
       e.preventDefault()
       splitFrom(active.id, e.shiftKey ? 'below' : 'right')
+    } else if (e.key === 'j') {
+      // La terminal enfocada cicla su tema local; fuera de ella, el global.
+      const inTerminal = active ? typeOf(active.id) === 'terminal' : false
+      if (inTerminal) return
+      e.preventDefault()
+      cycleTheme()
     }
   }
   window.addEventListener('keydown', onKeydown)
