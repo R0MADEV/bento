@@ -1,4 +1,4 @@
-import Hls from 'hls.js'
+import type Hls from 'hls.js'
 import type { Channel } from '../../core/channel/Channel'
 import { choosePlaybackMode } from '../../core/channel/playbackMode'
 import { pickSubtitleTrack } from '../../core/channel/pickSubtitleTrack'
@@ -34,7 +34,7 @@ export class HLSPlayer {
     this.video.textTracks.addEventListener('addtrack', () => this.preferSpanishSubtitles())
   }
 
-  play(channel: Channel): void {
+  async play(channel: Channel): Promise<void> {
     const url = channel.streamUrl
     if (!url) return
 
@@ -52,19 +52,25 @@ export class HLSPlayer {
     this.iframe.classList.add('hidden')
     this.video.classList.remove('hidden')
 
+    // El WebView reproduce HLS de forma nativa: en ese caso NO cargamos hls.js
+    // (así el chunk pesado solo se descarga cuando de verdad hace falta).
     const canPlayNative = Boolean(this.video.canPlayType('application/vnd.apple.mpegurl'))
-    const mode = choosePlaybackMode(canPlayNative, Hls.isSupported())
-
-    if (mode === 'native') {
+    if (canPlayNative) {
       this.video.src = url
       this.video.load()
       this.video.play().catch(() => {})
-    } else if (mode === 'hls') {
+      return
+    }
+
+    try {
+      const { default: Hls } = await import('hls.js')
+      const mode = choosePlaybackMode(canPlayNative, Hls.isSupported())
+      if (mode !== 'hls') { this.onStatus?.('error'); return }
       this.hls = new Hls({ lowLatencyMode: false })
       this.hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) this.onStatus?.('error') })
       this.hls.loadSource(url)
       this.hls.attachMedia(this.video)
-    } else {
+    } catch {
       this.onStatus?.('error')
     }
   }
