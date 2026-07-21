@@ -149,7 +149,6 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
   const sessionTab = (
     name: string,
-    index: number,
     active: boolean,
     onSelect: () => void,
     onClose: () => void,
@@ -209,11 +208,10 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   function render(): void {
     hidePopover()
     tabsArea.innerHTML = ''
-    state.sessions.forEach((s, i) => {
+    state.sessions.forEach((s) => {
       tabsArea.appendChild(
         sessionTab(
           s.name,
-          i + 1,
           s.id === state.activeId,
           () => { const next = setActiveSession(state, s.id); if (next.activeId !== state.activeId) { state = next; render() } },
           () => closeSession(s.id),
