@@ -1,16 +1,18 @@
 :root {
-  /* Valores por defecto (Tokyo Night); JS los sobreescribe según el tema */
-  --bg: #1a1b26;
-  --surface: #22232e;
-  --surface-2: #2a2b38;
-  --border: #353748;
-  --fg: #c0caf5;
-  --fg-dim: #565f89;
-  --accent: #7aa2f7;
-  --accent-fg: #1a1b26;
-  --selection: #33467c;
-  --gold: #e0af68;
+  /* Valores por defecto (Herdr); JS los sobreescribe según el tema */
+  --bg: #0d0e15;
+  --surface: #171822;
+  --surface-2: #20212c;
+  --border: #262838;
+  --fg: #c4cadd;
+  --fg-dim: #6b7396;
+  --accent: #7d9bf5;
+  --accent-fg: #0d0e15;
+  --selection: #222842;
+  --gold: #dbb168;
   --radius: 6px;
+  /* Pila monoespaciada: look terminal-native en toda la UI */
+  --font-ui: 'SF Mono', ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, monospace;
 }
 
 * {
@@ -55,16 +57,17 @@ html, body, #app {
   height: 100vh;
   overflow: hidden;
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Fondo glassmorphism: degradado azul vibrante con glows en las esquinas */
+/* Fondo plano dev-terminal: base oscura con glows muy sutiles en las esquinas */
 #app {
   background:
-    radial-gradient(70% 60% at 95% -5%, var(--glow), transparent 55%),
-    radial-gradient(65% 60% at 0% 105%, var(--glow), transparent 50%),
-    linear-gradient(145deg, var(--bg-grad) 0%, var(--bg) 50%, var(--bg-grad) 100%);
+    radial-gradient(60% 50% at 100% 0%, color-mix(in srgb, var(--glow) 20%, transparent), transparent 60%),
+    radial-gradient(55% 50% at 0% 100%, color-mix(in srgb, var(--glow) 14%, transparent), transparent 55%),
+    var(--bg);
 }
 
 /* Command palette (Cmd/Ctrl+K) */
@@ -288,12 +291,9 @@ html, body, #app {
 .session-instance {
   position: absolute;
   inset: 0;
-  /* Replica el gradiente de #app para que los gaps entre paneles y las zonas
-     vacías de dockview muestren el mismo fondo glassmorphism. */
-  background:
-    radial-gradient(70% 60% at 95% -5%, color-mix(in srgb, var(--glow) 60%, transparent), transparent 55%),
-    radial-gradient(65% 60% at 0% 105%, color-mix(in srgb, var(--glow) 60%, transparent), transparent 50%),
-    linear-gradient(145deg, var(--bg-grad) 0%, var(--bg) 50%, var(--bg-grad) 100%);
+  /* Fondo plano del tema: los gaps entre paneles y las zonas vacías de
+     dockview muestran el color base, sin degradados ni glows. */
+  background: var(--bg);
 }
 
 /* Sesión oculta: invisible pero renderizada → el audio/vídeo no se para.
@@ -382,9 +382,11 @@ html, body, #app {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
+/* Grupo activo: sin halo luminoso ni borde de acento. Solo un borde neutro
+   algo más marcado; el panel activo ya se distingue por la línea de acento
+   sobre su pestaña. */
 .workspace-view .dv-groupview.dv-active-group {
-  border-color: var(--accent);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 40%, transparent);
+  border-color: var(--border);
 }
 
 /* Icono "+" (añadir terminal) fijo a la derecha, alejado de la esquina
@@ -1323,12 +1325,53 @@ html, body, #app {
   color: var(--gold);
 }
 
-/* Escenario: vídeo arriba, lista de canales abajo */
+/* Estrecho: toolbar arriba, vídeo en medio, lista de canales abajo (apilado) */
 .tv-main {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   flex: 1;
   min-height: 0;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas:
+    "toolbar"
+    "stage"
+    "grid";
+}
+
+.tv-toolbar { grid-area: toolbar; }
+.tv-stage { grid-area: stage; }
+.tv-grid { grid-area: grid; }
+
+/* Ancho: barra lateral izquierda (buscador + filtros + parrilla) y el
+   reproductor a la derecha ocupando el resto. */
+.tv-main.wide {
+  grid-template-columns: 40% 60%;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "toolbar stage"
+    "grid    stage";
+}
+
+/* En la barra lateral el toolbar se envuelve: buscador en una línea,
+   filtros/botones debajo. */
+.tv-main.wide .tv-toolbar {
+  flex-wrap: wrap;
+}
+
+/* El reproductor llena su columna; el vídeo (object-fit:contain) se centra. */
+.tv-main.wide .tv-stage {
+  aspect-ratio: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Lista oculta en modo ancho: el reproductor ocupa todo el ancho. */
+.tv-main.wide.list-hidden {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "toolbar"
+    "stage";
 }
 
 .tv-stage {
@@ -1664,6 +1707,8 @@ html, body, #app {
   align-items: center;
   gap: 18px;
   padding: 32px 40px;
+  /* No desbordar la ventana: la tarjeta cabe siempre y los botones hacen wrap. */
+  max-width: min(620px, calc(100% - 32px));
   border: 1px solid var(--border);
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface) 60%, transparent);
@@ -1678,6 +1723,8 @@ html, body, #app {
 
 .workspace-empty-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 12px;
 }
 

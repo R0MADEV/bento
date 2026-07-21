@@ -77,8 +77,16 @@ export function createTVPanel(
   emptyState.innerHTML = `${icon('tv')}<p>Elige un canal para empezar</p>`
 
   stage.append(player.element, emptyState)
-  main.append(stage, grid)
-  root.append(toolbar, main)
+  // toolbar + stage + grid son hermanos del grid: así el layout puede pasar de
+  // apilado (estrecho) a barra lateral izquierda + reproductor derecha (ancho).
+  main.append(toolbar, stage, grid)
+  root.append(main)
+
+  // Layout responsive según el ancho REAL del panel (no del viewport: en
+  // dockview el panel puede ocupar cualquier fracción). Container queries no
+  // sirven aquí porque romperían el position:fixed del modo cine.
+  const syncWide = (w: number) => main.classList.toggle('wide', w >= 700)
+  new ResizeObserver(entries => { for (const e of entries) syncWide(e.contentRect.width) }).observe(main)
 
   let data: ChannelData = { channels: [], countries: [], categories: [] }
   let allChannels: Channel[] = []

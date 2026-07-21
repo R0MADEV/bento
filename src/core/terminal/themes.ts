@@ -23,9 +23,21 @@ export interface TerminalTheme {
   brightWhite: string
 }
 
-export const DEFAULT_THEME = 'dark'
+export const DEFAULT_THEME = 'herdr'
 
 const THEMES: Record<string, TerminalTheme> = {
+  // Herdr — near-black navy, plano y denso (look dev-terminal)
+  herdr: {
+    background: '#0d0e15',
+    foreground: '#c4cadd',
+    cursor: '#c4cadd',
+    cursorAccent: '#0d0e15',
+    selectionBackground: '#222842',
+    black: '#0d0e15', red: '#e06b7e', green: '#7fd88f', yellow: '#dbb168',
+    blue: '#7d9bf5', magenta: '#b18cf0', cyan: '#6fcfe6', white: '#a6adc8',
+    brightBlack: '#6b7396', brightRed: '#e06b7e', brightGreen: '#7fd88f', brightYellow: '#dbb168',
+    brightBlue: '#7d9bf5', brightMagenta: '#b18cf0', brightCyan: '#6fcfe6', brightWhite: '#e4e8f4',
+  },
   // Tokyo Night
   dark: {
     background: '#1a1b26',
@@ -129,6 +141,7 @@ const THEMES: Record<string, TerminalTheme> = {
 export const themeNames = Object.keys(THEMES)
 
 export const themeLabels: Record<string, string> = {
+  herdr: 'Herdr',
   dark: 'Tokyo Night',
   dracula: 'Dracula',
   onedark: 'One Dark',
