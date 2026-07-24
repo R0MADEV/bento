@@ -2578,6 +2578,38 @@ html, body, #app {
   border-bottom-left-radius: 4px;
 }
 
+/* Markdown dentro de las respuestas del asistente */
+.ai-msg-assistant p { margin: 0 0 6px; }
+.ai-msg-assistant p:last-child { margin-bottom: 0; }
+.ai-msg-assistant h1,
+.ai-msg-assistant h2,
+.ai-msg-assistant h3 { font-size: 13px; margin: 8px 0 4px; font-weight: 600; }
+.ai-msg-assistant ul { margin: 4px 0 6px; padding-left: 18px; }
+.ai-msg-assistant li { margin: 2px 0; }
+.ai-msg-assistant a { color: var(--accent); }
+.ai-msg-assistant code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 11.5px;
+}
+.ai-msg-assistant pre {
+  margin: 6px 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+.ai-msg-assistant pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11.5px;
+  white-space: pre;
+}
+
 .ai-input-row {
   display: flex;
   align-items: flex-end;
@@ -2630,3 +2662,138 @@ html, body, #app {
   padding: 6px 8px;
 }
 .ai-vault-notice.hidden { display: none; }
+
+/* Prompt de sistema (textarea) y botón de plantillas del chat */
+.ai-system {
+  resize: vertical;
+  min-height: 44px;
+  line-height: 1.4;
+}
+.ai-templates {
+  font-size: 15px;
+  font-weight: 700;
+  align-self: flex-end;
+  height: 34px;
+}
+
+/* Botón "enviar al chat" flotando en la esquina del response HTTP */
+.http-res { position: relative; }
+.http-ask-ai {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.http-ask-ai:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Editor de consultas del panel de BD */
+.db-query-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.db-query-input {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 1.4;
+  padding: 8px;
+  outline: none;
+  white-space: pre;
+}
+.db-query-input:focus { border-color: var(--accent); }
+.db-query-bar .db-connect { align-self: flex-start; }
+.db-query-leaf { color: var(--accent); }
+
+/* Filtro de tablas/relaciones en el editor de consultas */
+.db-query-filter {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  padding: 5px 8px;
+  outline: none;
+}
+.db-query-filter:focus { border-color: var(--accent); }
+
+/* Chips de ejemplo (tablas/colecciones/claves) en el editor de consultas */
+.db-query-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  align-content: flex-start;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.db-query-examples-label {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-right: 2px;
+}
+.db-query-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+.db-query-chip:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Acciones del editor de query + botón IA + chips de relación */
+.db-query-actions { display: flex; gap: 6px; }
+.db-query-ai {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.db-query-ai:hover { border-color: var(--accent); color: var(--accent); }
+.db-query-chip-rel {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+/* Conmutador de grupo (Todas / Tablas / Relaciones) del editor de consultas */
+.db-query-toggle { display: flex; gap: 4px; }
+.db-query-toggle-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-family: var(--font-ui);
+}
+.db-query-toggle-btn:hover { color: var(--fg); }
+.db-query-toggle-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
