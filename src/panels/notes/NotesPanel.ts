@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { askAi } from '../../ui/askAi'
 import { parseNote, serializeNote, type ParsedNote } from '../../core/notes/noteFile'
 import { noteTitle } from '../../core/notes/noteTitle'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
@@ -38,7 +39,17 @@ export function createNotesPanel() {
   layoutBtn.className = 'notes-toggle'
   layoutBtn.title = 'Vista'
   layoutBtn.innerHTML = icon('eye')
-  header.append(titleInput, layoutBtn)
+  const askAiBtn = document.createElement('button')
+  askAiBtn.className = 'notes-toggle'
+  askAiBtn.title = 'Preguntar a la IA sobre esta nota'
+  askAiBtn.innerHTML = icon('chat')
+  askAiBtn.addEventListener('click', () => {
+    const content = body.value.trim()
+    if (!content) return
+    const title = titleInput.value.trim()
+    askAi(`Contexto — nota${title ? ` "${title}"` : ''}:\n\n${content}\n\n`)
+  })
+  header.append(titleInput, layoutBtn, askAiBtn)
   const metaRow = document.createElement('div')
   metaRow.className = 'notes-meta'
   const categoryInput = document.createElement('input')

@@ -16,6 +16,7 @@ import { loadProfiles, addProfile, removeProfile } from '../../core/terminal/pro
 import { createActivityTracker } from '../../core/terminal/activityTracker'
 import { parseOsc7Path, toDisplayPath } from '../../core/terminal/osc7'
 import { createSearchBar } from './searchBar'
+import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
 import type { PanelApi } from '../registry'
 import 'xterm/css/xterm.css'
@@ -329,6 +330,11 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     const isCopy = mod && e.key === 'c' && term.hasSelection()
     if (isCopy) {
       navigator.clipboard.writeText(term.getSelection()).catch(() => {})
+      return false
+    }
+    const isAskAi = mod && e.shiftKey && e.key.toLowerCase() === 'e' && term.hasSelection()
+    if (isAskAi) {
+      askAi(`/explica\n\n\`\`\`\n${term.getSelection()}\n\`\`\``, true)
       return false
     }
     if (mod && e.key === 'v') {

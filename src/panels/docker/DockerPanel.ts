@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
 import { errorLines, isErrorLine } from '../../core/docker/logFilter'
+import { askAi } from '../../ui/askAi'
 import { createTerminalPanel } from '../terminal/TerminalPanel'
 import { createMasterDetail, type MdItem } from '../../ui/masterDetail'
 import { icon } from '../../ui/icons'
@@ -121,11 +122,29 @@ export function createDockerPanel(): { element: HTMLElement; dispose: () => void
     })
     const refreshBtn = iconBtn('refresh', 'Recargar', () => { if (live) { stopLive(); startLive() } else loadStatic() })
 
+    // Enviar al chat de IA: si hay selección la manda; si no, TODOS los errores
+    // del contenedor (y si no hay errores, los logs). Tope amplio por tamaño de
+    // petición: se queda con la parte más reciente.
+    const sendToAi = (): void => {
+      const selection = window.getSelection()?.toString().trim()
+      const content = (selection || errorLines(rawLogs).join('\n') || rawLogs).slice(-16000)
+      if (content.trim()) askAi(`/explica estos logs de Docker:\n\n\`\`\`\n${content}\n\`\`\``, true)
+    }
+    const askAiBtn = iconBtn('chat', 'Explicar errores con IA (⌘⇧E)', sendToAi)
+
+    pre.tabIndex = 0
+    pre.addEventListener('keydown', e => {
+      const isAskAi = (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'e'
+      if (!isAskAi) return
+      e.preventDefault()
+      sendToAi()
+    })
+
     const logsHead = document.createElement('div')
     logsHead.className = 'docker-logs-head'
     const t = document.createElement('span')
     t.textContent = 'Logs'
-    logsHead.append(t, liveBtn, errBtn, refreshBtn)
+    logsHead.append(t, liveBtn, errBtn, refreshBtn, askAiBtn)
 
     body.replaceChildren(logsHead, pre)
     bodyCleanup = stopLive

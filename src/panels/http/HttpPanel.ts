@@ -4,6 +4,7 @@ import { parseOpenApi, specTitle, type OpenApiEndpoint } from '../../core/http/o
 import { addCollection, removeCollection, renameCollection, type Collection } from '../../core/http/collections'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
+import { askAi } from '../../ui/askAi'
 
 const COMMON_HEADERS = [
   'Content-Type: application/json',
@@ -100,9 +101,17 @@ export function createHttpPanel(panelId = '') {
   status.className = 'http-status'
   const response = document.createElement('pre')
   response.className = 'http-response'
+  const askAiBtn = document.createElement('button')
+  askAiBtn.className = 'http-ask-ai'
+  askAiBtn.title = 'Enviar la respuesta al chat de IA'
+  askAiBtn.innerHTML = icon('chat')
+  askAiBtn.addEventListener('click', () => {
+    const body = response.textContent?.trim()
+    if (body) askAi(`Contexto — respuesta HTTP:\n\n\`\`\`\n${body}\n\`\`\`\n\n`)
+  })
   const resSection = document.createElement('div')
   resSection.className = 'http-res'
-  resSection.append(status, response)
+  resSection.append(status, askAiBtn, response)
 
   // Draggable divider: give more height to the request (big body) or the response.
   const divider = document.createElement('div')
