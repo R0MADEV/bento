@@ -38,4 +38,24 @@ describe('renderMarkdown', () => {
   it('does not format inside inline code', () => {
     expect(renderMarkdown('`**no**`')).toContain('<code>**no**</code>')
   })
+
+  it('renders fenced code blocks without inline formatting inside', () => {
+    const html = renderMarkdown('```js\nconst x = **1**\n```')
+    expect(html).toContain('<pre><code>const x = **1**</code></pre>')
+    expect(html).not.toContain('<strong>')
+  })
+
+  it('preserves newlines inside a code block', () => {
+    expect(renderMarkdown('```\na\nb\n```')).toContain('<pre><code>a\nb</code></pre>')
+  })
+
+  it('escapes HTML inside code blocks', () => {
+    const html = renderMarkdown('```\n<script>alert(1)</script>\n```')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('closes an unterminated code fence (partial streaming)', () => {
+    expect(renderMarkdown('```\nhalf')).toContain('<pre><code>half</code></pre>')
+  })
 })

@@ -6,6 +6,10 @@ import {
 } from '../core/ai/config'
 import { getAiKey, setAiKey, vaultStatus, type VaultStatus } from './aiKeys'
 import { splitLines, deltaFromLine, isDoneLine } from '../core/ai/sseStream'
+import { renderMarkdown } from '../core/notes/renderMarkdown'
+import { expandInput, SLASH_COMMANDS } from '../core/ai/prompts'
+import { showContextMenu } from './contextMenu'
+import { AI_ASK_EVENT, type AiAskDetail } from './askAi'
 
 // Widget flotante de chat con IA (endpoint compatible OpenAI). Botón en la
 // esquina; al abrir, un modal con el hilo, selector de proveedor/modelo y ajustes.
@@ -71,9 +75,18 @@ export function createAiChat(): HTMLElement {
   keyInput.type = 'password'
   keyInput.placeholder = 'API key'
   keyInput.autocomplete = 'off'
+  const systemInput = document.createElement('textarea')
+  systemInput.className = 'ai-field ai-system'
+  systemInput.rows = 2
+  systemInput.placeholder = 'Ej: Eres un asistente conciso que responde en español.'
   const vaultNotice = document.createElement('div')
   vaultNotice.className = 'ai-vault-notice hidden'
-  settings.append(labeled('Base URL', baseUrlInput), labeled('API key', keyInput), vaultNotice)
+  settings.append(
+    labeled('Prompt de sistema', systemInput),
+    labeled('Base URL', baseUrlInput),
+    labeled('API key', keyInput),
+    vaultNotice,
+  )
 
   // ── Hilo de mensajes ─────────────────────────────────────────────────────
   const thread = document.createElement('div')
@@ -82,6 +95,10 @@ export function createAiChat(): HTMLElement {
   // ── Barra de entrada ─────────────────────────────────────────────────────
   const inputRow = document.createElement('div')
   inputRow.className = 'ai-input-row'
+  const templatesBtn = document.createElement('button')
+  templatesBtn.className = 'ai-icon-btn ai-templates'
+  templatesBtn.title = 'Plantillas (/comandos)'
+  templatesBtn.textContent = '/'
   const input = document.createElement('textarea')
   input.className = 'ai-input'
   input.rows = 1
@@ -89,7 +106,15 @@ export function createAiChat(): HTMLElement {
   const sendBtn = document.createElement('button')
   sendBtn.className = 'ai-send'
   sendBtn.innerHTML = icon('send')
-  inputRow.append(input, sendBtn)
+  inputRow.append(templatesBtn, input, sendBtn)
+
+  templatesBtn.addEventListener('click', () => {
+    const rect = templatesBtn.getBoundingClientRect()
+    showContextMenu(rect.left, rect.top, SLASH_COMMANDS.map(c => ({
+      label: `/${c.name} — ${c.label}`,
+      onClick: () => { input.value = `/${c.name} `; input.focus() },
+    })))
+  })
 
   modal.append(header, settings, thread, inputRow)
 
@@ -103,6 +128,7 @@ export function createAiChat(): HTMLElement {
     providerSelect.value = cfg.providerId
     modelSelect.value = cfg.model
     baseUrlInput.value = cfg.baseUrl
+    systemInput.value = cfg.systemPrompt
     keyInput.placeholder = `API key de ${providerById(cfg.providerId)?.label ?? 'proveedor'}`
     refreshModelSuggestions()
   }
@@ -154,6 +180,7 @@ export function createAiChat(): HTMLElement {
   })
   modelSelect.addEventListener('change', () => { cfg = { ...cfg, model: modelSelect.value.trim() }; persist() })
   baseUrlInput.addEventListener('change', () => { cfg = { ...cfg, baseUrl: baseUrlInput.value.trim() }; persist() })
+  systemInput.addEventListener('change', () => { cfg = { ...cfg, systemPrompt: systemInput.value.trim() }; persist() })
   // Guarda la key en el Vault bajo el proveedor activo (cada uno la suya).
   keyInput.addEventListener('change', async () => {
     const ok = await setAiKey(cfg.providerId, keyInput.value.trim(), cfg.baseUrl)
@@ -176,8 +203,10 @@ export function createAiChat(): HTMLElement {
     messages.forEach(m => {
       const row = document.createElement('div')
       row.className = `ai-msg ai-msg-${m.role}`
-      // textContent: nunca interpretar HTML del contenido (seguridad).
-      row.textContent = m.content
+      // El asistente se pinta como Markdown (renderMarkdown escapa el HTML antes,
+      // así que es seguro). El mensaje del usuario va como texto plano.
+      if (m.role === 'assistant') row.innerHTML = renderMarkdown(m.content)
+      else row.textContent = m.content
       thread.appendChild(row)
     })
     thread.scrollTop = thread.scrollHeight
@@ -201,10 +230,17 @@ export function createAiChat(): HTMLElement {
 
     input.value = ''
     input.style.height = 'auto'
-    messages.push({ role: 'user', content: text })
+    // Los slash commands (/traducir, /explica…) se expanden a un prompt completo.
+    messages.push({ role: 'user', content: expandInput(text) })
     const assistant: ChatMessage = { role: 'assistant', content: '' }
     messages.push(assistant)
     renderThread()
+
+    // Historial sin el placeholder del asistente; el prompt de sistema va delante.
+    const history = messages.slice(0, -1)
+    const apiMessages: ChatMessage[] = cfg.systemPrompt
+      ? [{ role: 'system', content: cfg.systemPrompt }, ...history]
+      : history
 
     streaming = true
     root.classList.add('busy')
@@ -212,7 +248,7 @@ export function createAiChat(): HTMLElement {
       const res = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify(buildChatBody(messages.slice(0, -1), cfg.model)),
+        body: JSON.stringify(buildChatBody(apiMessages, cfg.model)),
       })
       if (!res.ok || !res.body) {
         assistant.content = `⚠️ Error ${res.status}: ${(await res.text()).slice(0, 300)}`
@@ -270,6 +306,16 @@ export function createAiChat(): HTMLElement {
   window.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleOpen() }
     if (e.key === 'Escape' && !modal.classList.contains('hidden')) close()
+  })
+
+  // Contexto desde otros paneles: abre el chat con el texto precargado (o lo envía).
+  window.addEventListener(AI_ASK_EVENT, e => {
+    const { text, autoSend } = (e as CustomEvent<AiAskDetail>).detail
+    open()
+    input.value = text
+    input.dispatchEvent(new Event('input')) // recalcula la altura del textarea
+    input.focus()
+    if (autoSend) send()
   })
 
   return root

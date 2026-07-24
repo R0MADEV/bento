@@ -20,15 +20,30 @@ function inline(text: string): string {
     .join('')
 }
 
-// Minimal, safe Markdown → HTML: headings (1-3), unordered lists, paragraphs +
-// inline (bold/italic/code/links). Input is escaped first, so it can't inject HTML.
+// Minimal, safe Markdown → HTML: fenced code blocks (```), headings (1-3),
+// unordered lists, paragraphs + inline (bold/italic/code/links). Input is escaped
+// first, so it can't inject HTML.
 export function renderMarkdown(md: string): string {
   const lines = escapeHtml(md).split('\n')
   const out: string[] = []
   let inList = false
+  let inCode = false
+  let codeBuffer: string[] = []
   const closeList = (): void => { if (inList) { out.push('</ul>'); inList = false } }
+  const flushCode = (): void => {
+    out.push(`<pre><code>${codeBuffer.join('\n')}</code></pre>`)
+    codeBuffer = []
+    inCode = false
+  }
 
   for (const line of lines) {
+    if (line.startsWith('```')) {
+      if (inCode) flushCode()
+      else { closeList(); inCode = true }
+      continue
+    }
+    if (inCode) { codeBuffer.push(line); continue }
+
     const heading = line.match(/^(#{1,3})\s+(.*)$/)
     if (heading) {
       closeList()
@@ -44,6 +59,7 @@ export function renderMarkdown(md: string): string {
     closeList()
     if (line.trim() !== '') out.push(`<p>${inline(line)}</p>`)
   }
+  if (inCode) flushCode() // fence sin cerrar (respuesta de IA a medio streaming)
   closeList()
   return out.join('\n')
 }

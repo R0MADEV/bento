@@ -15,12 +15,14 @@ export interface AiConfig {
   providerId: string
   baseUrl: string
   model: string
+  systemPrompt: string
 }
 
 export const DEFAULT_AI_CONFIG: AiConfig = {
   providerId: 'openai',
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
+  systemPrompt: '',
 }
 
 const KEY = 'bento.ai.config'
@@ -34,6 +36,7 @@ export function parseConfig(raw: string | null): AiConfig {
       providerId: obj.providerId ?? DEFAULT_AI_CONFIG.providerId,
       baseUrl: obj.baseUrl ?? DEFAULT_AI_CONFIG.baseUrl,
       model: obj.model ?? DEFAULT_AI_CONFIG.model,
+      systemPrompt: obj.systemPrompt ?? DEFAULT_AI_CONFIG.systemPrompt,
     }
   } catch {
     return { ...DEFAULT_AI_CONFIG }
