@@ -234,9 +234,14 @@ export function createVaultPanel(): { element: HTMLElement } {
     const url = field('URL (opcional)', existing?.url ?? '')
     const notes = field('Notas (opcional)', existing?.notes ?? '')
 
-    // Toggle show/hide password
-    const togglePw = mkBtn('eye', 'Mostrar contraseña', () => {
-      password.input.type = password.input.type === 'password' ? 'text' : 'password'
+    // Toggle show/hide password. Al revelar una entrada existente trae la
+    // contraseña guardada (no se precarga por seguridad; solo al pedir verla).
+    const togglePw = mkBtn('eye', 'Mostrar contraseña', async () => {
+      const revealing = password.input.type === 'password'
+      if (revealing && existing && !password.input.value) {
+        password.input.value = await invoke<string>('vault_get_password', { id: existing.id }).catch(() => '')
+      }
+      password.input.type = revealing ? 'text' : 'password'
     })
     const pwWrap = document.createElement('div')
     pwWrap.className = 'vault-pw-wrap'
