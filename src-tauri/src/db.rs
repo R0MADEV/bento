@@ -85,6 +85,31 @@ pub struct TableData {
     rows: Vec<Vec<String>>,
 }
 
+// Relación por clave foránea: table.column → ref_table.ref_column.
+#[derive(serde::Serialize)]
+pub struct ForeignKey {
+    table: String,
+    column: String,
+    ref_table: String,
+    ref_column: String,
+}
+
+fn parse_fks(out: String) -> Vec<ForeignKey> {
+    out.lines()
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split('\t').collect();
+            if p.len() >= 4 && !p[0].is_empty() && !p[2].is_empty() {
+                Some(ForeignKey {
+                    table: p[0].into(), column: p[1].into(),
+                    ref_table: p[2].into(), ref_column: p[3].into(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 // ---------------- detection (Docker + local ports) ----------------
 
 #[tauri::command]
@@ -167,6 +192,31 @@ pub fn db_docker_mysql_rows(container: String, host: String, port: u16, db: Stri
     }
     let op = mysql_op(&user, &password, &format!("SELECT * FROM `{}`.`{}` LIMIT 200", db, table), false);
     run_mysql(&container, &host, port, &op).map(parse_table)
+}
+
+// Ejecuta SQL libre contra la base `db`. Herramienta de dev sobre BDs locales
+// propias: la consulta es intencionadamente arbitraria (como cualquier cliente).
+#[tauri::command]
+pub fn db_docker_mysql_query(container: String, host: String, port: u16, db: String, sql: String, user: String, password: String) -> Result<TableData, String> {
+    if !is_safe_ident(&db) {
+        return Err("nombre de base inválido".into());
+    }
+    let op = mysql_op(&user, &password, &format!("USE `{}`; {}", db, sql), false);
+    run_mysql(&container, &host, port, &op).map(parse_table)
+}
+
+// Relaciones (claves foráneas) de una base MySQL/MariaDB.
+#[tauri::command]
+pub fn db_docker_mysql_fks(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<ForeignKey>, String> {
+    if !is_safe_ident(&db) {
+        return Err("nombre de base inválido".into());
+    }
+    let query = format!(
+        "SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA='{}' AND REFERENCED_TABLE_NAME IS NOT NULL",
+        db
+    );
+    let op = mysql_op(&user, &password, &query, true);
+    run_mysql(&container, &host, port, &op).map(parse_fks)
 }
 
 #[tauri::command]
@@ -272,6 +322,46 @@ pub fn db_docker_mongo_docs(container: String, host: String, port: u16, db: Stri
     mongo_eval(&container, &host, port, &user, &password, &script).map(lines_of)
 }
 
+// Ejecuta un script mongosh libre en el contexto de `db` (herramienta de dev).
+#[tauri::command]
+pub fn db_docker_mongo_query(container: String, host: String, port: u16, db: String, script: String, user: String, password: String) -> Result<String, String> {
+    if !is_safe_ident(&db) {
+        return Err("nombre de base inválido".into());
+    }
+    let wrapped = format!("db = db.getSiblingDB('{}'); {}", db, script);
+    mongo_eval(&container, &host, port, &user, &password, &wrapped)
+}
+
+// Relaciones de Mongo (heurística): campos *Id/*_id u ObjectId que apuntan a
+// otra colección, adivinada por el nombre. Referencias, no FKs forzadas.
+#[tauri::command]
+pub fn db_docker_mongo_refs(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<ForeignKey>, String> {
+    if !is_safe_ident(&db) {
+        return Err("nombre de base inválido".into());
+    }
+    let script = format!(
+        r#"var D=db.getSiblingDB('{}');var names=D.getCollectionNames();var out=[];var seen={{}};names.forEach(function(coll){{var docs=D.getCollection(coll).find().limit(20).toArray();docs.forEach(function(doc){{Object.keys(doc).forEach(function(k){{if(k==='_id')return;var key=coll+'|'+k;if(seen[key])return;var v=doc[k];var looksId=/(_id|Id)$/.test(k)||(v instanceof ObjectId);if(!looksId)return;seen[key]=1;var base=k.replace(/(_id|Id)$/,'').toLowerCase();var target='';for(var i=0;i<names.length;i++){{var lc=names[i].toLowerCase();if(lc===base||lc===base+'s'||lc.replace(/s$/,'')===base){{target=names[i];break;}}}}out.push(coll+'\t'+k+'\t'+target);}});}});}});print(out.join('\n'));"#,
+        db
+    );
+    mongo_eval(&container, &host, port, &user, &password, &script).map(parse_mongo_refs)
+}
+
+fn parse_mongo_refs(out: String) -> Vec<ForeignKey> {
+    out.lines()
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split('\t').collect();
+            if p.len() >= 3 && !p[0].is_empty() && !p[2].is_empty() {
+                Some(ForeignKey {
+                    table: p[0].into(), column: p[1].into(),
+                    ref_table: p[2].into(), ref_column: "_id".into(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn db_docker_mongo_update(container: String, host: String, port: u16, db: String, collection: String, doc: String, user: String, password: String) -> Result<(), String> {
@@ -364,6 +454,27 @@ pub fn db_docker_pg_rows(container: String, host: String, port: u16, db: String,
         "-A", "-F", "\t", "-P", "footer=off", "-P", "null=NULL", "-c", &query,
     ])?;
     Ok(parse_table(out))
+}
+
+// Ejecuta SQL libre contra `db` (herramienta de dev; consulta arbitraria).
+#[tauri::command]
+pub fn db_docker_pg_query(container: String, host: String, port: u16, db: String, sql: String, user: String, password: String) -> Result<TableData, String> {
+    let out = psql(&container, &host, port, &db, &user, &password, &[
+        "-A", "-F", "\t", "-P", "footer=off", "-P", "null=NULL", "-c", &sql,
+    ])?;
+    Ok(parse_table(out))
+}
+
+// Relaciones (claves foráneas) de una base PostgreSQL.
+#[tauri::command]
+pub fn db_docker_pg_fks(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<ForeignKey>, String> {
+    let query = "SELECT tc.table_name, kcu.column_name, ccu.table_name, ccu.column_name \
+        FROM information_schema.table_constraints tc \
+        JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name AND tc.table_schema=kcu.table_schema \
+        JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema \
+        WHERE tc.constraint_type='FOREIGN KEY'";
+    let out = psql(&container, &host, port, &db, &user, &password, &["-t", "-A", "-F", "\t", "-c", query])?;
+    Ok(parse_fks(out))
 }
 
 #[tauri::command]
@@ -467,6 +578,16 @@ pub fn db_docker_redis_value(container: String, host: String, port: u16, db: Str
         _ => String::new(),
     };
     Ok(RedisValue { kind, value })
+}
+
+// Ejecuta un comando redis-cli libre contra la base `db` (herramienta de dev).
+#[tauri::command]
+pub fn db_docker_redis_command(container: String, host: String, port: u16, db: String, command: String, password: String) -> Result<String, String> {
+    let args: Vec<&str> = command.split_whitespace().collect();
+    if args.is_empty() {
+        return Err("comando vacío".into());
+    }
+    redis_cli(&container, &host, port, &db, &password, &args)
 }
 
 #[cfg(test)]
