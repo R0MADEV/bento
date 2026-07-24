@@ -2426,3 +2426,207 @@ html, body, #app {
 .vault-confirm-actions .vault-primary { flex: 1; }
 .vault-transition-btn { padding: 8px 16px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; cursor: pointer; }
 .vault-danger { background: #f7768e !important; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Asistente IA — widget flotante (botón + modal de chat)
+   ══════════════════════════════════════════════════════════════════════════ */
+.ai-chat {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1500;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  font-family: var(--font-ui);
+}
+
+.ai-fab {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: var(--accent-fg);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.ai-fab:hover { transform: translateY(-2px); filter: brightness(1.08); }
+/* Con el modal abierto el FAB sobra (se cierra con la X o Esc). */
+.ai-chat.open .ai-fab { display: none; }
+.ai-chat.busy .ai-fab .icon { animation: spin 0.8s linear infinite; }
+
+.ai-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(460px, calc(100vw - 32px));
+  /* Casi toda la altura de la ventana (deja hueco para el FAB y márgenes). */
+  height: calc(100vh - 96px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  transition: width 0.16s ease;
+}
+.ai-modal.hidden { display: none; }
+
+/* Ampliado con el botón de ensanchar. */
+.ai-modal.wide {
+  width: min(820px, calc(100vw - 32px));
+}
+
+.ai-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ai-select,
+.ai-model,
+.ai-field {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+.ai-select { flex-shrink: 0; }
+.ai-model { flex: 1; min-width: 0; }
+.ai-select:focus,
+.ai-model:focus,
+.ai-field:focus { border-color: var(--accent); }
+
+.ai-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--fg-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+}
+.ai-icon-btn:hover { background: var(--surface-2); color: var(--fg); }
+
+.ai-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  flex-shrink: 0;
+}
+.ai-settings.hidden { display: none; }
+.ai-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ai-field-row span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--fg-dim);
+}
+
+.ai-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-msg {
+  max-width: 85%;
+  padding: 8px 11px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-msg-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-bottom-right-radius: 4px;
+}
+.ai-msg-assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+  color: var(--fg);
+  border-bottom-left-radius: 4px;
+}
+
+.ai-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ai-input {
+  flex: 1;
+  resize: none;
+  /* Cómodo para ~3 líneas por defecto; crece hasta max-height y luego scroll. */
+  min-height: 68px;
+  max-height: 180px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  padding: 8px 10px;
+  outline: none;
+}
+.ai-input:focus { border-color: var(--accent); }
+.ai-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: filter 0.12s;
+}
+.ai-send:hover { filter: brightness(1.08); }
+
+/* Aviso de estado del Vault dentro de los ajustes del chat. */
+.ai-vault-notice {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.ai-vault-notice.hidden { display: none; }

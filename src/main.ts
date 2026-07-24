@@ -16,6 +16,7 @@ import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
 import { LocalStorageWorkspaceStateRepository } from './adapters/LocalStorageWorkspaceStateRepository'
 import { createSessionManager } from './app/createSessionManager'
+import { createAiChat } from './ui/aiChat'
 import { getThemeName, applyAppTheme } from './panels/terminal/themePreference'
 import { isMac } from './ui/platform'
 import { invoke } from '@tauri-apps/api/core'
@@ -56,3 +57,4 @@ panels.register(vaultPanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))
+app.appendChild(createAiChat())
