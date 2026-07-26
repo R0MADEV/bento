@@ -9,10 +9,14 @@ import { splitLines, deltaFromLine, isDoneLine } from '../core/ai/sseStream'
 import { renderMarkdown } from '../core/notes/renderMarkdown'
 import { expandInput, SLASH_COMMANDS } from '../core/ai/prompts'
 import { showContextMenu } from './contextMenu'
-import { AI_ASK_EVENT, type AiAskDetail } from './askAi'
+import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from './askAi'
 
-// Widget flotante de chat con IA (endpoint compatible OpenAI). Botón en la
-// esquina; al abrir, un modal con el hilo, selector de proveedor/modelo y ajustes.
+// Messages as the API expects them (includes tool_calls and tool responses).
+interface ApiToolCall { id: string; function: { name: string; arguments: string } }
+interface ApiMessage { role: string; content?: string | null; tool_calls?: ApiToolCall[]; tool_call_id?: string }
+
+// Floating AI chat widget (OpenAI-compatible endpoint). Button in the
+// corner; opening it shows a modal with the thread, provider/model selector and settings.
 export function createAiChat(): HTMLElement {
   const root = document.createElement('div')
   root.className = 'ai-chat'
@@ -27,7 +31,7 @@ export function createAiChat(): HTMLElement {
   modal.className = 'ai-modal hidden'
   root.appendChild(modal)
 
-  // ── Cabecera: proveedor + modelo + ajustes + cerrar ──────────────────────
+  // ── Header: provider + model + settings + close ──────────────────────────
   const header = document.createElement('div')
   header.className = 'ai-header'
 
@@ -64,7 +68,7 @@ export function createAiChat(): HTMLElement {
 
   header.append(providerSelect, modelSelect, modelList, expandBtn, settingsBtn, closeBtn)
 
-  // ── Ajustes: base URL + API key ──────────────────────────────────────────
+  // ── Settings: base URL + API key ─────────────────────────────────────────
   const settings = document.createElement('div')
   settings.className = 'ai-settings hidden'
   const baseUrlInput = document.createElement('input')
@@ -88,11 +92,11 @@ export function createAiChat(): HTMLElement {
     vaultNotice,
   )
 
-  // ── Hilo de mensajes ─────────────────────────────────────────────────────
+  // ── Message thread ───────────────────────────────────────────────────────
   const thread = document.createElement('div')
   thread.className = 'ai-thread'
 
-  // ── Barra de entrada ─────────────────────────────────────────────────────
+  // ── Input bar ────────────────────────────────────────────────────────────
   const inputRow = document.createElement('div')
   inputRow.className = 'ai-input-row'
   const templatesBtn = document.createElement('button')
@@ -118,9 +122,9 @@ export function createAiChat(): HTMLElement {
 
   modal.append(header, settings, thread, inputRow)
 
-  // ── Estado ───────────────────────────────────────────────────────────────
+  // ── State ────────────────────────────────────────────────────────────────
   let cfg: AiConfig = loadConfig()
-  saveConfig(cfg) // reescribe la config sin secretos (limpia keys en claro del esquema viejo)
+  saveConfig(cfg) // rewrites the config without secrets (clears plaintext keys from the old schema)
   const messages: ChatMessage[] = []
   let streaming = false
 
@@ -133,7 +137,7 @@ export function createAiChat(): HTMLElement {
     refreshModelSuggestions()
   }
 
-  // Muestra el estado del Vault y ajusta el campo de la key en consecuencia.
+  // Shows the Vault status and adjusts the key field accordingly.
   const showVaultNotice = (status: VaultStatus): void => {
     const msg = status === 'absent'
       ? '🔒 Crea el Vault (panel Vault) para guardar tu API key de forma segura.'
@@ -145,8 +149,8 @@ export function createAiChat(): HTMLElement {
     keyInput.disabled = status !== 'unlocked'
   }
 
-  // La key vive en el Vault, no en la config: se carga aparte (async) y solo si
-  // el Vault está desbloqueado.
+  // The key lives in the Vault, not in the config: it's loaded separately (async) and only if
+  // the Vault is unlocked.
   const loadKeyField = async (): Promise<void> => {
     const status = await vaultStatus()
     showVaultNotice(status)
@@ -170,7 +174,7 @@ export function createAiChat(): HTMLElement {
     cfg = {
       ...cfg,
       providerId: providerSelect.value,
-      // Al cambiar de proveedor, adopta su base URL y primer modelo por defecto.
+      // When switching provider, adopt its base URL and first model by default.
       baseUrl: provider && provider.id !== 'custom' ? provider.baseUrl : cfg.baseUrl,
       model: provider?.models[0] ?? cfg.model,
     }
@@ -181,7 +185,7 @@ export function createAiChat(): HTMLElement {
   modelSelect.addEventListener('change', () => { cfg = { ...cfg, model: modelSelect.value.trim() }; persist() })
   baseUrlInput.addEventListener('change', () => { cfg = { ...cfg, baseUrl: baseUrlInput.value.trim() }; persist() })
   systemInput.addEventListener('change', () => { cfg = { ...cfg, systemPrompt: systemInput.value.trim() }; persist() })
-  // Guarda la key en el Vault bajo el proveedor activo (cada uno la suya).
+  // Saves the key in the Vault under the active provider (each provider has its own).
   keyInput.addEventListener('change', async () => {
     const ok = await setAiKey(cfg.providerId, keyInput.value.trim(), cfg.baseUrl)
     if (!ok) showVaultNotice(await vaultStatus())
@@ -189,7 +193,7 @@ export function createAiChat(): HTMLElement {
 
   settingsBtn.addEventListener('click', () => settings.classList.toggle('hidden'))
 
-  // Ancho ampliable con un click; se recuerda entre sesiones.
+  // Width expandable with a click; remembered between sessions.
   const WIDE_KEY = 'bento.ai.wide'
   if (localStorage.getItem(WIDE_KEY) === '1') modal.classList.add('wide')
   expandBtn.addEventListener('click', () => {
@@ -197,22 +201,49 @@ export function createAiChat(): HTMLElement {
     localStorage.setItem(WIDE_KEY, wide ? '1' : '0')
   })
 
-  // ── Render del hilo ──────────────────────────────────────────────────────
+  // Query runner and tools provided by the panel that opened the chat.
+  let runner: AiQueryRunner | undefined
+  let tools: AiTool[] | undefined
+
+  // If there's a runner, add "▶ Ejecutar" to each of the assistant's code blocks.
+  const decorateRunButtons = (): void => {
+    if (!runner) return
+    thread.querySelectorAll<HTMLElement>('.ai-msg-assistant pre').forEach(pre => {
+      const btn = document.createElement('button')
+      btn.className = 'ai-run-btn'
+      btn.textContent = '▶ Ejecutar'
+      btn.addEventListener('click', async () => {
+        const code = pre.querySelector('code')?.textContent?.trim()
+        if (!code || !runner) return
+        btn.disabled = true
+        btn.textContent = 'Ejecutando…'
+        const result = document.createElement('div')
+        result.className = 'ai-run-result'
+        result.append(await runner(code))
+        pre.after(result)
+        btn.remove()
+      })
+      pre.appendChild(btn)
+    })
+  }
+
+  // ── Thread render ────────────────────────────────────────────────────────
   const renderThread = (): void => {
     thread.innerHTML = ''
     messages.forEach(m => {
       const row = document.createElement('div')
       row.className = `ai-msg ai-msg-${m.role}`
-      // El asistente se pinta como Markdown (renderMarkdown escapa el HTML antes,
-      // así que es seguro). El mensaje del usuario va como texto plano.
+      // The assistant is rendered as Markdown (renderMarkdown escapes the HTML first,
+      // so it's safe). The user's message goes as plain text.
       if (m.role === 'assistant') row.innerHTML = renderMarkdown(m.content)
       else row.textContent = m.content
       thread.appendChild(row)
     })
+    decorateRunButtons()
     thread.scrollTop = thread.scrollHeight
   }
 
-  // ── Envío con streaming ──────────────────────────────────────────────────
+  // ── Streaming send ───────────────────────────────────────────────────────
   async function send(): Promise<void> {
     const text = input.value.trim()
     if (!text || streaming) return
@@ -230,13 +261,13 @@ export function createAiChat(): HTMLElement {
 
     input.value = ''
     input.style.height = 'auto'
-    // Los slash commands (/traducir, /explica…) se expanden a un prompt completo.
+    // Slash commands (/traducir, /explica…) expand into a full prompt.
     messages.push({ role: 'user', content: expandInput(text) })
     const assistant: ChatMessage = { role: 'assistant', content: '' }
     messages.push(assistant)
     renderThread()
 
-    // Historial sin el placeholder del asistente; el prompt de sistema va delante.
+    // History without the assistant placeholder; the system prompt goes first.
     const history = messages.slice(0, -1)
     const apiMessages: ChatMessage[] = cfg.systemPrompt
       ? [{ role: 'system', content: cfg.systemPrompt }, ...history]
@@ -245,32 +276,8 @@ export function createAiChat(): HTMLElement {
     streaming = true
     root.classList.add('busy')
     try {
-      const res = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify(buildChatBody(apiMessages, cfg.model)),
-      })
-      if (!res.ok || !res.body) {
-        assistant.content = `⚠️ Error ${res.status}: ${(await res.text()).slice(0, 300)}`
-        renderThread()
-        return
-      }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let done = false
-      while (!done) {
-        const chunk = await reader.read()
-        if (chunk.done) break
-        buffer += decoder.decode(chunk.value, { stream: true })
-        const split = splitLines(buffer)
-        buffer = split.rest
-        for (const line of split.lines) {
-          if (isDoneLine(line)) { done = true; break }
-          const delta = deltaFromLine(line)
-          if (delta) { assistant.content += delta; renderThread() }
-        }
-      }
+      if (tools?.length) await runWithTools(apiMessages, assistant, apiKey)
+      else await streamReply(apiMessages, assistant, apiKey)
     } catch (e) {
       assistant.content = `⚠️ ${e instanceof Error ? e.message : 'Fallo de red'}`
       renderThread()
@@ -280,17 +287,85 @@ export function createAiChat(): HTMLElement {
     }
   }
 
+  const chatUrl = (): string => `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`
+  const authHeaders = (apiKey: string) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` })
+
+  // Normal streaming reply (without tools).
+  async function streamReply(apiMessages: ChatMessage[], assistant: ChatMessage, apiKey: string): Promise<void> {
+    const res = await fetch(chatUrl(), { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(buildChatBody(apiMessages, cfg.model)) })
+    if (!res.ok || !res.body) {
+      assistant.content = `⚠️ Error ${res.status}: ${(await res.text()).slice(0, 300)}`
+      renderThread()
+      return
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let done = false
+    while (!done) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true })
+      const split = splitLines(buffer)
+      buffer = split.rest
+      for (const line of split.lines) {
+        if (isDoneLine(line)) { done = true; break }
+        const delta = deltaFromLine(line)
+        if (delta) { assistant.content += delta; renderThread() }
+      }
+    }
+  }
+
+  // With tools: non-streaming loop. The AI can request schema data
+  // (get_columns…) and we execute it and return it to the AI until it
+  // produces the final reply.
+  async function runWithTools(apiMessages: ChatMessage[], assistant: ChatMessage, apiKey: string): Promise<void> {
+    const byName = new Map(tools!.map(t => [t.name, t]))
+    const msgs: ApiMessage[] = [...apiMessages]
+    for (let i = 0; i < 6; i++) {
+      const res = await fetch(chatUrl(), {
+        method: 'POST',
+        headers: authHeaders(apiKey),
+        body: JSON.stringify({ model: cfg.model, messages: msgs, tools: tools!.map(t => t.schema), tool_choice: 'auto' }),
+      })
+      if (!res.ok) { assistant.content = `⚠️ Error ${res.status}: ${(await res.text()).slice(0, 300)}`; renderThread(); return }
+      const data = await res.json() as { choices?: Array<{ message?: ApiMessage }> }
+      const m = data.choices?.[0]?.message
+      if (!m) { assistant.content = '⚠️ Respuesta vacía del modelo.'; renderThread(); return }
+      if (m.tool_calls?.length) {
+        msgs.push(m)
+        assistant.content = '🔧 Consultando el esquema…'
+        renderThread()
+        for (const tc of m.tool_calls) {
+          const tool = byName.get(tc.function?.name)
+          let result = 'herramienta desconocida'
+          if (tool) {
+            try { result = await tool.run(JSON.parse(tc.function.arguments || '{}')) }
+            catch (err) { result = `error: ${err instanceof Error ? err.message : String(err)}` }
+          }
+          msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
+        }
+        continue
+      }
+      assistant.content = m.content ?? ''
+      renderThread()
+      return
+    }
+    assistant.content += '\n\n_(demasiadas llamadas a herramientas; corta aquí)_'
+    renderThread()
+  }
+
   sendBtn.addEventListener('click', send)
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   })
-  // Auto-crecer el textarea hasta un máximo (la CSS limita con max-height).
+  // Auto-grow the textarea up to a maximum (the CSS caps it with max-height).
   input.addEventListener('input', () => {
     input.style.height = 'auto'
     input.style.height = `${input.scrollHeight}px`
   })
 
-  // ── Apertura / cierre ────────────────────────────────────────────────────
+  // ── Open / close ─────────────────────────────────────────────────────────
   const open = (): void => {
     modal.classList.remove('hidden')
     root.classList.add('open')
@@ -308,14 +383,16 @@ export function createAiChat(): HTMLElement {
     if (e.key === 'Escape' && !modal.classList.contains('hidden')) close()
   })
 
-  // Contexto desde otros paneles: abre el chat con el texto precargado (o lo envía).
+  // Context from other panels: opens the chat with the text preloaded (or sends it).
   window.addEventListener(AI_ASK_EVENT, e => {
-    const { text, autoSend } = (e as CustomEvent<AiAskDetail>).detail
+    const detail = (e as CustomEvent<AiAskDetail>).detail
+    runner = detail.runner // enables/clears the Run button depending on the origin
+    tools = detail.tools   // enables/clears function-calling depending on the origin
     open()
-    input.value = text
-    input.dispatchEvent(new Event('input')) // recalcula la altura del textarea
+    input.value = detail.text
+    input.dispatchEvent(new Event('input')) // recalculates the textarea height
     input.focus()
-    if (autoSend) send()
+    if (detail.autoSend) send()
   })
 
   return root

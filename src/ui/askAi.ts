@@ -1,14 +1,32 @@
-// Puente ligero para enviar contexto al chat de IA desde cualquier panel, sin
-// acoplarse al widget entero: solo despacha un evento que el chat escucha.
+// Lightweight bridge to send context to the AI chat from any panel, without
+// coupling to the whole widget: it just dispatches an event the chat listens for.
 
 export const AI_ASK_EVENT = 'bento:ai-ask'
+
+// Runs a query the AI has written and returns the element to display
+// (table or text). Provided by the panel that opens the chat (e.g. the DB one), bound
+// to its active connection. This way the chat can execute without knowing the DB.
+export type AiQueryRunner = (query: string) => Promise<HTMLElement>
+
+// Tool (function-calling) the AI can invoke: e.g. the DB panel
+// offers get_columns so the AI can query real columns on demand.
+export interface AiTool {
+  name: string
+  // OpenAI tool spec: { type: 'function', function: { name, description, parameters } }
+  schema: Record<string, unknown>
+  run: (args: Record<string, unknown>) => Promise<string>
+}
 
 export interface AiAskDetail {
   text: string
   autoSend?: boolean
+  runner?: AiQueryRunner
+  tools?: AiTool[]
 }
 
-// Abre el chat con el texto precargaqudo; autoSend=true lo envía directamente.
-export function askAi(text: string, autoSend = false): void {
-  window.dispatchEvent(new CustomEvent<AiAskDetail>(AI_ASK_EVENT, { detail: { text, autoSend } }))
+// Opens the chat with the text preloaded; autoSend=true sends it directly.
+// runner (optional) enables "Run" on code blocks; tools (optional)
+// enables function-calling (the AI requests schema data on demand).
+export function askAi(text: string, autoSend = false, runner?: AiQueryRunner, tools?: AiTool[]): void {
+  window.dispatchEvent(new CustomEvent<AiAskDetail>(AI_ASK_EVENT, { detail: { text, autoSend, runner, tools } }))
 }
