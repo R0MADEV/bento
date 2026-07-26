@@ -1,5 +1,5 @@
 :root {
-  /* Valores por defecto (Herdr); JS los sobreescribe según el tema */
+  /* Default values (Herdr); JS overrides them according to the theme */
   --bg: #0d0e15;
   --surface: #171822;
   --surface-2: #20212c;
@@ -11,7 +11,7 @@
   --selection: #222842;
   --gold: #dbb168;
   --radius: 6px;
-  /* Pila monoespaciada: look terminal-native en toda la UI */
+  /* Monospace stack: terminal-native look across the whole UI */
   --font-ui: 'SF Mono', ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, monospace;
 }
 
@@ -21,7 +21,7 @@
   padding: 0;
 }
 
-/* Iconos SVG */
+/* SVG icons */
 .icon {
   width: 16px;
   height: 16px;
@@ -62,7 +62,7 @@ html, body, #app {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Fondo plano dev-terminal: base oscura con glows muy sutiles en las esquinas */
+/* Flat dev-terminal background: dark base with very subtle glows in the corners */
 #app {
   background:
     radial-gradient(60% 50% at 100% 0%, color-mix(in srgb, var(--glow) 20%, transparent), transparent 60%),
@@ -135,7 +135,7 @@ html, body, #app {
   opacity: 0.7;
 }
 
-/* Sesiones */
+/* Sessions */
 .session-manager {
   display: flex;
   flex-direction: column;
@@ -149,16 +149,16 @@ html, body, #app {
   gap: 2px;
   padding: 4px 8px;
   min-height: 36px;
-  /* Fondo glass sutil + borde: que se lea como chrome, no como un panel */
+  /* Subtle glass background + border: so it reads as chrome, not as a panel */
   background: color-mix(in srgb, var(--surface) 35%, transparent);
   backdrop-filter: blur(12px);
   overflow-x: auto;
   flex-shrink: 0;
-  /* Arrastrar la ventana desde la barra (la barra de título es overlay) */
+  /* Drag the window from the bar (the title bar is an overlay) */
   -webkit-app-region: drag;
 }
 
-/* Borde en el lado que toca a los paneles, según la posición de la barra */
+/* Border on the side that touches the panels, according to the bar's position */
 .session-manager[data-bar-pos="top"] .session-bar { border-bottom: 1px solid var(--border); }
 .session-manager[data-bar-pos="bottom"] .session-bar { border-top: 1px solid var(--border); }
 .session-manager[data-bar-pos="left"] .session-bar { border-right: 1px solid var(--border); }
@@ -180,14 +180,14 @@ html, body, #app {
   overflow-x: auto;
 }
 
-/* Los elementos interactivos no deben arrastrar la ventana */
+/* Interactive elements must not drag the window */
 .session-tab,
 .session-add,
 .window-control {
   -webkit-app-region: no-drag;
 }
 
-/* Controles de ventana propios (Windows/Linux) */
+/* Custom window controls (Windows/Linux) */
 .window-controls {
   display: flex;
   align-items: center;
@@ -237,8 +237,8 @@ html, body, #app {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 999px;
-  /* Atenuado pero legible: --fg-dim (brightBlack del tema) tenía muy poco
-     contraste. El activo usa --fg pleno, así se sigue distinguiendo. */
+  /* Dimmed but legible: --fg-dim (the theme's brightBlack) had too little
+     contrast. The active one uses full --fg, so it's still distinguishable. */
   color: color-mix(in srgb, var(--fg) 72%, transparent);
   font-size: 12px;
   cursor: pointer;
@@ -291,14 +291,14 @@ html, body, #app {
 .session-instance {
   position: absolute;
   inset: 0;
-  /* Fondo plano del tema: los gaps entre paneles y las zonas vacías de
-     dockview muestran el color base, sin degradados ni glows. */
+  /* Flat theme background: the gaps between panels and dockview's empty
+     areas show the base color, with no gradients or glows. */
   background: var(--bg);
 }
 
-/* Sesión oculta: invisible pero renderizada → el audio/vídeo no se para.
-   opacity:0 además de visibility:hidden porque WebKit deja colar algunos
-   elementos hijos (ej. botones × de Dockview) con solo visibility:hidden. */
+/* Hidden session: invisible but rendered → the audio/video doesn't stop.
+   opacity:0 in addition to visibility:hidden because WebKit lets some
+   child elements (e.g. Dockview's × buttons) slip through with only visibility:hidden. */
 .session-instance.hidden {
   visibility: hidden;
   opacity: 0;
@@ -312,9 +312,9 @@ html, body, #app {
 }
 
 .workspace-view {
-  /* Sin width/height fijos: el tamaño lo da session-body (poner width:100% rompía el margen derecho). */
+  /* No fixed width/height: the size comes from session-body (setting width:100% broke the right margin). */
 
-  /* Tema de Dockview (barra de tabs de paneles) ligado a nuestras variables */
+  /* Dockview theme (panel tab bar) tied to our variables */
   --dv-background-color: transparent;
   --dv-group-view-background-color: transparent;
   --dv-tabs-and-actions-container-background-color: var(--surface);
@@ -337,7 +337,7 @@ html, body, #app {
   --dv-drag-over-border-color: var(--accent);
 }
 
-/* Sin líneas de sash ni separadores (el gap ya separa los paneles) */
+/* No sash lines or separators (the gap already separates the panels) */
 .workspace-view .dv-sash,
 .workspace-view .dv-sash::before,
 .workspace-view .dv-sash::after {
@@ -349,21 +349,21 @@ html, body, #app {
   display: none !important;
 }
 
-/* Gap uniforme entre paneles: solo en vistas hoja (las que contienen un groupview
-   directamente, no las que contienen otro split anidado). Así el padding no se
-   acumula en niveles: borde exterior = 4px, entre paneles = 4+4 = 8px siempre. */
+/* Uniform gap between panels: only on leaf views (those that contain a groupview
+   directly, not those that contain another nested split). This way the padding doesn't
+   accumulate across levels: outer edge = 4px, between panels = 4+4 = 8px always. */
 .workspace-view .dv-split-view-container .dv-view:has(> .dv-groupview) {
   padding: 4px;
 }
 
-/* El overflow:auto del dv-view recortaría el border-radius del groupview;
-   con visible deja que las esquinas redondeadas se vean correctamente. */
+/* The dv-view's overflow:auto would clip the groupview's border-radius;
+   with visible it lets the rounded corners show correctly. */
 .workspace-view .dv-split-view-container .dv-view {
   overflow: visible;
 }
 
-/* Override de Dockview con MÁS especificidad que sus reglas internas
-   (sus selectores tienen 5-6 clases; con .workspace-view delante ganamos). */
+/* Dockview override with MORE specificity than its internal rules
+   (its selectors have 5-6 classes; with .workspace-view in front we win). */
 .workspace-view .dv-dockview,
 .workspace-view .dv-groupview,
 .workspace-view .dv-content-container,
@@ -382,15 +382,15 @@ html, body, #app {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-/* Grupo activo: sin halo luminoso ni borde de acento. Solo un borde neutro
-   algo más marcado; el panel activo ya se distingue por la línea de acento
-   sobre su pestaña. */
+/* Active group: no glowing halo or accent border. Just a slightly more
+   pronounced neutral border; the active panel is already distinguished by the accent line
+   above its tab. */
 .workspace-view .dv-groupview.dv-active-group {
   border-color: var(--border);
 }
 
-/* Icono "+" (añadir terminal) fijo a la derecha, alejado de la esquina
-   redondeada (padding) para que no se recorte ni se pierda. */
+/* "+" icon (add terminal) pinned to the right, away from the rounded
+   corner (padding) so it doesn't get clipped or lost. */
 .workspace-view .dv-right-actions-container {
   display: flex;
   align-items: center;
@@ -398,7 +398,7 @@ html, body, #app {
   flex-shrink: 0;
 }
 
-/* Las pestañas se encogen/scrollean en vez de empujar fuera el "+" */
+/* Tabs shrink/scroll instead of pushing the "+" out */
 .workspace-view .dv-tabs-container {
   min-width: 0;
 }
@@ -437,8 +437,8 @@ html, body, #app {
   color: var(--fg-dim);
 }
 
-/* Contenedor de un panel de carga diferida: transparente para el layout
-   (los roots de panel ya son 100% x 100%) hasta que su módulo monta dentro. */
+/* Container for a lazily loaded panel: transparent for the layout
+   (panel roots are already 100% x 100%) until its module mounts inside. */
 .panel-lazy {
   width: 100%;
   height: 100%;
@@ -552,13 +552,13 @@ html, body, #app {
   background: none;
 }
 
-/* Botón maximize de terminal (al lado del de paleta) */
+/* Terminal maximize button (next to the palette one) */
 .term-max-btn {
   bottom: 8px;
   right: 44px;
 }
 
-/* Sección de perfiles en el popover */
+/* Profiles section in the popover */
 .term-profiles-section {
   border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   padding-top: 10px;
@@ -623,7 +623,7 @@ html, body, #app {
 
 .term-profile-save:hover { color: var(--accent); border-color: var(--accent); }
 
-/* Botón "+" en la cabecera de cada grupo */
+/* "+" button in the header of each group */
 .group-add-tab {
   height: 100%;
   min-width: 28px;
@@ -641,7 +641,7 @@ html, body, #app {
   color: var(--fg);
 }
 
-/* Menú contextual */
+/* Context menu */
 .context-menu {
   position: fixed;
   z-index: 1000;
@@ -668,7 +668,7 @@ html, body, #app {
   color: var(--accent-fg);
 }
 
-/* Barra de búsqueda del terminal */
+/* Terminal search bar */
 .terminal-search {
   position: absolute;
   top: 8px;
@@ -1325,7 +1325,7 @@ html, body, #app {
   color: var(--gold);
 }
 
-/* Estrecho: toolbar arriba, vídeo en medio, lista de canales abajo (apilado) */
+/* Narrow: toolbar on top, video in the middle, channel list at the bottom (stacked) */
 .tv-main {
   display: grid;
   flex: 1;
@@ -1342,8 +1342,8 @@ html, body, #app {
 .tv-stage { grid-area: stage; }
 .tv-grid { grid-area: grid; }
 
-/* Ancho: barra lateral izquierda (buscador + filtros + parrilla) y el
-   reproductor a la derecha ocupando el resto. */
+/* Wide: left sidebar (search + filters + grid) and the
+   player on the right taking up the rest. */
 .tv-main.wide {
   grid-template-columns: 40% 60%;
   grid-template-rows: auto 1fr;
@@ -1352,13 +1352,13 @@ html, body, #app {
     "grid    stage";
 }
 
-/* En la barra lateral el toolbar se envuelve: buscador en una línea,
-   filtros/botones debajo. */
+/* In the sidebar the toolbar wraps: search on one line,
+   filters/buttons below. */
 .tv-main.wide .tv-toolbar {
   flex-wrap: wrap;
 }
 
-/* El reproductor llena su columna; el vídeo (object-fit:contain) se centra. */
+/* The player fills its column; the video (object-fit:contain) is centered. */
 .tv-main.wide .tv-stage {
   aspect-ratio: auto;
   width: 100%;
@@ -1366,7 +1366,7 @@ html, body, #app {
   min-height: 0;
 }
 
-/* Lista oculta en modo ancho: el reproductor ocupa todo el ancho. */
+/* List hidden in wide mode: the player takes up the full width. */
 .tv-main.wide.list-hidden {
   grid-template-columns: 1fr;
   grid-template-areas:
@@ -1435,7 +1435,7 @@ html, body, #app {
   display: none;
 }
 
-/* Modo cine: el escenario cubre toda la app */
+/* Cinema mode: the stage covers the whole app */
 .tv-stage.cinema {
   position: fixed;
   inset: 0;
@@ -1539,7 +1539,7 @@ html, body, #app {
   padding: 0;
 }
 
-/* Botón duplicar sesión */
+/* Duplicate session button */
 .session-tab-duplicate {
   opacity: 0;
   font-size: 12px;
@@ -1558,7 +1558,7 @@ html, body, #app {
   color: var(--accent);
 }
 
-/* Shell selector en el popover de terminal */
+/* Shell selector in the terminal popover */
 .term-shell-select {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1582,7 +1582,7 @@ html, body, #app {
 }
 .term-font-input:focus { border-color: var(--accent); }
 
-/* Toast de comando terminado */
+/* Finished command toast */
 .term-toast {
   position: absolute;
   top: 8px;
@@ -1609,7 +1609,7 @@ html, body, #app {
   to { opacity: 0; transform: translateX(-50%) translateY(-6px); }
 }
 
-/* Scrollbars finas acorde al tema */
+/* Thin scrollbars matching the theme */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -1629,9 +1629,9 @@ html, body, #app {
   background: transparent;
 }
 
-/* ===== Minimalista: auto-hide de controles (aparecen al hover) ===== */
+/* ===== Minimalist: auto-hide controls (they appear on hover) ===== */
 
-/* Botón "+" de sesión y controles de ventana: ocultos hasta hover en la barra */
+/* Session "+" button and window controls: hidden until hovering the bar */
 .session-add,
 .window-controls {
   opacity: 0;
@@ -1643,7 +1643,7 @@ html, body, #app {
   opacity: 1;
 }
 
-/* Cerrar sesión: solo al pasar por la pestaña */
+/* Close session: only when hovering the tab */
 .session-tab-close {
   opacity: 0;
   transition: opacity 0.15s ease;
@@ -1657,7 +1657,7 @@ html, body, #app {
   opacity: 1;
 }
 
-/* Botones de acción de la TV: ocultos hasta hover en la barra */
+/* TV action buttons: hidden until hovering the bar */
 .tv-btn {
   opacity: 0;
   transition: opacity 0.18s ease;
@@ -1667,7 +1667,7 @@ html, body, #app {
   opacity: 1;
 }
 
-/* "+" de cabecera de grupo (Dockview): siempre visible */
+/* Group header "+" (Dockview): always visible */
 .group-add-tab {
   opacity: 1;
   color: var(--fg-dim);
@@ -1677,7 +1677,7 @@ html, body, #app {
   color: var(--accent);
 }
 
-/* Botón de tema del terminal: solo al pasar por el panel */
+/* Terminal theme button: only when hovering the panel */
 .term-theme-btn {
   opacity: 0;
 }
@@ -1686,7 +1686,7 @@ html, body, #app {
   opacity: 1;
 }
 
-/* ===== Empty state del workspace (sin paneles abiertos) ===== */
+/* ===== Workspace empty state (no panels open) ===== */
 .workspace-empty {
   position: absolute;
   inset: 0;
@@ -1707,7 +1707,7 @@ html, body, #app {
   align-items: center;
   gap: 18px;
   padding: 32px 40px;
-  /* No desbordar la ventana: la tarjeta cabe siempre y los botones hacen wrap. */
+  /* Don't overflow the window: the card always fits and the buttons wrap. */
   max-width: min(620px, calc(100% - 32px));
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1808,7 +1808,7 @@ html, body, #app {
   cursor: pointer;
 }
 
-/* ===== Posición configurable de la barra de sesiones ===== */
+/* ===== Configurable position of the session bar ===== */
 .session-content {
   flex: 1;
   display: flex;
@@ -1824,8 +1824,8 @@ html, body, #app {
 .session-manager[data-bar-pos="left"] .session-content { flex-direction: row; }
 .session-manager[data-bar-pos="right"] .session-content { flex-direction: row-reverse; }
 
-/* Barra vertical en los laterales: franja de 4px por defecto, se expande al
-   hover empujando los paneles (flujo normal, sin overlay). */
+/* Vertical bar on the sides: 4px strip by default, expands on
+   hover pushing the panels (normal flow, no overlay). */
 .session-manager[data-bar-pos="left"] .session-bar,
 .session-manager[data-bar-pos="right"] .session-bar {
   flex-direction: column;
@@ -1842,7 +1842,7 @@ html, body, #app {
               padding 0.2s ease, background 0.2s ease, backdrop-filter 0.2s ease;
 }
 
-/* Al pasar el ratón: empuja los paneles (no overlay) */
+/* On hover: pushes the panels (no overlay) */
 .session-manager[data-bar-pos="left"] .session-bar:hover,
 .session-manager[data-bar-pos="right"] .session-bar:hover {
   width: 160px;
@@ -1869,10 +1869,10 @@ html, body, #app {
   padding-left: 0;
 }
 
-/* Gap menor en el lado pegado a la barra */
+/* Smaller gap on the side stuck to the bar */
 /* Gap between session bar and workspace is handled by inset: 10px on all sides. */
 
-/* macOS: franja superior para los semáforos cuando la barra no está arriba */
+/* macOS: top strip for the traffic lights when the bar is not at the top */
 .mac-title-strip {
   display: none;
 }
@@ -1931,8 +1931,8 @@ html, body, #app {
   align-items: center;
 }
 
-/* ── Barra lateral: estrecha por defecto, se expande al hover ─────────────
-   Solo en left/right. Top/bottom no tienen este comportamiento.           */
+/* ── Side bar: narrow by default, expands on hover ───────────────────────
+   Only on left/right. Top/bottom don't have this behavior.               */
 .session-tab-badge {
   display: none;
   width: 22px;
@@ -1951,7 +1951,7 @@ html, body, #app {
   overflow: hidden;
 }
 
-/* Contenido oculto mientras la barra está colapsada (4px) */
+/* Content hidden while the bar is collapsed (4px) */
 .session-manager[data-bar-pos="left"] .session-bar:not(:hover) .session-tabs,
 .session-manager[data-bar-pos="right"] .session-bar:not(:hover) .session-tabs,
 .session-manager[data-bar-pos="left"] .session-bar:not(:hover) .window-controls,
@@ -1962,7 +1962,7 @@ html, body, #app {
   pointer-events: none;
 }
 
-/* Badge y nombre visibles al expandir */
+/* Badge and name visible when expanded */
 .session-manager[data-bar-pos="left"] .session-tab-badge,
 .session-manager[data-bar-pos="right"] .session-tab-badge {
   display: flex;
@@ -1975,7 +1975,7 @@ html, body, #app {
   text-overflow: ellipsis;
 }
 
-/* Popover informativo de sesión (nombre + paneles abiertos) */
+/* Informational session popover (name + open panels) */
 .session-popover {
   position: fixed;
   z-index: 1000;
@@ -2428,7 +2428,7 @@ html, body, #app {
 .vault-danger { background: #f7768e !important; }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Asistente IA — widget flotante (botón + modal de chat)
+   AI Assistant — floating widget (button + chat modal)
    ══════════════════════════════════════════════════════════════════════════ */
 .ai-chat {
   position: fixed;
@@ -2457,7 +2457,7 @@ html, body, #app {
   transition: transform 0.12s ease, filter 0.12s ease;
 }
 .ai-fab:hover { transform: translateY(-2px); filter: brightness(1.08); }
-/* Con el modal abierto el FAB sobra (se cierra con la X o Esc). */
+/* With the modal open the FAB is redundant (it's closed with the X or Esc). */
 .ai-chat.open .ai-fab { display: none; }
 .ai-chat.busy .ai-fab .icon { animation: spin 0.8s linear infinite; }
 
@@ -2465,7 +2465,7 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   width: min(460px, calc(100vw - 32px));
-  /* Casi toda la altura de la ventana (deja hueco para el FAB y márgenes). */
+  /* Almost the full height of the window (leaves room for the FAB and margins). */
   height: calc(100vh - 96px);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -2476,7 +2476,7 @@ html, body, #app {
 }
 .ai-modal.hidden { display: none; }
 
-/* Ampliado con el botón de ensanchar. */
+/* Widened with the expand button. */
 .ai-modal.wide {
   width: min(820px, calc(100vw - 32px));
 }
@@ -2578,7 +2578,7 @@ html, body, #app {
   border-bottom-left-radius: 4px;
 }
 
-/* Markdown dentro de las respuestas del asistente */
+/* Markdown inside the assistant's responses */
 .ai-msg-assistant p { margin: 0 0 6px; }
 .ai-msg-assistant p:last-child { margin-bottom: 0; }
 .ai-msg-assistant h1,
@@ -2621,7 +2621,7 @@ html, body, #app {
 .ai-input {
   flex: 1;
   resize: none;
-  /* Cómodo para ~3 líneas por defecto; crece hasta max-height y luego scroll. */
+  /* Comfortable for ~3 lines by default; grows up to max-height and then scrolls. */
   min-height: 68px;
   max-height: 180px;
   line-height: 1.5;
@@ -2651,7 +2651,7 @@ html, body, #app {
 }
 .ai-send:hover { filter: brightness(1.08); }
 
-/* Aviso de estado del Vault dentro de los ajustes del chat. */
+/* Vault status notice inside the chat settings. */
 .ai-vault-notice {
   font-size: 11px;
   line-height: 1.45;
@@ -2663,7 +2663,7 @@ html, body, #app {
 }
 .ai-vault-notice.hidden { display: none; }
 
-/* Prompt de sistema (textarea) y botón de plantillas del chat */
+/* System prompt (textarea) and the chat's templates button */
 .ai-system {
   resize: vertical;
   min-height: 44px;
@@ -2676,7 +2676,7 @@ html, body, #app {
   height: 34px;
 }
 
-/* Botón "enviar al chat" flotando en la esquina del response HTTP */
+/* "Send to chat" button floating in the corner of the HTTP response */
 .http-res { position: relative; }
 .http-ask-ai {
   position: absolute;
@@ -2697,7 +2697,7 @@ html, body, #app {
 }
 .http-ask-ai:hover { color: var(--accent); border-color: var(--accent); }
 
-/* Editor de consultas del panel de BD */
+/* Query editor of the DB panel */
 .db-query-bar {
   display: flex;
   flex-direction: column;
@@ -2725,7 +2725,7 @@ html, body, #app {
 .db-query-bar .db-connect { align-self: flex-start; }
 .db-query-leaf { color: var(--accent); }
 
-/* Filtro de tablas/relaciones en el editor de consultas */
+/* Tables/relations filter in the query editor */
 .db-query-filter {
   width: 100%;
   background: var(--bg);
@@ -2739,7 +2739,7 @@ html, body, #app {
 }
 .db-query-filter:focus { border-color: var(--accent); }
 
-/* Chips de ejemplo (tablas/colecciones/claves) en el editor de consultas */
+/* Example chips (tables/collections/keys) in the query editor */
 .db-query-examples {
   display: flex;
   flex-wrap: wrap;
@@ -2767,7 +2767,7 @@ html, body, #app {
 }
 .db-query-chip:hover { color: var(--accent); border-color: var(--accent); }
 
-/* Acciones del editor de query + botón IA + chips de relación */
+/* Query editor actions + AI button + relation chips */
 .db-query-actions { display: flex; gap: 6px; }
 .db-query-ai {
   background: var(--surface-2);
@@ -2779,7 +2779,7 @@ html, body, #app {
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 
-/* Conmutador de grupo (Todas / Tablas / Relaciones) del editor de consultas */
+/* Group switcher (All / Tables / Relations) of the query editor */
 .db-query-toggle { display: flex; gap: 4px; }
 .db-query-toggle-btn {
   font-size: 11px;
@@ -2797,3 +2797,54 @@ html, body, #app {
   color: var(--accent-fg);
   border-color: var(--accent);
 }
+
+/* "Run" button (▶) in the code blocks of the AI's responses */
+.ai-msg-assistant pre { position: relative; }
+.ai-run-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-ui);
+}
+.ai-run-btn:hover { filter: brightness(1.08); }
+.ai-run-btn:disabled { opacity: 0.6; cursor: default; }
+.ai-run-result {
+  margin: 6px 0 2px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.ai-run-result table { font-size: 11px; }
+
+/* Execution error with a "Fix with AI" button in the chat */
+.db-query-fix { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px; }
+
+/* Multi-table JOIN builder (deterministic) */
+.db-join-builder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.db-join-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.db-join-add {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  padding: 4px 8px;
+  outline: none;
+  min-width: 140px;
+}
+.db-join-add:focus { border-color: var(--accent); }
+.db-join-msg { font-size: 11px; color: #f7768e; }
