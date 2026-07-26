@@ -58,4 +58,10 @@ describe('renderMarkdown', () => {
   it('closes an unterminated code fence (partial streaming)', () => {
     expect(renderMarkdown('```\nhalf')).toContain('<pre><code>half</code></pre>')
   })
+
+  it('detects indented code fences (e.g. inside a numbered list) and dedents', () => {
+    const md = '9. tabla:\n\n   ```sql\n   SELECT 1;\n   ```'
+    const html = renderMarkdown(md)
+    expect(html).toContain('<pre><code>SELECT 1;</code></pre>')
+  })
 })

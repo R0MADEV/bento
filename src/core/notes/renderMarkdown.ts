@@ -28,6 +28,7 @@ export function renderMarkdown(md: string): string {
   const out: string[] = []
   let inList = false
   let inCode = false
+  let codeIndent = 0
   let codeBuffer: string[] = []
   const closeList = (): void => { if (inList) { out.push('</ul>'); inList = false } }
   const flushCode = (): void => {
@@ -37,12 +38,14 @@ export function renderMarkdown(md: string): string {
   }
 
   for (const line of lines) {
-    if (line.startsWith('```')) {
+    // The fence may come indented (e.g. inside a numbered list).
+    const trimmed = line.trimStart()
+    if (trimmed.startsWith('```')) {
       if (inCode) flushCode()
-      else { closeList(); inCode = true }
+      else { closeList(); inCode = true; codeIndent = line.length - trimmed.length }
       continue
     }
-    if (inCode) { codeBuffer.push(line); continue }
+    if (inCode) { codeBuffer.push(line.slice(codeIndent)); continue }
 
     const heading = line.match(/^(#{1,3})\s+(.*)$/)
     if (heading) {
@@ -59,7 +62,7 @@ export function renderMarkdown(md: string): string {
     closeList()
     if (line.trim() !== '') out.push(`<p>${inline(line)}</p>`)
   }
-  if (inCode) flushCode() // fence sin cerrar (respuesta de IA a medio streaming)
+  if (inCode) flushCode() // unclosed fence (AI response still mid-stream)
   closeList()
   return out.join('\n')
 }
