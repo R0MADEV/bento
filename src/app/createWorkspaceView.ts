@@ -32,8 +32,8 @@ export interface WorkspaceOptions {
 
 export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOptions = {}): WorkspaceView {
   const element = document.createElement('div')
-  // dockview-theme-dark aporta los estilos estructurales; nuestras --dv-*
-  // (en .workspace-view) sobreescriben los colores con el tema activo.
+  // dockview-theme-dark provides the structural styles; our --dv-*
+  // (in .workspace-view) override the colors with the active theme.
   element.className = 'workspace-view dockview-theme-dark'
 
   const dockHost = document.createElement('div')
@@ -59,7 +59,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
 
   const existingOfType = (type: string) => api.panels.find(p => typeOf(p.id) === type)
 
-  // Mapa panel id → instancia, para poder llamar focus() tras ciclar paneles
+  // Map of panel id → instance, so focus() can be called after cycling panels
   const instanceMap = new Map<string, import('../panels/registry').PanelInstance>()
 
   const addPanel = (type: string, position?: Position): void => {
@@ -269,7 +269,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       e.preventDefault()
       splitFrom(active.id, e.shiftKey ? 'below' : 'right')
     } else if (e.key === 'j') {
-      // La terminal enfocada cicla su tema local; fuera de ella, el global.
+      // The focused terminal cycles its local theme; outside it, the global one.
       const inTerminal = active ? typeOf(active.id) === 'terminal' : false
       if (inTerminal) return
       e.preventDefault()
@@ -292,7 +292,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     requestAnimationFrame(() => instanceMap.get(next.id)?.focus?.())
   }
 
-  // Ctrl+Tab desde terminales (xterm intercepta el keydown y lo re-despacha)
+  // Ctrl+Tab from terminals (xterm intercepts the keydown and re-dispatches it)
   const onCyclePanel = (e: Event) => {
     if (!isFocused()) return
     cyclePanel((e as CustomEvent<{ reverse: boolean }>).detail.reverse)

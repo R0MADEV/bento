@@ -86,15 +86,15 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     const t = getTheme(name)
     term.options.theme = t
 
-    // xterm DOM renderer: actualizar el viewport directamente (no espera actividad)
+    // xterm DOM renderer: update the viewport directly (it doesn't wait for activity)
     const viewport = root.querySelector<HTMLElement>('.xterm-viewport')
     if (viewport) viewport.style.backgroundColor = t.background
     root.style.backgroundColor = t.background
     term.refresh(0, term.rows - 1)
 
-    // La barra de tabs del grupo usa --surface (derivada del tema global).
-    // Al cambiar el tema local hay que sobreescribirla en el .dv-groupview
-    // para que la cabecera refleje el color del nuevo tema de esta terminal.
+    // The group's tab bar uses --surface (derived from the global theme).
+    // When the local theme changes, it must be overridden on the .dv-groupview
+    // so the header reflects the color of this terminal's new theme.
     const groupView = root.closest<HTMLElement>('.dv-groupview')
     if (groupView) {
       const shade = isDark(t.background) ? '#ffffff' : '#000000'
@@ -401,13 +401,13 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   const dispose = () => {
     disposed = true
     if (panelId && lastCwd) {
-      try { localStorage.setItem(CWD_KEY(panelId), lastCwd) } catch { /* storage lleno */ }
+      try { localStorage.setItem(CWD_KEY(panelId), lastCwd) } catch { /* storage full */ }
     }
     observer.disconnect()
     unsubscribeTheme()
     root.removeEventListener('focusin', onRootFocus)
     invoke('pty_kill', { id }).catch(() => {})
-    try { term.dispose() } catch { /* ignorar */ }
+    try { term.dispose() } catch { /* ignore */ }
   }
 
   const onTitleChange = (cb: (title: string) => void): (() => void) => {

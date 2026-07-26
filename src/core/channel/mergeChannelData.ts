@@ -1,6 +1,6 @@
 import type { ChannelData, Country, Category } from './Channel'
 
-// Combina varias fuentes de canales en un único ChannelData.
+// Merges several channel sources into a single ChannelData.
 export function mergeChannelData(sources: ChannelData[]): ChannelData {
   const channels = sources.flatMap(s => s.channels)
 

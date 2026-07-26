@@ -234,8 +234,8 @@ export function createVaultPanel(): { element: HTMLElement } {
     const url = field('URL (opcional)', existing?.url ?? '')
     const notes = field('Notas (opcional)', existing?.notes ?? '')
 
-    // Toggle show/hide password. Al revelar una entrada existente trae la
-    // contraseña guardada (no se precarga por seguridad; solo al pedir verla).
+    // Toggle show/hide password. When revealing an existing entry, it fetches the
+    // stored password (not preloaded for security; only when asked to view it).
     const togglePw = mkBtn('eye', 'Mostrar contraseña', async () => {
       const revealing = password.input.type === 'password'
       if (revealing && existing && !password.input.value) {

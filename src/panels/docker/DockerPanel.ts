@@ -32,7 +32,7 @@ export function createDockerPanel(): { element: HTMLElement; dispose: () => void
   const projectAction = async (cmd: string, project: string): Promise<void> => {
     const targets = byProject(project).filter(c => cmd === 'docker_start' ? !isRunning(c) : isRunning(c))
     for (const c of targets) {
-      try { await invoke(cmd, { id: c.name }) } catch { /* sigue */ }
+      try { await invoke(cmd, { id: c.name }) } catch { /* keep going */ }
     }
     load()
   }
@@ -122,9 +122,9 @@ export function createDockerPanel(): { element: HTMLElement; dispose: () => void
     })
     const refreshBtn = iconBtn('refresh', 'Recargar', () => { if (live) { stopLive(); startLive() } else loadStatic() })
 
-    // Enviar al chat de IA: si hay selección la manda; si no, TODOS los errores
-    // del contenedor (y si no hay errores, los logs). Tope amplio por tamaño de
-    // petición: se queda con la parte más reciente.
+    // Send to the AI chat: if there's a selection, send it; otherwise ALL the
+    // container's errors (and if there are no errors, the logs). Generous cap due
+    // to request size: keeps the most recent part.
     const sendToAi = (): void => {
       const selection = window.getSelection()?.toString().trim()
       const content = (selection || errorLines(rawLogs).join('\n') || rawLogs).slice(-16000)

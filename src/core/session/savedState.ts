@@ -12,7 +12,7 @@ function isSession(v: unknown): v is Session {
     && typeof (v as Session).name === 'string'
 }
 
-// Valida el estado leído de disco (trust boundary): devuelve null si no es válido.
+// Validates the state read from disk (trust boundary): returns null if it isn't valid.
 export function parseSavedState(raw: string): SavedState | null {
   let data: unknown
   try {

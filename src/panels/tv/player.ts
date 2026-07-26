@@ -52,8 +52,8 @@ export class HLSPlayer {
     this.iframe.classList.add('hidden')
     this.video.classList.remove('hidden')
 
-    // El WebView reproduce HLS de forma nativa: en ese caso NO cargamos hls.js
-    // (así el chunk pesado solo se descarga cuando de verdad hace falta).
+    // The WebView plays HLS natively: in that case we do NOT load hls.js
+    // (so the heavy chunk is only downloaded when it's actually needed).
     const canPlayNative = Boolean(this.video.canPlayType('application/vnd.apple.mpegurl'))
     if (canPlayNative) {
       this.video.src = url

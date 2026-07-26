@@ -1,5 +1,5 @@
-// Presets de proveedores compatibles con la API de OpenAI (/chat/completions).
-// Todos hablan el mismo formato: solo cambia base URL, key y modelo.
+// Presets for providers compatible with the OpenAI API (/chat/completions).
+// They all speak the same format: only the base URL, key, and model change.
 
 export interface AiProvider {
   id: string

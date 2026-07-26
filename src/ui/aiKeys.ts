@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 
-// API keys de IA guardadas en el Vault (AES-256-GCM + contraseña maestra).
-// Cada proveedor es una entrada: service = 'Bento AI', username = <providerId>.
-// Requiere el Vault desbloqueado (igual que el resto de secretos).
+// AI API keys stored in the Vault (AES-256-GCM + master password).
+// Each provider is an entry: service = 'Bento AI', username = <providerId>.
+// Requires the Vault unlocked (like the rest of the secrets).
 
 const SERVICE = 'Bento AI'
 
@@ -23,7 +23,7 @@ export async function vaultStatus(): Promise<VaultStatus> {
   return unlocked ? 'unlocked' : 'locked'
 }
 
-// vault_list falla si está bloqueado → devolvemos undefined sin romper.
+// vault_list fails if locked → we return undefined without breaking.
 async function findEntry(provider: string): Promise<VaultEntryPublic | undefined> {
   const entries = await invoke<VaultEntryPublic[]>('vault_list').catch(() => [] as VaultEntryPublic[])
   return entries.find(e => e.service === SERVICE && e.username === provider)
@@ -35,8 +35,8 @@ export async function getAiKey(provider: string): Promise<string> {
   return invoke<string>('vault_get_password', { id: entry.id }).catch(() => '')
 }
 
-// Guarda/actualiza la key del proveedor en el Vault (una key vacía la borra).
-// Devuelve false si no se pudo (p. ej. Vault bloqueado).
+// Saves/updates the provider's key in the Vault (an empty key deletes it).
+// Returns false if it couldn't (e.g. Vault locked).
 export async function setAiKey(provider: string, key: string, baseUrl = ''): Promise<boolean> {
   const entry = await findEntry(provider)
   try {

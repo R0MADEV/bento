@@ -6,7 +6,7 @@ const EMBED_HOSTS = [
   'player.vimeo.com',
 ]
 
-// Distingue una página de reproductor embebido (iframe) de un stream directo.
+// Distinguishes an embedded player page (iframe) from a direct stream.
 export function isEmbedUrl(url: string): boolean {
   return EMBED_HOSTS.some(host => url.includes(host)) || url.endsWith('.html')
 }

@@ -98,11 +98,11 @@ pub fn pty_spawn(
             c
         }
         None => {
-            // Usa el shell por defecto del usuario ($SHELL) para que cargue su config
-            // (zsh/bash con prompt, git, autocompletado). Fallback al pasado por el front.
+            // Use the user's default shell ($SHELL) so it loads their config
+            // (zsh/bash with prompt, git, autocompletion). Fall back to the one passed by the front.
             let user_shell = std::env::var("SHELL").unwrap_or(shell);
             let mut c = CommandBuilder::new(&user_shell);
-            // Login + interactivo: carga ~/.zprofile, ~/.zshrc, etc.
+            // Login + interactive: loads ~/.zprofile, ~/.zshrc, etc.
             if !cfg!(target_os = "windows") {
                 c.arg("-l");
             }

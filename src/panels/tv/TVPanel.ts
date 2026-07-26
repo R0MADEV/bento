@@ -10,7 +10,7 @@ import { HLSPlayer } from './player'
 import { icon } from '../../ui/icons'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
-// repo = base ligera (M3U); worldRepo = fuente pesada cargada bajo demanda
+// repo = lightweight base (M3U); worldRepo = heavy source loaded on demand
 export function createTVPanel(
   repo: ChannelRepository,
   favoritesRepo: FavoritesRepository,
@@ -71,20 +71,20 @@ export function createTVPanel(
 
   const player = new HLSPlayer()
 
-  // Estado vacío: antes de elegir un canal
+  // Empty state: before a channel is chosen
   const emptyState = document.createElement('div')
   emptyState.className = 'tv-empty'
   emptyState.innerHTML = `${icon('tv')}<p>Elige un canal para empezar</p>`
 
   stage.append(player.element, emptyState)
-  // toolbar + stage + grid son hermanos del grid: así el layout puede pasar de
-  // apilado (estrecho) a barra lateral izquierda + reproductor derecha (ancho).
+  // toolbar + stage + grid are siblings of the grid: this lets the layout switch
+  // from stacked (narrow) to left sidebar + player on the right (wide).
   main.append(toolbar, stage, grid)
   root.append(main)
 
-  // Layout responsive según el ancho REAL del panel (no del viewport: en
-  // dockview el panel puede ocupar cualquier fracción). Container queries no
-  // sirven aquí porque romperían el position:fixed del modo cine.
+  // Responsive layout based on the panel's REAL width (not the viewport: in
+  // dockview the panel can take up any fraction). Container queries don't work
+  // here because they would break the position:fixed of cinema mode.
   const syncWide = (w: number) => main.classList.toggle('wide', w >= 700)
   new ResizeObserver(entries => { for (const e of entries) syncWide(e.contentRect.width) }).observe(main)
 
@@ -147,7 +147,7 @@ export function createTVPanel(
   categorySelect.addEventListener('change', refresh)
   toggleButton.addEventListener('click', () => main.classList.toggle('list-hidden'))
 
-  // Pantalla completa: modo cine (el escenario cubre la app) + fullscreen real de ventana
+  // Fullscreen: cinema mode (the stage covers the app) + real window fullscreen
   let cinema = false
   const setCinema = (on: boolean) => {
     cinema = on

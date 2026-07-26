@@ -1,12 +1,12 @@
-// Contrato común de todos los paneles de Bento (TV, terminal, radio, notas...).
-// Cada tipo de panel se auto-describe y se registra; la app los consume genéricamente.
+// Common contract for all Bento panels (TV, terminal, radio, notes...).
+// Each panel type self-describes and registers itself; the app consumes them generically.
 
 export interface PanelContext {
-  // Id único de la instancia en el layout
+  // Unique id of the instance in the layout
   panelId: string
-  // Quita este panel del layout (p. ej. cuando se queda vacío)
+  // Removes this panel from the layout (e.g. when it becomes empty)
   removeSelf: () => void
-  // Carpeta del proyecto de la sesión; las terminales nuevas arrancan aquí
+  // The session's project folder; new terminals start here
   projectPath?: string
 }
 

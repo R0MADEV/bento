@@ -1,6 +1,6 @@
-// Configuración NO secreta del chat de IA (proveedor, endpoint, modelo) en
-// localStorage. Las API keys NO se guardan aquí: van al Vault cifrado
-// (ver src/ui/aiKeys.ts).
+// Non-secret AI chat configuration (provider, endpoint, model) in
+// localStorage. API keys are NOT stored here: they go to the encrypted Vault
+// (see src/ui/aiKeys.ts).
 
 export type ChatRole = 'system' | 'user' | 'assistant'
 
@@ -9,8 +9,8 @@ export interface ChatMessage {
   content: string
 }
 
-// Config NO secreta (localStorage). Las API keys van al Vault cifrado,
-// nunca aquí — ver src/ui/aiKeys.ts.
+// Non-secret config (localStorage). API keys go to the encrypted Vault,
+// never here — see src/ui/aiKeys.ts.
 export interface AiConfig {
   providerId: string
   baseUrl: string
@@ -27,7 +27,7 @@ export const DEFAULT_AI_CONFIG: AiConfig = {
 
 const KEY = 'bento.ai.config'
 
-// Mezcla lo guardado sobre los defaults: tolera JSON inválido y claves ausentes.
+// Merges the stored values over the defaults: tolerates invalid JSON and missing keys.
 export function parseConfig(raw: string | null): AiConfig {
   if (!raw) return { ...DEFAULT_AI_CONFIG }
   try {
@@ -51,7 +51,7 @@ export function saveConfig(cfg: AiConfig): void {
   localStorage.setItem(KEY, JSON.stringify(cfg))
 }
 
-// Cuerpo de la petición a /chat/completions con streaming.
+// Request body for /chat/completions with streaming.
 export function buildChatBody(messages: ChatMessage[], model: string): {
   model: string
   messages: ChatMessage[]

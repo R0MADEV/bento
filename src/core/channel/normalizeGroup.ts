@@ -19,7 +19,7 @@ const TYPES: Record<string, string> = {
   Eventuales: 'Eventos',
 }
 
-// Convierte el grupo del M3U en categoría limpia + país (ES salvo internacionales).
+// Converts the M3U group into a clean category + country (ES except for international ones).
 export function normalizeGroup(group: string): NormalizedGroup {
   if (REGIONS.has(group)) return { category: 'Autonómicas', country: 'ES' }
   if (group.startsWith('Int. ')) return { category: 'Internacional', country: '' }

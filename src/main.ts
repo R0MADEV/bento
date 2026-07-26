@@ -28,16 +28,16 @@ invoke('web_panel_close_all').catch(() => {})
 // Terminal scrollback is no longer persisted; drop any old history keys to free localStorage.
 Object.keys(localStorage).filter(k => k.startsWith('bento.terminal.history.')).forEach(k => localStorage.removeItem(k))
 
-// Tiñe toda la UI con el tema guardado al arrancar
+// Tint the whole UI with the saved theme on startup
 applyAppTheme(getThemeName())
 
-// En macOS la barra de título es overlay: deja hueco para los semáforos
+// On macOS the title bar is an overlay: leave room for the traffic lights
 if (isMac) {
   document.body.classList.add('is-mac')
 }
 
-// Composition root: inyecta dependencias, registra paneles, monta la app.
-// Base ligera = M3U español (bundled). Mundial = iptv-org bajo demanda.
+// Composition root: injects dependencies, registers panels, mounts the app.
+// Lightweight base = Spanish M3U (bundled). Worldwide = iptv-org on demand.
 const channelRepo = new M3UChannelRepository(tvM3U)
 const worldRepo = new IptvOrgChannelRepository()
 const favoritesRepo = new LocalStorageFavoritesRepository()

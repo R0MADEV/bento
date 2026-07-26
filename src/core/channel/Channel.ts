@@ -1,4 +1,4 @@
-// Item reproducible que se muestra en el grid (deriva de un stream)
+// Playable item shown in the grid (derived from a stream)
 export interface Channel {
   id: string
   name: string
@@ -8,7 +8,7 @@ export interface Channel {
   streamUrl: string
 }
 
-// Esquemas crudos de la API iptv-org
+// Raw schemas from the iptv-org API
 export interface RawChannel {
   id: string
   name: string
@@ -38,7 +38,7 @@ export interface Category {
   name: string
 }
 
-// Resultado completo del repositorio: canales + metadatos para los filtros
+// Full repository result: channels + metadata for the filters
 export interface ChannelData {
   channels: Channel[]
   countries: Country[]

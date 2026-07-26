@@ -13,8 +13,8 @@ mod window_prefs;
 
 use std::sync::Arc;
 
-// Descarga HTTP desde el backend Rust: evita los límites del WebView con
-// ficheros grandes (la API de iptv-org pesa decenas de MB).
+// HTTP download from the Rust backend: avoids the WebView's limits with large
+// files (the iptv-org API weighs tens of MB).
 #[tauri::command]
 async fn http_get(url: String) -> Result<String, String> {
     let res = reqwest::get(&url).await.map_err(|e| e.to_string())?;

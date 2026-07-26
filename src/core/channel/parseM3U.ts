@@ -4,7 +4,7 @@ import { normalizeGroup } from './normalizeGroup'
 const attr = (line: string, name: string): string =>
   new RegExp(`${name}="([^"]*)"`).exec(line)?.[1] ?? ''
 
-// Parsea una playlist M3U (#EXTINF + url) a la lista de canales de Bento.
+// Parses an M3U playlist (#EXTINF + url) into Bento's channel list.
 export function parseM3U(text: string): Channel[] {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
   const channels: Channel[] = []

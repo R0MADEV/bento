@@ -1,7 +1,7 @@
 import { filterCommands, type Command } from '../core/command/command'
 
-// Paleta de comandos (Cmd/Ctrl+K). getCommands se llama al abrir, así refleja
-// el estado actual (sesiones, temas, etc.).
+// Command palette (Cmd/Ctrl+K). getCommands is called on open, so it reflects
+// the current state (sessions, themes, etc.).
 export function createCommandPalette(getCommands: () => Command[]): HTMLElement {
   const overlay = document.createElement('div')
   overlay.className = 'cmdk hidden'
@@ -83,7 +83,7 @@ export function createCommandPalette(getCommands: () => Command[]): HTMLElement 
 
   overlay.addEventListener('mousedown', e => { if (e.target === overlay) close() })
 
-  // Atajo global Cmd/Ctrl+K
+  // Global Cmd/Ctrl+K shortcut
   window.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault()

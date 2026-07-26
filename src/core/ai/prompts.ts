@@ -1,5 +1,5 @@
-// Slash commands: atajos que expanden `/comando texto` en un prompt más completo.
-// Pura lógica → testeable. La UI solo los ofrece y expande al enviar.
+// Slash commands: shortcuts that expand `/command text` into a fuller prompt.
+// Pure logic → testable. The UI just offers them and expands on send.
 
 export interface SlashCommand {
   name: string
@@ -14,7 +14,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'corrige', label: 'Corregir', expand: a => `Corrige gramática y estilo; devuelve solo el texto corregido:\n\n${a}` },
 ]
 
-// Si el texto empieza por `/comando` conocido, lo expande; si no, lo deja igual.
+// If the text starts with a known `/command`, expands it; otherwise leaves it as-is.
 export function expandInput(text: string): string {
   const match = text.match(/^\/(\w+)\s*([\s\S]*)$/)
   if (!match) return text

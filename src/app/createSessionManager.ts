@@ -20,11 +20,11 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const root = document.createElement('div')
   root.className = 'session-manager'
 
-  // macOS: la barra de título es overlay. Cuando la barra de sesiones no está
-  // arriba, esta franja superior reserva el hueco de los semáforos y permite
-  // arrastrar la ventana (en CSS solo se muestra si la barra no está arriba).
-  // La barra y el cuerpo viven en un contenedor cuya dirección define la
-  // posición de la barra (arriba/abajo/izquierda/derecha).
+  // macOS: the title bar is an overlay. When the session bar is not at the
+  // top, this top strip reserves the space for the traffic lights and lets
+  // you drag the window (in CSS it only shows if the bar is not at the top).
+  // The bar and the body live in a container whose direction defines the
+  // bar's position (top/bottom/left/right).
   const content = document.createElement('div')
   content.className = 'session-content'
 
@@ -72,7 +72,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   let savedLayouts: Record<string, unknown> = {}
   let state: SessionState = { sessions: [], activeId: null }
 
-  // Guardado debounced: los cambios de layout se disparan a ráfagas
+  // Debounced saving: layout changes fire in bursts
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const persist = (): void => {
     if (saveTimer) clearTimeout(saveTimer)

@@ -9,26 +9,26 @@ export function getThemeName(): string {
   return localStorage.getItem(KEY) ?? DEFAULT_THEME
 }
 
-// Aplica las variables CSS de la app (UI completa) según el tema.
+// Applies the app's CSS variables (entire UI) based on the theme.
 export function applyAppTheme(name: string): void {
   const vars = deriveAppVars(getTheme(name))
   const root = document.documentElement
   Object.entries(vars).forEach(([key, value]) => root.style.setProperty(key, value))
 }
 
-// Aplica un tema y lo guarda; notifica a las terminales y tiñe la app.
+// Applies a theme and saves it; notifies the terminals and tints the app.
 export function setTheme(name: string): void {
   localStorage.setItem(KEY, name)
   applyAppTheme(name)
   window.dispatchEvent(new CustomEvent(EVENT, { detail: name }))
 }
 
-// Cicla al siguiente tema.
+// Cycles to the next theme.
 export function cycleTheme(): void {
   setTheme(nextTheme(getThemeName(), themeNames))
 }
 
-// Suscribe un callback a los cambios de tema. Devuelve la función para desuscribir.
+// Subscribes a callback to theme changes. Returns the function to unsubscribe.
 export function onThemeChange(handler: (name: string) => void): () => void {
   const listener = (e: Event) => handler((e as CustomEvent<string>).detail)
   window.addEventListener(EVENT, listener)

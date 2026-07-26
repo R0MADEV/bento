@@ -4,7 +4,7 @@ export interface MenuItem {
 }
 
 export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
-  // Cierra cualquier menú previo que pudiera quedar abierto
+  // Close any previous menu that might still be open
   document.querySelectorAll('.context-menu').forEach(m => m.remove())
 
   const menu = document.createElement('div')
@@ -38,7 +38,7 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
 
   document.body.appendChild(menu)
 
-  // Ajustar al viewport: si se sale por abajo/derecha, reposicionar
+  // Fit to the viewport: if it overflows off the bottom/right, reposition
   const rect = menu.getBoundingClientRect()
   const margin = 8
   if (rect.bottom > window.innerHeight) {

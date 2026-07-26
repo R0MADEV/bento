@@ -1,4 +1,4 @@
-// Paleta completa de xterm ITheme para un look cuidado de dev.
+// Full xterm ITheme palette for a polished dev look.
 export interface TerminalTheme {
   background: string
   foreground: string
@@ -26,7 +26,7 @@ export interface TerminalTheme {
 export const DEFAULT_THEME = 'herdr'
 
 const THEMES: Record<string, TerminalTheme> = {
-  // Herdr — near-black navy, plano y denso (look dev-terminal)
+  // Herdr — near-black navy, flat and dense (dev-terminal look)
   herdr: {
     background: '#0d0e15',
     foreground: '#c4cadd',
@@ -118,7 +118,7 @@ const THEMES: Record<string, TerminalTheme> = {
     brightBlack: '#586e75', brightRed: '#cb4b16', brightGreen: '#586e75', brightYellow: '#657b83',
     brightBlue: '#839496', brightMagenta: '#6c71c4', brightCyan: '#93a1a1', brightWhite: '#fdf6e3',
   },
-  // Claro (GitHub)
+  // Light (GitHub)
   light: {
     background: '#ffffff', foreground: '#24292e', cursor: '#24292e', cursorAccent: '#ffffff',
     selectionBackground: '#c8e1ff',
@@ -127,7 +127,7 @@ const THEMES: Record<string, TerminalTheme> = {
     brightBlack: '#959da5', brightRed: '#cb2431', brightGreen: '#28a745', brightYellow: '#dbab09',
     brightBlue: '#2188ff', brightMagenta: '#8a63d2', brightCyan: '#3192aa', brightWhite: '#d1d5da',
   },
-  // Negro puro
+  // Pure black
   black: {
     background: '#000000', foreground: '#e0e0e0', cursor: '#ffffff', cursorAccent: '#000000',
     selectionBackground: '#333333',

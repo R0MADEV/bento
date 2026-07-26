@@ -7,7 +7,7 @@ const BASE = 'https://iptv-org.github.io/api'
 
 export class IptvOrgChannelRepository implements ChannelRepository {
   async fetchAll(): Promise<ChannelData> {
-    // streams es lo esencial; el resto enriquece y no bloquea si falla.
+    // streams are the essentials; the rest enriches and doesn't block if it fails.
     const streams = await this.json<Stream[]>(`${BASE}/streams.json`)
     const channels = await this.json<RawChannel[]>(`${BASE}/channels.json`).catch(() => [] as RawChannel[])
     const logos = await this.json<Logo[]>(`${BASE}/logos.json`).catch(() => [] as Logo[])
@@ -17,7 +17,7 @@ export class IptvOrgChannelRepository implements ChannelRepository {
     return { channels: buildChannels(streams, channels, logos), countries, categories }
   }
 
-  // Descarga vía backend Rust (sin límites de red del WebView).
+  // Download via the Rust backend (free of the WebView's network limits).
   private async json<T>(url: string): Promise<T> {
     const text = await invoke<string>('http_get', { url })
     return JSON.parse(text) as T

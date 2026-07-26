@@ -1,4 +1,4 @@
-// Devuelve el índice de la pista de subtítulos en el idioma preferido, o -1.
+// Returns the index of the subtitle track in the preferred language, or -1.
 export function pickSubtitleTrack(languages: string[], preferred: string): number {
   const p = preferred.toLowerCase()
   const iso2to3: Record<string, string> = { es: 'spa', en: 'eng', fr: 'fra', de: 'deu', pt: 'por' }

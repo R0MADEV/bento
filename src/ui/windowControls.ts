@@ -1,7 +1,7 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { icon } from './icons'
 
-// Controles de ventana propios y temados (Windows/Linux, sin barra nativa).
+// Custom, themed window controls (Windows/Linux, no native title bar).
 export function createWindowControls(): HTMLElement {
   const win = getCurrentWindow()
   const bar = document.createElement('div')
