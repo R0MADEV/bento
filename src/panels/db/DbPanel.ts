@@ -5,7 +5,12 @@ import { publishedPort } from '../../core/db/hostPort'
 import { mysqlCreds, mongoCreds, pgCreds } from '../../core/db/credentials'
 import { DEFAULT_PORT, LISTABLE, kindForPort, type DbServer, type DbKind } from '../../core/db/dbServer'
 import { icon } from '../../ui/icons'
-import { askAi } from '../../ui/askAi'
+import { askAi, type AiQueryRunner, type AiTool } from '../../ui/askAi'
+import { buildJoinPath, type Relation, type JoinPlan } from '../../core/db/joinPath'
+import { withRowLimit } from '../../core/db/rowLimit'
+
+// Counter for unique datalist ids (several DB panels/views at once).
+let joinListSeq = 0
 
 const KIND_LABEL: Record<DbKind, string> = {
   mysql: 'MySQL', mariadb: 'MariaDB', mongodb: 'MongoDB', postgres: 'PostgreSQL', redis: 'Redis',
@@ -162,7 +167,7 @@ export function createDbPanel(): { element: HTMLElement } {
     const c = document.createElement('span')
     c.className = 'db-detail-count'
     c.textContent = count
-    // Enviar al chat de IA: la selección o, si no hay, la vista actual (tabla/docs).
+    // Send to the AI chat: the selection or, if there's none, the current view (table/docs).
     const askBtn = document.createElement('button')
     askBtn.className = 'db-action'
     askBtn.title = 'Enviar al chat de IA'
@@ -176,19 +181,25 @@ export function createDbPanel(): { element: HTMLElement } {
     return bar
   }
 
-  // ---- editor de consultas (detecta el tipo de BD) ----
+  // ---- query editor (detects the DB type) ----
+  // Render cap: a SELECT * over a wide JOIN yields hundreds of columns; painting
+  // tens of thousands of cells at once freezes/crashes the WebView. We limit the DOM
+  // (the full data is still there; this only bounds what gets drawn).
+  const MAX_COLS = 60
+  const MAX_ROWS = 200
   const renderResultTable = (data: TableData): HTMLElement => {
     if (!data.columns.length) return note(data.rows.length ? 'OK.' : 'Sin resultados.', 'db-detail-hint')
+    const cols = data.columns.slice(0, MAX_COLS)
     const tbl = document.createElement('table')
     tbl.className = 'db-grid'
     const thead = document.createElement('thead')
     const htr = document.createElement('tr')
-    data.columns.forEach(col => { const th = document.createElement('th'); th.textContent = col; htr.appendChild(th) })
+    cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; htr.appendChild(th) })
     thead.appendChild(htr)
     const tbody = document.createElement('tbody')
-    data.rows.forEach(row => {
+    data.rows.slice(0, MAX_ROWS).forEach(row => {
       const tr = document.createElement('tr')
-      row.forEach(cell => {
+      row.slice(0, MAX_COLS).forEach(cell => {
         const td = document.createElement('td')
         td.textContent = cell
         if (cell === 'NULL') td.classList.add('db-null')
@@ -197,31 +208,39 @@ export function createDbPanel(): { element: HTMLElement } {
       tbody.appendChild(tr)
     })
     tbl.append(thead, tbody)
-    return tbl
+
+    const overflow: string[] = []
+    if (data.columns.length > MAX_COLS) overflow.push(`${data.columns.length} columnas (se muestran ${MAX_COLS})`)
+    if (data.rows.length > MAX_ROWS) overflow.push(`${data.rows.length} filas (se muestran ${MAX_ROWS})`)
+    if (!overflow.length) return tbl
+    const wrap = document.createElement('div')
+    wrap.append(note(`Resultado grande: ${overflow.join(', ')}. Evita SELECT * en JOINs anchos; pide solo las columnas que necesites.`, 'db-detail-hint'), tbl)
+    return wrap
   }
 
   const preResult = (out: string): HTMLElement => {
     const pre = document.createElement('pre')
     pre.className = 'db-doc'
-    pre.textContent = out.trim() || '(sin salida)'
+    const text = out.trim()
+    pre.textContent = text.length > 200000 ? `${text.slice(0, 200000)}\n… (truncado)` : text || '(sin salida)'
     return pre
   }
 
-  // Entrecomilla un identificador según el motor. Postgres lo necesita para
-  // nombres con mayúsculas (los pasa a minúsculas si van sin comillas); además
-  // cita cada parte de `schema.tabla`. MySQL usa backticks.
+  // Quotes an identifier according to the engine. Postgres needs it for names
+  // with uppercase letters (it lowercases them if unquoted); it also quotes each
+  // part of `schema.table`. MySQL uses backticks.
   const qIdent = (s: DbServer, name: string): string =>
     isPg(s) ? name.split('.').map(p => `"${p}"`).join('.') : `\`${name}\``
 
-  // Consulta de ejemplo para una tabla/colección/clave concreta, según el tipo.
+  // Example query for a specific table/collection/key, depending on the type.
   const exampleQuery = (s: DbServer, name: string): string => {
     if (isMongo(s)) return `db.${name}.find().limit(20).toArray()`
     if (isRedis(s)) return `GET ${name}`
     return `SELECT * FROM ${qIdent(s, name)} LIMIT 100`
   }
 
-  // Une una tabla con TODAS sus tablas relacionadas de una vez (una tabla puede
-  // tener varias FKs). SQL → multi-JOIN; Mongo → varias etapas $lookup.
+  // Joins a table with ALL its related tables at once (a table can have several
+  // FKs). SQL → multi-JOIN; Mongo → several $lookup stages.
   const buildRelationQuery = (s: DbServer, table: string, fks: ForeignKey[]): string => {
     if (isMongo(s)) {
       const stages = fks.map(fk =>
@@ -235,14 +254,26 @@ export function createDbPanel(): { element: HTMLElement } {
     return `SELECT * FROM ${qIdent(s, table)} base\n${joins.join('\n')}\nLIMIT 100`
   }
 
-  // Agrupa las relaciones por tabla de origen: cada tabla → todas sus FKs.
+  // Query from a JOIN plan (deterministic builder, no AI).
+  const buildJoinQuery = (s: DbServer, plan: JoinPlan): string => {
+    const aliasOf = new Map<string, string>([[plan.base, 't0']])
+    let sql = `SELECT * FROM ${qIdent(s, plan.base)} t0`
+    plan.steps.forEach((st, i) => {
+      const a = `t${i + 1}`
+      aliasOf.set(st.to, a)
+      sql += `\nJOIN ${qIdent(s, st.to)} ${a} ON ${aliasOf.get(st.from)}.${qIdent(s, st.fromCol)} = ${a}.${qIdent(s, st.toCol)}`
+    })
+    return `${sql}\nLIMIT 100`
+  }
+
+  // Groups relations by source table: each table → all its FKs.
   const groupRelations = (rels: ForeignKey[]): Map<string, ForeignKey[]> => {
     const byTable = new Map<string, ForeignKey[]>()
     rels.forEach(fk => { byTable.set(fk.table, [...(byTable.get(fk.table) ?? []), fk]) })
     return byTable
   }
 
-  // Relaciones de la BD: FKs en SQL, referencias heurísticas en Mongo, nada en Redis.
+  // DB relations: FKs in SQL, heuristic references in Mongo, nothing in Redis.
   const fetchRelations = (s: DbServer, db: string): Promise<ForeignKey[]> => {
     if (isRedis(s)) return Promise.resolve([])
     const cmd = isMongo(s) ? 'db_docker_mongo_refs' : sqlCmd(s, 'fks')
@@ -250,6 +281,10 @@ export function createDbPanel(): { element: HTMLElement } {
   }
 
   const openQuery = (s: DbServer, db: string, names: string[]): void => {
+    // Relations loaded once and shared (chips, AI, and the JOIN builder).
+    let relations: ForeignKey[] = []
+    const relationsReady = fetchRelations(s, db).then(r => { relations = r; return r })
+
     const editor = document.createElement('textarea')
     editor.className = 'db-query-input'
     editor.spellcheck = false
@@ -262,45 +297,190 @@ export function createDbPanel(): { element: HTMLElement } {
     runBtn.className = 'db-connect'
     runBtn.textContent = 'Ejecutar  ⌘↵'
 
-    // (B) Generar la consulta con IA: manda el esquema (tablas + relaciones) al
-    // chat y tú completas en lenguaje natural qué quieres.
+    // (B) Generate the query with AI: sends the schema (tables + relations) to the
+    // chat and you describe in natural language what you want.
     const aiBtn = document.createElement('button')
     aiBtn.className = 'db-connect db-query-ai'
     aiBtn.textContent = 'Generar con IA'
     aiBtn.addEventListener('click', async () => {
       const noun = isMongo(s) ? 'Colecciones' : 'Tablas'
+      const noun2 = isMongo(s) ? 'colecciones' : 'tablas'
+      const rels = await relationsReady
       let schema = `Base de datos ${KIND_LABEL[s.kind]} "${db}".\n${noun}: ${names.join(', ')}.`
-      const rels = await fetchRelations(s, db)
-      if (rels.length) schema += `\nRelaciones: ${rels.map(f => `${f.table}.${f.column} → ${f.ref_table}.${f.ref_column}`).join('; ')}.`
-      const dialect = isMongo(s) ? 'una consulta mongosh (usa $lookup para unir colecciones)' : isRedis(s) ? 'un comando redis-cli' : 'una consulta SQL'
-      askAi(`${schema}\n\nEscríbeme ${dialect} para: `, false)
+      // Inline relations only if there are few; with many, the AI requests them via the tool.
+      if (rels.length && rels.length <= 50) {
+        schema += `\nRelaciones (FK): ${rels.map(f => `${f.table}.${f.column} → ${f.ref_table}.${f.ref_column}`).join('; ')}.`
+      }
+      const dialect = isMongo(s)
+        ? 'una consulta mongosh (usa $lookup para unir colecciones relacionadas)'
+        : isRedis(s)
+          ? 'un comando redis-cli'
+          : isPg(s)
+            ? 'una consulta SQL de PostgreSQL. IMPORTANTE: entrecomilla SIEMPRE los identificadores y CADA PARTE por separado: "esquema"."tabla" (NUNCA "esquema.tabla" con el punto dentro de las comillas). Ej.: FROM "public"."client"'
+            : 'una consulta SQL'
+      // The runner executes the query the AI writes against this DB. If it fails, it offers
+      // "Fix with AI": resends the query + the error so the model corrects it.
+      const runner: AiQueryRunner = async query => {
+        try {
+          return await executeQuery(query)
+        } catch (e) {
+          const err = String(e)
+          const wrap = document.createElement('div')
+          wrap.className = 'db-query-fix'
+          wrap.append(note(err, 'db-detail-error'))
+          const fixBtn = document.createElement('button')
+          fixBtn.className = 'db-connect db-query-ai'
+          fixBtn.textContent = '🔧 Arreglar con IA'
+          fixBtn.addEventListener('click', () => askAi(
+            `La consulta falló al ejecutarse. Corrígela (usa get_columns/get_relations si hace falta) y devuélvela lista para ejecutar.\n\nConsulta:\n${query}\n\nError:\n${err}`,
+            true, runner, tools,
+          ))
+          wrap.append(fixBtn)
+          return wrap
+        }
+      }
+      // Tools: the AI requests real columns and relations on demand (scales with many tables).
+      const arrayParam = (desc: string) => ({
+        type: 'object',
+        properties: { tables: { type: 'array', items: { type: 'string' }, description: desc } },
+        required: ['tables'],
+      })
+      const tableDesc = `Nombres de ${noun2}${isPg(s) ? ' (formato schema.tabla)' : ''}`
+      const tools: AiTool[] = isRedis(s) ? [] : [
+        {
+          name: 'get_columns',
+          schema: { type: 'function', function: { name: 'get_columns', description: `Columnas reales (nombre y tipo) de las ${noun2} indicadas. Úsalo antes de escribir la consulta.`, parameters: arrayParam(tableDesc) } },
+          run: async args => {
+            const wanted = Array.isArray(args.tables) ? (args.tables as string[]).slice(0, 30) : []
+            const parts = await Promise.all(wanted.map(async t => `${t}: ${(await getColumns(t)).join(', ') || '(desconocidas)'}`))
+            return parts.join('\n') || '(sin columnas)'
+          },
+        },
+        {
+          name: 'get_relations',
+          schema: { type: 'function', function: { name: 'get_relations', description: `Relaciones (claves foráneas) que tocan las ${noun2} indicadas: por qué columnas unirlas (JOIN${isMongo(s) ? '/$lookup' : ''}).`, parameters: arrayParam(tableDesc) } },
+          run: async args => {
+            const wanted = new Set(Array.isArray(args.tables) ? (args.tables as string[]) : [])
+            const relevant = rels.filter(f => wanted.has(f.table) || wanted.has(f.ref_table))
+            return relevant.map(f => `${f.table}.${f.column} → ${f.ref_table}.${f.ref_column}`).join('\n') || '(sin relaciones para esas tablas)'
+          },
+        },
+      ]
+      const verb = isMongo(s) ? 'etapas $lookup' : 'los JOIN'
+      const fence = isMongo(s) ? '```js' : '```sql'
+      const guide = tools.length
+        ? ` Usa get_columns (columnas reales) y get_relations (claves foráneas) antes de responder. Une SOLO ${noun2} con una relación real (compruébalo con get_relations) y ordena ${verb} de modo que cada tabla referenciada ya se haya introducido antes. Si la petición implica varias ${noun2}, escribe la consulta COMPLETA; no te limites a un SELECT de una sola tabla. Devuelve SIEMPRE la consulta final dentro de un único bloque de código (${fence} … \`\`\`), sin indentarlo.`
+        : ''
+      askAi(`${schema}\n\nEscríbeme ${dialect} para: ${guide}`, false, runner, tools)
     })
 
     const actions = document.createElement('div')
     actions.className = 'db-query-actions'
     actions.append(runBtn, aiBtn)
 
-    // Búsqueda: filtro de texto + conmutador de grupo (Todas / Tablas / Relaciones)
-    // para gestionar bien cuando hay muchísimas tablas o relaciones.
+    // Deterministic JOIN builder (no AI): you pick tables and Bento finds the
+    // JOIN path through the foreign keys. SQL only.
+    const joinBuilder = document.createElement('div')
+    joinBuilder.className = 'db-join-builder'
+    if (!isMongo(s) && !isRedis(s)) {
+      const picked: string[] = []
+      const jLabel = document.createElement('span')
+      jLabel.className = 'db-query-examples-label'
+      jLabel.textContent = '⛓ Unir tablas:'
+      const jChips = document.createElement('span')
+      jChips.className = 'db-join-chips'
+      const jAdd = document.createElement('input')
+      jAdd.className = 'db-join-add'
+      jAdd.placeholder = '+ añadir tabla…'
+      const listId = `db-join-list-${++joinListSeq}`
+      jAdd.setAttribute('list', listId)
+      const jList = document.createElement('datalist')
+      jList.id = listId
+      names.forEach(n => { const o = document.createElement('option'); o.value = n; jList.appendChild(o) })
+      const jBuild = document.createElement('button')
+      jBuild.className = 'db-connect'
+      jBuild.textContent = 'Construir JOIN'
+      const jMsg = document.createElement('span')
+      jMsg.className = 'db-join-msg'
+
+      const renderPicked = (): void => {
+        jChips.replaceChildren()
+        picked.forEach(t => {
+          const c = document.createElement('button')
+          c.className = 'db-query-chip db-query-chip-rel'
+          c.textContent = `${t} ✕`
+          c.title = 'Quitar'
+          c.addEventListener('click', () => { picked.splice(picked.indexOf(t), 1); renderPicked() })
+          jChips.appendChild(c)
+        })
+      }
+      jAdd.addEventListener('change', () => {
+        const v = jAdd.value.trim()
+        if (v && names.includes(v) && !picked.includes(v)) { picked.push(v); renderPicked() }
+        jAdd.value = ''
+      })
+      jBuild.addEventListener('click', async () => {
+        jMsg.textContent = ''
+        if (!picked.length) return
+        await relationsReady
+        const rels: Relation[] = relations.map(f => ({ table: f.table, column: f.column, refTable: f.ref_table, refColumn: f.ref_column }))
+        const plan = buildJoinPath(picked, rels)
+        if (!plan) { jMsg.textContent = 'Esas tablas no se conectan por sus relaciones.'; return }
+        editor.value = buildJoinQuery(s, plan)
+        editor.focus()
+      })
+      joinBuilder.append(jLabel, jChips, jAdd, jList, jBuild, jMsg)
+    }
+
+    // Filtered search + group toggle. DATA-DRIVEN render with a CAP: a large DB
+    // has thousands of tables/relations and painting them all as buttons (each
+    // with a listener) froze the UI. We paint at most CHIP_CAP and the filter
+    // re-renders the matches from the whole list.
     type Group = 'all' | 'table' | 'rel'
+    interface ChipItem { group: 'table' | 'rel'; label: string; title: string; fill: () => string }
+    const CHIP_CAP = 200
     let activeGroup: Group = 'all'
+    const chipItems: ChipItem[] = names.map(name => ({
+      group: 'table', label: name, title: 'Insertar consulta de ejemplo', fill: () => exampleQuery(s, name),
+    }))
+
     const filter = document.createElement('input')
     filter.className = 'db-query-filter'
     filter.placeholder = 'Filtrar tablas / relaciones…'
     filter.spellcheck = false
 
-    const applyFilter = (): void => {
+    const examples = document.createElement('div')
+    examples.className = 'db-query-examples'
+
+    const groupLabel = (g: 'table' | 'rel'): string =>
+      g === 'rel' ? 'Relaciones:' : isRedis(s) ? 'Claves:' : isMongo(s) ? 'Colecciones:' : 'Tablas:'
+
+    const renderChips = (): void => {
       const q = filter.value.trim().toLowerCase()
-      examples.querySelectorAll<HTMLElement>('.db-query-chip').forEach(el => {
-        const matchText = !q || (el.textContent ?? '').toLowerCase().includes(q)
-        const matchGroup = activeGroup === 'all' || el.dataset.group === activeGroup
-        el.style.display = matchText && matchGroup ? '' : 'none'
+      const matches = chipItems.filter(it =>
+        (activeGroup === 'all' || it.group === activeGroup) && (!q || it.label.toLowerCase().includes(q)))
+      examples.replaceChildren()
+      let lastGroup = ''
+      matches.slice(0, CHIP_CAP).forEach(it => {
+        if (it.group !== lastGroup) {
+          lastGroup = it.group
+          const lbl = document.createElement('span')
+          lbl.className = 'db-query-examples-label'
+          lbl.textContent = groupLabel(it.group)
+          examples.appendChild(lbl)
+        }
+        const chip = document.createElement('button')
+        chip.className = it.group === 'rel' ? 'db-query-chip db-query-chip-rel' : 'db-query-chip'
+        chip.textContent = it.label
+        chip.title = it.title
+        chip.addEventListener('click', () => { editor.value = it.fill(); editor.focus() })
+        examples.appendChild(chip)
       })
-      examples.querySelectorAll<HTMLElement>('.db-query-examples-label').forEach(el => {
-        el.style.display = activeGroup === 'all' || activeGroup === el.dataset.group ? '' : 'none'
-      })
+      if (matches.length > CHIP_CAP) {
+        examples.appendChild(note(`… y ${matches.length - CHIP_CAP} más. Filtra para acotar.`, 'db-detail-hint'))
+      }
     }
-    filter.addEventListener('input', applyFilter)
+    filter.addEventListener('input', renderChips)
 
     const toggle = document.createElement('div')
     toggle.className = 'db-query-toggle'
@@ -318,81 +498,143 @@ export function createDbPanel(): { element: HTMLElement } {
           activeGroup = g
           toggle.querySelectorAll('.db-query-toggle-btn').forEach(x => x.classList.remove('active'))
           b.classList.add('active')
-          applyFilter()
+          renderChips()
         })
         toggle.appendChild(b)
       })
     }
 
-    // Ejemplos con las tablas/colecciones/claves reales de esta BD: un click
-    // rellena el editor con la consulta lista.
-    const examples = document.createElement('div')
-    examples.className = 'db-query-examples'
-    if (names.length) {
-      const label = document.createElement('span')
-      label.className = 'db-query-examples-label'
-      label.dataset.group = 'table'
-      label.textContent = isRedis(s) ? 'Claves:' : isMongo(s) ? 'Colecciones:' : 'Tablas:'
-      examples.appendChild(label)
-      names.forEach(name => {
-        const chip = document.createElement('button')
-        chip.className = 'db-query-chip'
-        chip.dataset.group = 'table'
-        chip.textContent = name
-        chip.title = 'Insertar consulta de ejemplo'
-        chip.addEventListener('click', () => { editor.value = exampleQuery(s, name); editor.focus() })
-        examples.appendChild(chip)
-      })
-    }
+    renderChips()
 
-    // (A) Relaciones como consultas listas, agrupadas por tabla (una tabla une
-    // con TODAS sus relacionadas): JOIN en SQL, $lookup en Mongo.
+    // Relations (grouped by table) as additional items, after the FKs load.
     if (!isRedis(s)) {
-      fetchRelations(s, db).then(rels => {
-        if (!rels.length) return
-        const relLabel = document.createElement('span')
-        relLabel.className = 'db-query-examples-label'
-        relLabel.dataset.group = 'rel'
-        relLabel.textContent = 'Relaciones:'
-        examples.appendChild(relLabel)
+      relationsReady.then(rels => {
         ;[...groupRelations(rels).entries()].forEach(([table, fks]) => {
-          const chip = document.createElement('button')
-          chip.className = 'db-query-chip db-query-chip-rel'
-          chip.dataset.group = 'rel'
-          chip.textContent = `${table} ▸ ${fks.map(f => f.ref_table).join(', ')}`
-          chip.title = fks.map(f => `${f.table}.${f.column} → ${f.ref_table}.${f.ref_column}`).join('\n')
-          chip.addEventListener('click', () => { editor.value = buildRelationQuery(s, table, fks); editor.focus() })
-          examples.appendChild(chip)
+          chipItems.push({
+            group: 'rel',
+            label: `${table} ▸ ${fks.map(f => f.ref_table).join(', ')}`,
+            title: fks.map(f => `${f.table}.${f.column} → ${f.ref_table}.${f.ref_column}`).join('\n'),
+            fill: () => buildRelationQuery(s, table, fks),
+          })
         })
-        applyFilter()
+        renderChips()
       }).catch(() => {})
     }
 
     const bar = document.createElement('div')
     bar.className = 'db-query-bar'
-    bar.append(editor, actions, filter, toggle, examples)
+    bar.append(editor, actions, joinBuilder, filter, toggle, examples)
 
     const resultArea = document.createElement('div')
     resultArea.className = 'db-grid-scroll'
     resultArea.append(note('Escribe una consulta y ejecútala.', 'db-detail-hint'))
+
+    // Postgres safety net: quotes known table names with uppercase letters if
+    // they come unquoted (Postgres would lowercase them and fail). Covers what
+    // the AI forgets to quote.
+    const pgFixIdents = (sql: string): string => {
+      let out = sql
+      const esc = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      names.forEach(full => {
+        if (!full.includes('.')) return
+        const quotedRight = full.split('.').map(p => `"${p}"`).join('.')
+        // Wrongly quoted as a single piece: "schema.table" → "schema"."table".
+        out = out.split(`"${full}"`).join(quotedRight)
+      })
+      names.forEach(full => {
+        const table = full.includes('.') ? full.split('.').slice(-1)[0] : full
+        if (!/[A-Z]/.test(table)) return // the rest is only at risk due to uppercase letters
+        const quotedFull = full.split('.').map(p => `"${p}"`).join('.')
+        out = out.replace(new RegExp(`(^|[^"\\w.])${esc(full)}(?![\\w"])`, 'g'), `$1${quotedFull}`)
+        out = out.replace(new RegExp(`(^|[^"\\w.])${esc(table)}(?![\\w"])`, 'g'), `$1"${table}"`)
+      })
+      return out
+    }
+
+    // Real columns (name + type) of a table/collection, for the AI's get_columns
+    // tool. Covers MySQL, MariaDB, PostgreSQL and Mongo.
+    const sqlEsc = (v: string): string => v.replace(/'/g, "''")
+    const getColumns = async (table: string): Promise<string[]> => {
+      try {
+        if (isMongo(s)) {
+          const script = `Object.keys(db.getSiblingDB('${sqlEsc(db)}').getCollection('${sqlEsc(table)}').findOne()||{}).join('\\n')`
+          const out = await invoke<string>('db_docker_mongo_query', { ...target(s), db, script, ...creds(s) })
+          return out.split('\n').map(x => x.trim()).filter(Boolean)
+        }
+        if (isPg(s)) {
+          const parts = table.split('.')
+          const tbl = parts.pop() ?? table
+          const schema = parts.pop() ?? 'public'
+          const sql = `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='${sqlEsc(schema)}' AND table_name='${sqlEsc(tbl)}' ORDER BY ordinal_position`
+          const data = await invoke<TableData>('db_docker_pg_query', { ...target(s), db, sql, ...creds(s) })
+          return data.rows.map(r => `${r[0]} (${r[1]})`)
+        }
+        // MySQL / MariaDB (same client)
+        const sql = `SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='${sqlEsc(db)}' AND TABLE_NAME='${sqlEsc(table)}' ORDER BY ORDINAL_POSITION`
+        const data = await invoke<TableData>('db_docker_mysql_query', { ...target(s), db, sql, ...creds(s) })
+        return data.rows.map(r => `${r[0]} (${r[1]})`)
+      } catch {
+        return []
+      }
+    }
+
+    // Runs a query and returns the element with the result (table or text).
+    // Reused by the editor and by the "Run" button in the AI chat.
+    const executeQuery = async (text: string): Promise<HTMLElement> => {
+      if (isMongo(s)) return preResult(await invoke<string>('db_docker_mongo_query', { ...target(s), db, script: text, ...creds(s) }))
+      if (isRedis(s)) return preResult(await invoke<string>('db_docker_redis_command', { ...target(s), db, command: text, password: s.password ?? '' }))
+      const limited = withRowLimit(text)
+      // MySQL/MariaDB: with many tables the optimizer takes forever to find the
+      // optimal JOIN ORDER (combinatorial explosion during PLANNING, even if the
+      // query executes few rows). With depth=1 it plans greedily instantly.
+      // Postgres doesn't suffer from this.
+      const sql = isPg(s) ? pgFixIdents(limited) : `SET SESSION optimizer_search_depth=1; ${limited}`
+      return renderResultTable(await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) }))
+    }
+
+    // EXPLAIN: asks the engine for the execution plan WITHOUT running the query. It's
+    // instant and reveals why a query is slow: which table is scanned in full
+    // (join type ALL, no index) and how many rows it estimates combining.
+    const explain = async (text: string): Promise<HTMLElement> => {
+      const raw = text.trim().replace(/;\s*$/, '')
+      // With many tables, MySQL/MariaDB takes so long to PLAN the JOIN order that
+      // even the EXPLAIN hangs. optimizer_search_depth=1 forces an immediate
+      // greedy plan: the diagnostic returns instead of blowing up.
+      const sql = isPg(s)
+        ? `EXPLAIN ${pgFixIdents(raw)}`
+        : `SET SESSION optimizer_search_depth=1; EXPLAIN ${raw}`
+      const plan = renderResultTable(await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) }))
+      const wrap = document.createElement('div')
+      wrap.append(
+        note('Plan de ejecución. Filas altas o type=ALL (MySQL) / "Seq Scan" (Postgres) señalan la tabla que hace explotar el JOIN: añade un WHERE o quita esa tabla.', 'db-detail-hint'),
+        plan,
+      )
+      return wrap
+    }
 
     const run = async (): Promise<void> => {
       const text = editor.value.trim()
       if (!text) return
       resultArea.replaceChildren(note('Ejecutando…', 'db-detail-loading'))
       try {
-        if (isMongo(s)) {
-          const out = await invoke<string>('db_docker_mongo_query', { ...target(s), db, script: text, ...creds(s) })
-          resultArea.replaceChildren(preResult(out))
-        } else if (isRedis(s)) {
-          const out = await invoke<string>('db_docker_redis_command', { ...target(s), db, command: text, password: s.password ?? '' })
-          resultArea.replaceChildren(preResult(out))
-        } else {
-          const data = await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql: text, ...creds(s) })
-          resultArea.replaceChildren(renderResultTable(data))
-        }
+        resultArea.replaceChildren(await executeQuery(text))
       } catch (e) {
-        resultArea.replaceChildren(note(String(e), 'db-detail-error'))
+        const errEl = note(String(e), 'db-detail-error')
+        const isExplainable = !isMongo(s) && !isRedis(s) && /^\s*(select|with)\b/i.test(text)
+        if (!isExplainable) { resultArea.replaceChildren(errEl); return }
+        const explainBtn = document.createElement('button')
+        explainBtn.className = 'db-query-run'
+        explainBtn.textContent = '🔍 Ver por qué (EXPLAIN)'
+        explainBtn.addEventListener('click', async () => {
+          explainBtn.disabled = true
+          explainBtn.textContent = 'Analizando…'
+          try {
+            resultArea.replaceChildren(await explain(text))
+          } catch (e2) {
+            resultArea.replaceChildren(errEl, note(String(e2), 'db-detail-error'))
+          }
+        })
+        resultArea.replaceChildren(errEl, explainBtn)
       }
     }
     runBtn.addEventListener('click', run)
@@ -648,7 +890,7 @@ export function createDbPanel(): { element: HTMLElement } {
     try {
       const names = await listTables(s, db)
       container.replaceChildren()
-      // Consulta libre (SQL / mongosh / redis-cli según el tipo de BD).
+      // Free-form query (SQL / mongosh / redis-cli depending on the DB type).
       const queryRow = rowEl(2, 'scripts', 'Nueva consulta', false)
       queryRow.classList.add('db-leaf', 'db-query-leaf')
       queryRow.addEventListener('click', () => { selectLeaf(queryRow); openQuery(s, db, names) })
