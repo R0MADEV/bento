@@ -1,13 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
-import { errorLines, isErrorLine } from '../../core/docker/logFilter'
-import { askAi } from '../../ui/askAi'
-import { createTerminalPanel } from '../terminal/TerminalPanel'
+import { renderContainerLogs, renderContainerTerminal } from './containerDetail'
 import { createMasterDetail, type MdItem } from '../../ui/masterDetail'
 import { icon } from '../../ui/icons'
 
-export function createDockerPanel(): { element: HTMLElement; dispose: () => void } {
+export function createDockerPanel(filterPrefix?: string): { element: HTMLElement; dispose: () => void } {
   let containers: Container[] = []
   // Teardown for the current detail's body (live stream / exec terminal).
   let bodyCleanup: () => void = () => {}
@@ -60,112 +57,15 @@ export function createDockerPanel(): { element: HTMLElement; dispose: () => void
     return d
   }
 
-  // ---- logs (static + live follow) ----
+  // ---- logs + terminal: delegated to shared containerDetail module ----
   function showLogs(body: HTMLElement, c: Container): void {
     bodyCleanup()
-    const pre = document.createElement('pre')
-    pre.className = 'docker-logs'
-    let rawLogs = ''
-    let errorsOnly = false
-    let live = false
-    let unlisten: (() => void) | null = null
-
-    const applyStatic = (): void => {
-      pre.textContent = errorsOnly
-        ? (errorLines(rawLogs).join('\n') || '(sin errores en los últimos logs)')
-        : (rawLogs || '(sin logs)')
-      pre.scrollTop = pre.scrollHeight
-    }
-    const loadStatic = async (): Promise<void> => {
-      pre.textContent = 'Cargando…'
-      try { rawLogs = await invoke<string>('docker_logs', { id: c.name, tail: 500 }) } catch (e) { rawLogs = String(e) }
-      applyStatic()
-    }
-    const onChunk = (chunk: string): void => {
-      rawLogs += chunk
-      const text = errorsOnly ? chunk.split('\n').filter(isErrorLine).map(l => `${l}\n`).join('') : chunk
-      if (!text) return
-      pre.textContent += text
-      pre.scrollTop = pre.scrollHeight
-    }
-    const setLiveBtn = (): void => {
-      liveBtn.innerHTML = icon(live ? 'stop' : 'play')
-      liveBtn.title = live ? 'Parar el seguimiento' : 'Seguir logs en vivo'
-      liveBtn.classList.toggle('active', live)
-    }
-    const startLive = async (): Promise<void> => {
-      live = true
-      setLiveBtn()
-      rawLogs = ''
-      pre.textContent = ''
-      try {
-        await invoke('docker_logs_follow', { id: c.name, tail: 200 })
-        unlisten = await listen<string>(`docker-logs-${c.name}`, e => onChunk(e.payload))
-      } catch (e) {
-        pre.textContent = String(e)
-      }
-    }
-    const stopLive = (): void => {
-      if (!live) return
-      live = false
-      setLiveBtn()
-      invoke('docker_logs_stop', { id: c.name }).catch(() => {})
-      unlisten?.()
-      unlisten = null
-    }
-
-    const liveBtn = iconBtn('play', 'Seguir logs en vivo', () => (live ? stopLive() : startLive()))
-    const errBtn = iconBtn('alert', 'Solo errores', () => {
-      errorsOnly = !errorsOnly
-      errBtn.classList.toggle('active', errorsOnly)
-      if (!live) applyStatic()
-    })
-    const refreshBtn = iconBtn('refresh', 'Recargar', () => { if (live) { stopLive(); startLive() } else loadStatic() })
-
-    // Send to the AI chat: if there's a selection, send it; otherwise ALL the
-    // container's errors (and if there are no errors, the logs). Generous cap due
-    // to request size: keeps the most recent part.
-    const sendToAi = (): void => {
-      const selection = window.getSelection()?.toString().trim()
-      const content = (selection || errorLines(rawLogs).join('\n') || rawLogs).slice(-16000)
-      if (content.trim()) askAi(`/explica estos logs de Docker:\n\n\`\`\`\n${content}\n\`\`\``, true)
-    }
-    const askAiBtn = iconBtn('chat', 'Explicar errores con IA (⌘⇧E)', sendToAi)
-
-    pre.tabIndex = 0
-    pre.addEventListener('keydown', e => {
-      const isAskAi = (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'e'
-      if (!isAskAi) return
-      e.preventDefault()
-      sendToAi()
-    })
-
-    const logsHead = document.createElement('div')
-    logsHead.className = 'docker-logs-head'
-    const t = document.createElement('span')
-    t.textContent = 'Logs'
-    logsHead.append(t, liveBtn, errBtn, refreshBtn, askAiBtn)
-
-    body.replaceChildren(logsHead, pre)
-    bodyCleanup = stopLive
-    loadStatic()
+    bodyCleanup = renderContainerLogs(c, body)
   }
 
-  // ---- exec terminal (shell inside the container) ----
   async function showTerminal(body: HTMLElement, c: Container, backToLogs: () => void): Promise<void> {
     bodyCleanup()
-    const argv = await invoke<string[]>('docker_exec_argv', { container: c.name }).catch(() => null)
-    if (!argv) {
-      body.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: 'No se pudo abrir la terminal.' }))
-      return
-    }
-    const term = createTerminalPanel('', '', backToLogs, argv)
-    const wrap = document.createElement('div')
-    wrap.className = 'docker-term'
-    wrap.appendChild(term.element)
-    body.replaceChildren(wrap)
-    requestAnimationFrame(() => term.fit())
-    bodyCleanup = () => term.dispose()
+    bodyCleanup = await renderContainerTerminal(c, body, backToLogs)
   }
 
   function renderDetail(name: string): void {
@@ -222,7 +122,8 @@ export function createDockerPanel(): { element: HTMLElement; dispose: () => void
 
   const load = async (): Promise<void> => {
     try {
-      containers = parseContainers(await invoke<string>('docker_list'))
+      const all = parseContainers(await invoke<string>('docker_list'))
+      containers = filterPrefix ? all.filter(c => c.name.startsWith(filterPrefix)) : all
     } catch {
       containers = []
     }
