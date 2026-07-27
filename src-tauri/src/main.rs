@@ -2,6 +2,7 @@
 
 mod db;
 mod docker;
+mod git;
 mod jira;
 mod notes;
 mod pty;
@@ -181,6 +182,19 @@ fn main() {
             docker::docker_logs_follow,
             docker::docker_logs_stop,
             docker::docker_exec_argv,
+            docker::docker_compose_isolate,
+            docker::docker_compose_up,
+            docker::docker_compose_down,
+            git::git_worktree_list,
+            git::git_status,
+            git::git_default_branch,
+            git::git_worktree_add,
+            git::git_worktree_remove,
+            git::git_sync,
+            git::git_diff,
+            git::open_in_editor,
+            docker::docker_compose_logs_follow,
+            docker::docker_compose_logs_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
