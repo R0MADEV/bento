@@ -207,12 +207,12 @@ function buildFileList(
   })
 }
 
-export function createTasksPanel(panelId = ''): { element: HTMLElement } {
+export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   // Per-panel keys so multiple tasks panels can track different repos independently
-  const REPO_KEY = `bento.tasks.repo${panelId ? `.${panelId}` : ''}`
-  const SELECTED_KEY = `bento.tasks.selected${panelId ? `.${panelId}` : ''}`
-  const BASE_KEY = `bento.tasks.base${panelId ? `.${panelId}` : ''}`
-  const OPERATIONS_KEY = `bento.tasks.gitOperations${panelId ? `.${panelId}` : ''}`
+  const REPO_KEY = `bento.tasks.repo.${panelId}`
+  const SELECTED_KEY = `bento.tasks.selected.${panelId}`
+  const BASE_KEY = `bento.tasks.base.${panelId}`
+  const OPERATIONS_KEY = `bento.tasks.gitOperations.${panelId}`
 
   let worktrees: Worktree[] = []
   let repoPath = localStorage.getItem(REPO_KEY) ?? ''

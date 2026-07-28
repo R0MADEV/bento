@@ -8,7 +8,6 @@ import { createCommandPalette } from '../ui/commandPalette'
 import type { Command } from '../core/command/command'
 import { themeNames, themeLabels } from '../core/terminal/themes'
 import { setTheme } from '../panels/terminal/themePreference'
-import { isUnlocked, toggleUnlocked } from '../panels/panelLockPreference'
 import { isMac } from '../ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition } from '../ui/sessionBarPreference'
@@ -326,16 +325,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         commands.push({ id: `goto-${s.id}`, label: `Ir a ${s.name}`, keywords: ['sesión'], run: () => { state = setActiveSession(state, s.id); render() } })
       }
     })
-    panels.list().filter(d => d.singleton).forEach(d => {
-      const on = isUnlocked(d.type)
-      commands.push({
-        id: `unlock-${d.type}`,
-        label: `${on ? '✓' : '○'} Permitir varias ${d.title}`,
-        keywords: ['bloquear', 'desbloquear', 'varias', 'multiple', d.type],
-        run: () => toggleUnlocked(d.type),
-      })
-    })
-    const barPos = getBarPosition()
+const barPos = getBarPosition()
     const barOptions: { pos: BarPosition; label: string }[] = [
       { pos: 'top', label: 'arriba' },
       { pos: 'bottom', label: 'abajo' },

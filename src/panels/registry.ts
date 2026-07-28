@@ -30,8 +30,6 @@ export interface PanelInstance {
 export interface PanelDefinition {
   type: string
   title: string
-  // Only one instance allowed by default (the user can unlock multiples).
-  singleton?: boolean
   create: (ctx: PanelContext) => PanelInstance
 }
 
