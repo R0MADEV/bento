@@ -2,6 +2,7 @@
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
 )]
+#![cfg_attr(test, allow(dead_code, unused_imports))]
 
 mod command_error;
 mod db;
@@ -122,6 +123,7 @@ fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(not(test))]
 fn main() {
     let context = tauri::generate_context!();
     #[cfg(all(feature = "e2e", target_os = "macos"))]
@@ -294,3 +296,9 @@ fn main() {
         .run(context)
         .expect("error while running tauri application");
 }
+
+// Unit tests exercise the command modules directly and do not need a desktop
+// runtime or compiled frontend assets. Keeping this entry point asset-free
+// makes `cargo test` work in a clean checkout before `npm run build`.
+#[cfg(test)]
+fn main() {}
