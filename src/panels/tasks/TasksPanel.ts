@@ -9,74 +9,28 @@ import { showContextMenu } from '../../ui/contextMenu'
 import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
 import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
-import { diffFileNames, changedPaths, matchingPaths, parseFilePatch, buildSelectedPatch } from '../../core/git/commitWorkflow'
-import { parseConflictFiles, parseConflictHunks, reconstructFromHunks, type ConflictSegment } from '../../core/git/conflictWorkflow'
+import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
+import { parseConflictFiles } from '../../core/git/conflictWorkflow'
 import {
   appendOperation, mapWithConcurrency, previewRebase,
-  type GitOperationEntry, type RebaseAction,
+  type GitOperationEntry, type RebaseAction, type RebasePlanItem,
 } from '../../core/git/rebaseWorkflow'
 import {
   loadJiraConfig, fetchIssue, fetchTransitions, applyTransition, browseUrl,
   type JiraConfig, type TaskIssue,
 } from './taskJiraClient'
 import { buildOperationHistoryView } from './OperationHistoryView'
+import type { BackupStatus, PrStatus, RebaseStatus, RewritePreflight, UpstreamStatus } from './gitTypes'
+import { buildPrStatusView } from './PrStatusView'
+import { getTaskLocale, setTaskLocale, taskT, type TaskLocale } from './i18n'
+import { buildBackupHistoryView } from './BackupHistoryView'
+import { buildConflictResolverView } from './ConflictResolverView'
+import { buildChangesFileView } from './ChangesFileView'
+import { buildRebasePlanPreview } from './RebasePlanView'
 
 interface IsolateResult {
   subnet: string
   urls: { service: string; url: string }[]
-}
-
-interface PrStatus {
-  state: string   // OPEN | DRAFT | MERGED | CLOSED
-  title: string
-  url: string
-  number: number
-  baseRefName?: string
-  isDraft?: boolean
-  mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
-  reviewDecision?: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | ''
-  statusCheckRollup?: { conclusion?: string; state?: string; status?: string; name?: string; context?: string }[]
-}
-
-interface RewritePreflight {
-  branch: string
-  base: string
-  dirty: boolean
-  operation: string
-  upstream: string
-  publishedCommits: number
-  protectedBase: boolean
-  signing: boolean
-  hooks: string[]
-}
-
-interface BackupStatus {
-  available: boolean
-  different?: boolean
-  hash?: string
-  short?: string
-  subject?: string
-}
-
-interface RebaseStatus {
-  active: boolean
-  sha?: string
-  short?: string
-  subject?: string
-  body?: string
-  branch?: string
-  current?: number
-  total?: number
-  conflicts?: string[]
-}
-
-interface UpstreamStatus {
-  branch: string
-  upstream?: string
-  hasUpstream: boolean
-  state: 'unpublished' | 'synced' | 'ahead' | 'behind' | 'diverged'
-  ahead: number
-  behind: number
 }
 
 interface CommitEntry {
@@ -162,16 +116,16 @@ function buildFileList(
       const patch = document.createElement('pre')
       patch.className = 'tasks-commit-file-diff hidden'
       let loaded = false
-      row.title = 'Ver código cambiado'
+      row.title = taskT('changedCode')
       row.addEventListener('click', async () => {
         const opening = patch.classList.contains('hidden')
         patch.classList.toggle('hidden', !opening)
         row.classList.toggle('tasks-commit-file-row--expanded', opening)
         if (!opening || loaded) return
-        patch.textContent = 'Cargando código…'
+        patch.textContent = taskT('loadingCode')
         try {
           const diff = await loadPatch(targetPath)
-          patch.innerHTML = diff.trim() ? renderPatchHtml(diff) : '<span>Este archivo no tiene un parche de texto visible.</span>'
+          patch.innerHTML = diff.trim() ? renderPatchHtml(diff) : `<span>${taskT('noTextPatch')}</span>`
           loaded = true
         } catch (e) {
           patch.textContent = String(e)
@@ -183,8 +137,8 @@ function buildFileList(
     if (loadFullFile) {
       const fullBtn = Object.assign(document.createElement('button'), {
         className: 'tasks-file-full-btn',
-        textContent: 'Archivo completo',
-        title: 'Ver el archivo completo en este commit',
+        textContent: taskT('fullFile'),
+        title: taskT('viewFullCommitFile'),
       })
       const full = document.createElement('pre')
       full.className = 'tasks-commit-file-diff tasks-full-file hidden'
@@ -193,7 +147,7 @@ function buildFileList(
         const opening = full.classList.contains('hidden')
         full.classList.toggle('hidden', !opening)
         if (!opening || fullLoaded) return
-        full.textContent = 'Cargando archivo…'
+        full.textContent = taskT('loadFile')
         try {
           const content = await loadFullFile(targetPath)
           full.innerHTML = renderSourceHtml(content)
@@ -207,12 +161,12 @@ function buildFileList(
   })
 }
 
-export function createTasksPanel(panelId = ''): { element: HTMLElement } {
+export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   // Per-panel keys so multiple tasks panels can track different repos independently
-  const REPO_KEY = `bento.tasks.repo${panelId ? `.${panelId}` : ''}`
-  const SELECTED_KEY = `bento.tasks.selected${panelId ? `.${panelId}` : ''}`
-  const BASE_KEY = `bento.tasks.base${panelId ? `.${panelId}` : ''}`
-  const OPERATIONS_KEY = `bento.tasks.gitOperations${panelId ? `.${panelId}` : ''}`
+  const REPO_KEY = `bento.tasks.repo.${panelId}`
+  const SELECTED_KEY = `bento.tasks.selected.${panelId}`
+  const BASE_KEY = `bento.tasks.base.${panelId}`
+  const OPERATIONS_KEY = `bento.tasks.gitOperations.${panelId}`
 
   let worktrees: Worktree[] = []
   let repoPath = localStorage.getItem(REPO_KEY) ?? ''
@@ -259,18 +213,21 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
   const root = document.createElement('div')
   root.className = 'tasks-panel'
+  root.dataset.testid = 'tasks-panel'
+  root.dataset.panelId = panelId
 
   // ---- header ----
   const header = document.createElement('div')
   header.className = 'tasks-header'
   const titleEl = document.createElement('span')
   titleEl.className = 'tasks-title'
-  titleEl.textContent = 'Tareas'
+  titleEl.textContent = taskT('tasks')
   const repoBtn = document.createElement('button')
   repoBtn.className = 'tasks-repo-btn'
-  repoBtn.title = 'Seleccionar repositorio'
+  repoBtn.dataset.testid = 'tasks-select-repository'
+  repoBtn.title = taskT('selectRepo')
   const updateRepoBtn = (): void => {
-    const name = repoPath ? repoPath.replace(/\/$/, '').split('/').pop()! : 'Seleccionar repo…'
+    const name = repoPath ? repoPath.replace(/\/$/, '').split('/').pop()! : taskT('selectRepoShort')
     repoBtn.innerHTML = `${icon('folder')}<span>${name}</span>`
   }
   updateRepoBtn()
@@ -285,7 +242,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   })
   const baseSelect = document.createElement('select')
   baseSelect.className = 'tasks-base-select'
-  baseSelect.title = 'Rama base para rebase, fixup, sincronización y PR'
+  baseSelect.title = taskT('baseBranch')
   baseSelect.addEventListener('change', () => {
     baseBranch = baseSelect.value
     localStorage.setItem(BASE_KEY, baseBranch)
@@ -293,8 +250,15 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   })
   const fetchAgeEl = document.createElement('span')
   fetchAgeEl.className = 'tasks-fetch-age'
-  const refreshBtn = iconBtn('refresh', 'Recargar', () => load())
-  header.append(titleEl, repoBtn, baseSelect, fetchAgeEl, refreshBtn)
+  const localeSelect = document.createElement('select')
+  localeSelect.className = 'tasks-locale-select'
+  localeSelect.title = taskT('language')
+  ;(['es', 'en'] as TaskLocale[]).forEach(locale => localeSelect.appendChild(Object.assign(document.createElement('option'), {
+    value: locale, textContent: locale === 'es' ? taskT('spanish') : taskT('english'), selected: locale === getTaskLocale(),
+  })))
+  localeSelect.addEventListener('change', () => { setTaskLocale(localeSelect.value as TaskLocale); location.reload() })
+  const refreshBtn = iconBtn('refresh', taskT('reload'), () => load())
+  header.append(titleEl, repoBtn, baseSelect, localeSelect, fetchAgeEl, refreshBtn)
 
   // ---- layout ----
   const body = document.createElement('div')
@@ -306,7 +270,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   const filterInput = Object.assign(document.createElement('input'), {
     className: 'tasks-filter-input',
     type: 'search',
-    placeholder: 'Filtrar tareas…',
+    placeholder: taskT('filter'),
   })
   filterInput.addEventListener('input', () => { filterText = filterInput.value; applyFilter() })
 
@@ -325,7 +289,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
   const showDetail = (...nodes: HTMLElement[]): void => { detailPane.replaceChildren(...nodes) }
 
-  showDetail(note('Selecciona una tarea para ver sus cambios.', 'db-detail-hint'))
+  showDetail(note(taskT('selectTask'), 'db-detail-hint'))
 
   // ---- list ----
   function renderList(statuses: Map<string, number>, runningPaths: Set<string>): void {
@@ -343,7 +307,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     listWrap.replaceChildren()
     if (filtered.length === 0) {
       listWrap.append(
-        note(worktrees.length === 0 ? 'No hay worktrees en este repo.' : 'Sin resultados.'),
+        note(worktrees.length === 0 ? taskT('noWorktrees') : taskT('noResults')),
         buildCreateForm(),
       )
       return
@@ -360,13 +324,15 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   function buildRow(wt: Worktree, isMain: boolean, changes: number, hasRunning: boolean): HTMLElement {
     const row = document.createElement('div')
     row.className = 'tasks-row'
+    row.dataset.testid = 'tasks-row'
+    row.dataset.branch = wt.branch ?? ''
     row.tabIndex = 0
     row.setAttribute('role', 'button')
-    row.setAttribute('aria-label', `Tarea ${wt.branch ?? 'sin rama'}, ${changes} cambios`)
+    row.setAttribute('aria-label', `${taskT('tasks')}: ${wt.branch ?? ''}, ${taskT('changes', { count: changes })}`)
 
     const runDot = document.createElement('span')
     runDot.className = `tasks-run-dot ${hasRunning ? 'docker-up' : ''}`
-    runDot.title = hasRunning ? 'Contenedores corriendo' : 'Sin contenedores'
+    runDot.title = hasRunning ? taskT('containersRunning') : taskT('noContainers')
 
     const issue = issueMap.get(wt.path) ?? null
     const ab = aheadBehindMap.get(wt.path)
@@ -377,7 +343,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
     const branchEl = Object.assign(document.createElement('span'), {
       className: 'tasks-branch',
-      textContent: wt.branch ?? '(detached)',
+      textContent: wt.branch ?? taskT('detached'),
     })
     if (isMain) branchEl.title = 'worktree principal'
 
@@ -408,7 +374,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
     const badge = Object.assign(document.createElement('span'), {
       className: `tasks-badge${changes > 0 ? ' tasks-badge--dirty' : ''}`,
-      textContent: changes > 0 ? `${changes} cambios` : 'limpio',
+      textContent: changes > 0 ? taskT('changes', { count: changes }) : taskT('clean'),
     })
 
     const flashBadge = (text: string, cls: string, ms: number): void => {
@@ -428,7 +394,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       if (ab.ahead > 0) parts.push(`↑${ab.ahead}`)
       if (ab.behind > 0) parts.push(`↓${ab.behind}`)
       abEl.textContent = parts.join(' ')
-      abEl.title = `${ab.ahead} por delante, ${ab.behind} por detrás de origin/${baseBranch}`
+      abEl.title = `${ab.ahead} / ${ab.behind} · origin/${baseBranch}`
     }
 
     // PR status badge
@@ -440,13 +406,13 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       const checks = pr.statusCheckRollup ?? []
       const failedChecks = checks.filter(check => /FAIL|ERROR|CANCEL|TIMED_OUT/i.test(check.conclusion ?? check.state ?? ''))
       const pendingChecks = checks.filter(check => /PENDING|QUEUED|IN_PROGRESS|EXPECTED/i.test(check.status ?? check.state ?? ''))
-      prEl.textContent = failedChecks.length ? `PR · ${failedChecks.length} fallo${failedChecks.length > 1 ? 's' : ''}`
+      prEl.textContent = failedChecks.length ? taskT('failedChecks', { count: failedChecks.length })
         : pendingChecks.length ? `PR · ${pendingChecks.length} pendiente${pendingChecks.length > 1 ? 's' : ''}`
           : labelMap[pr.state] ?? 'PR'
       const prSignals = [
         pr.baseRefName ? `base: ${pr.baseRefName}` : '',
         pr.mergeable === 'CONFLICTING' ? 'conflictos con la base' : '',
-        pr.reviewDecision === 'APPROVED' ? 'aprobada' : pr.reviewDecision === 'CHANGES_REQUESTED' ? 'cambios solicitados' : pr.reviewDecision === 'REVIEW_REQUIRED' ? 'revisión pendiente' : '',
+        pr.reviewDecision === 'APPROVED' ? taskT('approved') : pr.reviewDecision === 'CHANGES_REQUESTED' ? taskT('changesRequested') : pr.reviewDecision === 'REVIEW_REQUIRED' ? taskT('reviewPending') : '',
         failedChecks.length ? `${failedChecks.length} check(s) fallando` : pendingChecks.length ? `${pendingChecks.length} check(s) pendientes` : checks.length ? 'checks correctos' : '',
       ].filter(Boolean)
       prEl.title = `${pr.title}${prSignals.length ? ` · ${prSignals.join(' · ')}` : ''}`
@@ -457,39 +423,38 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const backupEl = document.createElement('span')
     if (backup?.available && backup.different) {
       backupEl.className = 'tasks-backup-badge'
-      backupEl.textContent = '↶ respaldo'
+      backupEl.textContent = taskT('backupBadge')
       backupEl.title = `${backup.short ?? ''} ${backup.subject ?? ''}`.trim()
     }
     const rebaseEl = document.createElement('span')
     if (rebase?.active) {
       rebaseEl.className = 'tasks-rebase-badge'
-      rebaseEl.textContent = rebase.total ? `rebase ${rebase.current ?? 0}/${rebase.total}` : 'rebase pausado'
+      rebaseEl.textContent = rebase.total ? `rebase ${rebase.current ?? 0}/${rebase.total}` : taskT('pausedRebase')
       rebaseEl.title = 'Pulsa para recuperar el rebase activo'
       rebaseEl.addEventListener('click', e => { e.stopPropagation(); selectRow(row); showRebasePaused(wt, rebase) })
     }
     const upstreamEl = document.createElement('span')
     if (upstream?.state === 'diverged') {
       upstreamEl.className = 'tasks-upstream-badge tasks-upstream-badge--diverged'
-      upstreamEl.textContent = 'historial reescrito'
-      upstreamEl.title = `${upstream.ahead} commit(s) locales y ${upstream.behind} remotos no compartidos`
+      upstreamEl.textContent = taskT('rewrittenHistory')
+      upstreamEl.title = taskT('localRemoteCommits', { local: upstream.ahead, remote: upstream.behind })
     } else if (upstream?.state === 'behind') {
       upstreamEl.className = 'tasks-upstream-badge tasks-upstream-badge--behind'
-      upstreamEl.textContent = `remoto +${upstream.behind}`
+      upstreamEl.textContent = taskT('remoteAhead', { count: upstream.behind })
     } else if (upstream?.state === 'unpublished') {
       upstreamEl.className = 'tasks-upstream-badge'
-      upstreamEl.textContent = 'sin publicar'
+      upstreamEl.textContent = taskT('unpublished')
     }
 
     const runSync = async (mode: 'fetch' | 'merge' | 'rebase'): Promise<void> => {
       if (mode === 'rebase') {
-        const raw = await invoke<string>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => '')
-        const preflight = raw ? JSON.parse(raw) as RewritePreflight : null
+        const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => null)
         if (preflight?.operation) {
-          selectRow(row); showSyncError('rebase', `Ya hay una operación ${preflight.operation} en curso.`, wt)
+          selectRow(row); showSyncError('rebase', taskT('operationInProgress', { operation: preflight.operation }), wt)
           return
         }
         if (preflight?.protectedBase) {
-          const ok = await askConfirm(`La rama ${preflight.branch} parece ser una rama base o protegida. ¿Reescribirla igualmente?`, { title: 'Rama base', kind: 'warning' })
+          const ok = await askConfirm(taskT('protectedBranchQuestion', { branch: preflight.branch }), { title: taskT('protectedBranchTitle'), kind: 'warning' })
           if (!ok) return
         }
       }
@@ -500,22 +465,22 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         const hasChanges = parseStatus(status).total > 0
         if (hasChanges) {
           const doStash = await askConfirm(
-            `"${wt.branch}" tiene cambios sin commitear. ¿Hacer stash automático antes de sincronizar y recuperarlos después?`,
-            { title: 'Sincronizar con stash', kind: 'warning' },
+            taskT('dirtySyncQuestion', { branch: wt.branch ?? '' }),
+            { title: taskT('syncWithStash'), kind: 'warning' },
           )
           if (!doStash) return
           autostash = true
         }
       }
-      flashBadge('Sincronizando…', '', 60000)
+      flashBadge(taskT('syncing'), '', 60000)
       try {
         const out = await invoke<string>('git_sync', { path: wt.path, base: baseBranch, mode, autostash })
         recordOperation(wt, mode, 'success', `origin/${baseBranch}${out.trim() ? ` · ${out.trim()}` : ''}`)
-        flashBadge(out.trim() || 'Ya al día', 'tasks-badge--ok', 3000)
+        flashBadge(out.trim() || taskT('upToDate'), 'tasks-badge--ok', 3000)
         load()
       } catch (e) {
         recordOperation(wt, mode, 'error', String(e))
-        flashBadge('Error al sincronizar', 'tasks-badge--error', 4000)
+        flashBadge(taskT('syncError'), 'tasks-badge--error', 4000)
         selectRow(row)
         showSyncError(mode, String(e), wt)
       }
@@ -547,54 +512,54 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const pushBranch = async (): Promise<void> => {
       if (upstream?.state === 'behind') {
         const fetch = await askConfirm(
-          `La rama remota tiene ${upstream.behind} commit(s) que no están localmente. Haz fetch y sincroniza antes de subir. ¿Ejecutar fetch ahora?`,
-          { title: 'La rama remota está por delante', kind: 'warning' },
+          taskT('remoteAheadQuestion', { count: upstream.behind }),
+          { title: taskT('remoteAheadTitle'), kind: 'warning' },
         )
         if (fetch) runSync('fetch')
         return
       }
       if (upstream?.state === 'diverged') {
         const force = await askConfirm(
-          `El historial local y ${upstream.upstream ?? 'el remoto'} son distintos (${upstream.ahead} local / ${upstream.behind} remoto).\n\nSi esto procede del rebase, puedes publicar con --force-with-lease. Se rechazará si el remoto cambió desde el último fetch. ¿Continuar?`,
-          { title: 'Historial reescrito', kind: 'warning' },
+          taskT('divergedQuestion', { upstream: upstream.upstream ?? 'origin', local: upstream.ahead, remote: upstream.behind }),
+          { title: taskT('rewrittenHistoryTitle'), kind: 'warning' },
         )
         if (!force) return
-        flashBadge('Subiendo con lease…', '', 60000)
+        flashBadge(taskT('pushingLease'), '', 60000)
         try {
           await invoke('git_push', { path: wt.path, forceWithLease: true })
           recordOperation(wt, 'push --force-with-lease', 'success', upstream.upstream ?? 'origin')
-          flashBadge('Force-with-lease OK', 'tasks-badge--ok', 3500)
+          flashBadge(taskT('leaseOk'), 'tasks-badge--ok', 3500)
           load()
         } catch (e) {
           recordOperation(wt, 'push --force-with-lease', 'error', String(e))
-          flashBadge('Push rechazado', 'tasks-badge--error', 4000)
+          flashBadge(taskT('pushRejected'), 'tasks-badge--error', 4000)
           selectRow(row); showSyncError('push --force-with-lease', String(e), wt)
         }
         return
       }
-      flashBadge('Subiendo…', '', 60000)
+      flashBadge(taskT('pushing'), '', 60000)
       try {
         await invoke('git_push', { path: wt.path })
         recordOperation(wt, 'push', 'success', upstream?.upstream ?? 'origin')
-        flashBadge('Push OK', 'tasks-badge--ok', 3000)
+        flashBadge(taskT('pushOk'), 'tasks-badge--ok', 3000)
         load()
       } catch (e) {
         const message = String(e)
         if (/non-fast-forward|rejected|fetch first/i.test(message)) {
           const force = await askConfirm(
-            'La rama remota tiene un historial distinto, probablemente por el rebase. ¿Actualizarla usando push --force-with-lease? La operación se rechazará si el remoto cambió desde tu último fetch.',
-            { title: 'Push seguro tras rebase', kind: 'warning' },
+            taskT('safePushQuestion'),
+            { title: taskT('safePushTitle'), kind: 'warning' },
           )
           if (force) {
             try {
               await invoke('git_push', { path: wt.path, forceWithLease: true })
               recordOperation(wt, 'push --force-with-lease', 'success', upstream?.upstream ?? 'origin')
-              flashBadge('Force-with-lease OK', 'tasks-badge--ok', 3500)
+              flashBadge(taskT('leaseOk'), 'tasks-badge--ok', 3500)
               load()
               return
             } catch (forceError) {
               recordOperation(wt, 'push --force-with-lease', 'error', String(forceError))
-              flashBadge('Push rechazado', 'tasks-badge--error', 4000)
+              flashBadge(taskT('pushRejected'), 'tasks-badge--error', 4000)
               selectRow(row)
               showSyncError('push --force-with-lease', String(forceError), wt)
               return
@@ -602,7 +567,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
           }
         }
         recordOperation(wt, 'push', 'error', message)
-        flashBadge('Error al subir', 'tasks-badge--error', 4000)
+        flashBadge(taskT('pushError'), 'tasks-badge--error', 4000)
         selectRow(row)
         showSyncError('push', message, wt)
       }
@@ -611,32 +576,32 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const restoreBackup = async (): Promise<void> => {
       if (!backup?.available || !backup.different) return
       const ok = await askConfirm(
-        `¿Restaurar la rama al respaldo ${backup.short ?? ''} “${backup.subject ?? ''}”?\n\nSolo se permite con el worktree limpio. La versión actual quedará guardada para poder volver atrás.`,
-        { title: 'Deshacer reescritura de historial', kind: 'warning' },
+        taskT('restoreQuestion', { short: backup.short ?? '', subject: backup.subject ?? '' }),
+        { title: taskT('undoRewrite'), kind: 'warning' },
       )
       if (!ok) return
       try {
         await invoke('git_restore_backup', { path: wt.path })
         recordOperation(wt, 'restaurar respaldo', 'success', backup.short ?? '')
-        flashBadge('Historial restaurado', 'tasks-badge--ok', 3500)
+        flashBadge(taskT('restoredHistory'), 'tasks-badge--ok', 3500)
         await load()
         showChanges(wt)
       } catch (e) {
         recordOperation(wt, 'restaurar respaldo', 'error', String(e))
         selectRow(row)
-        showSyncError('restaurar respaldo', String(e), wt)
+        showSyncError(taskT('restoringBackup'), String(e), wt)
       }
     }
 
     const createPR = async (): Promise<void> => {
-      flashBadge('Creando PR…', '', 60000)
+      flashBadge(taskT('creatingPr'), '', 60000)
       try {
         const result = await invoke<string>('git_create_pr', { path: wt.path, base: baseBranch })
-        flashBadge('PR creado', 'tasks-badge--ok', 3000)
+        flashBadge(taskT('prCreated'), 'tasks-badge--ok', 3000)
         if (result.startsWith('http')) openUrl(result).catch(() => {})
         load()
       } catch (e) {
-        flashBadge('Error al crear PR', 'tasks-badge--error', 4000)
+        flashBadge(taskT('prCreateError'), 'tasks-badge--error', 4000)
         selectRow(row)
         showSyncError('PR', String(e), wt)
       }
@@ -645,13 +610,13 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const renameTask = async (): Promise<void> => {
       const current = wt.branch ?? ''
       // eslint-disable-next-line no-alert
-      const newName = window.prompt(`Nuevo nombre de rama (actual: ${current}):`, current)
+      const newName = window.prompt(taskT('renamePrompt', { current }), current)
       if (!newName || newName === current) return
       try {
         await invoke('git_branch_rename', { path: wt.path, newName })
         load()
       } catch (e) {
-        await askConfirm(String(e), { title: 'Error al renombrar', kind: 'error' })
+        await askConfirm(String(e), { title: taskT('renameError'), kind: 'error' })
       }
     }
 
@@ -661,18 +626,18 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const menuItems = () => {
       const items = [
         ...(rebase?.active ? [{ label: `Continuar rebase${rebase.total ? ` · ${rebase.current ?? 0}/${rebase.total}` : ''}`, onClick: () => { selectRow(row); showRebasePaused(wt, rebase) } }] : []),
-        { label: 'Ver cambios', onClick: () => { selectRow(row); showChanges(wt) } },
-        { label: 'Ver historial', onClick: () => { selectRow(row); showCommitLog(wt) } },
-        { label: 'Ver gráfico de commits', onClick: () => { selectRow(row); showCommitGraph(wt) } },
-        { label: 'Rebase interactivo…', onClick: () => { selectRow(row); showInteractiveRebase(wt) } },
-        { label: 'Abrir en editor', onClick: () => { invoke('open_in_editor', { path: wt.path }).catch(console.error) } },
-        { label: 'Terminal', onClick: () => { selectRow(row); showWorktreeTerminal(wt) } },
-        { label: 'Copiar nombre de rama', onClick: copyBranch },
+        { label: taskT('viewChanges'), onClick: () => { selectRow(row); showChanges(wt) } },
+        { label: taskT('viewHistory'), onClick: () => { selectRow(row); showCommitLog(wt) } },
+        { label: taskT('viewGraph'), onClick: () => { selectRow(row); showCommitGraph(wt) } },
+        { label: taskT('interactiveRebase'), onClick: () => { selectRow(row); showInteractiveRebase(wt) } },
+        { label: taskT('openEditor'), onClick: () => { invoke('open_in_editor', { path: wt.path }).catch(console.error) } },
+        { label: taskT('terminal'), onClick: () => { selectRow(row); showWorktreeTerminal(wt) } },
+        { label: taskT('copyBranch'), onClick: copyBranch },
       ]
       if (issue && jiraCfg) {
         items.push(
-          { label: 'Abrir en Jira', onClick: openInJira },
-          { label: 'Cambiar estado…', onClick: () => { changeJiraStatus() } },
+          { label: taskT('openJira'), onClick: openInJira },
+          { label: taskT('changeStatus'), onClick: () => { changeJiraStatus() } },
         )
       }
       if (pr?.baseRefName && pr.baseRefName !== baseBranch) {
@@ -688,34 +653,35 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       if (!isMain) {
         items.push(
           { label: 'Docker', onClick: () => { selectRow(row); isolateDocker(wt) } },
-          { label: `Fetch origin`, onClick: () => runSync('fetch') },
+          { label: taskT('fetch'), onClick: () => runSync('fetch') },
           { label: `Merge origin/${baseBranch}`, onClick: () => runSync('merge') },
           { label: `Rebase sobre origin/${baseBranch}`, onClick: () => runSync('rebase') },
-          { label: 'Push', onClick: pushBranch },
+          { label: taskT('push'), onClick: pushBranch },
         )
         if (ahead > 0 && !hasPr) {
-          items.push({ label: `Crear PR → ${baseBranch}`, onClick: createPR })
+          items.push({ label: taskT('createPrFor', { base: baseBranch }), onClick: createPR })
         }
         if (pr?.url) {
-          items.push({ label: 'Ver PR en GitHub', onClick: () => openUrl(pr.url).catch(() => {}) })
-          items.push({ label: 'Checks y revisiones de la PR…', onClick: () => { selectRow(row); showPrDetails(wt, pr) } })
+          items.push({ label: taskT('viewPr'), onClick: () => openUrl(pr.url).catch(() => {}) })
+          items.push({ label: taskT('prChecks'), onClick: () => { selectRow(row); showPrDetails(wt, pr) } })
         }
         items.push(
           { label: `Resetear a origin/${baseBranch}…`, onClick: () => { selectRow(row); showResetView(wt) } },
-          { label: 'Historial de respaldos…', onClick: () => { selectRow(row); showBackupHistory(wt) } },
-          { label: 'Registro de operaciones…', onClick: () => { selectRow(row); showOperationHistory(wt) } },
+          { label: taskT('backups'), onClick: () => { selectRow(row); showBackupHistory(wt) } },
+          { label: taskT('operations'), onClick: () => { selectRow(row); showOperationHistory(wt) } },
           ...(backup?.available && backup.different ? [{ label: `Deshacer reescritura → ${backup.short ?? 'respaldo'}`, onClick: restoreBackup }] : []),
-          { label: 'Renombrar…', onClick: renameTask },
-          { label: 'Eliminar tarea', onClick: () => deleteWorktree(wt) },
+          { label: taskT('rename'), onClick: renameTask },
+          { label: taskT('deleteTask'), onClick: () => deleteWorktree(wt) },
         )
       }
       return items
     }
 
-    const menuBtn = iconBtn('more', 'Acciones', () => {
+    const menuBtn = iconBtn('more', taskT('actions'), () => {
       const r = menuBtn.getBoundingClientRect()
       showContextMenu(r.right - 4, r.bottom, menuItems())
     })
+    menuBtn.dataset.testid = 'tasks-actions'
     const actions = document.createElement('div')
     actions.className = 'tasks-actions'
     actions.appendChild(menuBtn)
@@ -742,8 +708,8 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   function buildCreateForm(): HTMLElement {
     const form = document.createElement('div')
     form.className = 'tasks-create'
-    const input = Object.assign(document.createElement('input'), { className: 'tasks-name-input', type: 'text', placeholder: 'Nueva tarea…' })
-    const btn = iconBtn('plus', 'Crear tarea', () => createTask(input.value.trim()))
+    const input = Object.assign(document.createElement('input'), { className: 'tasks-name-input', type: 'text', placeholder: taskT('newTask') })
+    const btn = iconBtn('plus', taskT('createTask'), () => createTask(input.value.trim()))
     input.addEventListener('keydown', e => { if (e.key === 'Enter') createTask(input.value.trim()) })
     form.append(input, btn)
     return form
@@ -753,15 +719,14 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   async function showChanges(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    showDetail(note('Cargando cambios…', 'db-detail-loading'))
+    showDetail(note(taskT('loadingChanges'), 'db-detail-loading'))
     try {
-      const [raw, statusRaw, rebaseRaw] = await Promise.all([
+      const [raw, statusRaw, rebaseStatus] = await Promise.all([
         invoke<string>('git_diff', { path: wt.path }),
         invoke<string>('git_status', { path: wt.path }).catch(() => ''),
-        invoke<string>('git_rebase_status', { path: wt.path }).catch(() => '{"active":false}'),
+        invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false })),
       ])
-      let rebaseActive = false
-      try { rebaseActive = (JSON.parse(rebaseRaw) as RebaseStatus).active } catch { /* optional status */ }
+      const rebaseActive = rebaseStatus.active
       showDetail(buildDiffView(raw, wt, { statusRaw, rebaseActive }))
       // Auto-refresh: re-fetch diff every 5 s and update if content changed
       let lastSnapshot = `${statusRaw}\0${raw}`
@@ -796,22 +761,23 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const msgInput = Object.assign(document.createElement('input'), {
       className: 'tasks-commit-msg',
       type: 'text',
-      placeholder: 'Mensaje de commit…',
+      placeholder: taskT('commitMessage'),
       value: opts.initMessage ?? '',
     })
+    msgInput.dataset.testid = 'tasks-commit-message'
 
     const amendToggle = Object.assign(document.createElement('button'), {
       className: 'tasks-amend-btn',
-      title: 'Amend: modifica el último commit',
+      title: taskT('amendHint'),
       textContent: 'Amend',
     })
     let doAmend = opts.initAmend ?? false
     amendToggle.classList.toggle('tasks-amend-btn--active', doAmend)
-    if (doAmend) msgInput.placeholder = 'Nuevo mensaje (vacío = mantener el actual)…'
+    if (doAmend) msgInput.placeholder = taskT('keepMessage')
     amendToggle.addEventListener('click', () => {
       doAmend = !doAmend
       amendToggle.classList.toggle('tasks-amend-btn--active', doAmend)
-      msgInput.placeholder = doAmend ? 'Nuevo mensaje (vacío = mantener el actual)…' : 'Mensaje de commit…'
+      msgInput.placeholder = doAmend ? taskT('keepMessage') : taskT('commitMessage')
       commitBtn.textContent = doAmend ? 'Amend commit' : 'Commit'
     })
 
@@ -819,10 +785,11 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       className: 'tasks-commit-btn',
       textContent: 'Commit',
     })
+    commitBtn.dataset.testid = 'tasks-commit'
     const fixupBtn = Object.assign(document.createElement('button'), {
       className: 'tasks-amend-btn',
-      title: 'Añadir los cambios a cualquier commit anterior',
-      textContent: 'Fixup en…',
+      title: taskT('addToPreviousHint'),
+      textContent: taskT('fixupInto'),
       disabled: !raw.trim(),
     })
     fixupBtn.addEventListener('click', () => {
@@ -849,7 +816,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       try {
         const selectedPatch = buildSelectedPatch(raw, checkedFiles, selectedHunks)
         await invoke('git_commit', { path: wt.path, message: msg, amend: doAmend || undefined, patch: selectedPatch || undefined })
-        recordOperation(wt, doAmend ? 'commit --amend' : 'commit', 'success', msg || 'mensaje conservado')
+        recordOperation(wt, doAmend ? 'commit --amend' : 'commit', 'success', msg || taskT('keptMessage'))
         const wasAmend = doAmend
         msgInput.value = ''
         doAmend = false
@@ -880,12 +847,12 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     commitBar.append(msgInput, amendToggle, fixupBtn, commitBtn)
 
     if (opts.rebaseActive) wrap.appendChild(note(
-      'Rebase pausado: puedes usar Amend para modificar el commit actual o crear commits parciales si lo estás dividiendo. Después vuelve a la tarea para continuar.',
+      taskT('pausedCommitHint'),
       'tasks-rebase-hint tasks-conflict-warning',
     ))
 
     if (!raw.trim()) {
-      wrap.append(commitBar, note('Sin cambios no confirmados.', 'db-detail-hint'))
+      wrap.append(commitBar, note(taskT('noChanges'), 'db-detail-hint'))
       return wrap
     }
 
@@ -893,104 +860,10 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
     for (const chunk of chunks) {
       const firstLine = chunk.split('\n')[0] ?? ''
-      const match = firstLine.match(/^diff --git a\/(.+) b\//)
-      const fileName = match?.[1] ?? firstLine
-
-      const lines = chunk.split('\n')
-      let additions = 0, deletions = 0
-      for (const line of lines) {
-        if (line.startsWith('+') && !line.startsWith('+++')) additions++
-        else if (line.startsWith('-') && !line.startsWith('---')) deletions++
-      }
-
-      const details = document.createElement('details')
-      details.className = 'tasks-diff-file'
-
-      const summary = document.createElement('summary')
-      summary.className = 'tasks-diff-summary'
-
-      // Checkbox for partial staging
-      const checkbox = document.createElement('input')
-      checkbox.type = 'checkbox'
-      checkbox.className = 'tasks-diff-check'
-      checkbox.title = 'Incluir en el próximo commit'
-      checkbox.addEventListener('change', () => {
-        if (checkbox.checked) {
-          checkedFiles.add(fileName)
-          selectedHunks.delete(fileName)
-          details.querySelectorAll<HTMLInputElement>('.tasks-hunk-check').forEach(input => { input.checked = true })
-        } else {
-          checkedFiles.delete(fileName)
-          details.querySelectorAll<HTMLInputElement>('.tasks-hunk-check').forEach(input => { input.checked = false })
-        }
-        checkbox.indeterminate = false
-      })
-      checkbox.addEventListener('click', e => e.stopPropagation())
-
-      const nameEl = Object.assign(document.createElement('span'), { className: 'tasks-diff-name', textContent: fileName })
-      const stateName = fileStates.get(fileName)
-      const stateEl = Object.assign(document.createElement('span'), {
-        className: `tasks-file-state${stateName === 'staged' ? ' tasks-file-state--staged' : stateName === 'untracked' ? ' tasks-file-state--untracked' : ''}`,
-        textContent: stateName ?? '',
-      })
-      const stats = document.createElement('span')
-      stats.className = 'tasks-diff-stats'
-      if (additions > 0) stats.innerHTML += `<span class="tasks-diff-add">+${additions}</span>`
-      if (deletions > 0) stats.innerHTML += `<span class="tasks-diff-del">-${deletions}</span>`
-      summary.append(checkbox, nameEl, stateEl, stats)
-
-      const body = document.createElement('div')
-      body.className = 'tasks-diff-body'
-      body.appendChild(note('Abre el archivo para cargar el diff.', 'db-detail-hint'))
-      let patchRendered = false
-      const renderFilePatch = (): void => {
-        if (patchRendered) return
-        patchRendered = true
-        body.replaceChildren()
-        const patchParts = parseFilePatch(chunk)
-        if (patchParts.hunks.length === 0) {
-          const pre = document.createElement('pre')
-          pre.className = 'tasks-diff-code'
-          pre.innerHTML = renderPatchHtml(chunk)
-          body.appendChild(pre)
-          return
-        }
-        const headerPre = document.createElement('pre')
-        headerPre.className = 'tasks-diff-code tasks-diff-code--header'
-        headerPre.innerHTML = renderPatchHtml(patchParts.header)
-        body.appendChild(headerPre)
-        patchParts.hunks.forEach((hunk, hunkIndex) => {
-          const hunkEl = document.createElement('section')
-          hunkEl.className = 'tasks-diff-hunk-block'
-          const selectLabel = document.createElement('label')
-          selectLabel.className = 'tasks-hunk-select'
-          const hunkCheck = Object.assign(document.createElement('input'), { type: 'checkbox', className: 'tasks-hunk-check' })
-          hunkCheck.checked = checkedFiles.has(fileName) || selectedHunks.get(fileName)?.has(hunkIndex) === true
-          const hunkTitle = hunk.split('\n')[0] ?? `Fragmento ${hunkIndex + 1}`
-          selectLabel.append(hunkCheck, document.createTextNode(` Incluir fragmento ${hunkIndex + 1} · ${hunkTitle}`))
-          hunkCheck.addEventListener('change', () => {
-            const set = selectedHunks.get(fileName) ?? (checkedFiles.has(fileName)
-              ? new Set(patchParts.hunks.map((_, index) => index))
-              : new Set<number>())
-            if (hunkCheck.checked) set.add(hunkIndex); else set.delete(hunkIndex)
-            if (set.size) selectedHunks.set(fileName, set); else selectedHunks.delete(fileName)
-            checkedFiles.delete(fileName)
-            const all = set.size === patchParts.hunks.length
-            checkbox.checked = all
-            checkbox.indeterminate = set.size > 0 && !all
-            if (all) { checkedFiles.add(fileName); selectedHunks.delete(fileName) }
-          })
-          const code = document.createElement('pre')
-          code.className = 'tasks-diff-code'
-          code.innerHTML = renderPatchHtml(hunk)
-          hunkEl.append(selectLabel, code)
-          body.appendChild(hunkEl)
-        })
-      }
-      details.addEventListener('toggle', () => { if (details.open) renderFilePatch() })
-
-      details.append(summary, body)
-      wrap.appendChild(details)
+      const fileName = firstLine.match(/^diff --git a\/(.+) b\//)?.[1] ?? firstLine
+      wrap.appendChild(buildChangesFileView({
+        chunk, state: fileStates.get(fileName), checkedFiles, selectedHunks, renderPatch: renderPatchHtml,
+      }))
     }
 
     wrap.appendChild(commitBar)
@@ -1009,7 +882,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     })
     section.appendChild(Object.assign(document.createElement('h3'), {
       className: 'tasks-fixup-incoming-title',
-      textContent: `Cambios que se añadirán · ${chunks.length} archivo(s)`,
+      textContent: taskT('incomingChanges', { count: chunks.length }),
     }))
 
     for (const chunk of chunks) {
@@ -1039,7 +912,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     }
 
     if (chunks.length === 0) {
-      section.appendChild(note('No hay un diff de texto visible para los archivos seleccionados.', 'db-detail-hint'))
+      section.appendChild(note(taskT('noSelectedTextDiff'), 'db-detail-hint'))
     }
     return section
   }
@@ -1048,12 +921,12 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   async function showFixupPicker(wt: Worktree, files: string[] | undefined, incomingDiff: string, selectedPatch?: string): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    showDetail(note('Cargando commits…', 'db-detail-loading'))
+    showDetail(note(taskT('loadingCommits'), 'db-detail-loading'))
     try {
       const raw = await invoke<string>('git_rebase_log', { path: wt.path, base: baseBranch })
       const entries = parseLogEntries(raw)
       if (entries.length === 0) {
-        showDetail(note(`No hay commits propios sobre origin/${baseBranch}.`, 'db-detail-hint'))
+        showDetail(note(taskT('noOwnCommits', { base: baseBranch }), 'db-detail-hint'))
         return
       }
 
@@ -1090,14 +963,14 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
       const wrap = document.createElement('div')
       wrap.className = 'tasks-fixup-wrap'
-      wrap.append(buildSubHead('Añadir cambios a un commit', () => showChanges(wt)))
+      wrap.append(buildSubHead(taskT('addChangesTitle'), () => showChanges(wt)))
       wrap.appendChild(Object.assign(document.createElement('p'), {
         className: 'tasks-rebase-hint',
         textContent: selectedPatch
-          ? `Se añadirán ${incomingFiles.size} archivo(s) o fragmento(s) seleccionado(s). Elige el commit destino.`
+          ? taskT('incomingSelection', { count: incomingFiles.size })
           : files?.length
-            ? `Se añadirán ${files.length} archivo(s) seleccionado(s). Elige el commit destino.`
-            : 'Se añadirán todos los cambios actuales. Elige el commit destino.',
+            ? taskT('incomingFiles', { count: files.length })
+            : taskT('incomingAll'),
       }))
       wrap.appendChild(buildIncomingChanges(incomingDiff, files))
 
@@ -1110,7 +983,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         header.className = 'tasks-fixup-header'
         const filesEl = document.createElement('div')
         filesEl.className = 'tasks-commit-files hidden'
-        const expandBtn = iconBtn('chevron-down', 'Ver archivos y código del commit', async () => {
+        const expandBtn = iconBtn('chevron-down', taskT('viewCommitCode'), async () => {
           const opening = filesEl.classList.contains('hidden')
           filesEl.classList.toggle('hidden', !opening)
           if (!opening || filesEl.childElementCount > 0) return
@@ -1123,34 +996,32 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         expandBtn.className = 'tasks-expand-btn'
         const chooseBtn = Object.assign(document.createElement('button'), {
           className: 'tasks-commit-btn',
-          textContent: 'Añadir aquí',
+          textContent: taskT('addHere'),
         })
         const statusEl = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
         chooseBtn.addEventListener('click', async () => {
-          const preflightRaw = await invoke<string>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => '')
-          const preflight = preflightRaw ? JSON.parse(preflightRaw) as RewritePreflight : null
+          const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => null)
           if (preflight?.operation) {
-            statusEl.textContent = `Ya hay una operación ${preflight.operation} en curso.`
+            statusEl.textContent = taskT('operationInProgress', { operation: preflight.operation })
             return
           }
           const publishedWarning = preflight?.publishedCommits
-            ? `\nPublicados: ${preflight.publishedCommits} commit(s); después será necesario push --force-with-lease.` : ''
+            ? taskT('publishedFixup', { count: preflight.publishedCommits }) : ''
           const ok = await askConfirm(
-            `VISTA PREVIA\n\nCambios entrantes: ${incomingFiles.size} archivo(s)\nCommit destino: ${entry.short} ${entry.subject}\nCoincidencias directas: ${overlap.length ? overlap.join(', ') : 'ninguna'}\nLíneas atribuidas por blame: ${blame.score || 'ninguna'}\nPresencia en historial: ${history.score ? history.files.join(', ') : 'ninguna'}\nResultado: los cambios quedarán dentro de ese commit mediante fixup + autosquash.${publishedWarning}\n\nEsto reescribe el historial de la rama y crea un respaldo. ¿Continuar?`,
-            { title: 'Aplicar fixup', kind: 'warning' },
+            taskT('fixupPreview', { count: incomingFiles.size, target: `${entry.short} ${entry.subject}`, matches: overlap.length ? overlap.join(', ') : taskT('none'), blame: blame.score || taskT('none'), history: history.score ? history.files.join(', ') : taskT('none'), published: publishedWarning }),
+            { title: taskT('applyFixup'), kind: 'warning' },
           )
           if (!ok) return
           list.querySelectorAll('button').forEach(button => { button.disabled = true })
-          statusEl.textContent = 'Creando fixup y reorganizando…'
+          statusEl.textContent = taskT('fixupRunning')
           try {
             const result = await invoke<string>('git_fixup', { path: wt.path, target: entry.hash, base: baseBranch, files, patch: selectedPatch })
             recordOperation(wt, 'fixup + autosquash', 'success', `${entry.short} ${entry.subject}`)
             if (result === 'paused') {
-              const stRaw = await invoke<string>('git_rebase_status', { path: wt.path })
-              showRebasePaused(wt, JSON.parse(stRaw) as RebaseStatus)
+              showRebasePaused(wt, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }))
               return
             }
-            statusEl.textContent = '✓ Cambios integrados'
+            statusEl.textContent = taskT('changesIntegrated')
             setTimeout(() => { showChanges(wt); load() }, 900)
           } catch (e) {
             recordOperation(wt, 'fixup + autosquash', 'error', String(e))
@@ -1164,18 +1035,18 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
           Object.assign(document.createElement('span'), { className: 'tasks-rebase-subject', textContent: entry.subject }),
           ...(overlap.length ? [Object.assign(document.createElement('span'), {
             className: 'tasks-fixup-match-badge',
-            textContent: `Recomendado · ${overlap.length} coincide${overlap.length > 1 ? 'n' : ''}`,
+            textContent: taskT('recommendedMatch', { count: overlap.length }),
             title: overlap.join('\n'),
           })] : []),
           ...(blame.score ? [Object.assign(document.createElement('span'), {
             className: 'tasks-fixup-blame-badge',
-            textContent: `Blame · ${blame.score} línea${blame.score > 1 ? 's' : ''}`,
-            title: `Líneas originales atribuidas a este commit en: ${blame.files.join(', ')}`,
+            textContent: taskT('blameLines', { count: blame.score }),
+            title: taskT('blameHint', { files: blame.files.join(', ') }),
           })] : []),
           ...(!overlap.length && !blame.score && history.score ? [Object.assign(document.createElement('span'), {
             className: 'tasks-fixup-history-badge',
-            textContent: `Historial · ${history.score}`,
-            title: `Este commit aparece en el historial de: ${history.files.join(', ')}`,
+            textContent: taskT('historyScore', { count: history.score }),
+            title: taskT('historyHint', { files: history.files.join(', ') }),
           })] : []),
           statusEl,
           chooseBtn,
@@ -1194,75 +1065,14 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   async function showBackupHistory(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    showDetail(note('Cargando respaldos…', 'db-detail-loading'))
+    showDetail(note(taskT('loadingBackups'), 'db-detail-loading'))
     try {
-      const raw = await invoke<string>('git_backup_list', { path: wt.path })
-      const backups = raw.trim().split('\n').filter(Boolean).map(line => {
-        const [ref = '', hash = '', short = '', subject = ''] = line.split('\x1f')
-        const createdAt = Number(ref.split('/').at(-1) ?? '0')
-        return { ref, hash, short, subject, createdAt }
-      })
-      const wrap = document.createElement('div')
-      wrap.className = 'tasks-log-wrap'
-      wrap.append(buildSubHead(`Respaldos · ${wt.branch ?? ''}`, () => showChanges(wt)))
-      const hint = Object.assign(document.createElement('p'), {
-        className: 'tasks-rebase-hint',
-        textContent: 'Se conservan los últimos 20 puntos anteriores a rebase, fixup y reset. Restaurar exige un worktree limpio y también guarda el estado actual.',
-      })
-      wrap.appendChild(hint)
-      const list = document.createElement('div')
-      list.className = 'tasks-backup-list'
-      if (!backups.length) list.appendChild(note('Todavía no hay respaldos automáticos.', 'db-detail-hint'))
-      for (const backup of backups) {
-        const item = document.createElement('div')
-        item.className = 'tasks-backup-item'
-        const head = document.createElement('div')
-        head.className = 'tasks-fixup-header'
-        const diffEl = document.createElement('pre')
-        diffEl.className = 'tasks-commit-file-diff hidden'
-        let loaded = false
-        const inspectBtn = iconBtn('chevron-down', 'Comparar respaldo con HEAD', async () => {
-          const opening = diffEl.classList.contains('hidden')
-          diffEl.classList.toggle('hidden', !opening)
-          if (!opening || loaded) return
-          diffEl.textContent = 'Cargando comparación…'
-          try {
-            const diff = await invoke<string>('git_backup_diff', { path: wt.path, target: backup.ref })
-            diffEl.innerHTML = diff.trim() ? renderPatchHtml(diff) : '<span>Sin diferencias con el estado actual.</span>'
-            loaded = true
-          } catch (e) { diffEl.textContent = String(e) }
-        })
-        const restoreBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: 'Restaurar' })
-        restoreBtn.addEventListener('click', async () => {
-          const ok = await askConfirm(
-            `¿Restaurar ${backup.short} “${backup.subject}”? El estado actual se guardará como otro respaldo.`,
-            { title: 'Restaurar respaldo', kind: 'warning' },
-          )
-          if (!ok) return
-          restoreBtn.disabled = true
-          try {
-            await invoke('git_restore_backup', { path: wt.path, target: backup.ref })
-            recordOperation(wt, 'restaurar respaldo', 'success', `${backup.short} ${backup.subject}`)
-            await load(); showChanges(wt)
-          } catch (e) {
-            recordOperation(wt, 'restaurar respaldo', 'error', String(e))
-            restoreBtn.disabled = false
-            await askConfirm(String(e), { title: 'No se pudo restaurar', kind: 'error' })
-          }
-        })
-        const date = backup.createdAt ? new Date(backup.createdAt).toLocaleString() : ''
-        head.append(
-          inspectBtn,
-          Object.assign(document.createElement('span'), { className: 'tasks-log-short', textContent: backup.short }),
-          Object.assign(document.createElement('span'), { className: 'tasks-rebase-subject', textContent: backup.subject }),
-          Object.assign(document.createElement('span'), { className: 'tasks-log-meta-inline', textContent: date }),
-          restoreBtn,
-        )
-        item.append(head, diffEl)
-        list.appendChild(item)
-      }
-      wrap.appendChild(list)
-      showDetail(wrap)
+      showDetail(await buildBackupHistoryView({
+        path: wt.path, branch: wt.branch ?? '', renderPatch: renderPatchHtml,
+        onBack: () => showChanges(wt),
+        onRestored: async () => { await load(); showChanges(wt) },
+        onOperation: (status, detail) => recordOperation(wt, 'restaurar respaldo', status, detail),
+      }))
     } catch (e) { showDetail(note(String(e), 'db-detail-error')) }
   }
 
@@ -1289,18 +1099,18 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
     const wrap = document.createElement('div')
     wrap.className = 'tasks-reset-wrap'
-    wrap.append(buildSubHead(`Resetear commits · ${wt.branch ?? ''}`, () => showChanges(wt)))
+    wrap.append(buildSubHead(taskT('resetTitle', { branch: wt.branch ?? '' }), () => showChanges(wt)))
 
     const descEl = Object.assign(document.createElement('p'), {
       className: 'tasks-rebase-hint',
-      textContent: 'Descarta los commits a partir del punto de origen y devuelve los cambios al worktree (o al índice si eliges Soft). Los cambios en los archivos no se pierden — solo desaparecen los commits.',
+      textContent: taskT('resetHint'),
     })
     wrap.appendChild(descEl)
 
     const form = document.createElement('div')
     form.className = 'tasks-reset-form'
 
-    const targetLabel = Object.assign(document.createElement('label'), { className: 'tasks-reset-label', textContent: 'Resetear hasta:' })
+    const targetLabel = Object.assign(document.createElement('label'), { className: 'tasks-reset-label', textContent: taskT('resetTo') })
     const targetInput = Object.assign(document.createElement('input'), {
       className: 'tasks-name-input',
       type: 'text',
@@ -1308,14 +1118,14 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     })
     form.append(targetLabel, targetInput)
 
-    const modeLabel = Object.assign(document.createElement('label'), { className: 'tasks-reset-label', textContent: 'Modo:' })
+    const modeLabel = Object.assign(document.createElement('label'), { className: 'tasks-reset-label', textContent: taskT('mode') })
     const modeGroup = document.createElement('div')
     modeGroup.className = 'tasks-reset-modes'
 
     const modes: { value: string; label: string; desc: string }[] = [
-      { value: 'mixed', label: 'Mixed (por defecto)', desc: 'Los cambios vuelven al worktree sin commitear ni stagear.' },
-      { value: 'soft',  label: 'Soft',                desc: 'Los cambios vuelven al índice (staged), listos para un nuevo commit.' },
-      { value: 'hard',  label: 'Hard ⚠',              desc: 'Descarta todos los cambios permanentemente. No hay vuelta atrás.' },
+      { value: 'mixed', label: taskT('mixedLabel'), desc: taskT('mixedDesc') },
+      { value: 'soft',  label: 'Soft', desc: taskT('softDesc') },
+      { value: 'hard',  label: 'Hard ⚠', desc: taskT('hardDesc') },
     ]
     let selectedMode = 'mixed'
     modes.forEach(m => {
@@ -1335,24 +1145,24 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const footer = document.createElement('div')
     footer.className = 'tasks-rebase-paused-actions'
     const statusEl = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
-    const resetBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: 'Resetear' })
+    const resetBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: taskT('reset') })
 
     resetBtn.addEventListener('click', async () => {
       const target = targetInput.value.trim()
       if (!target) return
       if (selectedMode === 'hard') {
         const ok = await askConfirm(
-          `⚠ git reset --hard ${target}\n\nTodos los cambios no commiteados se perderán para siempre. ¿Continuar?`,
-          { title: 'Reset hard — acción destructiva', kind: 'warning' }
+          taskT('hardResetQuestion', { target }),
+          { title: taskT('hardResetTitle'), kind: 'warning' }
         )
         if (!ok) return
       }
       resetBtn.disabled = true
-      statusEl.textContent = 'Ejecutando…'
+      statusEl.textContent = taskT('running')
       try {
         await invoke('git_reset', { path: wt.path, target, mode: selectedMode })
         recordOperation(wt, `reset --${selectedMode}`, 'success', target)
-        statusEl.textContent = `✓ Reset a ${target}`
+        statusEl.textContent = taskT('resetDone', { target })
         setTimeout(() => { showChanges(wt); load() }, 900)
       } catch (e) {
         recordOperation(wt, `reset --${selectedMode}`, 'error', String(e))
@@ -1370,15 +1180,15 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   async function showCommitGraph(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    showDetail(note('Cargando gráfico…', 'db-detail-loading'))
+    showDetail(note(taskT('loadingGraph'), 'db-detail-loading'))
     try {
       const raw = await invoke<string>('git_graph', { path: wt.path, base: baseBranch })
       const wrap = document.createElement('div')
       wrap.className = 'tasks-graph-wrap'
-      wrap.append(buildSubHead(`Gráfico · ${wt.branch ?? ''} vs origin/${baseBranch}`, () => showChanges(wt)))
+      wrap.append(buildSubHead(taskT('graphTitle', { branch: wt.branch ?? '', base: baseBranch }), () => showChanges(wt)))
       const legend = Object.assign(document.createElement('p'), {
         className: 'tasks-rebase-hint',
-        textContent: 'HEAD muestra tu tarea; origin indica el estado remoto y las bifurcaciones muestran merges o historiales divergentes.',
+        textContent: taskT('graphHint'),
       })
       const graph = document.createElement('pre')
       graph.className = 'tasks-git-graph'
@@ -1393,55 +1203,27 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   function showPrDetails(wt: Worktree, pr: PrStatus): void {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-log-wrap'
-    wrap.append(buildSubHead(`PR #${pr.number} · ${pr.title}`, () => showChanges(wt)))
-    const summary = document.createElement('div')
-    summary.className = 'tasks-pr-summary'
-    const review = pr.reviewDecision === 'APPROVED' ? 'Aprobada' : pr.reviewDecision === 'CHANGES_REQUESTED'
-      ? 'Cambios solicitados' : pr.reviewDecision === 'REVIEW_REQUIRED' ? 'Revisión pendiente' : 'Sin decisión de revisión'
-    summary.append(
-      Object.assign(document.createElement('span'), { textContent: `Estado: ${pr.isDraft ? 'borrador' : pr.state.toLowerCase()}` }),
-      Object.assign(document.createElement('span'), { textContent: `Merge: ${pr.mergeable === 'CONFLICTING' ? 'con conflictos' : pr.mergeable === 'MERGEABLE' ? 'permitido' : 'por calcular'}` }),
-      Object.assign(document.createElement('span'), { textContent: `Revisión: ${review}` }),
-      Object.assign(document.createElement('span'), { textContent: `Base: ${pr.baseRefName ?? baseBranch}` }),
-    )
-    const checks = document.createElement('div')
-    checks.className = 'tasks-backup-list'
-    for (const check of pr.statusCheckRollup ?? []) {
-      const state = check.conclusion ?? check.state ?? check.status ?? 'UNKNOWN'
-      const failed = /FAIL|ERROR|CANCEL|TIMED_OUT/i.test(state)
-      const pending = /PENDING|QUEUED|IN_PROGRESS|EXPECTED/i.test(state)
-      const row = document.createElement('div')
-      row.className = `tasks-operation-item tasks-operation-item--${failed ? 'error' : pending ? 'pending' : 'success'}`
-      row.append(
-        Object.assign(document.createElement('span'), { className: 'tasks-operation-status', textContent: failed ? '!' : pending ? '…' : '✓' }),
-        Object.assign(document.createElement('strong'), { textContent: check.name ?? check.context ?? 'Check' }),
-        Object.assign(document.createElement('span'), { className: 'tasks-log-meta-inline', textContent: state.toLowerCase() }),
-      )
-      checks.appendChild(row)
-    }
-    if (!checks.childElementCount) checks.appendChild(note('La PR no ha devuelto checks de CI.', 'db-detail-hint'))
-    const openBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: 'Abrir PR' })
-    openBtn.addEventListener('click', () => openUrl(pr.url).catch(() => {}))
-    wrap.append(summary, checks, openBtn)
-    showDetail(wrap)
+    showDetail(buildPrStatusView({
+      pr, baseBranch,
+      onBack: () => showChanges(wt),
+      onOpen: () => openUrl(pr.url).catch(() => {}),
+    }))
   }
 
   async function showCommitLog(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    showDetail(note('Cargando historial…', 'db-detail-loading'))
+    showDetail(note(taskT('loadingHistory'), 'db-detail-loading'))
     try {
       const raw = await invoke<string>('git_log', { path: wt.path, limit: 50, noMerges: false })
       const entries = parseLogEntries(raw)
       const wrap = document.createElement('div')
       wrap.className = 'tasks-log-wrap'
-      wrap.append(buildSubHead(`Historial · ${wt.branch ?? ''}`, () => showChanges(wt)))
+      wrap.append(buildSubHead(taskT('historyTitle', { branch: wt.branch ?? '' }), () => showChanges(wt)))
       const list = document.createElement('div')
       list.className = 'tasks-log-list'
       if (entries.length === 0) {
-        list.appendChild(note('Sin commits en esta rama.', 'db-detail-hint'))
+        list.appendChild(note(taskT('noBranchCommits'), 'db-detail-hint'))
       }
       for (const e of entries) {
         const item = document.createElement('div')
@@ -1455,13 +1237,13 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         let filesLoaded = false
         const filesEl = document.createElement('div')
         filesEl.className = 'tasks-commit-files hidden'
-        const expandBtn = iconBtn('chevron-down', 'Ver archivos del commit', async () => {
+        const expandBtn = iconBtn('chevron-down', taskT('viewCommitFiles'), async () => {
           const isOpen = !filesEl.classList.contains('hidden')
-          if (isOpen) { filesEl.classList.add('hidden'); expandBtn.title = 'Ver archivos del commit'; return }
-          filesEl.classList.remove('hidden'); expandBtn.title = 'Ocultar archivos'
+          if (isOpen) { filesEl.classList.add('hidden'); expandBtn.title = taskT('viewCommitFiles'); return }
+          filesEl.classList.remove('hidden'); expandBtn.title = taskT('hideFiles')
           if (filesLoaded) return
           filesLoaded = true
-          filesEl.textContent = 'Cargando…'
+          filesEl.textContent = taskT('loading')
           const raw = await invoke<string>('git_show_files', { path: wt.path, hash: e.hash }).catch(() => '')
           filesEl.replaceChildren(...buildFileList(
             raw,
@@ -1485,10 +1267,9 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   async function showInteractiveRebase(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    showDetail(note('Cargando…', 'db-detail-loading'))
+    showDetail(note(taskT('loading'), 'db-detail-loading'))
     try {
-      const stRaw = await invoke<string>('git_rebase_status', { path: wt.path })
-      const st = JSON.parse(stRaw) as RebaseStatus
+      const st = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path })
       if (st.active) { showRebasePaused(wt, st); return }
 
       const [raw, mergeRaw] = await Promise.all([
@@ -1497,7 +1278,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       ])
       const entries = parseLogEntries(raw)
       if (entries.length === 0) {
-        showDetail(note(`Sin commits propios sobre origin/${baseBranch}.`, 'db-detail-hint'))
+        showDetail(note(taskT('noOwnCommits', { base: baseBranch }), 'db-detail-hint'))
         return
       }
       const merges = parseLogEntries(mergeRaw)
@@ -1509,10 +1290,10 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   function showMergeRebaseWarning(wt: Worktree, entries: CommitEntry[], merges: CommitEntry[]): void {
     const wrap = document.createElement('div')
     wrap.className = 'tasks-rebase-wrap'
-    wrap.append(buildSubHead('Esta rama contiene merges', () => showChanges(wt)))
+    wrap.append(buildSubHead(taskT('branchHasMerges'), () => showChanges(wt)))
     wrap.appendChild(Object.assign(document.createElement('p'), {
       className: 'tasks-rebase-hint tasks-conflict-warning',
-      textContent: `Se detectaron ${merges.length} merge commit(s). Un rebase interactivo plano eliminaría su estructura.`,
+      textContent: taskT('mergesWarning', { count: merges.length }),
     }))
     const list = document.createElement('div')
     list.className = 'tasks-log-list'
@@ -1529,30 +1310,28 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const footer = document.createElement('div')
     footer.className = 'tasks-rebase-footer'
     const status = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
-    const flattenBtn = Object.assign(document.createElement('button'), { className: 'tasks-amend-btn', textContent: 'Continuar aplanando' })
-    const preserveBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: 'Conservar merges' })
+    const flattenBtn = Object.assign(document.createElement('button'), { className: 'tasks-amend-btn', textContent: taskT('flatten') })
+    const preserveBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: taskT('preserveMerges') })
     flattenBtn.addEventListener('click', async () => {
-      const ok = await askConfirm('Los merge commits desaparecerán y sus cambios se reproducirán como commits lineales. ¿Continuar?', { title: 'Aplanar historial', kind: 'warning' })
+      const ok = await askConfirm(taskT('flattenQuestion'), { title: taskT('flattenTitle'), kind: 'warning' })
       if (ok) showRebaseEditor(wt, entries)
     })
     preserveBtn.addEventListener('click', async () => {
-      const preflightRaw = await invoke<string>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => '')
-      const preflight = preflightRaw ? JSON.parse(preflightRaw) as RewritePreflight : null
-      if (preflight?.operation) { status.textContent = `Ya hay una operación ${preflight.operation} en curso.`; return }
+      const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => null)
+      if (preflight?.operation) { status.textContent = taskT('operationInProgress', { operation: preflight.operation }); return }
       const ok = await askConfirm(
-        `Se conservará la topología de ${merges.length} merge commit(s) y se creará un respaldo.${preflight?.publishedCommits ? ` Hay ${preflight.publishedCommits} commit(s) publicados.` : ''} ¿Continuar?`,
-        { title: 'Rebase conservando merges', kind: 'warning' },
+        taskT('preserveQuestion', { count: merges.length, published: preflight?.publishedCommits ? ` ${preflight.publishedCommits} commit(s).` : '' }),
+        { title: taskT('preserveTitle'), kind: 'warning' },
       )
       if (!ok) return
       preserveBtn.disabled = true; flattenBtn.disabled = true
-      status.textContent = 'Reorganizando con --rebase-merges…'
+      status.textContent = taskT('reorganizingMerges')
       try {
         const result = await invoke<string>('git_rebase_preserve_merges', { path: wt.path, base: baseBranch })
         recordOperation(wt, 'rebase --rebase-merges', 'success', `origin/${baseBranch}`)
         if (result === 'paused') {
-          const stRaw = await invoke<string>('git_rebase_status', { path: wt.path })
-          showRebasePaused(wt, JSON.parse(stRaw) as RebaseStatus)
-        } else { status.textContent = '✓ Rebase completado'; setTimeout(() => { showChanges(wt); load() }, 900) }
+          showRebasePaused(wt, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }))
+        } else { status.textContent = taskT('rebaseDone'); setTimeout(() => { showChanges(wt); load() }, 900) }
       } catch (e) {
         recordOperation(wt, 'rebase --rebase-merges', 'error', String(e))
         status.textContent = String(e).slice(0, 150); preserveBtn.disabled = false; flattenBtn.disabled = false
@@ -1564,7 +1343,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   }
 
   function showRebaseEditor(wt: Worktree, entries: CommitEntry[]): void {
-    type RebaseItem = { action: RebaseAction; hash: string; short: string; subject: string; newMessage: string }
+    type RebaseItem = RebasePlanItem & { action: RebaseAction; newMessage: string }
     const items: RebaseItem[] = entries.map(e => ({ action: 'pick', hash: e.hash, short: e.short, subject: e.subject, newMessage: '' }))
     const ACTIONS: RebaseAction[] = ['pick', 'reword', 'edit', 'squash', 'fixup', 'drop']
     let draggedIndex: number | null = null
@@ -1572,28 +1351,19 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
     const wrap = document.createElement('div')
     wrap.className = 'tasks-rebase-wrap'
-    wrap.append(buildSubHead(`Rebase interactivo · ${wt.branch ?? ''} sobre origin/${baseBranch}`, () => showChanges(wt)))
+    wrap.append(buildSubHead(taskT('interactiveTitle', { branch: wt.branch ?? '', base: baseBranch }), () => showChanges(wt)))
 
     const hint = Object.assign(document.createElement('p'), {
       className: 'tasks-rebase-hint',
-      textContent: 'Los commits están en orden de ejecución (más antiguo arriba). Para integrar un cambio, colócalo debajo del commit destino y elige fixup o squash.',
+      textContent: taskT('rebaseOrderHint'),
     })
     wrap.appendChild(hint)
 
     const previewEl = document.createElement('div')
     previewEl.className = 'tasks-rebase-preview hidden'
     const renderPreview = (): void => {
-      const preview = previewRebase(items)
-      previewEl.replaceChildren(
-        Object.assign(document.createElement('strong'), { textContent: `Resultado previsto: ${preview.resultingCommits} commits` }),
-        Object.assign(document.createElement('span'), { textContent: `${preview.combinedCommits} integrados · ${preview.droppedCommits} eliminados · ${preview.editedCommits} pausas/renombres` }),
-      )
-      if (preview.warnings.length) previewEl.appendChild(Object.assign(document.createElement('p'), {
-        className: 'tasks-conflict-warning', textContent: preview.warnings.join(' '),
-      }))
-      const ordered = document.createElement('ol')
-      preview.lines.forEach(line => ordered.appendChild(Object.assign(document.createElement('li'), { textContent: line })))
-      previewEl.appendChild(ordered)
+      const content = buildRebasePlanPreview(items)
+      previewEl.replaceChildren(...content.childNodes)
     }
     wrap.appendChild(previewEl)
 
@@ -1605,6 +1375,8 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       items.forEach((item, idx) => {
         const row = document.createElement('div')
         row.className = `tasks-rebase-item${item.action === 'drop' ? ' tasks-rebase-drop' : ''}`
+        row.dataset.testid = 'tasks-rebase-item'
+        row.dataset.hash = item.hash
         row.tabIndex = 0
         row.setAttribute('role', 'listitem')
         row.setAttribute('aria-label', `${item.action} ${item.short} ${item.subject}. Alt flecha arriba o abajo para mover.`)
@@ -1612,9 +1384,9 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         const dragHandle = Object.assign(document.createElement('button'), {
           className: 'tasks-rebase-drag',
           textContent: '⠿',
-          title: 'Arrastrar para mover el commit',
+          title: taskT('dragCommit'),
         })
-        dragHandle.setAttribute('aria-label', `Mover commit ${item.short}`)
+        dragHandle.setAttribute('aria-label', taskT('moveCommit', { commit: item.short }))
 
         const clearDragStyles = (): void => {
           list.querySelectorAll('.tasks-rebase-item').forEach(el => {
@@ -1689,7 +1461,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
             className: 'tasks-rebase-reword-input',
             type: 'text',
             value: item.newMessage || item.subject,
-            placeholder: 'Nuevo título del commit…',
+            placeholder: taskT('newCommitTitle'),
           })
           msgIn.addEventListener('input', () => { item.newMessage = msgIn.value })
           msgIn.addEventListener('click', e => e.stopPropagation())
@@ -1732,13 +1504,13 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         let filesLoaded = false
         const filesEl = document.createElement('div')
         filesEl.className = 'tasks-commit-files hidden'
-        const expandBtn = iconBtn('chevron-down', 'Ver archivos del commit', async () => {
+        const expandBtn = iconBtn('chevron-down', taskT('viewCommitFiles'), async () => {
           const isOpen = !filesEl.classList.contains('hidden')
-          if (isOpen) { filesEl.classList.add('hidden'); expandBtn.title = 'Ver archivos del commit'; return }
-          filesEl.classList.remove('hidden'); expandBtn.title = 'Ocultar archivos'
+          if (isOpen) { filesEl.classList.add('hidden'); expandBtn.title = taskT('viewCommitFiles'); return }
+          filesEl.classList.remove('hidden'); expandBtn.title = taskT('hideFiles')
           if (filesLoaded) return
           filesLoaded = true
-          filesEl.textContent = 'Cargando…'
+          filesEl.textContent = taskT('loading')
           const raw = await invoke<string>('git_show_files', { path: wt.path, hash: item.hash }).catch(() => '')
           filesEl.replaceChildren(...buildFileList(
             raw,
@@ -1759,16 +1531,18 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const footer = document.createElement('div')
     footer.className = 'tasks-rebase-footer'
     const statusEl = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
-    const previewBtn = Object.assign(document.createElement('button'), { className: 'tasks-amend-btn', textContent: 'Simular resultado' })
+    const previewBtn = Object.assign(document.createElement('button'), { className: 'tasks-amend-btn', textContent: taskT('simulate') })
+    previewBtn.dataset.testid = 'tasks-rebase-preview'
     previewBtn.addEventListener('click', () => {
       renderPreview()
       previewEl.classList.toggle('hidden')
-      previewBtn.textContent = previewEl.classList.contains('hidden') ? 'Simular resultado' : 'Ocultar simulación'
+      previewBtn.textContent = previewEl.classList.contains('hidden') ? taskT('simulate') : taskT('hideSimulation')
     })
     const startBtn = Object.assign(document.createElement('button'), {
       className: 'tasks-commit-btn',
-      textContent: 'Iniciar rebase',
+      textContent: taskT('startRebase'),
     })
+    startBtn.dataset.testid = 'tasks-rebase-start'
     startBtn.addEventListener('click', async () => {
       const preview = previewRebase(items)
       if (preview.warnings.length) {
@@ -1778,44 +1552,43 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       }
       let preflight: RewritePreflight
       try {
-        preflight = JSON.parse(await invoke<string>('git_rewrite_preflight', { path: wt.path, base: baseBranch })) as RewritePreflight
+        preflight = await invoke<RewritePreflight>('git_rewrite_preflight', { path: wt.path, base: baseBranch })
       } catch (e) {
-        statusEl.textContent = `No se pudo validar el rebase: ${String(e).slice(0, 100)}`
+        statusEl.textContent = taskT('validationError', { error: String(e).slice(0, 100) })
         return
       }
       if (preflight.operation) {
-        statusEl.textContent = `Ya hay una operación ${preflight.operation} en curso.`
+        statusEl.textContent = taskT('operationInProgress', { operation: preflight.operation })
         return
       }
       const risks = [
-        preflight.dirty ? 'Hay cambios sin commit; Git usará autostash.' : '',
-        preflight.publishedCommits ? `${preflight.publishedCommits} commit(s) ya están publicados y requerirán push --force-with-lease.` : '',
-        preflight.protectedBase ? `Estás intentando reescribir la rama base ${preflight.branch}.` : '',
-        preflight.hooks.length ? `Se ejecutarán/pueden intervenir hooks: ${preflight.hooks.join(', ')}.` : '',
-        preflight.signing ? 'El repositorio exige commits firmados.' : '',
+        preflight.dirty ? taskT('dirtyRisk') : '',
+        preflight.publishedCommits ? taskT('publishedRisk', { count: preflight.publishedCommits }) : '',
+        preflight.protectedBase ? taskT('protectedRisk', { branch: preflight.branch }) : '',
+        preflight.hooks.length ? taskT('hooksRisk', { hooks: preflight.hooks.join(', ') }) : '',
+        preflight.signing ? taskT('signingRisk') : '',
       ].filter(Boolean)
       const confirmed = await askConfirm(
-        `El plan dejará ${preview.resultingCommits} commit(s), combinará ${preview.combinedCommits} y eliminará ${preview.droppedCommits}.${risks.length ? `\n\n${risks.join('\n')}` : ''}\n\nSe creará un respaldo automático. ¿Iniciar?`,
-        { title: 'Confirmar rebase', kind: risks.length ? 'warning' : 'info' },
+        taskT('rebaseQuestion', { result: preview.resultingCommits, combined: preview.combinedCommits, dropped: preview.droppedCommits, risks: risks.length ? `\n\n${risks.join('\n')}` : '' }),
+        { title: taskT('confirmRebase'), kind: risks.length ? 'warning' : 'info' },
       )
       if (!confirmed) return
       startBtn.disabled = true
-      statusEl.textContent = 'Ejecutando…'
+      statusEl.textContent = taskT('running')
       // reword → convert to edit in the git todo; the new message is applied in the paused UI
       const rewordMessages = new Map(items.filter(i => i.action === 'reword').map(i => [i.hash, i.newMessage || i.subject]))
       const todoLines = items.map(i => `${i.action === 'reword' ? 'edit' : i.action} ${i.hash} ${i.subject}`)
       try {
         await invoke('git_rebase_start', { path: wt.path, base: baseBranch, todoLines })
         recordOperation(wt, 'rebase interactivo', 'success', `${items.length} instrucciones sobre origin/${baseBranch}`)
-        const stRaw = await invoke<string>('git_rebase_status', { path: wt.path })
-        const st = JSON.parse(stRaw) as RebaseStatus
+        const st = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path })
         if (st.active) {
           // If this commit was a reword, pre-fill the message with the new title
           const preMsg = rewordMessages.get(st.sha ?? '') ?? st.subject ?? ''
           showRebasePaused(wt, { ...st, subject: preMsg })
           return
         }
-        statusEl.textContent = '¡Rebase completado!'
+        statusEl.textContent = taskT('rebaseComplete')
         setTimeout(() => { showChanges(wt); load() }, 1200)
       } catch (e) {
         recordOperation(wt, 'rebase interactivo', 'error', String(e))
@@ -1831,119 +1604,21 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   // ---- Inline conflict resolver ----
   function showConflictResolver(wt: Worktree, file: string, onBack: () => void): void {
     stopDiffRefresh()
-    clearInterval(0) // no interval needed here
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-conflict-resolver'
-    wrap.append(buildSubHead(`Conflicto: ${file.split('/').pop()}`, onBack))
-
-    const body = document.createElement('div')
-    body.className = 'tasks-conflict-resolver-body'
-    wrap.appendChild(body)
-
-    const footer = document.createElement('div')
-    footer.className = 'tasks-rebase-paused-actions'
-    const progressEl = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
-    const saveBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: 'Guardar y marcar resuelto', disabled: true })
-    footer.append(progressEl, saveBtn)
-    wrap.appendChild(footer)
-
-    let segments: ConflictSegment[] = []
-
-    const refresh = (): void => {
-      const hunks = segments.filter(s => s.type === 'hunk') as Extract<ConflictSegment, { type: 'hunk' }>[]
-      const resolved = hunks.filter(h => h.choice !== null).length
-      const total = hunks.length
-      progressEl.textContent = total === 0 ? 'Sin conflictos detectados' : `${resolved} / ${total} resueltos`
-      saveBtn.disabled = resolved < total
-    }
-
-    const renderSegments = (): void => {
-      body.replaceChildren()
-      segments.forEach((seg, si) => {
-        if (seg.type === 'context') {
-          const ctx = document.createElement('pre')
-          ctx.className = 'tasks-conflict-ctx'
-          ctx.textContent = seg.lines.join('\n')
-          body.appendChild(ctx)
-          return
-        }
-        const hunk = seg
-        const hunkEl = document.createElement('div')
-        hunkEl.className = `tasks-conflict-hunk${hunk.choice ? ' tasks-conflict-hunk-done' : ''}`
-
-        const makeBlock = (label: string, lines: string[], side: 'ours' | 'theirs'): HTMLElement => {
-          const block = document.createElement('div')
-          block.className = `tasks-conflict-block tasks-conflict-${side}${hunk.choice === side ? ' tasks-conflict-chosen' : ''}`
-          const head = document.createElement('div')
-          head.className = 'tasks-conflict-block-head'
-          const labelEl = Object.assign(document.createElement('span'), { className: 'tasks-conflict-block-label', textContent: label })
-          const pickBtn = Object.assign(document.createElement('button'), {
-            className: 'tasks-conflict-pick-btn',
-            textContent: hunk.choice === side ? '✓ Elegido' : 'Elegir',
-          })
-          pickBtn.addEventListener('click', () => {
-            segments[si] = { ...hunk, choice: hunk.choice === side ? null : side }
-            renderSegments(); refresh()
-          })
-          head.append(labelEl, pickBtn)
-          const pre = document.createElement('pre')
-          pre.className = 'tasks-conflict-code'
-          pre.textContent = lines.join('\n')
-          block.append(head, pre)
-          return block
-        }
-
-        const oursBlock = makeBlock('Resultado actual sobre la rama base', hunk.ours, 'ours')
-        const theirsBlock = makeBlock(`Cambio del commit que se está aplicando (${hunk.label})`, hunk.theirs, 'theirs')
-
-        const bothBtn = Object.assign(document.createElement('button'), {
-          className: 'tasks-conflict-btn tasks-conflict-both-btn',
-          textContent: hunk.choice === 'both' ? '✓ Ambos elegidos' : 'Mantener ambos',
-        })
-        bothBtn.addEventListener('click', () => {
-          segments[si] = { ...hunk, choice: hunk.choice === 'both' ? null : 'both' }
-          renderSegments(); refresh()
-        })
-
-        hunkEl.append(oursBlock, theirsBlock, bothBtn)
-        body.appendChild(hunkEl)
-      })
-    }
-
-    saveBtn.addEventListener('click', async () => {
-      saveBtn.disabled = true
-      const content = reconstructFromHunks(segments)
-      try {
-        await invoke('git_write_file', { path: wt.path, file, content })
-        await invoke('git_add_files', { path: wt.path, files: [file] })
-        onBack()
-      } catch (e) {
-        progressEl.textContent = String(e).slice(0, 100)
-        saveBtn.disabled = false
-      }
-    })
-
-    body.textContent = 'Cargando…'
-    invoke<string>('git_read_file', { path: wt.path, file }).then(content => {
-      segments = parseConflictHunks(content)
-      renderSegments(); refresh()
-    }).catch(e => { body.textContent = String(e) })
-
-    showDetail(wrap)
+    showDetail(buildConflictResolverView({ path: wt.path, file, onBack }))
   }
 
   function showRebasePaused(wt: Worktree, st: RebaseStatus): void {
     const wrap = document.createElement('div')
     wrap.className = 'tasks-rebase-paused'
 
-    wrap.append(buildSubHead(`Rebase pausado · ${wt.branch ?? ''}`, () => showChanges(wt)))
+    wrap.append(buildSubHead(taskT('pausedTitle', { branch: wt.branch ?? '' }), () => showChanges(wt)))
 
     const infoEl = document.createElement('div')
     infoEl.className = 'tasks-rebase-paused-info'
     infoEl.append(
       Object.assign(document.createElement('span'), {
         className: 'tasks-rebase-paused-label',
-        textContent: st.total ? `Rebase ${st.current ?? 0}/${st.total}:` : 'Editando:',
+        textContent: st.total ? `Rebase ${st.current ?? 0}/${st.total}:` : taskT('editing'),
       }),
       Object.assign(document.createElement('span'), { className: 'tasks-log-short', textContent: st.short ?? '' }),
       Object.assign(document.createElement('span'), { className: 'tasks-rebase-subject', textContent: st.subject ?? '' }),
@@ -1954,26 +1629,26 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     actionsEl.className = 'tasks-rebase-paused-actions'
     const statusEl = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
 
-    const abortBtn = Object.assign(document.createElement('button'), { className: 'tasks-amend-btn', textContent: 'Abortar rebase' })
+    const abortBtn = Object.assign(document.createElement('button'), { className: 'tasks-amend-btn', textContent: taskT('abortRebase') })
     const editBtn = Object.assign(document.createElement('button'), {
       className: 'tasks-amend-btn',
-      textContent: 'Editar commit',
-      title: 'Abre sus cambios; usa Amend y vuelve a la tarea para continuar el rebase',
+      textContent: taskT('editCommit'),
+      title: taskT('editHint'),
     })
     const splitBtn = Object.assign(document.createElement('button'), {
       className: 'tasks-amend-btn',
-      textContent: 'Dividir commit',
-      title: 'Devuelve este commit al worktree para crear varios commits parciales',
+      textContent: taskT('splitCommit'),
+      title: taskT('splitHint'),
     })
-    const continueBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: 'Continuar rebase' })
+    const continueBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: taskT('continueRebase') })
 
     let intervalId = 0
 
     editBtn.addEventListener('click', () => showChanges(wt))
     splitBtn.addEventListener('click', async () => {
       const ok = await askConfirm(
-        'El commit actual volverá al worktree. Selecciona fragmentos y crea dos o más commits normales; después vuelve a esta tarea y pulsa Continuar rebase.',
-        { title: 'Dividir commit', kind: 'warning' },
+        taskT('splitQuestion'),
+        { title: taskT('splitTitle'), kind: 'warning' },
       )
       if (!ok) return
       splitBtn.disabled = true
@@ -1990,15 +1665,14 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
     continueBtn.addEventListener('click', async () => {
       continueBtn.disabled = true; abortBtn.disabled = true
-      statusEl.textContent = 'Continuando…'
+      statusEl.textContent = taskT('continuing')
       clearInterval(intervalId)
       try {
         const result = await invoke<string>('git_rebase_continue', { path: wt.path })
         if (result === 'paused') {
-          const stRaw = await invoke<string>('git_rebase_status', { path: wt.path })
-          showRebasePaused(wt, JSON.parse(stRaw) as RebaseStatus)
+          showRebasePaused(wt, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }))
         } else {
-          statusEl.textContent = '¡Rebase completado!'
+          statusEl.textContent = taskT('rebaseComplete')
           setTimeout(() => { showChanges(wt); load() }, 1200)
         }
       } catch (e) {
@@ -2008,7 +1682,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     })
 
     abortBtn.addEventListener('click', async () => {
-      const ok = await askConfirm('¿Abortar el rebase? Se restaurará el estado original.', { title: 'Abortar rebase', kind: 'warning' })
+      const ok = await askConfirm(taskT('abortQuestion'), { title: taskT('abortRebase'), kind: 'warning' })
       if (!ok) return
       await invoke('git_rebase_abort', { path: wt.path }).catch(() => {})
       clearInterval(intervalId)
@@ -2023,7 +1697,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       // ---- Conflict resolution mode ----
       const warningEl = Object.assign(document.createElement('p'), {
         className: 'tasks-rebase-hint tasks-conflict-warning',
-        textContent: `⚠ Hay ${conflicts.length} archivo${conflicts.length > 1 ? 's' : ''} con conflictos. Resuélvelos y luego pulsa "Continuar".`,
+        textContent: taskT('conflictWarning', { count: conflicts.length }),
       })
       wrap.appendChild(warningEl)
 
@@ -2049,7 +1723,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
           btns.className = 'tasks-conflict-btns'
 
           if (!isResolved) {
-            const resolveBtn = Object.assign(document.createElement('button'), { className: 'tasks-conflict-btn tasks-conflict-btn-primary', textContent: 'Resolver aquí' })
+            const resolveBtn = Object.assign(document.createElement('button'), { className: 'tasks-conflict-btn tasks-conflict-btn-primary', textContent: taskT('resolveHere') })
             resolveBtn.title = 'Abrir resolver de conflictos en el panel'
             resolveBtn.addEventListener('click', () => {
               clearInterval(intervalId)
@@ -2059,8 +1733,8 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
               })
             })
 
-            const oursBtn = Object.assign(document.createElement('button'), { className: 'tasks-conflict-btn', textContent: 'Resultado actual' })
-            oursBtn.title = 'Conservar el resultado ya reconstruido sobre la rama base (git checkout --ours)'
+            const oursBtn = Object.assign(document.createElement('button'), { className: 'tasks-conflict-btn', textContent: taskT('currentVersion') })
+            oursBtn.title = taskT('keepOursHint')
             oursBtn.addEventListener('click', async () => {
               oursBtn.disabled = true
               await invoke('git_resolve_conflict', { path: wt.path, file, side: 'ours' }).catch(e => { statusEl.textContent = String(e); oursBtn.disabled = false })
@@ -2068,8 +1742,8 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
               renderConflicts(currentConflicts)
             })
 
-            const theirsBtn = Object.assign(document.createElement('button'), { className: 'tasks-conflict-btn', textContent: 'Commit aplicado' })
-            theirsBtn.title = 'Aceptar el cambio del commit que se está reproduciendo (git checkout --theirs)'
+            const theirsBtn = Object.assign(document.createElement('button'), { className: 'tasks-conflict-btn', textContent: taskT('appliedCommit') })
+            theirsBtn.title = taskT('keepTheirsHint')
             theirsBtn.addEventListener('click', async () => {
               theirsBtn.disabled = true
               await invoke('git_resolve_conflict', { path: wt.path, file, side: 'theirs' }).catch(e => { statusEl.textContent = String(e); theirsBtn.disabled = false })
@@ -2079,7 +1753,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
             btns.append(resolveBtn, oursBtn, theirsBtn)
           } else {
-            btns.appendChild(Object.assign(document.createElement('span'), { className: 'tasks-conflict-done', textContent: '✓ resuelto' }))
+            btns.appendChild(Object.assign(document.createElement('span'), { className: 'tasks-conflict-done', textContent: taskT('resolved') }))
           }
 
           row.append(fileEl, btns)
@@ -2096,9 +1770,8 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
       // Auto-refresh conflict list in case user resolves from terminal
       intervalId = window.setInterval(async () => {
-        const stRaw = await invoke<string>('git_rebase_status', { path: wt.path }).catch(() => null)
-        if (!stRaw) return
-        const fresh = JSON.parse(stRaw) as RebaseStatus
+        const fresh = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => null)
+        if (!fresh) return
         if (!fresh.active) { clearInterval(intervalId); showChanges(wt); load(); return }
         const freshConflicts = fresh.conflicts ?? []
         freshConflicts.forEach(f => { if (!freshConflicts.includes(f)) resolved.delete(f) })
@@ -2116,7 +1789,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       // ---- Normal edit mode (intentional `edit` step) ----
       const hintEl = Object.assign(document.createElement('p'), {
         className: 'tasks-rebase-hint',
-        textContent: 'El diff de abajo muestra los cambios sin commitear. Edita el mensaje, añade archivos si hace falta, y pulsa Commit (Amend ya está activo). Luego pulsa "Continuar".',
+        textContent: taskT('amendPausedHint'),
       })
       wrap.appendChild(hintEl)
 
@@ -2165,8 +1838,8 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const head = document.createElement('div')
     head.className = 'tasks-sync-error-head'
     head.append(
-      Object.assign(document.createElement('span'), { className: 'tasks-sync-error-title', textContent: `Error en ${mode}` }),
-      iconBtn('chat', 'Explicar el error con IA', () => {
+      Object.assign(document.createElement('span'), { className: 'tasks-sync-error-title', textContent: taskT('errorIn', { mode }) }),
+      iconBtn('chat', taskT('explainAi'), () => {
         askAi(`/explica este error de git al hacer \`${mode}\`:\n\n\`\`\`\n${errorText.slice(-8000)}\n\`\`\``, true)
       }),
     )
@@ -2184,7 +1857,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         conflictsEl.className = 'tasks-conflicts'
         conflictsEl.appendChild(Object.assign(document.createElement('div'), {
           className: 'tasks-conflicts-title',
-          textContent: `${conflicts.length} archivo${conflicts.length > 1 ? 's' : ''} en conflicto:`,
+          textContent: taskT('conflictFiles', { count: conflicts.length }),
         }))
         for (const f of conflicts) {
           const row = document.createElement('div')
@@ -2213,7 +1886,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       buildDockerDetail(result, wt)
     } catch (e) {
       const msg = String(e)
-      showDetail(note(msg === 'no-compose' ? 'No hay docker-compose.yml en este worktree.' : msg,
+      showDetail(note(msg === 'no-compose' ? taskT('noCompose') : msg,
         msg === 'no-compose' ? 'db-detail-hint' : 'db-detail-error'))
     }
   }
@@ -2228,19 +1901,19 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
 
     const statusLabel = Object.assign(document.createElement('span'), { className: 'tasks-compose-status' })
 
-    const upBtn = iconBtn('play', 'Arrancar stack', async () => {
-      upBtn.disabled = true; statusLabel.textContent = 'Arrancando…'
+    const upBtn = iconBtn('play', taskT('startStack'), async () => {
+      upBtn.disabled = true; statusLabel.textContent = taskT('starting')
       await invoke('docker_compose_up', { worktreePath: wt.path }).catch(e => { statusLabel.textContent = String(e) })
       upBtn.disabled = false
-      if (statusLabel.textContent === 'Arrancando…') statusLabel.textContent = ''
+      if (statusLabel.textContent === taskT('starting')) statusLabel.textContent = ''
     })
-    const downBtn = iconBtn('stop', 'Parar stack', async () => {
-      downBtn.disabled = true; statusLabel.textContent = 'Parando…'
+    const downBtn = iconBtn('stop', taskT('stopStack'), async () => {
+      downBtn.disabled = true; statusLabel.textContent = taskT('stopping')
       await invoke('docker_compose_down', { worktreePath: wt.path }).catch(e => { statusLabel.textContent = String(e) })
       downBtn.disabled = false
-      if (statusLabel.textContent === 'Parando…') statusLabel.textContent = ''
+      if (statusLabel.textContent === taskT('stopping')) statusLabel.textContent = ''
     })
-    const stackLogsBtn = iconBtn('list', 'Logs del stack completo', () => showStackLogs(wt, worktreeDir))
+    const stackLogsBtn = iconBtn('list', taskT('stackLogs'), () => showStackLogs(wt, worktreeDir))
 
     const controls = document.createElement('div')
     controls.className = 'tasks-compose-controls'
@@ -2267,7 +1940,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       const mine = all.filter(c => c.name.startsWith(`${worktreeDir}-`))
       containerList.replaceChildren()
       if (mine.length === 0) {
-        containerList.appendChild(note('Sin contenedores — pulsa ▶ para arrancar.', 'tasks-note'))
+        containerList.appendChild(note(taskT('emptyContainers'), 'tasks-note'))
         return
       }
       for (const c of mine) {
@@ -2279,7 +1952,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         const lbl = Object.assign(document.createElement('span'), { className: 'tasks-ctr-name', textContent: shortName })
         const btns = document.createElement('div')
         btns.className = 'tasks-ctr-btns'
-        const restartBtn = iconBtn(running ? 'power' : 'play', running ? 'Reiniciar' : 'Arrancar', async () => {
+        const restartBtn = iconBtn(running ? 'power' : 'play', running ? taskT('restart') : taskT('start'), async () => {
           await invoke(running ? 'docker_restart' : 'docker_start', { id: c.name }).catch(() => {})
           refresh()
         })
@@ -2335,8 +2008,8 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     const liveBtn = iconBtn('play', 'Seguir logs en vivo', () => live ? stopLive() : startLive())
     const refreshBtn = iconBtn('refresh', 'Recargar', () => {
       if (live) { stopLive(); startLive() } else {
-        pre.textContent = 'Cargando…'
-        invoke<string>('docker_logs', { id: worktreeDir, tail: 500 }).catch(() => '').then(r => { rawLogs = r; pre.textContent = r || '(sin logs)' })
+        pre.textContent = taskT('loading')
+        invoke<string>('docker_logs', { id: worktreeDir, tail: 500 }).catch(() => '').then(r => { rawLogs = r; pre.textContent = r || taskT('noLogs') })
       }
     })
 
@@ -2380,7 +2053,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   function buildSubHead(title: string, goBack: () => void, ...extra: HTMLElement[]): HTMLElement {
     const head = document.createElement('div')
     head.className = 'tasks-sub-head'
-    head.append(iconBtn('arrow-left', 'Volver', goBack), Object.assign(document.createElement('span'), { className: 'tasks-sub-title', textContent: title }), ...extra)
+    head.append(iconBtn('arrow-left', taskT('back'), goBack), Object.assign(document.createElement('span'), { className: 'tasks-sub-title', textContent: title }), ...extra)
     return head
   }
 
@@ -2389,7 +2062,7 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     if (!name || !repoPath) return
     const branch = taskBranch(name)
     const path = taskPath(repoPath, branch.slice('feat/'.length))
-    listWrap.replaceChildren(note('Creando tarea…', 'db-detail-loading'))
+    listWrap.replaceChildren(note(taskT('creatingTask'), 'db-detail-loading'))
     try {
       const base = await invoke<string>('git_default_branch', { repo: repoPath })
       await invoke('git_worktree_add', { repo: repoPath, path, branch, base })
@@ -2405,16 +2078,16 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
   async function deleteWorktree(wt: Worktree): Promise<void> {
     const { total } = parseStatus(await invoke<string>('git_status', { path: wt.path }).catch(() => ''))
     const ok = await askConfirm(
-      total > 0 ? `"${wt.branch}" tiene ${total} cambios sin commitear. ¿Eliminar igualmente?` : `¿Eliminar la tarea "${wt.branch}"?`,
-      { title: 'Eliminar tarea', kind: total > 0 ? 'warning' : 'info' },
+      total > 0 ? taskT('deleteDirtyQuestion', { branch: wt.branch ?? '', count: total }) : taskT('deleteQuestion', { branch: wt.branch ?? '' }),
+      { title: taskT('deleteTask'), kind: total > 0 ? 'warning' : 'info' },
     )
     if (!ok) return
     try {
       await invoke('docker_compose_down', { worktreePath: wt.path }).catch(() => {})
       await invoke('git_worktree_remove', { repo: repoPath, path: wt.path, force: total > 0, branch: wt.branch ?? null })
-      showDetail(note('Selecciona una tarea para ver sus cambios.', 'db-detail-hint'))
+      showDetail(note(taskT('selectTask'), 'db-detail-hint'))
       await load()
-    } catch (e) { await askConfirm(String(e), { title: 'Error', kind: 'error' }) }
+    } catch (e) { await askConfirm(String(e), { title: taskT('genericError'), kind: 'error' }) }
   }
 
   // ---- load ----
@@ -2422,12 +2095,12 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
     if (!repoPath) {
       baseSelect.disabled = true
       filterInput.style.display = 'none'
-      listWrap.replaceChildren(note('Selecciona un repositorio con el botón de arriba.'), buildCreateForm())
+      listWrap.replaceChildren(note(taskT('selectRepoHint')), buildCreateForm())
       return
     }
     baseSelect.disabled = false
     filterInput.style.display = ''
-    listWrap.replaceChildren(note('Cargando…', 'db-detail-loading'))
+    listWrap.replaceChildren(note(taskT('loading'), 'db-detail-loading'))
     try {
       const [defaultBranch, remoteBranchesRaw] = await Promise.all([
         invoke<string>('git_default_branch', { repo: repoPath }).catch(() => 'main'),
@@ -2445,16 +2118,16 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
       })))
       worktrees = parseWorktreeList(await invoke<string>('git_worktree_list', { repo: repoPath }))
       if (worktrees[0]) {
-        const fetchRaw = await invoke<string>('git_fetch_info', { path: worktrees[0].path }).catch(() => '{"fetchedAt":0}')
-        try { fetchedAt = (JSON.parse(fetchRaw) as { fetchedAt?: number }).fetchedAt ?? 0 } catch { fetchedAt = 0 }
+        const fetchInfo = await invoke<{ fetchedAt: number }>('git_fetch_info', { path: worktrees[0].path }).catch(() => ({ fetchedAt: 0 }))
+        fetchedAt = fetchInfo.fetchedAt
       }
       if (fetchedAt) {
         const ageMinutes = Math.max(0, Math.floor((Date.now() / 1000 - fetchedAt) / 60))
-        fetchAgeEl.textContent = ageMinutes < 1 ? 'fetch ahora' : ageMinutes < 60 ? `fetch hace ${ageMinutes}m` : `fetch hace ${Math.floor(ageMinutes / 60)}h`
+        fetchAgeEl.textContent = ageMinutes < 1 ? taskT('fetchNow') : ageMinutes < 60 ? taskT('fetchMinutes', { count: ageMinutes }) : taskT('fetchHours', { count: Math.floor(ageMinutes / 60) })
         fetchAgeEl.classList.toggle('tasks-fetch-age--stale', ageMinutes > 60)
         fetchAgeEl.title = new Date(fetchedAt * 1000).toLocaleString()
       } else {
-        fetchAgeEl.textContent = 'sin fetch'
+        fetchAgeEl.textContent = taskT('noFetch')
         fetchAgeEl.classList.add('tasks-fetch-age--stale')
       }
       jiraCfg = await loadJiraConfig()
@@ -2477,24 +2150,14 @@ export function createTasksPanel(panelId = ''): { element: HTMLElement } {
         issueMap.set(wt.path, issue)
 
         // PR status — silent fallback if gh is not installed
-        const prRaw = await invoke<string>('git_pr_status', { path: wt.path }).catch(() => '')
-        try {
-          prStatusMap.set(wt.path, prRaw ? JSON.parse(prRaw) as PrStatus : null)
-        } catch {
-          prStatusMap.set(wt.path, null)
-        }
+        prStatusMap.set(wt.path, await invoke<PrStatus | null>('git_pr_status', { path: wt.path }).catch(() => null))
 
-        const backupRaw = await invoke<string>('git_backup_status', { path: wt.path }).catch(() => '{"available":false}')
-        try { backupStatusMap.set(wt.path, JSON.parse(backupRaw) as BackupStatus) }
-        catch { backupStatusMap.set(wt.path, { available: false }) }
+        backupStatusMap.set(wt.path, await invoke<BackupStatus>('git_backup_status', { path: wt.path }).catch(() => ({ available: false })))
 
-        const rebaseRaw = await invoke<string>('git_rebase_status', { path: wt.path }).catch(() => '{"active":false}')
-        try { rebaseStatusMap.set(wt.path, JSON.parse(rebaseRaw) as RebaseStatus) }
-        catch { rebaseStatusMap.set(wt.path, { active: false }) }
+        rebaseStatusMap.set(wt.path, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false })))
 
-        const upstreamRaw = await invoke<string>('git_upstream_status', { path: wt.path }).catch(() => '')
-        try { upstreamStatusMap.set(wt.path, JSON.parse(upstreamRaw) as UpstreamStatus) }
-        catch { upstreamStatusMap.delete(wt.path) }
+        const upstream = await invoke<UpstreamStatus | null>('git_upstream_status', { path: wt.path }).catch(() => null)
+        if (upstream) upstreamStatusMap.set(wt.path, upstream); else upstreamStatusMap.delete(wt.path)
       })
 
       const runningPaths = new Set<string>()

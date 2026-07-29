@@ -4,6 +4,9 @@ mod db;
 mod docker;
 mod git;
 mod jira;
+mod memory_import;
+mod memory;
+mod memory_sources;
 mod notes;
 mod pty;
 mod scripts;
@@ -31,6 +34,13 @@ struct HttpResponse {
     status_text: String,
     headers: Vec<(String, String)>,
     body: String,
+}
+
+// The E2E runner checks this before touching UI state. This prevents an
+// accidentally supplied production binary from sharing the user's WebView data.
+#[tauri::command]
+fn app_identifier(app: tauri::AppHandle) -> String {
+    app.config().identifier.clone()
 }
 
 // General HTTP request for the HTTP-client panel (any method, headers, body).
@@ -101,9 +111,25 @@ fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    #[cfg(all(feature = "e2e", target_os = "macos"))]
+    let context = {
+        let mut context = context;
+        for window in &mut context.config_mut().app.windows {
+            window.data_store_identifier = Some([
+                183, 46, 91, 12, 231, 95, 74, 90, 166, 211, 22, 73, 194, 8, 117, 49,
+            ]);
+        }
+        context
+    };
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    // The embedded WebDriver is test-only. Production bundles are built
+    // without the `e2e` feature and expose no automation server.
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         .setup(|app| {
             #[cfg(target_os = "macos")]
             install_menu(app)?;
@@ -116,6 +142,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             http_get,
             http_request,
+            app_identifier,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
@@ -163,6 +190,24 @@ fn main() {
             db::db_docker_redis_command,
             jira::jira_config_get,
             jira::jira_config_set,
+            memory_import::memory_import_claude,
+            memory_import::memory_import_codex,
+            memory::memory_list,
+            memory::memory_list_all,
+            memory::memory_create,
+            memory::memory_update,
+            memory::memory_remove,
+            memory::memory_migrate,
+            memory::memory_transcript_list,
+            memory::memory_transcript_create,
+            memory::memory_summary_job_list,
+            memory::memory_regenerate_summary,
+            memory_sources::memory_source_list,
+            memory_sources::memory_source_create,
+            memory_sources::memory_source_remove,
+            memory_sources::memory_source_scan,
+            memory_sources::memory_source_scan_path,
+            memory_sources::memory_source_import,
             vault::vault_exists,
             vault::vault_is_unlocked,
             vault::vault_setup,
@@ -231,6 +276,6 @@ fn main() {
             docker::docker_compose_logs_follow,
             docker::docker_compose_logs_stop,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

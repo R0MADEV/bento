@@ -4,8 +4,6 @@ import { lowestAvailableNumber } from '../core/terminal/lowestAvailableNumber'
 import { cycleTheme } from '../panels/terminal/themePreference'
 import { showContextMenu } from '../ui/contextMenu'
 import { furthestEdgeIndex, type MoveDirection } from '../core/workspace/edge'
-import { canAddPanel } from '../core/workspace/panelLimit'
-import { isUnlocked, setUnlocked, onUnlockChange } from '../panels/panelLockPreference'
 import { icon } from '../ui/icons'
 import { isMac, shortcutLabel } from '../ui/platform'
 import { currentPanelIndex } from '../core/workspace/currentPanel'
@@ -65,16 +63,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const addPanel = (type: string, position?: Position): void => {
     const def = panels.get(type)
     if (!def) return
-    const allowed = canAddPanel({
-      singleton: !!def.singleton,
-      unlocked: isUnlocked(type),
-      alreadyExists: !!existingOfType(type),
-    })
-    // Blocked singleton (e.g. a 2nd TV while locked): focus the existing one.
-    if (!allowed) {
-      existingOfType(type)?.api.setActive()
-      return
-    }
     const n = lowestAvailableNumber(usedNumbers(type))
     api.addPanel({ id: `${type}-${n}`, component: type, title: `${def.title} ${n}`, position })
   }
@@ -226,22 +214,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
 
   card.append(emptyTitle, actions, hintsEl)
 
-  // One checkbox per singleton type to allow multiple instances.
-  const unlockUnsubs: Array<() => void> = []
-  panels.list().filter(d => d.singleton).forEach(d => {
-    const label = document.createElement('label')
-    label.className = 'workspace-empty-option'
-    const cb = document.createElement('input')
-    cb.type = 'checkbox'
-    cb.checked = isUnlocked(d.type)
-    cb.addEventListener('change', () => setUnlocked(d.type, cb.checked))
-    unlockUnsubs.push(onUnlockChange(() => { cb.checked = isUnlocked(d.type) }))
-    const span = document.createElement('span')
-    span.textContent = `Permitir varias ${d.title}`
-    label.append(cb, span)
-    card.appendChild(label)
-  })
-
   emptyState.appendChild(card)
   element.appendChild(emptyState)
 
@@ -359,7 +331,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       window.removeEventListener('keydown', onKeydown)
       window.removeEventListener('keydown', onCyclePanelKeydown)
       window.removeEventListener('bento:cycle-panel', onCyclePanel)
-      unlockUnsubs.forEach(unsub => unsub())
       api.dispose()
     },
   }

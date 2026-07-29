@@ -7,6 +7,94 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewritePreflight {
+    branch: String,
+    base: String,
+    dirty: bool,
+    operation: String,
+    upstream: String,
+    published_commits: u32,
+    protected_base: bool,
+    signing: bool,
+    hooks: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchInfo { fetched_at: u64 }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupStatus {
+    available: bool,
+    different: Option<bool>,
+    hash: Option<String>,
+    short: Option<String>,
+    subject: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupEntry {
+    reference: String,
+    hash: String,
+    short: String,
+    subject: String,
+    created_at: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamStatus {
+    branch: String,
+    upstream: Option<String>,
+    has_upstream: bool,
+    state: String,
+    ahead: u32,
+    behind: u32,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseStatus {
+    active: bool,
+    sha: Option<String>,
+    short: Option<String>,
+    subject: Option<String>,
+    body: Option<String>,
+    branch: Option<String>,
+    current: Option<u32>,
+    total: Option<u32>,
+    conflicts: Vec<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrCheck {
+    name: Option<String>,
+    context: Option<String>,
+    conclusion: Option<String>,
+    state: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrStatus {
+    state: String,
+    title: String,
+    url: String,
+    number: u64,
+    base_ref_name: Option<String>,
+    is_draft: Option<bool>,
+    mergeable: Option<String>,
+    review_decision: Option<String>,
+    #[serde(default)]
+    status_check_rollup: Vec<PrCheck>,
+}
+
 // macOS GUI apps don't inherit the shell PATH, so `git` may not be on PATH.
 fn login_shell_output(cmd: &str) -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
@@ -90,10 +178,6 @@ fn create_history_backup(path: &str) -> Result<String, String> {
     Ok(backup_ref)
 }
 
-fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
-}
-
 fn apply_selected_patch(path: &str, patch: &str) -> Result<(), String> {
     if patch.trim().is_empty() || !patch.contains("diff --git ") {
         return Err("selected patch is empty or invalid".into());
@@ -166,7 +250,7 @@ pub async fn git_status(path: String) -> Result<String, String> {
 // explain every risk before invoking rebase/fixup instead of discovering it
 // after Git has already started the operation.
 #[tauri::command]
-pub async fn git_rewrite_preflight(path: String, base: String) -> Result<String, String> {
+pub async fn git_rewrite_preflight(path: String, base: String) -> Result<RewritePreflight, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_safe_branch(&base) {
             return Err(format!("unsafe base branch: {base}"));
@@ -196,16 +280,15 @@ pub async fn git_rewrite_preflight(path: String, base: String) -> Result<String,
         };
         let hooks = ["pre-rebase", "pre-commit", "commit-msg"]
             .iter().filter(|name| git_dir.join("hooks").join(name).exists())
-            .map(|name| format!(r#""{}""#, json_escape(name)))
-            .collect::<Vec<_>>().join(",");
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
         let signing = git_output(&path, &["config", "--bool", "commit.gpgsign"])
             .map(|value| value.trim() == "true").unwrap_or(false);
         let protected_base = branch == base || matches!(branch.as_str(), "main" | "master");
-        Ok(format!(
-            r#"{{"branch":"{}","base":"{}","dirty":{},"operation":"{}","upstream":"{}","publishedCommits":{},"protectedBase":{},"signing":{},"hooks":[{}]}}"#,
-            json_escape(&branch), json_escape(&base), dirty, json_escape(operation),
-            json_escape(&upstream), published_commits, protected_base, signing, hooks,
-        ))
+        Ok(RewritePreflight {
+            branch, base, dirty, operation: operation.into(), upstream,
+            published_commits, protected_base, signing, hooks,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -587,18 +670,17 @@ pub async fn git_merge_log(path: String, base: String) -> Result<String, String>
     .map_err(|e| e.to_string())?
 }
 
-// Returns JSON from `gh pr view` or empty string if no PR / gh not installed.
+// Returns typed PR metadata or null if no PR / gh is unavailable.
 #[tauri::command]
-pub async fn git_pr_status(path: String) -> Result<String, String> {
+pub async fn git_pr_status(path: String) -> Result<Option<PrStatus>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let cmd = format!("cd {:?} && gh pr view --json state,title,url,number,baseRefName,isDraft,mergeable,reviewDecision,statusCheckRollup 2>/dev/null", path);
-        let out = Command::new(&shell)
-            .arg("-lc")
-            .arg(&cmd)
-            .output()
-            .map_err(|e| e.to_string())?;
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "view", "--json", "state,title,url,number,baseRefName,isDraft,mergeable,reviewDecision,statusCheckRollup"])
+            .output();
+        let Ok(out) = out else { return Ok(None); };
+        if !out.status.success() || out.stdout.is_empty() { return Ok(None); }
+        serde_json::from_slice::<PrStatus>(&out.stdout).map(Some).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -636,12 +718,15 @@ pub async fn git_push(path: String, force_with_lease: Option<bool>) -> Result<St
 }
 
 #[tauri::command]
-pub async fn git_upstream_status(path: String) -> Result<String, String> {
+pub async fn git_upstream_status(path: String) -> Result<UpstreamStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let branch = current_branch(&path)?;
         let upstream = match git_output(&path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) {
             Ok(value) => value.trim().to_string(),
-            Err(_) => return Ok(format!(r#"{{"branch":"{}","hasUpstream":false,"state":"unpublished","ahead":0,"behind":0}}"#, json_escape(&branch))),
+            Err(_) => return Ok(UpstreamStatus {
+                branch, upstream: None, has_upstream: false,
+                state: "unpublished".into(), ahead: 0, behind: 0,
+            }),
         };
         let counts = git_output(&path, &["rev-list", "--left-right", "--count", "@{u}...HEAD"])?;
         let mut parts = counts.split_whitespace();
@@ -651,17 +736,17 @@ pub async fn git_upstream_status(path: String) -> Result<String, String> {
             else if behind > 0 { "behind" }
             else if ahead > 0 { "ahead" }
             else { "synced" };
-        Ok(format!(
-            r#"{{"branch":"{}","upstream":"{}","hasUpstream":true,"state":"{state}","ahead":{ahead},"behind":{behind}}}"#,
-            json_escape(&branch), json_escape(&upstream),
-        ))
+        Ok(UpstreamStatus {
+            branch, upstream: Some(upstream), has_upstream: true,
+            state: state.into(), ahead, behind,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_fetch_info(path: String) -> Result<String, String> {
+pub async fn git_fetch_info(path: String) -> Result<FetchInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let raw_path = git_output(&path, &["rev-parse", "--git-path", "FETCH_HEAD"])?;
         let fetch_path = Path::new(raw_path.trim());
@@ -669,7 +754,7 @@ pub async fn git_fetch_info(path: String) -> Result<String, String> {
         let modified = fs::metadata(absolute).and_then(|m| m.modified()).ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|duration| duration.as_secs()).unwrap_or(0);
-        Ok(format!(r#"{{"fetchedAt":{modified}}}"#))
+        Ok(FetchInfo { fetched_at: modified })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -677,23 +762,25 @@ pub async fn git_fetch_info(path: String) -> Result<String, String> {
 
 // Describes the latest automatic backup for the current branch.
 #[tauri::command]
-pub async fn git_backup_status(path: String) -> Result<String, String> {
+pub async fn git_backup_status(path: String) -> Result<BackupStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let backup_ref = backup_ref_for(&path)?;
         let hash = match git_output(&path, &["rev-parse", "--verify", &backup_ref]) {
             Ok(value) => value.trim().to_string(),
-            Err(_) => return Ok(r#"{"available":false}"#.into()),
+            Err(_) => return Ok(BackupStatus {
+                available: false, different: None, hash: None, short: None, subject: None,
+            }),
         };
         let head = git_output(&path, &["rev-parse", "HEAD"])?.trim().to_string();
         let subject = git_output(&path, &["log", "-1", "--format=%s", &backup_ref])?
             .trim().to_string();
-        Ok(format!(
-            r#"{{"available":true,"different":{},"hash":"{}","short":"{}","subject":"{}"}}"#,
-            hash != head,
-            json_escape(&hash),
-            json_escape(&hash.chars().take(7).collect::<String>()),
-            json_escape(&subject),
-        ))
+        Ok(BackupStatus {
+            available: true,
+            different: Some(hash != head),
+            short: Some(hash.chars().take(7).collect()),
+            hash: Some(hash),
+            subject: Some(subject),
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -702,16 +789,25 @@ pub async fn git_backup_status(path: String) -> Result<String, String> {
 // Lists the bounded automatic backup history, newest first.
 // Format: ref<US>hash<US>short<US>subject. Creation time is encoded in ref.
 #[tauri::command]
-pub async fn git_backup_list(path: String) -> Result<String, String> {
+pub async fn git_backup_list(path: String) -> Result<Vec<BackupEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let branch = current_branch(&path)?;
         let prefix = format!("refs/bento/history/{branch}");
-        git_output(&path, &[
+        let raw = git_output(&path, &[
             "for-each-ref",
             "--sort=-refname",
             "--format=%(refname)\x1f%(objectname)\x1f%(objectname:short)\x1f%(subject)",
             &prefix,
-        ])
+        ])?;
+        Ok(raw.lines().filter_map(|line| {
+            let mut parts = line.split('\x1f');
+            let reference = parts.next()?.to_string();
+            let hash = parts.next()?.to_string();
+            let short = parts.next()?.to_string();
+            let subject = parts.next().unwrap_or_default().to_string();
+            let created_at = reference.rsplit('/').next()?.parse::<u64>().ok()?;
+            Some(BackupEntry { reference, hash, short, subject, created_at })
+        }).collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -781,10 +877,9 @@ pub async fn git_create_pr(path: String, base: String) -> Result<String, String>
         if !is_safe_branch(&base) {
             return Err(format!("unsafe base branch: {base}"));
         }
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        let out = Command::new(&shell)
-            .arg("-lc")
-            .arg(format!("cd {:?} && gh pr create --fill --base {}", path, base))
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "create", "--fill", "--base", &base])
             .output()
             .map_err(|e| e.to_string())?;
         if out.status.success() {
@@ -825,9 +920,13 @@ fn resolve_git_dir(path: &str) -> std::path::PathBuf {
 fn write_sequence_editor_script(todo_content: &str) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let pid = std::process::id();
     let todo_path = std::env::temp_dir().join(format!("bento-rebase-todo-{pid}.txt"));
-    let script_path = std::env::temp_dir().join(format!("bento-rebase-editor-{pid}.sh"));
+    let extension = if cfg!(windows) { "cmd" } else { "sh" };
+    let script_path = std::env::temp_dir().join(format!("bento-rebase-editor-{pid}.{extension}"));
 
     fs::write(&todo_path, todo_content).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    let script = format!("@echo off\r\ncopy /Y \"{}\" \"%~1\" >NUL\r\n", todo_path.display());
+    #[cfg(not(windows))]
     let script = format!("#!/bin/sh\ncp '{}' \"$1\"\n", todo_path.display());
     fs::write(&script_path, &script).map_err(|e| e.to_string())?;
 
@@ -977,11 +1076,14 @@ pub async fn git_rebase_split(path: String) -> Result<(), String> {
 
 // Returns JSON with rebase state. Includes `conflicts` array (unmerged files) when paused at a conflict.
 #[tauri::command]
-pub async fn git_rebase_status(path: String) -> Result<String, String> {
+pub async fn git_rebase_status(path: String) -> Result<RebaseStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let rebase_dir = resolve_git_dir(&path).join("rebase-merge");
         if !rebase_dir.exists() {
-            return Ok(r#"{"active":false}"#.to_string());
+            return Ok(RebaseStatus {
+                active: false, sha: None, short: None, subject: None, body: None,
+                branch: None, current: None, total: None, conflicts: Vec::new(),
+            });
         }
         // Use HEAD directly — more reliable than stopped-sha (not always written by git).
         let sha = git_output(&path, &["rev-parse", "HEAD"])
@@ -1006,17 +1108,11 @@ pub async fn git_rebase_status(path: String) -> Result<String, String> {
             .map(|l| l[3..].trim().to_string())
             .collect();
 
-        fn json_esc(s: &str) -> String { s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n") }
-        let conflicts_json = conflicts.iter()
-            .map(|f| format!(r#""{}""#, json_esc(f)))
-            .collect::<Vec<_>>()
-            .join(",");
-        Ok(format!(
-            r#"{{"active":true,"sha":"{sha}","short":"{short}","subject":"{sub}","body":"{body}","branch":"{br}","current":{current},"total":{total},"conflicts":[{conflicts_json}]}}"#,
-            sub = json_esc(&subject),
-            body = json_esc(&body),
-            br = json_esc(&head_name),
-        ))
+        Ok(RebaseStatus {
+            active: true,
+            sha: Some(sha), short: Some(short), subject: Some(subject), body: Some(body),
+            branch: Some(head_name), current: Some(current), total: Some(total), conflicts,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1249,7 +1345,12 @@ pub async fn open_in_editor(path: String) -> Result<(), String> {
                 }
             }
         }
+        #[cfg(target_os = "macos")]
         Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        #[cfg(target_os = "linux")]
+        Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        #[cfg(target_os = "windows")]
+        Command::new("cmd").args(["/C", "start", "", &path]).spawn().map_err(|e| e.to_string())?;
         Ok(())
     })
     .await
@@ -1422,10 +1523,10 @@ mod tests {
         let report = tauri::async_runtime::block_on(git_rewrite_preflight(
             repo.0.to_string_lossy().to_string(), "main".into(),
         )).unwrap();
-        assert!(report.contains(r#""dirty":true"#));
-        assert!(report.contains(r#""publishedCommits":1"#));
-        assert!(report.contains(r#""signing":true"#));
-        assert!(report.contains("pre-rebase"));
+        assert!(report.dirty);
+        assert_eq!(report.published_commits, 1);
+        assert!(report.signing);
+        assert!(report.hooks.contains(&"pre-rebase".to_string()));
     }
 
     #[test]

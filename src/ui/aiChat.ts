@@ -10,6 +10,9 @@ import { renderMarkdown } from '../core/notes/renderMarkdown'
 import { expandInput, SLASH_COMMANDS } from '../core/ai/prompts'
 import { showContextMenu } from './contextMenu'
 import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from './askAi'
+import type { MemoryRepository } from '../ports/MemoryRepository'
+import { getActiveProjectPath } from './activeProject'
+import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
 
 // Messages as the API expects them (includes tool_calls and tool responses).
 interface ApiToolCall { id: string; function: { name: string; arguments: string } }
@@ -17,7 +20,7 @@ interface ApiMessage { role: string; content?: string | null; tool_calls?: ApiTo
 
 // Floating AI chat widget (OpenAI-compatible endpoint). Button in the
 // corner; opening it shows a modal with the thread, provider/model selector and settings.
-export function createAiChat(): HTMLElement {
+export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   const root = document.createElement('div')
   root.className = 'ai-chat'
 
@@ -267,11 +270,18 @@ export function createAiChat(): HTMLElement {
     messages.push(assistant)
     renderThread()
 
-    // History without the assistant placeholder; the system prompt goes first.
+    // History without the assistant placeholder; the project memory is sent as
+    // private system context and is never added to the visible conversation.
     const history = messages.slice(0, -1)
-    const apiMessages: ChatMessage[] = cfg.systemPrompt
-      ? [{ role: 'system', content: cfg.systemPrompt }, ...history]
-      : history
+    const projectPath = getActiveProjectPath()
+    const memory = projectPath
+      ? await memoryRepo.list(projectPath).then(entries => buildMemoryContext(selectMemoryForPrompt(entries, text), projectPath)).catch(() => null)
+      : null
+    const systemMessages: ChatMessage[] = [
+      ...(cfg.systemPrompt ? [{ role: 'system' as const, content: cfg.systemPrompt }] : []),
+      ...(memory ? [{ role: 'system' as const, content: memory }] : []),
+    ]
+    const apiMessages: ChatMessage[] = [...systemMessages, ...history]
 
     streaming = true
     root.classList.add('busy')

@@ -29,6 +29,8 @@
     "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "build:e2e:app": "node scripts/build-e2e-app.mjs",
+    "test:e2e:tasks": "node scripts/e2e-tasks.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

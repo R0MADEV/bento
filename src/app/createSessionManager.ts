@@ -8,13 +8,13 @@ import { createCommandPalette } from '../ui/commandPalette'
 import type { Command } from '../core/command/command'
 import { themeNames, themeLabels } from '../core/terminal/themes'
 import { setTheme } from '../panels/terminal/themePreference'
-import { isUnlocked, toggleUnlocked } from '../panels/panelLockPreference'
 import { isMac } from '../ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition } from '../ui/sessionBarPreference'
 import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
 import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
+import { setActiveProjectPath } from '../ui/activeProject'
 
 export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
@@ -207,6 +207,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
   function render(): void {
     hidePopover()
+    setActiveProjectPath(state.sessions.find(s => s.id === state.activeId)?.projectPath)
     tabsArea.innerHTML = ''
     state.sessions.forEach((s) => {
       tabsArea.appendChild(
@@ -272,6 +273,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-jira', label: 'Nuevo panel Jira', keywords: ['jira', 'tickets', 'tareas', 'atlassian', 'issues'], run: () => active?.addPanel('jira') },
       { id: 'new-docker', label: 'Nuevo panel Docker', keywords: ['docker', 'contenedores', 'containers', 'logs'], run: () => active?.addPanel('docker') },
       { id: 'new-tasks', label: 'Nuevo panel Tareas', keywords: ['tareas', 'tasks', 'worktree', 'git', 'paralelo'], run: () => active?.addPanel('tasks') },
+      { id: 'new-memory', label: 'Nuevo panel Memoria', keywords: ['memoria', 'memory', 'contexto', 'decisiones', 'resumen'], run: () => active?.addPanel('memory') },
       {
         id: 'bind-project', label: 'Atar sesión a la carpeta de la terminal activa',
         keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],
@@ -326,16 +328,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         commands.push({ id: `goto-${s.id}`, label: `Ir a ${s.name}`, keywords: ['sesión'], run: () => { state = setActiveSession(state, s.id); render() } })
       }
     })
-    panels.list().filter(d => d.singleton).forEach(d => {
-      const on = isUnlocked(d.type)
-      commands.push({
-        id: `unlock-${d.type}`,
-        label: `${on ? '✓' : '○'} Permitir varias ${d.title}`,
-        keywords: ['bloquear', 'desbloquear', 'varias', 'multiple', d.type],
-        run: () => toggleUnlocked(d.type),
-      })
-    })
-    const barPos = getBarPosition()
+const barPos = getBarPosition()
     const barOptions: { pos: BarPosition; label: string }[] = [
       { pos: 'top', label: 'arriba' },
       { pos: 'bottom', label: 'abajo' },

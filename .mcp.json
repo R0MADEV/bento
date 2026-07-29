@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bento-memory": {
+      "command": "sh",
+      "args": [
+        "-lc",
+        "exec node \"$(git rev-parse --show-toplevel)/scripts/bento-memory-mcp.mjs\""
+      ]
+    }
+  }
+}
