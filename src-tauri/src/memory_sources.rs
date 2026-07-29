@@ -108,7 +108,11 @@ fn clip(value: &str, max: usize) -> String {
     if clean.chars().count() <= max {
         return clean;
     }
-    clean.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+    clean
+        .chars()
+        .take(max.saturating_sub(1))
+        .collect::<String>()
+        + "…"
 }
 
 fn file_timestamp(path: &Path) -> String {
@@ -117,7 +121,10 @@ fn file_timestamp(path: &Path) -> String {
         .and_then(|meta| meta.modified().ok())
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .and_then(|secs| time::OffsetDateTime::from_unix_timestamp(secs.as_secs() as i64).ok())
-        .and_then(|dt| dt.format(&time::format_description::well_known::Rfc3339).ok())
+        .and_then(|dt| {
+            dt.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
         .unwrap_or_else(now_iso)
 }
 
@@ -209,10 +216,10 @@ fn details_from_content(content: &str) -> String {
 }
 
 fn sanitize_tag(value: &str) -> String {
-    value
-        .trim()
-        .to_lowercase()
-        .replace(|ch: char| !ch.is_alphanumeric() && ch != '-' && ch != '_', "-")
+    value.trim().to_lowercase().replace(
+        |ch: char| !ch.is_alphanumeric() && ch != '-' && ch != '_',
+        "-",
+    )
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -256,13 +263,22 @@ fn project_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn candidate_from_lexis_index(source: &MemorySource, path: &Path) -> Option<ImportedMemoryCandidate> {
+fn candidate_from_lexis_index(
+    source: &MemorySource,
+    path: &Path,
+) -> Option<ImportedMemoryCandidate> {
     let meta = fs::metadata(path).ok()?;
     let snippet = read_prefix(path, MAX_METADATA_READ_BYTES).ok()?;
     let path_text = path.to_string_lossy().to_string();
-    let project_path = extract_json_string(&snippet, "projectPath")
-        .unwrap_or_else(|| path.parent().and_then(|parent| parent.file_name()).and_then(|name| name.to_str()).unwrap_or("proyecto").to_string());
-    let created_at = extract_json_string(&snippet, "createdAt").unwrap_or_else(|| file_timestamp(path));
+    let project_path = extract_json_string(&snippet, "projectPath").unwrap_or_else(|| {
+        path.parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("proyecto")
+            .to_string()
+    });
+    let created_at =
+        extract_json_string(&snippet, "createdAt").unwrap_or_else(|| file_timestamp(path));
     let size_label = format_bytes(meta.len());
     let project_label = project_name(&project_path);
     let label_tag = sanitize_tag(&source.label);
@@ -287,7 +303,10 @@ fn candidate_from_lexis_index(source: &MemorySource, path: &Path) -> Option<Impo
     })
 }
 
-fn candidate_from_large_file(source: &MemorySource, path: &Path) -> Option<ImportedMemoryCandidate> {
+fn candidate_from_large_file(
+    source: &MemorySource,
+    path: &Path,
+) -> Option<ImportedMemoryCandidate> {
     let meta = fs::metadata(path).ok()?;
     let path_text = path.to_string_lossy().to_string();
     let label_tag = sanitize_tag(&source.label);
@@ -347,7 +366,10 @@ fn candidate_from_file(source: &MemorySource, path: &Path) -> Option<ImportedMem
     })
 }
 
-fn scan_candidates(source: &MemorySource, limit: Option<usize>) -> Result<Vec<ImportedMemoryCandidate>, String> {
+fn scan_candidates(
+    source: &MemorySource,
+    limit: Option<usize>,
+) -> Result<Vec<ImportedMemoryCandidate>, String> {
     if source.kind != "filesystem" {
         return Err("Solo se soportan fuentes filesystem por ahora".to_string());
     }
@@ -425,7 +447,10 @@ fn entry_exists(conn: &Connection, project_path: &str, external_id: &str) -> Res
 }
 
 #[tauri::command]
-pub fn memory_source_list(app: AppHandle, project_path: String) -> Result<Vec<MemorySource>, String> {
+pub fn memory_source_list(
+    app: AppHandle,
+    project_path: String,
+) -> Result<Vec<MemorySource>, String> {
     let conn = connection(&app)?;
     let mut stmt = conn
         .prepare(
@@ -433,7 +458,8 @@ pub fn memory_source_list(app: AppHandle, project_path: String) -> Result<Vec<Me
              FROM memory_sources WHERE project_path = ?1 ORDER BY updated_at DESC",
         )
         .map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![project_path.trim()], row_to_source)
+    let rows = stmt
+        .query_map(params![project_path.trim()], row_to_source)
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -468,7 +494,11 @@ pub fn memory_source_create(app: AppHandle, source: MemorySource) -> Result<Memo
 }
 
 #[tauri::command]
-pub fn memory_source_remove(app: AppHandle, project_path: String, id: String) -> Result<bool, String> {
+pub fn memory_source_remove(
+    app: AppHandle,
+    project_path: String,
+    id: String,
+) -> Result<bool, String> {
     let conn = connection(&app)?;
     Ok(conn
         .execute(
@@ -550,14 +580,22 @@ mod tests {
 
     #[test]
     fn detects_lexis_index_paths() {
-        assert!(is_lexis_index(Path::new("/Users/test/.lexis/projects/demo/index.json")));
+        assert!(is_lexis_index(Path::new(
+            "/Users/test/.lexis/projects/demo/index.json"
+        )));
         assert!(!is_lexis_index(Path::new("/Users/test/notes/index.json")));
     }
 
     #[test]
     fn extracts_json_string_from_snippet() {
         let snippet = r#"{"projectPath":"/tmp/demo","createdAt":"2026-07-28T10:00:00Z"}"#;
-        assert_eq!(extract_json_string(snippet, "projectPath").as_deref(), Some("/tmp/demo"));
-        assert_eq!(extract_json_string(snippet, "createdAt").as_deref(), Some("2026-07-28T10:00:00Z"));
+        assert_eq!(
+            extract_json_string(snippet, "projectPath").as_deref(),
+            Some("/tmp/demo")
+        );
+        assert_eq!(
+            extract_json_string(snippet, "createdAt").as_deref(),
+            Some("2026-07-28T10:00:00Z")
+        );
     }
 }

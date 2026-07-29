@@ -35,7 +35,9 @@ pub fn web_panel_navigate(
     if let Some(panel) = panels.get(&id) {
         if panel.ua == user_agent {
             let _ = panel.webview.navigate(url_parsed);
-            let _ = panel.webview.set_position(LogicalPosition::new(rect_x, rect_y));
+            let _ = panel
+                .webview
+                .set_position(LogicalPosition::new(rect_x, rect_y));
             let _ = panel.webview.set_size(LogicalSize::new(width, height));
             let _ = panel.webview.show();
             return Ok(());
@@ -59,7 +61,13 @@ pub fn web_panel_navigate(
         )
         .map_err(|e| e.to_string())?;
 
-    panels.insert(id, Panel { webview, ua: user_agent });
+    panels.insert(
+        id,
+        Panel {
+            webview,
+            ua: user_agent,
+        },
+    );
     Ok(())
 }
 
@@ -74,7 +82,9 @@ pub fn web_panel_set_bounds(
 ) -> Result<(), String> {
     let panels = state.panels.lock().unwrap();
     if let Some(panel) = panels.get(&id) {
-        let _ = panel.webview.set_position(LogicalPosition::new(rect_x, rect_y));
+        let _ = panel
+            .webview
+            .set_position(LogicalPosition::new(rect_x, rect_y));
         let _ = panel.webview.set_size(LogicalSize::new(width, height));
     }
     Ok(())
@@ -88,16 +98,17 @@ pub fn web_panel_set_visible(
 ) -> Result<(), String> {
     let panels = state.panels.lock().unwrap();
     if let Some(panel) = panels.get(&id) {
-        if visible { let _ = panel.webview.show(); } else { let _ = panel.webview.hide(); }
+        if visible {
+            let _ = panel.webview.show();
+        } else {
+            let _ = panel.webview.hide();
+        }
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn web_panel_close(
-    id: String,
-    state: tauri::State<'_, WebPanelState>,
-) -> Result<(), String> {
+pub fn web_panel_close(id: String, state: tauri::State<'_, WebPanelState>) -> Result<(), String> {
     let mut panels = state.panels.lock().unwrap();
     if let Some(panel) = panels.remove(&id) {
         let _ = panel.webview.close();

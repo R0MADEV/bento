@@ -62,6 +62,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # `tauri::generate_context!` validates frontendDist at Rust compile time.
+      # Create dist before bindings/clippy compile the Tauri binary on clean runners.
+      - name: Build frontend
+        run: npm run build
+
       - name: Verify generated Rust bindings
         run: npm run bindings:check
 
@@ -72,7 +77,7 @@ jobs:
         if: runner.os == 'Linux'
         run: npm run test:coverage
 
-      - name: Build
+      - name: Build desktop bundles
         run: npm run tauri:build
 
       - name: Upload artifacts

@@ -21,11 +21,16 @@ pub struct WorkspaceState {
     layouts: HashMap<String, serde_json::Value>,
 }
 
-fn workspace_schema_version() -> u32 { 1 }
+fn workspace_schema_version() -> u32 {
+    1
+}
 
 fn validate_workspace(state: WorkspaceState) -> Result<WorkspaceState, String> {
     if state.schema_version != workspace_schema_version() {
-        return Err(format!("unsupported workspace schema version: {}", state.schema_version));
+        return Err(format!(
+            "unsupported workspace schema version: {}",
+            state.schema_version
+        ));
     }
     Ok(state)
 }
@@ -53,19 +58,27 @@ fn read_workspace(path: &std::path::Path) -> Result<WorkspaceState, String> {
 
 fn load_workspace_path(path: &std::path::Path) -> Result<Option<WorkspaceState>, String> {
     if !path.exists() {
-        return if backup_path(path).exists() { read_workspace(&backup_path(path)).map(Some) } else { Ok(None) };
+        return if backup_path(path).exists() {
+            read_workspace(&backup_path(path)).map(Some)
+        } else {
+            Ok(None)
+        };
     }
     match read_workspace(path) {
         Ok(state) => Ok(Some(state)),
         Err(primary_error) => match read_workspace(&backup_path(path)) {
             Ok(state) => Ok(Some(state)),
-            Err(backup_error) => Err(format!("workspace is invalid ({primary_error}); backup is unavailable ({backup_error})")),
+            Err(backup_error) => Err(format!(
+                "workspace is invalid ({primary_error}); backup is unavailable ({backup_error})"
+            )),
         },
     }
 }
 
 fn save_workspace_path(path: &std::path::Path, state: &WorkspaceState) -> Result<(), String> {
-    let directory = path.parent().ok_or_else(|| "invalid workspace path".to_string())?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| "invalid workspace path".to_string())?;
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     if path.exists() && read_workspace(path).is_ok() {
         fs::copy(path, backup_path(path)).map_err(|error| error.to_string())?;
@@ -108,7 +121,11 @@ mod tests {
     fn workspace_contract_uses_frontend_field_names() {
         let state = WorkspaceState {
             schema_version: workspace_schema_version(),
-            sessions: vec![WorkspaceSession { id: "session-1".into(), name: "Session 1".into(), project_path: Some("/repo".into()) }],
+            sessions: vec![WorkspaceSession {
+                id: "session-1".into(),
+                name: "Session 1".into(),
+                project_path: Some("/repo".into()),
+            }],
             active_id: Some("session-1".into()),
             layouts: HashMap::new(),
         };
@@ -120,15 +137,25 @@ mod tests {
     fn state(name: &str) -> WorkspaceState {
         WorkspaceState {
             schema_version: workspace_schema_version(),
-            sessions: vec![WorkspaceSession { id: "session-1".into(), name: name.into(), project_path: None }],
+            sessions: vec![WorkspaceSession {
+                id: "session-1".into(),
+                name: name.into(),
+                project_path: None,
+            }],
             active_id: Some("session-1".into()),
             layouts: HashMap::new(),
         }
     }
 
     fn temporary_workspace(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let directory = std::env::temp_dir().join(format!("bento-workspace-{name}-{}-{nonce}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "bento-workspace-{name}-{}-{nonce}",
+            std::process::id()
+        ));
         (directory.join("workspace.json"), directory)
     }
 
@@ -137,7 +164,10 @@ mod tests {
         let (path, directory) = temporary_workspace("backup");
         save_workspace_path(&path, &state("first")).unwrap();
         save_workspace_path(&path, &state("second")).unwrap();
-        assert_eq!(read_workspace(&backup_path(&path)).unwrap().sessions[0].name, "first");
+        assert_eq!(
+            read_workspace(&backup_path(&path)).unwrap().sessions[0].name,
+            "first"
+        );
         assert_eq!(read_workspace(&path).unwrap().sessions[0].name, "second");
         let _ = fs::remove_dir_all(directory);
     }

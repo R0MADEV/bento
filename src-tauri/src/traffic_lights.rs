@@ -13,19 +13,27 @@ pub fn set_traffic_lights_visible(window: tauri::WebviewWindow, visible: bool) {
 
 #[cfg(target_os = "macos")]
 fn set_visible_macos(window: &tauri::WebviewWindow, visible: bool) {
-    use objc::{msg_send, sel, sel_impl, runtime::Object};
+    use objc::{msg_send, runtime::Object, sel, sel_impl};
 
     // Tauri 2 exposes the NSWindow pointer directly via Window::ns_window().
     // WebviewWindow delegates to Window internally.
-    let Ok(ns_window) = window.ns_window() else { return };
+    let Ok(ns_window) = window.ns_window() else {
+        return;
+    };
     let ns_window = ns_window as *mut Object;
 
     // NSWindowButton constants: Close=0, Miniaturize=1, Zoom=2
     for button_kind in 0usize..=2 {
         unsafe {
             let btn: *mut Object = msg_send![ns_window, standardWindowButton: button_kind];
-            if btn.is_null() { continue; }
-            let hidden: objc::runtime::BOOL = if visible { objc::runtime::NO } else { objc::runtime::YES };
+            if btn.is_null() {
+                continue;
+            }
+            let hidden: objc::runtime::BOOL = if visible {
+                objc::runtime::NO
+            } else {
+                objc::runtime::YES
+            };
             let _: () = msg_send![btn, setHidden: hidden];
         }
     }

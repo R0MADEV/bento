@@ -21,13 +21,21 @@ fn login_shell_output(cmd: &str) -> Option<String> {
 // The docker executable: bare `docker` when it's on PATH (Linux/Windows GUI apps
 // inherit it), else the path resolved via a login shell (the macOS case).
 pub fn docker_bin() -> Option<String> {
-    let on_path = Command::new("docker").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    let on_path = Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     if on_path {
         return Some("docker".into());
     }
     let path = login_shell_output("command -v docker")?;
     let path = path.trim().to_string();
-    if path.is_empty() { None } else { Some(path) }
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 pub fn docker_output(args: &[&str]) -> Option<String> {
@@ -43,7 +51,9 @@ pub fn docker_output(args: &[&str]) -> Option<String> {
 // else before using one in a command.
 pub fn is_safe_container(name: &str) -> bool {
     !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
 // These shell out to docker, which can take seconds (restart stops + starts the
@@ -64,7 +74,10 @@ fn docker_action(action: &str, id: &str) -> Result<(), String> {
         return Err("contenedor inválido".into());
     }
     let bin = docker_bin().ok_or("docker no encontrado")?;
-    let out = Command::new(bin).args([action, id]).output().map_err(|e| e.to_string())?;
+    let out = Command::new(bin)
+        .args([action, id])
+        .output()
+        .map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -100,7 +113,10 @@ pub async fn docker_logs(id: String, tail: u32) -> Result<String, String> {
         }
         let bin = docker_bin().ok_or("docker no encontrado")?;
         let tail = tail.to_string();
-        let out = Command::new(bin).args(["logs", "--tail", &tail, &id]).output().map_err(|e| e.to_string())?;
+        let out = Command::new(bin)
+            .args(["logs", "--tail", &tail, &id])
+            .output()
+            .map_err(|e| e.to_string())?;
         // docker writes container logs to both stdout and stderr; show both.
         let mut combined = String::from_utf8_lossy(&out.stdout).to_string();
         combined.push_str(&String::from_utf8_lossy(&out.stderr));
@@ -125,7 +141,12 @@ fn pipe_lines(reader: impl Read + Send + 'static, app: AppHandle, event: String)
 }
 
 #[tauri::command]
-pub fn docker_logs_follow(id: String, tail: u32, app: AppHandle, state: tauri::State<LogStreams>) -> Result<(), String> {
+pub fn docker_logs_follow(
+    id: String,
+    tail: u32,
+    app: AppHandle,
+    state: tauri::State<LogStreams>,
+) -> Result<(), String> {
     if !is_safe_container(&id) {
         return Err("contenedor inválido".into());
     }
@@ -170,8 +191,12 @@ pub fn docker_exec_argv(container: String) -> Result<Vec<String>, String> {
     let bin = docker_bin().ok_or("docker no encontrado")?;
     // Prefer bash (Tab completion via readline); fall back to sh when it's absent.
     Ok(vec![
-        bin, "exec".into(), "-it".into(), container,
-        "sh".into(), "-c".into(),
+        bin,
+        "exec".into(),
+        "-it".into(),
+        container,
+        "sh".into(),
+        "-c".into(),
         "command -v bash >/dev/null 2>&1 && exec bash || exec sh".into(),
     ])
 }
@@ -200,7 +225,11 @@ pub struct IsolateResult {
 // subnet_prefix: "10.189.4" (without the .0/24 part).
 fn parse_compose_info(content: &str) -> Option<(String, String, Vec<ComposeService>)> {
     #[derive(PartialEq)]
-    enum Section { Other, Services, Networks }
+    enum Section {
+        Other,
+        Services,
+        Networks,
+    }
 
     let mut section = Section::Other;
     let mut current_service: Option<String> = None;
@@ -211,7 +240,11 @@ fn parse_compose_info(content: &str) -> Option<(String, String, Vec<ComposeServi
 
     for line in content.lines() {
         // Top-level section key: non-indented, non-empty, ends with ':'
-        if !line.starts_with(' ') && !line.starts_with('\t') && line.ends_with(':') && !line.starts_with('#') {
+        if !line.starts_with(' ')
+            && !line.starts_with('\t')
+            && line.ends_with(':')
+            && !line.starts_with('#')
+        {
             let key = line.trim_end_matches(':').trim();
             section = match key {
                 "services" => Section::Services,
@@ -253,13 +286,15 @@ fn parse_compose_info(content: &str) -> Option<(String, String, Vec<ComposeServi
                 } else {
                     // Subnet can appear as "subnet: x" or "- subnet: x" (YAML list item)
                     let t = line.trim();
-                    let subnet_val = t.strip_prefix("subnet:")
+                    let subnet_val = t
+                        .strip_prefix("subnet:")
                         .or_else(|| t.strip_prefix("- subnet:"));
                     if let Some(rest) = subnet_val {
                         if let Some(without_mask) = rest.trim().split('/').next() {
                             let parts: Vec<&str> = without_mask.split('.').collect();
                             if parts.len() == 4 && subnet_prefix.is_none() {
-                                subnet_prefix = Some(format!("{}.{}.{}", parts[0], parts[1], parts[2]));
+                                subnet_prefix =
+                                    Some(format!("{}.{}.{}", parts[0], parts[1], parts[2]));
                             }
                         }
                     }
@@ -281,21 +316,35 @@ fn get_actual_host_port(container_name: &str, internal_port: u16) -> Option<u16>
     let format = "{{json .HostConfig.PortBindings}}";
     let out = Command::new(&bin)
         .args(["inspect", "--format", format, container_name])
-        .output().ok().filter(|o| o.status.success())?;
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
     let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
     // Parse: {"3000/tcp":[{"HostIp":"","HostPort":"20231"}], ...}
     let key = format!("{}/tcp", internal_port);
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    v.get(&key)?.as_array()?.first()?
-        .get("HostPort")?.as_str()?
-        .parse().ok()
+    v.get(&key)?
+        .as_array()?
+        .first()?
+        .get("HostPort")?
+        .as_str()?
+        .parse()
+        .ok()
 }
 
 // for images that listen on ports without declaring EXPOSE in their Dockerfile.
 fn get_exposed_ports(container_name: &str) -> Vec<u16> {
-    let bin = match docker_bin() { Some(b) => b, None => return vec![] };
+    let bin = match docker_bin() {
+        Some(b) => b,
+        None => return vec![],
+    };
     let out = match Command::new(&bin)
-        .args(["inspect", "--format", "{{json .Config.ExposedPorts}}", container_name])
+        .args([
+            "inspect",
+            "--format",
+            "{{json .Config.ExposedPorts}}",
+            container_name,
+        ])
         .output()
     {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
@@ -303,7 +352,9 @@ fn get_exposed_ports(container_name: &str) -> Vec<u16> {
     };
     let mut ports = vec![];
     for part in out.split('"') {
-        let stripped = part.strip_suffix("/tcp").or_else(|| part.strip_suffix("/udp"));
+        let stripped = part
+            .strip_suffix("/tcp")
+            .or_else(|| part.strip_suffix("/udp"));
         if let Some(port_str) = stripped {
             if let Ok(p) = port_str.parse::<u16>() {
                 ports.push(p);
@@ -328,10 +379,18 @@ fn get_exposed_ports(container_name: &str) -> Vec<u16> {
         for line in raw.lines().skip(1) {
             let mut cols = line.split_whitespace();
             let _sl = cols.next();
-            let local = match cols.next() { Some(v) => v, None => continue };
+            let local = match cols.next() {
+                Some(v) => v,
+                None => continue,
+            };
             cols.next(); // remote_address
-            let state = match cols.next() { Some(v) => v, None => continue };
-            if state != "0A" { continue; }
+            let state = match cols.next() {
+                Some(v) => v,
+                None => continue,
+            };
+            if state != "0A" {
+                continue;
+            }
             if let Some(port_hex) = local.rsplit(':').next() {
                 if let Ok(p) = u16::from_str_radix(port_hex, 16) {
                     // Skip ephemeral ports (>= 32768) — these are HMR sockets,
@@ -354,8 +413,16 @@ fn get_vite_base_path(container_name: &str) -> Option<String> {
     let bin = docker_bin()?;
     // Find the PID of the running Vite process.
     let pgrep_out = Command::new(&bin)
-        .args(["exec", container_name, "pgrep", "-f", "node_modules/.bin/vite"])
-        .output().ok().filter(|o| o.status.success())?;
+        .args([
+            "exec",
+            container_name,
+            "pgrep",
+            "-f",
+            "node_modules/.bin/vite",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
     let pid = String::from_utf8_lossy(&pgrep_out.stdout)
         .lines()
         .map(str::trim)
@@ -363,16 +430,27 @@ fn get_vite_base_path(container_name: &str) -> Option<String> {
         .map(String::from)?;
     // Resolve the working directory of that process.
     let cwd_out = Command::new(&bin)
-        .args(["exec", container_name, "readlink", &format!("/proc/{}/cwd", pid)])
-        .output().ok().filter(|o| o.status.success())?;
+        .args([
+            "exec",
+            container_name,
+            "readlink",
+            &format!("/proc/{}/cwd", pid),
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
     let cwd = String::from_utf8_lossy(&cwd_out.stdout).trim().to_string();
-    if cwd.is_empty() { return None; }
+    if cwd.is_empty() {
+        return None;
+    }
     // Try vite.config.ts then vite.config.js from the working directory.
     for config_name in &["vite.config.ts", "vite.config.js"] {
         let config_path = format!("{}/{}", cwd, config_name);
         let cat_out = Command::new(&bin)
             .args(["exec", container_name, "cat", &config_path])
-            .output().ok().filter(|o| o.status.success());
+            .output()
+            .ok()
+            .filter(|o| o.status.success());
         let content = match cat_out {
             Some(o) => String::from_utf8_lossy(&o.stdout).to_string(),
             None => continue,
@@ -380,10 +458,17 @@ fn get_vite_base_path(container_name: &str) -> Option<String> {
         for line in content.lines() {
             let t = line.trim();
             // Match: const base = '/brand/';  or  base: '/brand/',
-            let rest = if let Some(r) = t.strip_prefix("const base = ") { r }
-                       else if let Some(r) = t.strip_prefix("base:") { r.trim() }
-                       else { continue };
-            let path = rest.trim().trim_end_matches([',', ';']).trim_matches(|c: char| c == '\'' || c == '"');
+            let rest = if let Some(r) = t.strip_prefix("const base = ") {
+                r
+            } else if let Some(r) = t.strip_prefix("base:") {
+                r.trim()
+            } else {
+                continue;
+            };
+            let path = rest
+                .trim()
+                .trim_end_matches([',', ';'])
+                .trim_matches(|c: char| c == '\'' || c == '"');
             if !path.is_empty() && path.starts_with('/') && path != "/" {
                 return Some(path.to_string());
             }
@@ -426,7 +511,9 @@ fn probe_http_path(host_port: u16) -> String {
     if reader.read_line(&mut status_line).is_err() {
         return String::new();
     }
-    let status: u16 = status_line.split_whitespace().nth(1)
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -437,13 +524,16 @@ fn probe_http_path(host_port: u16) -> String {
         let mut line = String::new();
         while reader.read_line(&mut line).unwrap_or(0) > 0 {
             let trimmed = line.trim();
-            if trimmed.is_empty() { break; }
+            if trimmed.is_empty() {
+                break;
+            }
             if let Some(loc) = trimmed.strip_prefix("Location:") {
                 let loc = loc.trim();
                 if loc.starts_with('/') {
                     return loc.to_string();
                 }
-                let after_scheme = loc.strip_prefix("http://")
+                let after_scheme = loc
+                    .strip_prefix("http://")
                     .or_else(|| loc.strip_prefix("https://"))
                     .unwrap_or("");
                 if let Some(slash_idx) = after_scheme.find('/') {
@@ -468,7 +558,13 @@ fn get_docker_used_subnets() -> Vec<String> {
     let mut subnets = vec![];
     for id in ids.lines().map(str::trim).filter(|s| !s.is_empty()) {
         if let Ok(out) = Command::new(&bin)
-            .args(["network", "inspect", "--format", "{{range .IPAM.Config}}{{.Subnet}}|{{end}}", id])
+            .args([
+                "network",
+                "inspect",
+                "--format",
+                "{{range .IPAM.Config}}{{.Subnet}}|{{end}}",
+                id,
+            ])
             .output()
         {
             for part in String::from_utf8_lossy(&out.stdout).split('|') {
@@ -493,7 +589,9 @@ fn get_sibling_override_subnets(worktree_path: &str) -> Vec<String> {
     if let Ok(entries) = std::fs::read_dir(parent) {
         for entry in entries.flatten() {
             let override_file = entry.path().join("docker-compose.override.yml");
-            if override_file == std::path::Path::new(worktree_path).join("docker-compose.override.yml") {
+            if override_file
+                == std::path::Path::new(worktree_path).join("docker-compose.override.yml")
+            {
                 continue; // skip the worktree we're about to write
             }
             if let Ok(content) = std::fs::read_to_string(override_file) {
@@ -596,14 +694,16 @@ pub async fn docker_compose_isolate(worktree_path: String) -> Result<IsolateResu
         // containers can resolve the gitdir pointer (needed for yarn install).
         let git_file = format!("{}/.git", worktree_path);
         let git_volume_line = if std::path::Path::new(&git_file).is_file() {
-            std::fs::read_to_string(&git_file).ok()
+            std::fs::read_to_string(&git_file)
+                .ok()
                 .and_then(|c| {
-                    c.lines().find_map(|l| l.strip_prefix("gitdir:").map(|s| s.trim().to_string()))
+                    c.lines()
+                        .find_map(|l| l.strip_prefix("gitdir:").map(|s| s.trim().to_string()))
                 })
                 .and_then(|gitdir| {
                     std::path::Path::new(&gitdir)
-                        .parent()  // worktrees/
-                        .and_then(|p| p.parent())  // .git/
+                        .parent() // worktrees/
+                        .and_then(|p| p.parent()) // .git/
                         .and_then(|p| p.to_str())
                         .map(|main_git| format!("      - {}:{}:ro\n", main_git, main_git))
                 })
@@ -615,20 +715,22 @@ pub async fn docker_compose_isolate(worktree_path: String) -> Result<IsolateResu
         // exists — avoids regenerating a new subnet (and thus new ports) every
         // time the button is clicked while containers are running.
         let override_path_check = format!("{}/docker-compose.override.yml", worktree_path);
-        let existing_prefix = std::fs::read_to_string(&override_path_check).ok()
+        let existing_prefix = std::fs::read_to_string(&override_path_check)
+            .ok()
             .and_then(|c| {
-                c.lines()
-                    .find_map(|l| {
-                        let t = l.trim();
-                        let s = t.strip_prefix("- subnet:").or_else(|| t.strip_prefix("subnet:"))?;
-                        let without_mask = s.trim().split('/').next()?;
-                        let parts: Vec<&str> = without_mask.split('.').collect();
-                        if parts.len() == 4 {
-                            Some(format!("{}.{}.{}", parts[0], parts[1], parts[2]))
-                        } else {
-                            None
-                        }
-                    })
+                c.lines().find_map(|l| {
+                    let t = l.trim();
+                    let s = t
+                        .strip_prefix("- subnet:")
+                        .or_else(|| t.strip_prefix("subnet:"))?;
+                    let without_mask = s.trim().split('/').next()?;
+                    let parts: Vec<&str> = without_mask.split('.').collect();
+                    if parts.len() == 4 {
+                        Some(format!("{}.{}.{}", parts[0], parts[1], parts[2]))
+                    } else {
+                        None
+                    }
+                })
             });
 
         let new_prefix = match existing_prefix {
@@ -638,8 +740,18 @@ pub async fn docker_compose_isolate(worktree_path: String) -> Result<IsolateResu
         };
         let new_subnet = format!("{}.0/24", new_prefix);
 
-        let base_third: u16 = old_prefix.split('.').nth(2).unwrap_or("0").parse().unwrap_or(0);
-        let new_third: u16 = new_prefix.split('.').nth(2).unwrap_or("0").parse().unwrap_or(0);
+        let base_third: u16 = old_prefix
+            .split('.')
+            .nth(2)
+            .unwrap_or("0")
+            .parse()
+            .unwrap_or(0);
+        let new_third: u16 = new_prefix
+            .split('.')
+            .nth(2)
+            .unwrap_or("0")
+            .parse()
+            .unwrap_or(0);
         let subnet_offset = new_third.saturating_sub(base_third);
 
         let mut yaml = format!(
@@ -659,7 +771,9 @@ pub async fn docker_compose_isolate(worktree_path: String) -> Result<IsolateResu
             let host_port_base = 20000 + subnet_offset * 100 + last_octet;
 
             // Discover internal ports by inspecting the main stack container
-            let exposed = svc.container_name.as_deref()
+            let exposed = svc
+                .container_name
+                .as_deref()
                 .map(get_exposed_ports)
                 .unwrap_or_default();
 
@@ -673,12 +787,16 @@ pub async fn docker_compose_isolate(worktree_path: String) -> Result<IsolateResu
                 // not the main stack container — the worktree one is the running instance.
                 // 1. Vite config detection (reads base from vite.config.{ts,js})
                 // 2. HTTP probe on the primary mapped port (generic fallback)
-                let actual_first_port = get_actual_host_port(&new_container, exposed[0])
-                    .unwrap_or(host_port_base);
+                let actual_first_port =
+                    get_actual_host_port(&new_container, exposed[0]).unwrap_or(host_port_base);
                 let url_base = get_vite_base_path(&new_container)
                     .or_else(|| {
                         let p = probe_http_path(actual_first_port);
-                        if p.is_empty() { None } else { Some(p) }
+                        if p.is_empty() {
+                            None
+                        } else {
+                            Some(p)
+                        }
                     })
                     .unwrap_or_default();
                 yaml.push_str("    ports:\n");
@@ -710,7 +828,10 @@ pub async fn docker_compose_isolate(worktree_path: String) -> Result<IsolateResu
 
         ensure_global_gitignore("docker-compose.override.yml");
 
-        Ok(IsolateResult { subnet: new_subnet, urls })
+        Ok(IsolateResult {
+            subnet: new_subnet,
+            urls,
+        })
     })
     .await
     .map_err(|e| e.to_string())?

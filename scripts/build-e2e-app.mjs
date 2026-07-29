@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { npmRunInvocation } from './lib/crossPlatformProcess.mjs'
 
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const cargo = process.platform === 'win32' ? 'cargo.exe' : 'cargo'
 const override = {
   productName: 'bento-e2e',
@@ -29,7 +29,8 @@ function run(command, args, env = process.env) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
-run(npm, ['run', 'build'])
+const npmBuild = npmRunInvocation('build')
+run(npmBuild.command, npmBuild.args)
 run(cargo, ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'e2e'], {
   ...process.env,
   TAURI_CONFIG: JSON.stringify(override),

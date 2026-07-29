@@ -26,7 +26,12 @@ fn read_jsonl(path: &Path) -> Vec<Value> {
     fs::read_to_string(path)
         .ok()
         .into_iter()
-        .flat_map(|text| text.lines().map(str::trim).map(str::to_string).collect::<Vec<_>>())
+        .flat_map(|text| {
+            text.lines()
+                .map(str::trim)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
         .filter(|line| !line.is_empty())
         .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
         .collect()
@@ -37,7 +42,11 @@ fn short(text: &str, max: usize) -> String {
     if clean.chars().count() <= max {
         return clean;
     }
-    clean.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+    clean
+        .chars()
+        .take(max.saturating_sub(1))
+        .collect::<String>()
+        + "…"
 }
 
 fn push_unique(list: &mut Vec<String>, value: String) {
@@ -51,7 +60,10 @@ fn sanitize_project_path(project_path: &str) -> String {
 }
 
 #[tauri::command]
-pub fn memory_import_claude(project_path: String, limit: Option<usize>) -> Result<Vec<ImportedMemory>, String> {
+pub fn memory_import_claude(
+    project_path: String,
+    limit: Option<usize>,
+) -> Result<Vec<ImportedMemory>, String> {
     let dir = home_dir()?
         .join(".claude")
         .join("projects")
@@ -73,7 +85,11 @@ pub fn memory_import_claude(project_path: String, limit: Option<usize>) -> Resul
         let mut files = Vec::new();
         for row in rows {
             if created_at.is_empty() {
-                created_at = row.get("timestamp").and_then(Value::as_str).unwrap_or("").to_string();
+                created_at = row
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
             }
             if row.get("type").and_then(Value::as_str) == Some("user") && first_user.is_empty() {
                 if let Some(text) = row.pointer("/message/content").and_then(Value::as_str) {
@@ -113,7 +129,10 @@ pub fn memory_import_claude(project_path: String, limit: Option<usize>) -> Resul
         if first_user.is_empty() && last_assistant.is_empty() {
             continue;
         }
-        let session_id = path.file_stem().and_then(|name| name.to_str()).unwrap_or("claude-session");
+        let session_id = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("claude-session");
         out.push(ImportedMemory {
             title: short(&first_user, 80),
             summary: short(&last_assistant, 240),
@@ -134,17 +153,41 @@ fn codex_session_meta_matches(row: &Value, project_path: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn memory_import_codex(project_path: String, limit: Option<usize>) -> Result<Vec<ImportedMemory>, String> {
+pub fn memory_import_codex(
+    project_path: String,
+    limit: Option<usize>,
+) -> Result<Vec<ImportedMemory>, String> {
     let base = home_dir()?.join(".codex").join("sessions");
     let mut session_files = Vec::new();
     for year in fs::read_dir(&base).map_err(|_| "No existe historial de Codex".to_string())? {
-        let year = match year { Ok(v) => v.path(), Err(_) => continue };
-        for month in match fs::read_dir(&year) { Ok(v) => v, Err(_) => continue } {
-            let month = match month { Ok(v) => v.path(), Err(_) => continue };
-            for day in match fs::read_dir(&month) { Ok(v) => v, Err(_) => continue } {
-                let day = match day { Ok(v) => v.path(), Err(_) => continue };
-                for file in match fs::read_dir(&day) { Ok(v) => v, Err(_) => continue } {
-                    let path = match file { Ok(v) => v.path(), Err(_) => continue };
+        let year = match year {
+            Ok(v) => v.path(),
+            Err(_) => continue,
+        };
+        for month in match fs::read_dir(&year) {
+            Ok(v) => v,
+            Err(_) => continue,
+        } {
+            let month = match month {
+                Ok(v) => v.path(),
+                Err(_) => continue,
+            };
+            for day in match fs::read_dir(&month) {
+                Ok(v) => v,
+                Err(_) => continue,
+            } {
+                let day = match day {
+                    Ok(v) => v.path(),
+                    Err(_) => continue,
+                };
+                for file in match fs::read_dir(&day) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                } {
+                    let path = match file {
+                        Ok(v) => v.path(),
+                        Err(_) => continue,
+                    };
                     if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
                         session_files.push(path);
                     }
@@ -158,7 +201,10 @@ pub fn memory_import_codex(project_path: String, limit: Option<usize>) -> Result
     let mut out = Vec::new();
     for path in session_files {
         let rows = read_jsonl(&path);
-        if !rows.iter().any(|row| codex_session_meta_matches(row, &project_path)) {
+        if !rows
+            .iter()
+            .any(|row| codex_session_meta_matches(row, &project_path))
+        {
             continue;
         }
         let mut first_user = String::new();
@@ -166,10 +212,17 @@ pub fn memory_import_codex(project_path: String, limit: Option<usize>) -> Result
         let mut created_at = String::new();
         for row in &rows {
             if created_at.is_empty() {
-                created_at = row.get("timestamp").and_then(Value::as_str).unwrap_or("").to_string();
+                created_at = row
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
             }
             if first_user.is_empty() {
-                if let Some(text) = row.pointer("/payload/content/0/text").and_then(Value::as_str) {
+                if let Some(text) = row
+                    .pointer("/payload/content/0/text")
+                    .and_then(Value::as_str)
+                {
                     if row.pointer("/payload/role").and_then(Value::as_str) == Some("user") {
                         first_user = text.to_string();
                     }
@@ -177,14 +230,18 @@ pub fn memory_import_codex(project_path: String, limit: Option<usize>) -> Result
                 if first_user.is_empty() {
                     if let Some(text) = row.pointer("/payload/message").and_then(Value::as_str) {
                         if row.get("type").and_then(Value::as_str) == Some("event_msg")
-                            && row.pointer("/payload/type").and_then(Value::as_str) == Some("user_message")
+                            && row.pointer("/payload/type").and_then(Value::as_str)
+                                == Some("user_message")
                         {
                             first_user = text.to_string();
                         }
                     }
                 }
             }
-            if let Some(text) = row.pointer("/payload/content/0/text").and_then(Value::as_str) {
+            if let Some(text) = row
+                .pointer("/payload/content/0/text")
+                .and_then(Value::as_str)
+            {
                 if row.pointer("/payload/role").and_then(Value::as_str) == Some("assistant") {
                     last_assistant = text.to_string();
                 }
@@ -200,7 +257,10 @@ pub fn memory_import_codex(project_path: String, limit: Option<usize>) -> Result
         if first_user.is_empty() && last_assistant.is_empty() {
             continue;
         }
-        let session_id = path.file_stem().and_then(|name| name.to_str()).unwrap_or("codex-session");
+        let session_id = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("codex-session");
         out.push(ImportedMemory {
             title: short(&first_user, 80),
             summary: short(&last_assistant, 240),

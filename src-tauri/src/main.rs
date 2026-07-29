@@ -1,13 +1,16 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
-mod db;
 mod command_error;
+mod db;
 mod docker;
 mod git;
 mod git_paths;
 mod jira;
-mod memory_import;
 mod memory;
+mod memory_import;
 mod memory_sources;
 mod notes;
 mod pty;
@@ -54,7 +57,8 @@ async fn http_request(
     headers: Vec<(String, String)>,
     body: Option<String>,
 ) -> Result<HttpResponse, String> {
-    let m = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|e| e.to_string())?;
+    let m =
+        reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|e| e.to_string())?;
     let mut req = reqwest::Client::new().request(m, &url);
     for (k, v) in &headers {
         if !k.is_empty() {
@@ -75,7 +79,12 @@ async fn http_request(
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
     let body = res.text().await.map_err(|e| e.to_string())?;
-    Ok(HttpResponse { status, status_text, headers: resp_headers, body })
+    Ok(HttpResponse {
+        status,
+        status_text,
+        headers: resp_headers,
+        body,
+    })
 }
 
 // macOS binds Cmd+Z to the native Edit > Undo menu item, whose undo is broken in

@@ -72,7 +72,10 @@ pub struct RewritePreflight {
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/generated/bindings/")]
-pub struct FetchInfo { #[ts(type = "number")] fetched_at: u64 }
+pub struct FetchInfo {
+    #[ts(type = "number")]
+    fetched_at: u64,
+}
 
 #[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -173,7 +176,11 @@ fn git_bin() -> Option<String> {
     }
     let path = login_shell_output("command -v git")?;
     let path = path.trim().to_string();
-    if path.is_empty() { None } else { Some(path) }
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 fn git_output(repo: &str, args: &[&str]) -> Result<String, String> {
@@ -191,20 +198,38 @@ fn git_output(repo: &str, args: &[&str]) -> Result<String, String> {
 }
 
 fn parse_worktrees(raw: &str) -> Vec<WorktreeInfo> {
-    raw.trim().split("\n\n").filter_map(|block| {
-        let mut path = None;
-        let mut head = None;
-        let mut branch = None;
-        let mut bare = false;
-        for line in block.lines() {
-            if let Some(value) = line.strip_prefix("worktree ") { path = Some(value.to_string()); }
-            if let Some(value) = line.strip_prefix("HEAD ") { head = Some(value.to_string()); }
-            if let Some(value) = line.strip_prefix("branch refs/heads/") { branch = Some(value.to_string()); }
-            if line == "bare" { bare = true; }
-        }
-        if bare { return None; }
-        Some(WorktreeInfo { path: path?, head: head?, branch, bare })
-    }).collect()
+    raw.trim()
+        .split("\n\n")
+        .filter_map(|block| {
+            let mut path = None;
+            let mut head = None;
+            let mut branch = None;
+            let mut bare = false;
+            for line in block.lines() {
+                if let Some(value) = line.strip_prefix("worktree ") {
+                    path = Some(value.to_string());
+                }
+                if let Some(value) = line.strip_prefix("HEAD ") {
+                    head = Some(value.to_string());
+                }
+                if let Some(value) = line.strip_prefix("branch refs/heads/") {
+                    branch = Some(value.to_string());
+                }
+                if line == "bare" {
+                    bare = true;
+                }
+            }
+            if bare {
+                return None;
+            }
+            Some(WorktreeInfo {
+                path: path?,
+                head: head?,
+                branch,
+                bare,
+            })
+        })
+        .collect()
 }
 
 fn parse_status(raw: String) -> GitStatus {
@@ -217,33 +242,48 @@ fn parse_status(raw: String) -> GitStatus {
         let bytes = line.as_bytes();
         let x = bytes.first().copied().unwrap_or(b' ');
         let y = bytes.get(1).copied().unwrap_or(b' ');
-        if x == b'?' && y == b'?' { untracked += 1; }
-        else {
-            if x != b' ' { staged += 1; }
-            if y != b' ' { unstaged += 1; }
+        if x == b'?' && y == b'?' {
+            untracked += 1;
+        } else {
+            if x != b' ' {
+                staged += 1;
+            }
+            if y != b' ' {
+                unstaged += 1;
+            }
         }
     }
-    GitStatus { raw, staged, unstaged, untracked, total }
+    GitStatus {
+        raw,
+        staged,
+        unstaged,
+        untracked,
+        total,
+    }
 }
 
 fn parse_commit_log(raw: String) -> Vec<CommitEntry> {
-    raw.lines().filter_map(|line| {
-        let mut fields = line.split('\x1f');
-        Some(CommitEntry {
-            hash: fields.next()?.to_string(),
-            short: fields.next().unwrap_or_default().to_string(),
-            subject: fields.next().unwrap_or_default().to_string(),
-            date: fields.next().unwrap_or_default().to_string(),
-            author: fields.next().unwrap_or_default().to_string(),
+    raw.lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\x1f');
+            Some(CommitEntry {
+                hash: fields.next()?.to_string(),
+                short: fields.next().unwrap_or_default().to_string(),
+                subject: fields.next().unwrap_or_default().to_string(),
+                date: fields.next().unwrap_or_default().to_string(),
+                author: fields.next().unwrap_or_default().to_string(),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 // Accepts [A-Za-z0-9._/-], rejects `..` and spaces.
 fn is_safe_branch(name: &str) -> bool {
     !name.is_empty()
         && !name.contains("..")
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
 }
 
 fn is_git_repo(path: &str) -> bool {
@@ -252,7 +292,8 @@ fn is_git_repo(path: &str) -> bool {
 
 fn current_branch(path: &str) -> Result<String, String> {
     let branch = git_output(path, &["rev-parse", "--abbrev-ref", "HEAD"])?
-        .trim().to_string();
+        .trim()
+        .to_string();
     if branch.is_empty() || branch == "HEAD" || !is_safe_branch(&branch) {
         return Err("cannot operate on detached HEAD".into());
     }
@@ -276,7 +317,15 @@ fn create_history_backup(path: &str) -> Result<String, String> {
 
     // Keep the history bounded per branch.
     let prefix = format!("refs/bento/history/{branch}");
-    if let Ok(refs) = git_output(path, &["for-each-ref", "--sort=-refname", "--format=%(refname)", &prefix]) {
+    if let Ok(refs) = git_output(
+        path,
+        &[
+            "for-each-ref",
+            "--sort=-refname",
+            "--format=%(refname)",
+            &prefix,
+        ],
+    ) {
         for old_ref in refs.lines().skip(20) {
             let _ = git_output(path, &["update-ref", "-d", old_ref]);
         }
@@ -296,13 +345,24 @@ fn apply_selected_patch(path: &str, patch: &str) -> Result<(), String> {
     git_output(path, &["reset", "--mixed", "HEAD"])?;
     let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
     let mut child = Command::new(&bin)
-        .arg("-C").arg(path)
-        .arg("apply").arg("--cached").arg("--unidiff-zero").arg("--whitespace=nowarn")
+        .arg("-C")
+        .arg(path)
+        .arg("apply")
+        .arg("--cached")
+        .arg("--unidiff-zero")
+        .arg("--whitespace=nowarn")
         .arg("-")
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .spawn().map_err(|e| e.to_string())?;
-    child.stdin.as_mut().ok_or("could not open git apply stdin")?
-        .write_all(patch.as_bytes()).map_err(|e| e.to_string())?;
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or("could not open git apply stdin")?
+        .write_all(patch.as_bytes())
+        .map_err(|e| e.to_string())?;
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         let _ = git_output(path, &["reset", "--mixed", "HEAD"]);
@@ -318,11 +378,17 @@ fn collect_worktree_diff(path: &str) -> Result<String, String> {
     let null_file = if cfg!(windows) { "NUL" } else { "/dev/null" };
     for file in untracked.lines().filter(|line| !line.is_empty()) {
         let out = Command::new(&bin)
-            .arg("-C").arg(path)
-            .arg("diff").arg("--no-index")
-            .arg("--src-prefix=a/").arg("--dst-prefix=b/")
-            .arg("--").arg(null_file).arg(file)
-            .output().map_err(|e| e.to_string())?;
+            .arg("-C")
+            .arg(path)
+            .arg("diff")
+            .arg("--no-index")
+            .arg("--src-prefix=a/")
+            .arg("--dst-prefix=b/")
+            .arg("--")
+            .arg(null_file)
+            .arg(file)
+            .output()
+            .map_err(|e| e.to_string())?;
         if out.status.code() == Some(0) || out.status.code() == Some(1) {
             combined.push_str(&String::from_utf8_lossy(&out.stdout));
         } else {
@@ -362,38 +428,57 @@ pub async fn git_rewrite_preflight(path: String, base: String) -> Result<Rewrite
             return Err(format!("unsafe base branch: {base}"));
         }
         let branch = current_branch(&path)?;
-        let dirty = !git_output(&path, &["status", "--porcelain"])?.trim().is_empty();
+        let dirty = !git_output(&path, &["status", "--porcelain"])?
+            .trim()
+            .is_empty();
         let git_dir = resolve_git_dir(&path);
-        let operation = if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-            "rebase"
-        } else if git_dir.join("MERGE_HEAD").exists() {
-            "merge"
-        } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
-            "cherry-pick"
-        } else if git_dir.join("REVERT_HEAD").exists() {
-            "revert"
-        } else {
-            ""
-        };
-        let upstream = git_output(&path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-            .unwrap_or_default().trim().to_string();
+        let operation =
+            if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+                "rebase"
+            } else if git_dir.join("MERGE_HEAD").exists() {
+                "merge"
+            } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+                "cherry-pick"
+            } else if git_dir.join("REVERT_HEAD").exists() {
+                "revert"
+            } else {
+                ""
+            };
+        let upstream = git_output(
+            &path,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        )
+        .unwrap_or_default()
+        .trim()
+        .to_string();
         let published_commits = if upstream.is_empty() {
             0
         } else {
             let range = format!("origin/{base}..@{{u}}");
             git_output(&path, &["rev-list", "--count", &range])
-                .ok().and_then(|value| value.trim().parse::<u32>().ok()).unwrap_or(0)
+                .ok()
+                .and_then(|value| value.trim().parse::<u32>().ok())
+                .unwrap_or(0)
         };
         let hooks = ["pre-rebase", "pre-commit", "commit-msg"]
-            .iter().filter(|name| git_dir.join("hooks").join(name).exists())
+            .iter()
+            .filter(|name| git_dir.join("hooks").join(name).exists())
             .map(|name| name.to_string())
             .collect::<Vec<_>>();
         let signing = git_output(&path, &["config", "--bool", "commit.gpgsign"])
-            .map(|value| value.trim() == "true").unwrap_or(false);
+            .map(|value| value.trim() == "true")
+            .unwrap_or(false);
         let protected_base = branch == base || matches!(branch.as_str(), "main" | "master");
         Ok(RewritePreflight {
-            branch, base, dirty, operation: operation.into(), upstream,
-            published_commits, protected_base, signing, hooks,
+            branch,
+            base,
+            dirty,
+            operation: operation.into(),
+            upstream,
+            published_commits,
+            protected_base,
+            signing,
+            hooks,
         })
     })
     .await
@@ -404,7 +489,10 @@ pub async fn git_rewrite_preflight(path: String, base: String) -> Result<Rewrite
 pub async fn git_default_branch(repo: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         // Try origin/HEAD first.
-        if let Ok(out) = git_output(&repo, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
+        if let Ok(out) = git_output(
+            &repo,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        ) {
             let branch = out.trim().trim_start_matches("origin/").to_string();
             if !branch.is_empty() {
                 return Ok(branch);
@@ -426,12 +514,16 @@ pub async fn git_remote_branches(repo: String) -> Result<Vec<String>, String> {
         if !is_git_repo(&repo) {
             return Err("not a git repository".into());
         }
-        let raw = git_output(&repo, &[
-            "for-each-ref",
-            "--format=%(refname:short)",
-            "refs/remotes/origin",
-        ])?;
-        Ok(raw.lines()
+        let raw = git_output(
+            &repo,
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "refs/remotes/origin",
+            ],
+        )?;
+        Ok(raw
+            .lines()
             .filter_map(|line| line.strip_prefix("origin/"))
             .filter(|branch| *branch != "HEAD" && is_safe_branch(branch))
             .map(str::to_string)
@@ -469,7 +561,12 @@ pub async fn git_worktree_add(
 }
 
 #[tauri::command]
-pub async fn git_worktree_remove(repo: String, path: String, force: bool, branch: Option<String>) -> Result<(), String> {
+pub async fn git_worktree_remove(
+    repo: String,
+    path: String,
+    force: bool,
+    branch: Option<String>,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
 
@@ -516,7 +613,12 @@ pub async fn git_worktree_remove(repo: String, path: String, force: bool, branch
 // `mode` is one of "fetch", "merge", "rebase".
 // `autostash`: stash before merge/rebase and pop after (asked by the user beforehand).
 #[tauri::command]
-pub async fn git_sync(path: String, base: String, mode: String, autostash: Option<bool>) -> Result<String, String> {
+pub async fn git_sync(
+    path: String,
+    base: String,
+    mode: String,
+    autostash: Option<bool>,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_safe_branch(&base) {
             return Err(format!("unsafe base branch: {base}"));
@@ -525,11 +627,19 @@ pub async fn git_sync(path: String, base: String, mode: String, autostash: Optio
         let target = format!("origin/{base}");
         let do_stash = autostash.unwrap_or(false);
         match mode.as_str() {
-            "fetch" => Ok(if fetched.trim().is_empty() { "Fetch completado".into() } else { fetched }),
+            "fetch" => Ok(if fetched.trim().is_empty() {
+                "Fetch completado".into()
+            } else {
+                fetched
+            }),
             "merge" => {
-                if do_stash { git_output(&path, &["stash"])?; }
+                if do_stash {
+                    git_output(&path, &["stash"])?;
+                }
                 let result = git_output(&path, &["merge", &target]);
-                if do_stash { let _ = git_output(&path, &["stash", "pop"]); }
+                if do_stash {
+                    let _ = git_output(&path, &["stash", "pop"]);
+                }
                 result
             }
             "rebase" => {
@@ -549,11 +659,9 @@ pub async fn git_sync(path: String, base: String, mode: String, autostash: Optio
 
 #[tauri::command]
 pub async fn git_diff(path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        collect_worktree_diff(&path)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || collect_worktree_diff(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // Validates that a commit message is non-empty (trust boundary: frontend input).
@@ -591,21 +699,25 @@ pub async fn git_commit(
         }
 
         let mut commit_args = vec!["commit"];
-        if do_amend { commit_args.push("--amend"); }
+        if do_amend {
+            commit_args.push("--amend");
+        }
         if is_valid_message(&message) {
             commit_args.extend(["-m", &message]);
         } else {
             commit_args.push("--no-edit");
         }
         if patch.is_none() {
-          if let Some(items) = selected {
-            commit_args.push("--only");
-            commit_args.push("--");
-            commit_args.extend(items.iter().map(String::as_str));
-          }
+            if let Some(items) = selected {
+                commit_args.push("--only");
+                commit_args.push("--");
+                commit_args.extend(items.iter().map(String::as_str));
+            }
         }
         let result = git_output(&path, &commit_args);
-        if result.is_err() && patch.is_some() { let _ = git_output(&path, &["reset", "--mixed", "HEAD"]); }
+        if result.is_err() && patch.is_some() {
+            let _ = git_output(&path, &["reset", "--mixed", "HEAD"]);
+        }
         result
     })
     .await
@@ -654,21 +766,29 @@ pub async fn git_fixup(
         let fixup_arg = format!("--fixup={target}");
         let mut commit_args = vec!["commit", fixup_arg.as_str()];
         if patch.is_none() {
-          if let Some(items) = selected {
-            commit_args.push("--only");
-            commit_args.push("--");
-            commit_args.extend(items.iter().map(String::as_str));
-          }
+            if let Some(items) = selected {
+                commit_args.push("--only");
+                commit_args.push("--");
+                commit_args.extend(items.iter().map(String::as_str));
+            }
         }
         if let Err(error) = git_output(&path, &commit_args) {
-            if patch.is_some() { let _ = git_output(&path, &["reset", "--mixed", "HEAD"]); }
-            return Err(format!("{error}\n\nNo se creó el fixup; los cambios siguen en el worktree."));
+            if patch.is_some() {
+                let _ = git_output(&path, &["reset", "--mixed", "HEAD"]);
+            }
+            return Err(format!(
+                "{error}\n\nNo se creó el fixup; los cambios siguen en el worktree."
+            ));
         }
 
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let out = Command::new(&bin)
-            .arg("-C").arg(&path)
-            .arg("rebase").arg("-i").arg("--autosquash").arg("--autostash")
+            .arg("-C")
+            .arg(&path)
+            .arg("rebase")
+            .arg("-i")
+            .arg("--autosquash")
+            .arg("--autostash")
             .arg(&base_ref)
             .env("GIT_SEQUENCE_EDITOR", "true")
             .env("GIT_EDITOR", "true")
@@ -676,7 +796,9 @@ pub async fn git_fixup(
             .map_err(|e| e.to_string())?;
 
         let rebase_dir = resolve_git_dir(&path).join("rebase-merge");
-        if rebase_dir.exists() { return Ok("paused".into()); }
+        if rebase_dir.exists() {
+            return Ok("paused".into());
+        }
         if !out.status.success() {
             // The fixup commit exists but no recoverable rebase is active.
             // Return to the pre-operation commit with --mixed so every file
@@ -708,7 +830,11 @@ pub async fn git_branch_rename(path: String, new_name: String) -> Result<(), Str
 
 // Returns newline-separated entries: "<hash>\x1f<short>\x1f<subject>\x1f<date>\x1f<author>"
 #[tauri::command]
-pub async fn git_log(path: String, limit: u32, no_merges: Option<bool>) -> Result<Vec<CommitEntry>, String> {
+pub async fn git_log(
+    path: String,
+    limit: u32,
+    no_merges: Option<bool>,
+) -> Result<Vec<CommitEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let n = limit.clamp(1, 200).to_string();
         let mut args = vec![
@@ -717,7 +843,9 @@ pub async fn git_log(path: String, limit: u32, no_merges: Option<bool>) -> Resul
             "--format=%H\x1f%h\x1f%s\x1f%ad\x1f%an".to_string(),
             "--date=relative".to_string(),
         ];
-        if no_merges.unwrap_or(false) { args.push("--no-merges".to_string()); }
+        if no_merges.unwrap_or(false) {
+            args.push("--no-merges".to_string());
+        }
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         git_output(&path, &refs).map(parse_commit_log)
     })
@@ -728,12 +856,24 @@ pub async fn git_log(path: String, limit: u32, no_merges: Option<bool>) -> Resul
 #[tauri::command]
 pub async fn git_graph(path: String, base: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
+        if !is_safe_branch(&base) {
+            return Err(format!("unsafe base branch: {base}"));
+        }
         let base_ref = format!("origin/{base}");
-        git_output(&path, &[
-            "log", "--graph", "--decorate", "--oneline", "--date-order", "--boundary", "-100",
-            &base_ref, "HEAD",
-        ])
+        git_output(
+            &path,
+            &[
+                "log",
+                "--graph",
+                "--decorate",
+                "--oneline",
+                "--date-order",
+                "--boundary",
+                "-100",
+                &base_ref,
+                "HEAD",
+            ],
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -749,14 +889,18 @@ pub async fn git_rebase_log(path: String, base: String) -> Result<Vec<CommitEntr
         }
         let target = format!("origin/{base}");
         let range = format!("{target}..HEAD");
-        git_output(&path, &[
-            "log",
-            "--reverse",
-            "--no-merges",
-            "--format=%H\x1f%h\x1f%s\x1f%ad\x1f%an",
-            "--date=relative",
-            &range,
-        ]).map(parse_commit_log)
+        git_output(
+            &path,
+            &[
+                "log",
+                "--reverse",
+                "--no-merges",
+                "--format=%H\x1f%h\x1f%s\x1f%ad\x1f%an",
+                "--date=relative",
+                &range,
+            ],
+        )
+        .map(parse_commit_log)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -765,12 +909,22 @@ pub async fn git_rebase_log(path: String, base: String) -> Result<Vec<CommitEntr
 #[tauri::command]
 pub async fn git_merge_log(path: String, base: String) -> Result<Vec<CommitEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
+        if !is_safe_branch(&base) {
+            return Err(format!("unsafe base branch: {base}"));
+        }
         let range = format!("origin/{base}..HEAD");
-        git_output(&path, &[
-            "log", "--reverse", "--merges",
-            "--format=%H\x1f%h\x1f%s\x1f%ad\x1f%an", "--date=relative", &range,
-        ]).map(parse_commit_log)
+        git_output(
+            &path,
+            &[
+                "log",
+                "--reverse",
+                "--merges",
+                "--format=%H\x1f%h\x1f%s\x1f%ad\x1f%an",
+                "--date=relative",
+                &range,
+            ],
+        )
+        .map(parse_commit_log)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -804,7 +958,11 @@ pub async fn git_push(path: String, force_with_lease: Option<bool>) -> Result<St
             return Err("cannot push: detached HEAD".into());
         }
 
-        let has_upstream = git_output(&path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok();
+        let has_upstream = git_output(
+            &path,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        )
+        .is_ok();
 
         let mut cmd = Command::new(&bin);
         cmd.arg("-C").arg(&path).arg("push");
@@ -827,24 +985,51 @@ pub async fn git_push(path: String, force_with_lease: Option<bool>) -> Result<St
 pub async fn git_upstream_status(path: String) -> Result<UpstreamStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let branch = current_branch(&path)?;
-        let upstream = match git_output(&path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) {
+        let upstream = match git_output(
+            &path,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ) {
             Ok(value) => value.trim().to_string(),
-            Err(_) => return Ok(UpstreamStatus {
-                branch, upstream: None, has_upstream: false,
-                state: "unpublished".into(), ahead: 0, behind: 0,
-            }),
+            Err(_) => {
+                return Ok(UpstreamStatus {
+                    branch,
+                    upstream: None,
+                    has_upstream: false,
+                    state: "unpublished".into(),
+                    ahead: 0,
+                    behind: 0,
+                })
+            }
         };
-        let counts = git_output(&path, &["rev-list", "--left-right", "--count", "@{u}...HEAD"])?;
+        let counts = git_output(
+            &path,
+            &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        )?;
         let mut parts = counts.split_whitespace();
-        let behind = parts.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-        let ahead = parts.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
-        let state = if ahead > 0 && behind > 0 { "diverged" }
-            else if behind > 0 { "behind" }
-            else if ahead > 0 { "ahead" }
-            else { "synced" };
+        let behind = parts
+            .next()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        let ahead = parts
+            .next()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        let state = if ahead > 0 && behind > 0 {
+            "diverged"
+        } else if behind > 0 {
+            "behind"
+        } else if ahead > 0 {
+            "ahead"
+        } else {
+            "synced"
+        };
         Ok(UpstreamStatus {
-            branch, upstream: Some(upstream), has_upstream: true,
-            state: state.into(), ahead, behind,
+            branch,
+            upstream: Some(upstream),
+            has_upstream: true,
+            state: state.into(),
+            ahead,
+            behind,
         })
     })
     .await
@@ -856,11 +1041,20 @@ pub async fn git_fetch_info(path: String) -> Result<FetchInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let raw_path = git_output(&path, &["rev-parse", "--git-path", "FETCH_HEAD"])?;
         let fetch_path = Path::new(raw_path.trim());
-        let absolute = if fetch_path.is_absolute() { fetch_path.to_path_buf() } else { Path::new(&path).join(fetch_path) };
-        let modified = fs::metadata(absolute).and_then(|m| m.modified()).ok()
+        let absolute = if fetch_path.is_absolute() {
+            fetch_path.to_path_buf()
+        } else {
+            Path::new(&path).join(fetch_path)
+        };
+        let modified = fs::metadata(absolute)
+            .and_then(|m| m.modified())
+            .ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_secs()).unwrap_or(0);
-        Ok(FetchInfo { fetched_at: modified })
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        Ok(FetchInfo {
+            fetched_at: modified,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -873,13 +1067,22 @@ pub async fn git_backup_status(path: String) -> Result<BackupStatus, String> {
         let backup_ref = backup_ref_for(&path)?;
         let hash = match git_output(&path, &["rev-parse", "--verify", &backup_ref]) {
             Ok(value) => value.trim().to_string(),
-            Err(_) => return Ok(BackupStatus {
-                available: false, different: None, hash: None, short: None, subject: None,
-            }),
+            Err(_) => {
+                return Ok(BackupStatus {
+                    available: false,
+                    different: None,
+                    hash: None,
+                    short: None,
+                    subject: None,
+                })
+            }
         };
-        let head = git_output(&path, &["rev-parse", "HEAD"])?.trim().to_string();
+        let head = git_output(&path, &["rev-parse", "HEAD"])?
+            .trim()
+            .to_string();
         let subject = git_output(&path, &["log", "-1", "--format=%s", &backup_ref])?
-            .trim().to_string();
+            .trim()
+            .to_string();
         Ok(BackupStatus {
             available: true,
             different: Some(hash != head),
@@ -899,21 +1102,33 @@ pub async fn git_backup_list(path: String) -> Result<Vec<BackupEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let branch = current_branch(&path)?;
         let prefix = format!("refs/bento/history/{branch}");
-        let raw = git_output(&path, &[
-            "for-each-ref",
-            "--sort=-refname",
-            "--format=%(refname)\x1f%(objectname)\x1f%(objectname:short)\x1f%(subject)",
-            &prefix,
-        ])?;
-        Ok(raw.lines().filter_map(|line| {
-            let mut parts = line.split('\x1f');
-            let reference = parts.next()?.to_string();
-            let hash = parts.next()?.to_string();
-            let short = parts.next()?.to_string();
-            let subject = parts.next().unwrap_or_default().to_string();
-            let created_at = reference.rsplit('/').next()?.parse::<u64>().ok()?;
-            Some(BackupEntry { reference, hash, short, subject, created_at })
-        }).collect())
+        let raw = git_output(
+            &path,
+            &[
+                "for-each-ref",
+                "--sort=-refname",
+                "--format=%(refname)\x1f%(objectname)\x1f%(objectname:short)\x1f%(subject)",
+                &prefix,
+            ],
+        )?;
+        Ok(raw
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split('\x1f');
+                let reference = parts.next()?.to_string();
+                let hash = parts.next()?.to_string();
+                let short = parts.next()?.to_string();
+                let subject = parts.next().unwrap_or_default().to_string();
+                let created_at = reference.rsplit('/').next()?.parse::<u64>().ok()?;
+                Some(BackupEntry {
+                    reference,
+                    hash,
+                    short,
+                    subject,
+                    created_at,
+                })
+            })
+            .collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -938,7 +1153,10 @@ pub async fn git_backup_diff(path: String, target: String) -> Result<String, Str
 #[tauri::command]
 pub async fn git_restore_backup(path: String, target: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !git_output(&path, &["status", "--porcelain"])?.trim().is_empty() {
+        if !git_output(&path, &["status", "--porcelain"])?
+            .trim()
+            .is_empty()
+        {
             return Err("cannot restore backup with uncommitted changes".into());
         }
         if resolve_git_dir(&path).join("rebase-merge").exists() {
@@ -952,8 +1170,11 @@ pub async fn git_restore_backup(path: String, target: Option<String>) -> Result<
             return Err("invalid backup reference".into());
         }
         let target_hash = git_output(&path, &["rev-parse", "--verify", &target_ref])?
-            .trim().to_string();
-        let current = git_output(&path, &["rev-parse", "HEAD"])?.trim().to_string();
+            .trim()
+            .to_string();
+        let current = git_output(&path, &["rev-parse", "HEAD"])?
+            .trim()
+            .to_string();
         // Preserve the state being left as another history entry.
         create_history_backup(&path)?;
         git_output(&path, &["update-ref", &backup_ref, &current])?;
@@ -971,7 +1192,15 @@ pub async fn git_ahead_behind(path: String, base: String) -> Result<String, Stri
             return Err(format!("unsafe base branch: {base}"));
         }
         let target = format!("origin/{base}");
-        git_output(&path, &["rev-list", "--left-right", "--count", &format!("{target}...HEAD")])
+        git_output(
+            &path,
+            &[
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("{target}...HEAD"),
+            ],
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -994,8 +1223,8 @@ pub async fn git_create_pr(path: String, base: String) -> Result<String, String>
         // Fallback: return compare URL so the frontend can open it in the browser.
         if let Ok(remote) = git_output(&path, &["remote", "get-url", "origin"]) {
             let remote = remote.trim().trim_end_matches(".git").to_string();
-            let branch = git_output(&path, &["rev-parse", "--abbrev-ref", "HEAD"])
-                .unwrap_or_default();
+            let branch =
+                git_output(&path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
             let branch = branch.trim().to_string();
             if !remote.is_empty() && !branch.is_empty() {
                 return Ok(format!("{remote}/compare/{base}...{branch}?expand=1"));
@@ -1023,7 +1252,9 @@ fn resolve_git_dir(path: &str) -> std::path::PathBuf {
 
 // Writes a temp shell script that copies its first argument to our prepared todo file.
 // Used as GIT_SEQUENCE_EDITOR so git uses our todo instead of opening $EDITOR.
-fn write_sequence_editor_script(todo_content: &str) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+fn write_sequence_editor_script(
+    todo_content: &str,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let pid = std::process::id();
     let todo_path = std::env::temp_dir().join(format!("bento-rebase-todo-{pid}.txt"));
     let extension = if cfg!(windows) { "cmd" } else { "sh" };
@@ -1031,7 +1262,10 @@ fn write_sequence_editor_script(todo_content: &str) -> Result<(std::path::PathBu
 
     fs::write(&todo_path, todo_content).map_err(|e| e.to_string())?;
     #[cfg(windows)]
-    let script = format!("@echo off\r\ncopy /Y \"{}\" \"%~1\" >NUL\r\n", todo_path.display());
+    let script = format!(
+        "@echo off\r\ncopy /Y \"{}\" \"%~1\" >NUL\r\n",
+        todo_path.display()
+    );
     #[cfg(not(windows))]
     let script = format!("#!/bin/sh\ncp '{}' \"$1\"\n", todo_path.display());
     fs::write(&script_path, &script).map_err(|e| e.to_string())?;
@@ -1050,7 +1284,11 @@ fn write_sequence_editor_script(todo_content: &str) -> Result<(std::path::PathBu
 // (e.g. ["pick abc1234 Fix login", "drop def5678 Bad commit"]).
 // If git stops at an `edit` step this returns Ok(()) — check git_rebase_status afterwards.
 #[tauri::command]
-pub async fn git_rebase_start(path: String, base: String, todo_lines: Vec<String>) -> Result<(), String> {
+pub async fn git_rebase_start(
+    path: String,
+    base: String,
+    todo_lines: Vec<String>,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_safe_branch(&base) {
             return Err(format!("unsafe base branch: {base}"));
@@ -1083,8 +1321,11 @@ pub async fn git_rebase_start(path: String, base: String, todo_lines: Vec<String
 
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let out = Command::new(&bin)
-            .arg("-C").arg(&path)
-            .arg("rebase").arg("-i").arg("--autostash")
+            .arg("-C")
+            .arg(&path)
+            .arg("rebase")
+            .arg("-i")
+            .arg("--autostash")
             .arg(&target)
             .env("GIT_SEQUENCE_EDITOR", &script_path)
             .env("GIT_EDITOR", "true") // suppress editor prompts for squash messages
@@ -1096,7 +1337,9 @@ pub async fn git_rebase_start(path: String, base: String, todo_lines: Vec<String
 
         // Check for pause BEFORE checking exit code: git may exit 0 or non-0 when paused.
         let rebase_dir = resolve_git_dir(&path).join("rebase-merge");
-        if rebase_dir.exists() { return Ok(()); }
+        if rebase_dir.exists() {
+            return Ok(());
+        }
 
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
@@ -1110,18 +1353,29 @@ pub async fn git_rebase_start(path: String, base: String, todo_lines: Vec<String
 #[tauri::command]
 pub async fn git_rebase_preserve_merges(path: String, base: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
+        if !is_safe_branch(&base) {
+            return Err(format!("unsafe base branch: {base}"));
+        }
         let target = format!("origin/{base}");
         git_output(&path, &["rev-parse", "--verify", &target])?;
         create_history_backup(&path)?;
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let out = Command::new(&bin)
-            .arg("-C").arg(&path)
-            .arg("rebase").arg("--rebase-merges").arg("--autostash").arg(&target)
+            .arg("-C")
+            .arg(&path)
+            .arg("rebase")
+            .arg("--rebase-merges")
+            .arg("--autostash")
+            .arg(&target)
             .env("GIT_EDITOR", "true")
-            .output().map_err(|e| e.to_string())?;
-        if resolve_git_dir(&path).join("rebase-merge").exists() { return Ok("paused".into()); }
-        if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).trim().to_string()); }
+            .output()
+            .map_err(|e| e.to_string())?;
+        if resolve_git_dir(&path).join("rebase-merge").exists() {
+            return Ok("paused".into());
+        }
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
         Ok("completed".into())
     })
     .await
@@ -1134,15 +1388,19 @@ pub async fn git_rebase_continue(path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let out = Command::new(&bin)
-            .arg("-C").arg(&path)
-            .arg("rebase").arg("--continue")
+            .arg("-C")
+            .arg(&path)
+            .arg("rebase")
+            .arg("--continue")
             .env("GIT_EDITOR", "true")
             .output()
             .map_err(|e| e.to_string())?;
 
         // Same pattern as git_rebase_start: check directory before exit code.
         let rebase_dir = resolve_git_dir(&path).join("rebase-merge");
-        if rebase_dir.exists() { return Ok("paused".into()); }
+        if rebase_dir.exists() {
+            return Ok("paused".into());
+        }
 
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
@@ -1171,7 +1429,10 @@ pub async fn git_rebase_split(path: String) -> Result<(), String> {
         if !rebase_dir.exists() {
             return Err("no interactive rebase is active".into());
         }
-        if !git_output(&path, &["status", "--porcelain"])?.trim().is_empty() {
+        if !git_output(&path, &["status", "--porcelain"])?
+            .trim()
+            .is_empty()
+        {
             return Err("resolve or commit the current worktree changes before splitting".into());
         }
         git_output(&path, &["reset", "--mixed", "HEAD^"]).map(|_| ())
@@ -1187,37 +1448,66 @@ pub async fn git_rebase_status(path: String) -> Result<RebaseStatus, String> {
         let rebase_dir = resolve_git_dir(&path).join("rebase-merge");
         if !rebase_dir.exists() {
             return Ok(RebaseStatus {
-                active: false, sha: None, short: None, subject: None, body: None,
-                branch: None, current: None, total: None, conflicts: Vec::new(),
+                active: false,
+                sha: None,
+                short: None,
+                subject: None,
+                body: None,
+                branch: None,
+                current: None,
+                total: None,
+                conflicts: Vec::new(),
             });
         }
         // Use HEAD directly — more reliable than stopped-sha (not always written by git).
         let sha = git_output(&path, &["rev-parse", "HEAD"])
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let short = sha.chars().take(7).collect::<String>();
         let head_name = fs::read_to_string(rebase_dir.join("head-name"))
-            .unwrap_or_default().trim().trim_start_matches("refs/heads/").to_string();
+            .unwrap_or_default()
+            .trim()
+            .trim_start_matches("refs/heads/")
+            .to_string();
         let current = fs::read_to_string(rebase_dir.join("msgnum"))
-            .unwrap_or_default().trim().parse::<u32>().unwrap_or(0);
+            .unwrap_or_default()
+            .trim()
+            .parse::<u32>()
+            .unwrap_or(0);
         let total = fs::read_to_string(rebase_dir.join("end"))
-            .unwrap_or_default().trim().parse::<u32>().unwrap_or(0);
+            .unwrap_or_default()
+            .trim()
+            .parse::<u32>()
+            .unwrap_or(0);
         // Full commit message: subject + body (separated by blank line in git output)
         let full_msg = git_output(&path, &["log", "--format=%B", "-1"])
-            .unwrap_or_default().trim().to_string();
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let subject = full_msg.lines().next().unwrap_or("").to_string();
         let body = full_msg.lines().skip(2).collect::<Vec<_>>().join("\n");
 
         // Detect conflicting files: porcelain status lines where both sides are non-clean (UU, AA, DD, AU, UA, DU, UD).
         let status_out = git_output(&path, &["status", "--porcelain"]).unwrap_or_default();
-        let conflicts: Vec<String> = status_out.lines()
-            .filter(|l| l.len() >= 2 && matches!(&l[..2], "UU" | "AA" | "DD" | "AU" | "UA" | "DU" | "UD"))
+        let conflicts: Vec<String> = status_out
+            .lines()
+            .filter(|l| {
+                l.len() >= 2 && matches!(&l[..2], "UU" | "AA" | "DD" | "AU" | "UA" | "DU" | "UD")
+            })
             .map(|l| l[3..].trim().to_string())
             .collect();
 
         Ok(RebaseStatus {
             active: true,
-            sha: Some(sha), short: Some(short), subject: Some(subject), body: Some(body),
-            branch: Some(head_name), current: Some(current), total: Some(total), conflicts,
+            sha: Some(sha),
+            short: Some(short),
+            subject: Some(subject),
+            body: Some(body),
+            branch: Some(head_name),
+            current: Some(current),
+            total: Some(total),
+            conflicts,
         })
     })
     .await
@@ -1228,13 +1518,23 @@ pub async fn git_rebase_status(path: String) -> Result<RebaseStatus, String> {
 #[tauri::command]
 pub async fn git_show_files(path: String, hash: String) -> Result<Vec<CommitFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git_output(&path, &["diff-tree", "--no-commit-id", "-r", "--name-status", &hash]).map(|raw| {
-            raw.lines().filter_map(|line| {
-                let mut fields = line.split('\t');
-                let status = fields.next()?.to_string();
-                let paths = fields.map(str::to_string).collect::<Vec<_>>();
-                if paths.is_empty() { None } else { Some(CommitFile { status, paths }) }
-            }).collect()
+        git_output(
+            &path,
+            &["diff-tree", "--no-commit-id", "-r", "--name-status", &hash],
+        )
+        .map(|raw| {
+            raw.lines()
+                .filter_map(|line| {
+                    let mut fields = line.split('\t');
+                    let status = fields.next()?.to_string();
+                    let paths = fields.map(str::to_string).collect::<Vec<_>>();
+                    if paths.is_empty() {
+                        None
+                    } else {
+                        Some(CommitFile { status, paths })
+                    }
+                })
+                .collect()
         })
     })
     .await
@@ -1243,7 +1543,11 @@ pub async fn git_show_files(path: String, hash: String) -> Result<Vec<CommitFile
 
 // Shows the patch introduced by one commit, optionally limited to one file.
 #[tauri::command]
-pub async fn git_show_commit_diff(path: String, hash: String, file: Option<String>) -> Result<String, String> {
+pub async fn git_show_commit_diff(
+    path: String,
+    hash: String,
+    file: Option<String>,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut args = vec![
             "show",
@@ -1285,22 +1589,34 @@ pub async fn git_show_file(path: String, hash: String, file: String) -> Result<S
 // Scores task commits by how often they appear in the selected files' history.
 // Format: full-hash<US>score<US>comma-separated-files
 #[tauri::command]
-pub async fn git_recommend_commits(path: String, base: String, files: Vec<String>) -> Result<Vec<CommitRecommendation>, String> {
+pub async fn git_recommend_commits(
+    path: String,
+    base: String,
+    files: Vec<String>,
+) -> Result<Vec<CommitRecommendation>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
+        if !is_safe_branch(&base) {
+            return Err(format!("unsafe base branch: {base}"));
+        }
         let range = format!("origin/{base}..HEAD");
         let mut scores = std::collections::HashMap::<String, (u32, Vec<String>)>::new();
         for file in files.iter().take(200) {
-            let history = git_output(&path, &["log", "--format=%H", &range, "--", file]).unwrap_or_default();
+            let history =
+                git_output(&path, &["log", "--format=%H", &range, "--", file]).unwrap_or_default();
             for hash in history.lines() {
                 let entry = scores.entry(hash.to_string()).or_insert((0, Vec::new()));
                 entry.0 += 1;
-                if !entry.1.contains(file) { entry.1.push(file.clone()); }
+                if !entry.1.contains(file) {
+                    entry.1.push(file.clone());
+                }
             }
         }
         let mut rows: Vec<_> = scores.into_iter().collect();
-        rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-        Ok(rows.into_iter().map(|(hash, (score, files))| CommitRecommendation { hash, score, files }).collect())
+        rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        Ok(rows
+            .into_iter()
+            .map(|(hash, (score, files))| CommitRecommendation { hash, score, files })
+            .collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1309,23 +1625,45 @@ pub async fn git_recommend_commits(path: String, base: String, files: Vec<String
 // Attributes the original line ranges touched by an incoming patch to task
 // commits using git blame. Same output format as git_recommend_commits.
 #[tauri::command]
-pub async fn git_blame_recommend(path: String, base: String, patch: String) -> Result<Vec<CommitRecommendation>, String> {
+pub async fn git_blame_recommend(
+    path: String,
+    base: String,
+    patch: String,
+) -> Result<Vec<CommitRecommendation>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
-        if patch.len() > 16 * 1024 * 1024 { return Err("patch is too large".into()); }
+        if !is_safe_branch(&base) {
+            return Err(format!("unsafe base branch: {base}"));
+        }
+        if patch.len() > 16 * 1024 * 1024 {
+            return Err("patch is too large".into());
+        }
         let range = format!("origin/{base}..HEAD");
         let allowed: std::collections::HashSet<String> = git_output(&path, &["rev-list", &range])?
-            .lines().map(str::to_string).collect();
+            .lines()
+            .map(str::to_string)
+            .collect();
         let mut current_file = String::new();
         let mut ranges = Vec::<(String, u32, u32)>::new();
         for line in patch.lines() {
             if let Some(rest) = line.strip_prefix("diff --git a/") {
                 current_file = rest.split(" b/").next().unwrap_or("").to_string();
             } else if line.starts_with("@@ -") && !current_file.is_empty() {
-                let old_spec = line.split_whitespace().nth(1).unwrap_or("").trim_start_matches('-');
+                let old_spec = line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim_start_matches('-');
                 let mut values = old_spec.split(',');
-                let start = values.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).max(1);
-                let count = values.next().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).max(1);
+                let start = values
+                    .next()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(1)
+                    .max(1);
+                let count = values
+                    .next()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(1)
+                    .max(1);
                 ranges.push((current_file.clone(), start, start.saturating_add(count - 1)));
             }
         }
@@ -1333,20 +1671,36 @@ pub async fn git_blame_recommend(path: String, base: String, patch: String) -> R
         let mut scores = std::collections::HashMap::<String, (u32, Vec<String>)>::new();
         for (file, start, end) in ranges.into_iter().take(500) {
             let line_range = format!("{start},{end}");
-            let blame = git_output(&path, &["blame", "--line-porcelain", "-L", &line_range, "HEAD", "--", &file])
-                .unwrap_or_default();
+            let blame = git_output(
+                &path,
+                &[
+                    "blame",
+                    "--line-porcelain",
+                    "-L",
+                    &line_range,
+                    "HEAD",
+                    "--",
+                    &file,
+                ],
+            )
+            .unwrap_or_default();
             for line in blame.lines() {
                 let hash = line.split_whitespace().next().unwrap_or("");
                 if line.len() >= 41 && hash.len() == 40 && allowed.contains(hash) {
                     let entry = scores.entry(hash.to_string()).or_insert((0, Vec::new()));
                     entry.0 += 1;
-                    if !entry.1.contains(&file) { entry.1.push(file.clone()); }
+                    if !entry.1.contains(&file) {
+                        entry.1.push(file.clone());
+                    }
                 }
             }
         }
         let mut rows: Vec<_> = scores.into_iter().collect();
-        rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-        Ok(rows.into_iter().map(|(hash, (score, files))| CommitRecommendation { hash, score, files }).collect())
+        rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        Ok(rows
+            .into_iter()
+            .map(|(hash, (score, files))| CommitRecommendation { hash, score, files })
+            .collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1358,18 +1712,31 @@ pub async fn git_blame_recommend(path: String, base: String, patch: String) -> R
 pub async fn git_resolve_conflict(path: String, file: String, side: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
-        let flag = if side == "theirs" { "--theirs" } else { "--ours" };
+        let flag = if side == "theirs" {
+            "--theirs"
+        } else {
+            "--ours"
+        };
         let co = Command::new(&bin)
-            .arg("-C").arg(&path)
-            .arg("checkout").arg(flag).arg("--").arg(&file)
-            .output().map_err(|e| e.to_string())?;
+            .arg("-C")
+            .arg(&path)
+            .arg("checkout")
+            .arg(flag)
+            .arg("--")
+            .arg(&file)
+            .output()
+            .map_err(|e| e.to_string())?;
         if !co.status.success() {
             return Err(String::from_utf8_lossy(&co.stderr).trim().to_string());
         }
         let add = Command::new(&bin)
-            .arg("-C").arg(&path)
-            .arg("add").arg("--").arg(&file)
-            .output().map_err(|e| e.to_string())?;
+            .arg("-C")
+            .arg(&path)
+            .arg("add")
+            .arg("--")
+            .arg(&file)
+            .output()
+            .map_err(|e| e.to_string())?;
         if !add.status.success() {
             return Err(String::from_utf8_lossy(&add.stderr).trim().to_string());
         }
@@ -1381,15 +1748,21 @@ pub async fn git_resolve_conflict(path: String, file: String, side: String) -> R
 
 // Stages specific files (used after manually resolving conflicts in an editor).
 #[tauri::command]
-pub async fn git_add_files(path: String, files: Vec<String>) -> Result<(), crate::command_error::CommandError> {
+pub async fn git_add_files(
+    path: String,
+    files: Vec<String>,
+) -> Result<(), crate::command_error::CommandError> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let safe_files = files.iter()
+        let safe_files = files
+            .iter()
             .map(|file| crate::git_paths::existing_worktree_file(&path, file))
             .collect::<Result<Vec<_>, _>>()?;
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let mut cmd = Command::new(&bin);
         cmd.arg("-C").arg(&path).arg("add").arg("--");
-        for file in &safe_files { cmd.arg(file); }
+        for file in &safe_files {
+            cmd.arg(file);
+        }
         let out = cmd.output().map_err(|e| e.to_string())?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
@@ -1403,7 +1776,10 @@ pub async fn git_add_files(path: String, files: Vec<String>) -> Result<(), crate
 
 // Reads a file from a worktree — used by the inline conflict resolver.
 #[tauri::command]
-pub async fn git_read_file(path: String, file: String) -> Result<String, crate::command_error::CommandError> {
+pub async fn git_read_file(
+    path: String,
+    file: String,
+) -> Result<String, crate::command_error::CommandError> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let safe_path = crate::git_paths::existing_worktree_file(&path, &file)?;
         fs::read_to_string(safe_path).map_err(|e| e.to_string())
@@ -1415,7 +1791,11 @@ pub async fn git_read_file(path: String, file: String) -> Result<String, crate::
 
 // Writes resolved content back to a worktree file — used by the inline conflict resolver.
 #[tauri::command]
-pub async fn git_write_file(path: String, file: String, content: String) -> Result<(), crate::command_error::CommandError> {
+pub async fn git_write_file(
+    path: String,
+    file: String,
+    content: String,
+) -> Result<(), crate::command_error::CommandError> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         let safe_path = crate::git_paths::existing_worktree_file(&path, &file)?;
         fs::write(safe_path, content).map_err(|e| e.to_string())
@@ -1438,8 +1818,11 @@ pub async fn git_reset(path: String, target: String, mode: Option<String>) -> Re
         };
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let out = Command::new(&bin)
-            .arg("-C").arg(&path)
-            .arg("reset").arg(flag).arg(&target)
+            .arg("-C")
+            .arg(&path)
+            .arg("reset")
+            .arg(flag)
+            .arg(&target)
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
@@ -1463,11 +1846,20 @@ pub async fn open_in_editor(path: String) -> Result<(), String> {
             }
         }
         #[cfg(target_os = "macos")]
-        Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
         #[cfg(target_os = "linux")]
-        Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+        Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
         #[cfg(target_os = "windows")]
-        Command::new("explorer.exe").arg(&path).spawn().map_err(|e| e.to_string())?;
+        Command::new("explorer.exe")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
         Ok(())
     })
     .await
@@ -1482,13 +1874,18 @@ mod tests {
     struct TestRepo(PathBuf);
 
     impl Drop for TestRepo {
-        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     fn repo(name: &str) -> TestRepo {
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("bento-{name}-{}-{stamp}", std::process::id()));
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("bento-{name}-{}-{stamp}", std::process::id()));
         fs::create_dir_all(&path).unwrap();
         run(&path, &["init", "-q"]);
         run(&path, &["config", "user.email", "bento-tests@example.com"]);
@@ -1497,8 +1894,18 @@ mod tests {
     }
 
     fn run(path: &Path, args: &[&str]) -> String {
-        let out = Command::new("git").arg("-C").arg(path).args(args).output().unwrap();
-        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).to_string()
     }
 
@@ -1517,7 +1924,10 @@ mod tests {
         commit_file(&repo.0, "two\n", "second");
         let saved = run(&repo.0, &["rev-parse", &backup_ref]);
         assert_eq!(saved.trim(), original.trim());
-        let history = run(&repo.0, &["for-each-ref", "--format=%(refname)", "refs/bento/history"]);
+        let history = run(
+            &repo.0,
+            &["for-each-ref", "--format=%(refname)", "refs/bento/history"],
+        );
         assert_eq!(history.lines().count(), 1);
     }
 
@@ -1537,10 +1947,16 @@ mod tests {
         let repo = repo("partial");
         let original = (1..=12).map(|n| format!("line {n}\n")).collect::<String>();
         commit_file(&repo.0, &original, "base");
-        let changed = original.replace("line 1\n", "changed one\n").replace("line 12\n", "changed twelve\n");
+        let changed = original
+            .replace("line 1\n", "changed one\n")
+            .replace("line 12\n", "changed twelve\n");
         fs::write(repo.0.join("file.txt"), changed).unwrap();
         let diff = run(&repo.0, &["diff", "--unified=0"]);
-        let second_hunk = diff.match_indices("@@").nth(2).map(|(index, _)| index).unwrap();
+        let second_hunk = diff
+            .match_indices("@@")
+            .nth(2)
+            .map(|(index, _)| index)
+            .unwrap();
         let selected = &diff[..second_hunk];
         apply_selected_patch(repo.0.to_str().unwrap(), selected).unwrap();
         let staged = run(&repo.0, &["diff", "--cached"]);
@@ -1564,13 +1980,27 @@ mod tests {
         run(&repo.0, &["add", "file.txt"]);
         run(&repo.0, &["commit", &format!("--fixup={}", target.trim())]);
 
-        let out = Command::new("git").arg("-C").arg(&repo.0)
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo.0)
             .args(["rebase", "-i", "--autosquash", "base"])
-            .env("GIT_SEQUENCE_EDITOR", "true").env("GIT_EDITOR", "true")
-            .output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(run(&repo.0, &["rev-list", "--count", "base..HEAD"]).trim(), "2");
-        assert_eq!(fs::read_to_string(repo.0.join("file.txt")).unwrap(), "target with fix\n");
+            .env("GIT_SEQUENCE_EDITOR", "true")
+            .env("GIT_EDITOR", "true")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            run(&repo.0, &["rev-list", "--count", "base..HEAD"]).trim(),
+            "2"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.0.join("file.txt")).unwrap(),
+            "target with fix\n"
+        );
         assert!(!run(&repo.0, &["log", "--format=%s", "base..HEAD"]).contains("fixup!"));
     }
 
@@ -1580,14 +2010,30 @@ mod tests {
         commit_file(&repo.0, "initial\n", "initial");
         let remote = repo.0.join("remote.git");
         let collab = repo.0.join("collab");
-        let init = Command::new("git").args(["init", "--bare", "-q"])
-            .arg(&remote).output().unwrap();
+        let init = Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&remote)
+            .output()
+            .unwrap();
         assert!(init.status.success());
-        run(&repo.0, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        run(
+            &repo.0,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
         run(&repo.0, &["push", "-u", "origin", "HEAD"]);
 
-        let clone = Command::new("git").arg("clone").arg("-q").arg(&remote).arg(&collab).output().unwrap();
-        assert!(clone.status.success(), "{}", String::from_utf8_lossy(&clone.stderr));
+        let clone = Command::new("git")
+            .arg("clone")
+            .arg("-q")
+            .arg(&remote)
+            .arg(&collab)
+            .output()
+            .unwrap();
+        assert!(
+            clone.status.success(),
+            "{}",
+            String::from_utf8_lossy(&clone.stderr)
+        );
         run(&collab, &["config", "user.email", "collab@example.com"]);
         run(&collab, &["config", "user.name", "Collaborator"]);
         fs::write(collab.join("file.txt"), "remote change\n").unwrap();
@@ -1598,9 +2044,16 @@ mod tests {
         fs::write(repo.0.join("file.txt"), "local rewrite\n").unwrap();
         run(&repo.0, &["add", "file.txt"]);
         run(&repo.0, &["commit", "-qm", "local rewrite"]);
-        let push = Command::new("git").arg("-C").arg(&repo.0)
-            .args(["push", "--force-with-lease"]).output().unwrap();
-        assert!(!push.status.success(), "force-with-lease unexpectedly overwrote a changed remote");
+        let push = Command::new("git")
+            .arg("-C")
+            .arg(&repo.0)
+            .args(["push", "--force-with-lease"])
+            .output()
+            .unwrap();
+        assert!(
+            !push.status.success(),
+            "force-with-lease unexpectedly overwrote a changed remote"
+        );
     }
 
     #[test]
@@ -1613,13 +2066,25 @@ mod tests {
         run(&repo.0, &["checkout", "-q", "task"]);
         commit_file(&repo.0, "task version\n", "task change");
         let original_head = run(&repo.0, &["rev-parse", "HEAD"]);
-        let rebase = Command::new("git").arg("-C").arg(&repo.0)
-            .args(["rebase", base_branch.trim()]).output().unwrap();
+        let rebase = Command::new("git")
+            .arg("-C")
+            .arg(&repo.0)
+            .args(["rebase", base_branch.trim()])
+            .output()
+            .unwrap();
         assert!(!rebase.status.success());
-        assert!(resolve_git_dir(repo.0.to_str().unwrap()).join("rebase-merge").exists());
+        assert!(resolve_git_dir(repo.0.to_str().unwrap())
+            .join("rebase-merge")
+            .exists());
         run(&repo.0, &["rebase", "--abort"]);
-        assert_eq!(run(&repo.0, &["rev-parse", "HEAD"]).trim(), original_head.trim());
-        assert_eq!(fs::read_to_string(repo.0.join("file.txt")).unwrap(), "task version\n");
+        assert_eq!(
+            run(&repo.0, &["rev-parse", "HEAD"]).trim(),
+            original_head.trim()
+        );
+        assert_eq!(
+            fs::read_to_string(repo.0.join("file.txt")).unwrap(),
+            "task version\n"
+        );
     }
 
     #[test]
@@ -1638,8 +2103,10 @@ mod tests {
         fs::write(repo.0.join("dirty.txt"), "dirty\n").unwrap();
 
         let report = tauri::async_runtime::block_on(git_rewrite_preflight(
-            repo.0.to_string_lossy().to_string(), "main".into(),
-        )).unwrap();
+            repo.0.to_string_lossy().to_string(),
+            "main".into(),
+        ))
+        .unwrap();
         assert!(report.dirty);
         assert_eq!(report.published_commits, 1);
         assert!(report.signing);
@@ -1655,19 +2122,33 @@ mod tests {
         let commit = run(&repo.0, &["rev-parse", "HEAD"]);
         let todo = format!("edit {} change to split\n", commit.trim());
         let (todo_path, script_path) = write_sequence_editor_script(&todo).unwrap();
-        let out = Command::new("git").arg("-C").arg(&repo.0)
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo.0)
             .args(["rebase", "-i", "base"])
-            .env("GIT_SEQUENCE_EDITOR", &script_path).env("GIT_EDITOR", "true")
-            .output().unwrap();
+            .env("GIT_SEQUENCE_EDITOR", &script_path)
+            .env("GIT_EDITOR", "true")
+            .output()
+            .unwrap();
         let _ = fs::remove_file(todo_path);
         let _ = fs::remove_file(script_path);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert!(resolve_git_dir(repo.0.to_str().unwrap()).join("rebase-merge").exists());
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(resolve_git_dir(repo.0.to_str().unwrap())
+            .join("rebase-merge")
+            .exists());
 
-        tauri::async_runtime::block_on(git_rebase_split(repo.0.to_string_lossy().to_string())).unwrap();
+        tauri::async_runtime::block_on(git_rebase_split(repo.0.to_string_lossy().to_string()))
+            .unwrap();
         let status = run(&repo.0, &["status", "--short"]);
         assert!(status.contains("file.txt"));
-        assert_eq!(fs::read_to_string(repo.0.join("file.txt")).unwrap(), "changed\n");
+        assert_eq!(
+            fs::read_to_string(repo.0.join("file.txt")).unwrap(),
+            "changed\n"
+        );
         run(&repo.0, &["rebase", "--abort"]);
     }
 
@@ -1686,7 +2167,15 @@ mod tests {
         let raw = " M a.txt\nM  b.txt\nMM c.txt\n?? d.txt\n".to_string();
         let status = parse_status(raw.clone());
         assert_eq!(status.raw, raw);
-        assert_eq!((status.staged, status.unstaged, status.untracked, status.total), (2, 2, 1, 4));
+        assert_eq!(
+            (
+                status.staged,
+                status.unstaged,
+                status.untracked,
+                status.total
+            ),
+            (2, 2, 1, 4)
+        );
     }
 
     #[test]

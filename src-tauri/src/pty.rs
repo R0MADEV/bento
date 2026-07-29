@@ -15,7 +15,9 @@ pub struct PtyManager {
 }
 
 fn dirs_home() -> Option<String> {
-    std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
 }
 
 /// Drains as much valid UTF-8 as possible from `pending`, returning it and
@@ -86,7 +88,12 @@ pub fn pty_spawn(
     let pty_system = native_pty_system();
 
     let pair = pty_system
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| e.to_string())?;
 
     let mut cmd = match command.filter(|c| !c.is_empty()) {
@@ -151,7 +158,10 @@ pub fn pty_spawn(
 
     state.instances.lock().unwrap().insert(
         id,
-        PtyInstance { writer, master: pair.master },
+        PtyInstance {
+            writer,
+            master: pair.master,
+        },
     );
 
     Ok(())
@@ -165,7 +175,10 @@ pub fn pty_write(
 ) -> Result<(), String> {
     let mut instances = state.instances.lock().unwrap();
     let instance = instances.get_mut(&id).ok_or("PTY not found")?;
-    instance.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())
+    instance
+        .writer
+        .write_all(data.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -177,8 +190,14 @@ pub fn pty_resize(
 ) -> Result<(), String> {
     let instances = state.instances.lock().unwrap();
     let instance = instances.get(&id).ok_or("PTY not found")?;
-    instance.master
-        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+    instance
+        .master
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| e.to_string())
 }
 

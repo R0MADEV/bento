@@ -16,7 +16,9 @@ const SCRIPT_EXTS: &[&str] = &["sh", "bash", "zsh", "fish", "py", "js", "rb", "p
 const SKIP_DIRS: &[&str] = &["node_modules", "target", "dist", "build", "vendor", ".next"];
 
 fn starts_with_shebang(path: &Path) -> bool {
-    let Ok(mut file) = fs::File::open(path) else { return false };
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
     let mut buf = [0u8; 2];
     file.read_exact(&mut buf).is_ok() && &buf == b"#!"
 }
@@ -44,7 +46,9 @@ fn walk(dir: &Path, base: &str, depth: usize, out: &mut Vec<ScriptFile>) {
     if depth == 0 {
         return;
     }
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
