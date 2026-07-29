@@ -11,6 +11,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
+ts-rs = { version = "12.0", features = ["serde-json-impl"] }
 tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
@@ -34,6 +35,13 @@ objc = "0.2"
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 e2e = ["dep:tauri-plugin-wdio-webdriver"]
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(cargo_clippy)'] }
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
 
 [profile.release]
 opt-level = "z"

@@ -1,6 +1,7 @@
 import type { Session } from './sessionModel'
 
 export interface SavedState {
+  schemaVersion: number
   sessions: Session[]
   activeId: string | null
   layouts: Record<string, unknown>
@@ -31,5 +32,8 @@ export function parseSavedState(raw: string): SavedState | null {
     : {}
   const activeId = typeof obj.activeId === 'string' ? obj.activeId : null
 
-  return { sessions: obj.sessions, activeId, layouts }
+  const schemaVersion = typeof obj.schemaVersion === 'number' ? obj.schemaVersion : 1
+  if (!Number.isInteger(schemaVersion) || schemaVersion < 1 || schemaVersion > 1) return null
+
+  return { schemaVersion, sessions: obj.sessions, activeId, layouts }
 }

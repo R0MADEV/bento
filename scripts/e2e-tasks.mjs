@@ -1,20 +1,23 @@
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 
-const app = process.env.BENTO_E2E_APP
-if (!app) throw new Error('Set BENTO_E2E_APP to the absolute path of the built Bento binary.')
+const app = process.env.BENTO_E2E_APP ?? resolve('src-tauri', 'target', 'debug', process.platform === 'win32' ? 'bento.exe' : 'bento')
 const provider = process.env.BENTO_E2E_PROVIDER ?? 'embedded'
 const embeddedPort = process.env.BENTO_E2E_PORT ?? '4445'
 const driverUrl = process.env.BENTO_E2E_DRIVER_URL ?? `http://127.0.0.1:${provider === 'embedded' ? embeddedPort : '4444'}`
+const root = mkdtempSync(join(tmpdir(), 'bento-tasks-e2e-'))
+process.env.BENTO_E2E_CONFIG_DIR = join(root, 'config')
+let driverExit = null
 const driver = provider === 'external' && !process.env.BENTO_E2E_DRIVER_URL
   ? spawn(process.env.TAURI_DRIVER ?? 'tauri-driver', [], { stdio: 'inherit' }) : null
+driver?.once('exit', (code, signal) => { driverExit = { code, signal } })
 let appProcess = null
-const root = mkdtempSync(join(tmpdir(), 'bento-tasks-e2e-'))
-const repo = join(root, 'repo')
-const task = join(root, 'task')
-const conflict = join(root, 'conflict')
+let appExit = null
+const repo = join(root, 'repo espacio ñ')
+const task = join(root, 'tarea unicode ñ')
+const conflict = join(root, 'conflicto espacio ñ')
 const remote = join(root, 'remote.git')
 let sessionId = ''
 let isolatedProfile = false
@@ -22,13 +25,19 @@ let isolatedProfile = false
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 function startApp() {
   if (provider !== 'embedded') return
+  appExit = null
   appProcess = spawn(app, [], { stdio: 'inherit', env: { ...process.env, TAURI_WEBDRIVER_PORT: embeddedPort } })
+  appProcess.once('exit', (code, signal) => { appExit = { code, signal } })
 }
 async function stopApp() {
   if (!appProcess || appProcess.exitCode !== null) { appProcess = null; return }
   const stopped = new Promise(resolve => appProcess.once('exit', resolve))
   appProcess.kill('SIGTERM')
-  await Promise.race([stopped, delay(5000)])
+  const stoppedGracefully = await Promise.race([stopped.then(() => true), delay(5000).then(() => false)])
+  if (!stoppedGracefully && appProcess.exitCode === null) {
+    appProcess.kill('SIGKILL')
+    await Promise.race([stopped, delay(2000)])
+  }
   appProcess = null
 }
 
@@ -62,12 +71,12 @@ function fixture() {
   if (rebase.status === 0) throw new Error('The E2E conflict fixture did not conflict.')
 }
 
-async function request(path, body, method = body === undefined ? 'GET' : 'POST') {
+async function request(path, body, method = body === undefined ? 'GET' : 'POST', timeout = 10000) {
   const response = await fetch(`${driverUrl}${path}`, {
     method,
     headers: { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(timeout),
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok || payload.value?.error) throw new Error(`${path}: ${JSON.stringify(payload)}`)
@@ -78,9 +87,41 @@ const route = path => `/session/${sessionId}${path}`
 const elementKey = 'element-6066-11e4-a52e-4f735466cecf'
 async function createSession() {
   const capabilities = provider === 'embedded' ? {} : { 'tauri:options': { application: app } }
-  const until = Date.now() + 20000
+  const until = Date.now() + (provider === 'external' ? 120000 : 20000)
   let lastError
+
+  if (provider === 'external') {
+    // Starting tauri-driver and creating a native WebKitGTK session are two
+    // separate phases. Wait for the server first, then send one long-lived
+    // POST /session: aborting and retrying that POST leaves half-open launches.
+    while (Date.now() < until) {
+      if (driverExit) {
+        throw new Error(`tauri-driver exited before WebDriver became ready (code=${driverExit.code}, signal=${driverExit.signal})`)
+      }
+      try {
+        await request('/status', undefined, 'GET', 2000)
+        break
+      } catch (error) {
+        lastError = error
+        await delay(250)
+      }
+    }
+    if (Date.now() >= until) {
+      throw new Error(`WebDriver status did not become ready at ${driverUrl}: ${String(lastError)}`)
+    }
+    const value = await request('/session', { capabilities: { alwaysMatch: capabilities } }, 'POST', 120000)
+    sessionId = value.sessionId ?? value.capabilities?.sessionId
+    if (!sessionId) throw new Error(`Driver returned no session id: ${JSON.stringify(value)}`)
+    return
+  }
+
   while (Date.now() < until) {
+    if (appExit) {
+      throw new Error(`Bento exited before WebDriver became ready (code=${appExit.code}, signal=${appExit.signal})`)
+    }
+    if (driverExit) {
+      throw new Error(`tauri-driver exited before WebDriver became ready (code=${driverExit.code}, signal=${driverExit.signal})`)
+    }
     try {
       const value = await request('/session', { capabilities: { alwaysMatch: capabilities } })
       sessionId = value.sessionId ?? value.capabilities?.sessionId
@@ -128,32 +169,42 @@ const type = (id, text) => request(route(`/element/${id}/value`), { text, value:
 const textOf = id => request(route(`/element/${id}/text`))
 const execute = (script, args = []) => request(route('/execute/sync'), { script, args })
 const refresh = () => request(route('/refresh'), {})
-async function keys(values) {
-  await request(route('/actions'), { actions: [{ type: 'key', id: 'keyboard', actions: values.map(value => ({ type: 'keyDown', value })).concat(values.toReversed().map(value => ({ type: 'keyUp', value }))) }] })
-  await request(route('/actions'), undefined, 'DELETE')
-}
 async function openTasksPanel() {
-  const existing = await findAll('css selector', '[data-testid="tasks-panel"]')
+  await waitFor('css selector', '.session-manager[data-ready="true"]')
+  let existing = await findAll('css selector', '[data-testid="tasks-panel"]')
+  const restoredUntil = Date.now() + 2000
+  while (!existing.length && Date.now() < restoredUntil) {
+    await delay(100)
+    existing = await findAll('css selector', '[data-testid="tasks-panel"]')
+  }
   if (!existing.length) {
     await execute(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));`)
-    const input = await waitFor('css selector', '.cmdk-input')
-    await type(input, 'Nuevo panel Tareas')
-    await click(await waitFor('xpath', "//*[contains(@class,'cmdk-item') and contains(.,'Nuevo panel Tareas')]"))
+    await waitFor('css selector', '.cmdk-input')
+    await clickWhen('css selector', '[data-command-id="new-tasks"]')
   }
   return waitFor('css selector', '[data-testid="tasks-panel"]')
 }
 async function selectRepo(expectedBranch = 'task/e2e') {
-  const panel = await openTasksPanel()
+  await openTasksPanel()
   await execute(`const panel = document.querySelector('[data-testid="tasks-panel"]'); localStorage.setItem('bento.tasks.repo.' + panel.dataset.panelId, arguments[0]);`, [repo])
   // Workspace layout persistence is debounced by Bento; let the newly-created
   // panel reach storage before reloading it with the repository preference.
   await delay(700)
   await refresh()
   await openTasksPanel()
-  await waitFor(
-    'css selector',
-    expectedBranch ? `[data-testid="tasks-row"][data-branch="${expectedBranch}"]` : '[data-testid="tasks-row"]',
-  )
+  const selector = expectedBranch ? `[data-testid="tasks-row"][data-branch="${expectedBranch}"]` : '[data-testid="tasks-row"]'
+  try {
+    await waitFor('css selector', selector)
+  } catch (error) {
+    const ui = await execute(`const panel = document.querySelector('[data-testid="tasks-panel"]'); return {
+      ready: document.querySelector('.session-manager')?.dataset.ready,
+      panelId: panel?.dataset.panelId,
+      storedRepo: panel ? localStorage.getItem('bento.tasks.repo.' + panel.dataset.panelId) : null,
+      text: panel?.innerText?.slice(0, 1000),
+    };`).catch(debugError => ({ debugError: String(debugError) }))
+    const backend = await invoke('git_worktree_list', { repo }).catch(debugError => ({ debugError: String(debugError) }))
+    throw new Error(`${String(error)}\nUI: ${JSON.stringify(ui)}\nBackend: ${JSON.stringify(backend)}`, { cause: error })
+  }
 }
 async function invoke(command, args) {
   const result = await request(route('/execute/async'), {
@@ -189,30 +240,83 @@ async function run() {
     throw new Error(`Refusing to run against non-isolated app identifier: ${identifier}. Build with npm run build:e2e:app.`)
   }
   isolatedProfile = true
+  await invoke('workspace_reset', {})
   await execute('localStorage.clear(); sessionStorage.clear();')
   await refresh()
   console.log('E2E: opening Tasks panel')
   await selectRepo()
 
+  console.log('E2E: switching locale without interpreting user content')
+  await execute(`localStorage.setItem('bento.locale', 'en');`)
+  await refresh()
+  await waitFor('css selector', '.session-manager[data-ready="true"]')
+  // Verify the translated command palette while it is actually open. Reading
+  // a detached/hidden input after reload is timing-dependent in native
+  // WebViews and occasionally observes the previous placeholder.
+  await waitUntil(
+    async () => await execute(`const palette = document.querySelector('.cmdk');
+      if (palette?.classList.contains('hidden')) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+      return palette?.classList.contains('hidden') === false;`).catch(() => false),
+    'the command palette to open',
+    30000,
+  )
+  await waitFor('css selector', '.cmdk-input')
+  await waitUntil(
+    async () => await execute(`return document.querySelector('.cmdk-input')?.placeholder;`).catch(() => null) === 'Type a command…',
+    'the English command-palette locale',
+    20000,
+  )
+  // Toggle through the same global shortcut used to open it, then wait until
+  // the overlay can no longer intercept pointer input (important in WebKitGTK).
+  await waitUntil(
+    async () => await execute(`const palette = document.querySelector('.cmdk');
+      if (palette && !palette.classList.contains('hidden')) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+      return palette?.classList.contains('hidden') === true;`).catch(() => false),
+    'the command palette to close',
+    30000,
+  )
+  await waitFor('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"]')
+
   // Real commit through the Bento UI.
   console.log('E2E: committing through the UI')
-  await click(await find('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"]'))
+  await clickWhen('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"]', 20000)
   const message = await waitFor('css selector', '[data-testid="tasks-commit-message"]')
   await type(message, 'e2e commit from Bento')
-  await click(await find('css selector', '[data-testid="tasks-commit"]'))
+  await clickWhen('css selector', '[data-testid="tasks-commit"]', 20000)
   await waitUntil(() => git(task, 'log', '-1', '--format=%s') === 'e2e commit from Bento', 'Bento UI commit')
+  // The Git command completes before the panel finishes rebuilding its detail
+  // view. Opening the rebase during that gap is a race on slower Windows CI.
+  await waitUntil(
+    async () => await execute(`const button = document.querySelector('[data-testid="tasks-commit"]');
+      const message = document.querySelector('[data-testid="tasks-commit-message"]');
+      return Boolean(button && !button.disabled && button.textContent === 'Commit' && message?.value === '');`).catch(() => false),
+    'the commit UI to settle',
+    20000,
+  )
 
   // Open the real rebase editor, preview and reorder by pointer actions.
   console.log('E2E: testing interactive rebase drag-and-drop')
-  await click(await find('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"] [data-testid="tasks-actions"]'))
-  await click(await waitFor('xpath', "//*[contains(@class,'context-menu-item') and (contains(.,'Rebase interactivo') or contains(.,'Interactive rebase'))]"))
+  // The row may be replaced by the final post-commit refresh between locating
+  // its action button and clicking it. Re-resolve the element on every retry.
+  await clickWhen('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"] [data-testid="tasks-actions"]', 20000)
+  await clickWhen('xpath', "//*[contains(@class,'context-menu-item') and (contains(.,'Rebase interactivo') or contains(.,'Interactive rebase'))]", 20000)
   let items = []
-  await waitUntil(async () => {
-    items = await request(route('/elements'), { using: 'css selector', value: '[data-testid="tasks-rebase-item"]' })
-    return items.length >= 2
-  }, 'at least two interactive-rebase commits')
+  try {
+    await waitUntil(async () => {
+      items = await request(route('/elements'), { using: 'css selector', value: '[data-testid="tasks-rebase-item"]' })
+      return items.length >= 2
+    }, 'at least two interactive-rebase commits', 20000)
+  } catch (error) {
+    const backend = await invoke('git_rebase_log', { path: task, base: 'main' }).catch(debugError => ({ error: String(debugError) }))
+    const ui = await execute(`return {
+      detail: document.querySelector('.tasks-detail')?.innerText?.slice(0, 2000),
+      base: document.querySelector('.tasks-base-select')?.value,
+      rows: [...document.querySelectorAll('[data-testid="tasks-rebase-item"]')].length,
+    };`).catch(debugError => ({ error: String(debugError) }))
+    throw new Error(`${String(error)}\nBackend rebase log: ${JSON.stringify(backend)}\nUI: ${JSON.stringify(ui)}`, { cause: error })
+  }
   await drag(items[0][elementKey], items[1][elementKey])
-  await click(await find('css selector', '[data-testid="tasks-rebase-preview"]'))
+  await clickWhen('css selector', '[data-testid="tasks-rebase-preview"]', 20000)
   if (!(await textOf(await find('css selector', '.tasks-rebase-preview'))).match(/Resultado previsto|Expected result|commits/)) throw new Error('Rebase preview was not rendered.')
 
   // Start a paused edit through the real Tauri invoke bridge, restart Bento,
@@ -239,27 +343,73 @@ async function run() {
   await waitFor('css selector', '.tasks-conflict-file')
   await clickWhen('css selector', '.tasks-conflict-btn-primary')
   await waitFor('css selector', '[data-testid="tasks-conflict-resolver"]')
-  const choices = await findAll('css selector', '.tasks-conflict-pick-btn')
-  await click(choices[0])
-  await click(await find('css selector', '[data-testid="tasks-conflict-save"]'))
-  await waitUntil(() => {
-    const lock = git(conflict, 'rev-parse', '--git-path', 'index.lock')
-    return git(conflict, 'diff', '--name-only', '--diff-filter=U') === '' && !existsSync(lock)
-  }, 'conflict resolution to finish writing the Git index')
+  // The resolver shell is rendered before git_read_file finishes and creates
+  // the hunk controls. Waiting only for the shell can leave choices[0]
+  // undefined on slower macOS runners.
+  await clickWhen('css selector', '.tasks-conflict-pick-btn', 20000)
+  await waitUntil(
+    async () => await execute(`return document.querySelector('[data-testid="tasks-conflict-save"]')?.disabled === false;`).catch(() => false),
+    'the resolved conflict to enable saving',
+    20000,
+  )
+  await clickWhen('css selector', '[data-testid="tasks-conflict-save"]', 20000)
+  try {
+    await waitUntil(() => {
+      const lock = git(conflict, 'rev-parse', '--git-path', 'index.lock')
+      return git(conflict, 'diff', '--name-only', '--diff-filter=U') === '' && !existsSync(lock)
+    }, 'conflict resolution to finish writing the Git index')
+  } catch (error) {
+    const status = await execute(`return document.querySelector('[data-testid="tasks-conflict-status"]')?.textContent;`).catch(() => null)
+    const unmerged = git(conflict, 'diff', '--name-only', '--diff-filter=U')
+    throw new Error(`${String(error)}\nConflict resolver status: ${JSON.stringify(status)}\nUnmerged files: ${JSON.stringify(unmerged)}`, { cause: error })
+  }
   await invoke('git_rebase_abort', { path: conflict })
 
   // Create an automatic backup through Bento's backend and verify its UI.
   console.log('E2E: verifying backup recovery UI')
   await invoke('git_reset', { path: task, target: 'HEAD^', mode: 'mixed' })
+  const backups = await invoke('git_backup_list', { path: task })
+  if (!Array.isArray(backups) || backups.length === 0) throw new Error(`git_reset created no history backup: ${JSON.stringify(backups)}`)
   await refresh()
   await waitFor('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"]')
-  await click(await waitFor('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"] [data-testid="tasks-actions"]'))
-  await click(await waitFor('xpath', "//*[contains(@class,'context-menu-item') and (contains(.,'respaldos') or contains(.,'Backup'))]"))
-  await waitFor('css selector', '[data-testid="tasks-backup-history"]')
+  await clickWhen('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"] [data-testid="tasks-actions"]', 20000)
+  await clickWhen('css selector', '[data-testid="tasks-backups-action"]', 20000)
+  // The embedded Windows driver can acknowledge a click without dispatching
+  // the DOM event. If the menu item is still present, the native click had no
+  // effect; activate that same visible control through the DOM and then verify
+  // the resulting view below.
+  await delay(250)
+  await execute(`const item = document.querySelector('[data-testid="tasks-backups-action"]'); if (item) item.click();`)
+  try {
+    await waitFor('css selector', '[data-testid="tasks-backup-history"]', 30000)
+  } catch (error) {
+    const detail = await execute(`return document.querySelector('.tasks-detail')?.innerText?.slice(0, 3000);`).catch(() => null)
+    throw new Error(`${String(error)}\nBackups returned by backend: ${JSON.stringify(backups)}\nTasks detail: ${JSON.stringify(detail)}`, { cause: error })
+  }
   console.log('Bento task-panel E2E passed: commit, drag/drop, restart recovery, conflict resolver and backups.')
 }
 
-try { await run() } finally {
+async function captureFailure(error) {
+  const directory = resolve('artifacts', 'e2e')
+  mkdirSync(directory, { recursive: true })
+  const diagnostic = { platform: process.platform, provider, driverUrl, app, appExit, driverExit, error: String(error), stack: error?.stack }
+  if (sessionId) {
+    diagnostic.ui = await execute(`return {
+      title: document.title,
+      body: document.body?.innerText?.slice(0, 5000),
+      url: location.href,
+    };`).catch(captureError => ({ error: String(captureError) }))
+    const screenshot = await request(route('/screenshot')).catch(() => null)
+    if (typeof screenshot === 'string') writeFileSync(join(directory, `${process.platform}-failure.png`), Buffer.from(screenshot, 'base64'))
+  }
+  writeFileSync(join(directory, `${process.platform}-failure.json`), `${JSON.stringify(diagnostic, null, 2)}\n`)
+}
+
+try { await run() } catch (error) {
+  await captureFailure(error).catch(captureError => console.error('Could not capture E2E diagnostics:', captureError))
+  throw error
+} finally {
+  if (sessionId && isolatedProfile) await invoke('workspace_reset', {}).catch(() => {})
   if (sessionId && isolatedProfile) await execute('localStorage.clear(); sessionStorage.clear();').catch(() => {})
   if (sessionId) await fetch(`${driverUrl}/session/${sessionId}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => {})
   driver?.kill('SIGTERM')

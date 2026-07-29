@@ -1,68 +1,16 @@
-export interface PrCheck {
-  conclusion?: string
-  state?: string
-  status?: string
-  name?: string
-  context?: string
-}
-
-export interface PrStatus {
-  state: string
-  title: string
-  url: string
-  number: number
-  baseRefName?: string
-  isDraft?: boolean
-  mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
-  reviewDecision?: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | ''
-  statusCheckRollup?: PrCheck[]
-}
-
-export interface BackupStatus {
-  available: boolean
-  different?: boolean
-  hash?: string
-  short?: string
-  subject?: string
-}
-
-export interface BackupEntry {
-  reference: string
-  hash: string
-  short: string
-  subject: string
-  createdAt: number
-}
-
-export interface RebaseStatus {
-  active: boolean
-  sha?: string
-  short?: string
-  subject?: string
-  body?: string
-  branch?: string
-  current?: number
-  total?: number
-  conflicts?: string[]
-}
-
-export interface UpstreamStatus {
-  branch: string
-  upstream?: string
-  hasUpstream: boolean
-  state: 'unpublished' | 'synced' | 'ahead' | 'behind' | 'diverged'
-  ahead: number
-  behind: number
-}
-
-export interface RewritePreflight {
-  branch: string
-  base: string
-  dirty: boolean
-  operation: string
-  upstream: string
-  publishedCommits: number
-  protectedBase: boolean
-  signing: boolean
-  hooks: string[]
-}
+// Public compatibility barrel. The source of truth for these contracts is Rust;
+// `cargo test export_bindings` regenerates the files below via ts-rs.
+export type { BackupEntry } from '../../generated/bindings/BackupEntry'
+export type { BackupStatus } from '../../generated/bindings/BackupStatus'
+export type { CommitEntry } from '../../generated/bindings/CommitEntry'
+export type { CommitFile } from '../../generated/bindings/CommitFile'
+export type { CommitRecommendation } from '../../generated/bindings/CommitRecommendation'
+export type { CommandError } from '../../generated/bindings/CommandError'
+export type { FetchInfo } from '../../generated/bindings/FetchInfo'
+export type { GitStatus } from '../../generated/bindings/GitStatus'
+export type { PrCheck } from '../../generated/bindings/PrCheck'
+export type { PrStatus } from '../../generated/bindings/PrStatus'
+export type { RebaseStatus } from '../../generated/bindings/RebaseStatus'
+export type { RewritePreflight } from '../../generated/bindings/RewritePreflight'
+export type { UpstreamStatus } from '../../generated/bindings/UpstreamStatus'
+export type { WorktreeInfo } from '../../generated/bindings/WorktreeInfo'

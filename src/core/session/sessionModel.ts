@@ -1,5 +1,6 @@
 import { lowestAvailableNumber } from '../terminal/lowestAvailableNumber'
 import { projectName } from './project'
+import { appT } from '../i18n'
 
 export interface Session {
   id: string
@@ -19,7 +20,7 @@ function sessionNumbers(sessions: Session[]): number[] {
 
 export function addSession(state: SessionState): SessionState {
   const n = lowestAvailableNumber(sessionNumbers(state.sessions))
-  const session: Session = { id: `session-${n}`, name: `Sesión ${n}` }
+  const session: Session = { id: `session-${n}`, name: `${appT('session')} ${n}` }
   return { sessions: [...state.sessions, session], activeId: session.id }
 }
 
@@ -50,6 +51,6 @@ export function duplicateSession(state: SessionState, id: string): SessionState 
   const source = state.sessions.find(s => s.id === id)
   if (!source) return state
   const n = lowestAvailableNumber(sessionNumbers(state.sessions))
-  const copy: Session = { id: `session-${n}`, name: `${source.name} (copia)` }
+  const copy: Session = { id: `session-${n}`, name: `${source.name} (${appT('copy')})` }
   return { sessions: [...state.sessions, copy], activeId: copy.id }
 }

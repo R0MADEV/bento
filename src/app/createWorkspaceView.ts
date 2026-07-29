@@ -7,6 +7,7 @@ import { furthestEdgeIndex, type MoveDirection } from '../core/workspace/edge'
 import { icon } from '../ui/icons'
 import { isMac, shortcutLabel } from '../ui/platform'
 import { currentPanelIndex } from '../core/workspace/currentPanel'
+import { appT } from '../core/i18n'
 
 export type SplitDirection = 'within' | 'left' | 'right' | 'above' | 'below'
 
@@ -41,8 +42,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const fits = new Set<() => void>()
   const fitAll = () => fits.forEach(f => f())
 
-  let api: DockviewApi
-
   const typeOf = (panelId: string): string => panelId.slice(0, panelId.lastIndexOf('-'))
 
   const usedNumbers = (type: string): number[] => {
@@ -54,8 +53,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   }
 
   type Position = AddPanelOptions['position']
-
-  const existingOfType = (type: string) => api.panels.find(p => typeOf(p.id) === type)
 
   // Map of panel id → instance, so focus() can be called after cycling panels
   const instanceMap = new Map<string, import('../panels/registry').PanelInstance>()
@@ -88,10 +85,10 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const addInActiveGroup = (type: string): void =>
     addPanel(type, api.activeGroup ? { referenceGroup: api.activeGroup, direction: 'within' } : undefined)
 
-  api = createDockview(dockHost, {
+  const api: DockviewApi = createDockview(dockHost, {
     createComponent({ id, name }) {
       const def = panels.get(name)
-      if (!def) throw new Error(`Panel no registrado: ${name}`)
+      if (!def) throw new Error(appT('panelNotRegistered', { name }))
 
       const instance = def.create({ panelId: id, removeSelf: () => removePanel(id), projectPath: options.projectPath?.() })
       instanceMap.set(id, instance)
@@ -101,15 +98,15 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       instance.element.addEventListener('contextmenu', e => {
         e.preventDefault()
         showContextMenu(e.clientX, e.clientY, [
-          { label: '↦ Mover a la derecha', onClick: () => movePanel(id, 'right') },
-          { label: '↤ Mover a la izquierda', onClick: () => movePanel(id, 'left') },
-          { label: '↥ Mover arriba', onClick: () => movePanel(id, 'above') },
-          { label: '↧ Mover abajo', onClick: () => movePanel(id, 'below') },
-          { label: 'Dividir derecha', onClick: () => splitFrom(id, 'right') },
-          { label: 'Dividir izquierda', onClick: () => splitFrom(id, 'left') },
-          { label: 'Dividir arriba', onClick: () => splitFrom(id, 'above') },
-          { label: 'Dividir abajo', onClick: () => splitFrom(id, 'below') },
-          { label: `Nueva pestaña (${def.title})`, onClick: () => splitFrom(id, 'within') },
+          { label: appT('moveRight'), onClick: () => movePanel(id, 'right') },
+          { label: appT('moveLeft'), onClick: () => movePanel(id, 'left') },
+          { label: appT('moveUp'), onClick: () => movePanel(id, 'above') },
+          { label: appT('moveDown'), onClick: () => movePanel(id, 'below') },
+          { label: appT('splitRight'), onClick: () => splitFrom(id, 'right') },
+          { label: appT('splitLeft'), onClick: () => splitFrom(id, 'left') },
+          { label: appT('splitUp'), onClick: () => splitFrom(id, 'above') },
+          { label: appT('splitDown'), onClick: () => splitFrom(id, 'below') },
+          { label: appT('newTab', { name: def.title }), onClick: () => splitFrom(id, 'within') },
         ])
       })
 
@@ -192,7 +189,11 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   panels.list().forEach(d => {
     const btn = document.createElement('button')
     btn.className = 'workspace-empty-btn'
-    btn.innerHTML = `${icon(d.type)}<span>${d.title}</span>`
+    const iconSlot = document.createElement('span')
+    iconSlot.innerHTML = icon(d.type)
+    const label = document.createElement('span')
+    label.textContent = d.title
+    btn.append(iconSlot, label)
     btn.addEventListener('click', () => addInActiveGroup(d.type))
 
     const hints = panelHints[d.type] ?? []

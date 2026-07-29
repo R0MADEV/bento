@@ -19,6 +19,7 @@ src-tauri/target/
 Thumbs.db
 
 # Build outputs
+artifacts/e2e/
 *.AppImage
 *.deb
 *.dmg

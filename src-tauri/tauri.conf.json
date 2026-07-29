@@ -21,7 +21,7 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self' tauri: asset: 'unsafe-inline'; frame-src *; media-src * blob:; connect-src ipc: http://ipc.localhost tauri: https://*"
+      "csp": "default-src 'self' tauri: asset:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https:; font-src 'self' data:; frame-src https:; media-src https: blob:; connect-src ipc: http://ipc.localhost tauri: https:"
     },
     "windows": [
       {

@@ -19,9 +19,7 @@ const run = (command, args, cwd, prompt) => new Promise(resolve => {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   let output = ''
-  let error = ''
   child.stdout.on('data', chunk => { output += chunk })
-  child.stderr.on('data', chunk => { error += chunk })
   child.stdin.end(prompt)
   const timeout = setTimeout(() => child.kill('SIGTERM'), Math.max(10_000, Number(process.env.BENTO_MEMORY_SUMMARY_TIMEOUT_MS) || 180_000))
   child.on('close', code => {

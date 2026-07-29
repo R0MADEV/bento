@@ -8,19 +8,23 @@ fn notes_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "no home dir".to_string())?;
-    let dir = PathBuf::from(home).join(".config").join("bento").join("notes");
+    let dir = PathBuf::from(home)
+        .join(".config")
+        .join("bento")
+        .join("notes");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
 
 // Only a plain .md filename is allowed — reject path traversal.
-fn safe_path(dir: &PathBuf, name: &str) -> Result<PathBuf, String> {
-    let invalid = name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..");
+fn safe_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, String> {
+    let invalid =
+        name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..");
     if invalid {
         return Err("invalid note name".into());
     }
     let path = dir.join(name);
-    if path.parent() != Some(dir.as_path()) {
+    if path.parent() != Some(dir) {
         return Err("invalid note path".into());
     }
     Ok(path)
@@ -41,9 +45,14 @@ pub fn notes_list() -> Result<Vec<NoteFile>, String> {
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         let content = fs::read_to_string(&path).unwrap_or_default();
-        out.push(NoteFile { name: name.to_string(), content });
+        out.push(NoteFile {
+            name: name.to_string(),
+            content,
+        });
     }
     Ok(out)
 }

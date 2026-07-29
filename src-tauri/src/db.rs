@@ -149,7 +149,11 @@ fn run_client(
 }
 
 fn lines_of(out: String) -> Vec<String> {
-    out.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 // Reject identifiers that could break out of a backtick (SQL) or single-quote (JS)
@@ -179,8 +183,10 @@ fn parse_fks(out: String) -> Vec<ForeignKey> {
             let p: Vec<&str> = l.split('\t').collect();
             if p.len() >= 4 && !p[0].is_empty() && !p[2].is_empty() {
                 Some(ForeignKey {
-                    table: p[0].into(), column: p[1].into(),
-                    ref_table: p[2].into(), ref_column: p[3].into(),
+                    table: p[0].into(),
+                    column: p[1].into(),
+                    ref_table: p[2].into(),
+                    ref_column: p[3].into(),
                 })
             } else {
                 None
@@ -201,9 +207,19 @@ pub fn db_inspect_env(container: String) -> Vec<String> {
     if !is_safe_container(&container) {
         return Vec::new();
     }
-    docker_output(&["inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", &container])
-        .map(|s| s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
-        .unwrap_or_default()
+    docker_output(&[
+        "inspect",
+        "-f",
+        "{{range .Config.Env}}{{println .}}{{end}}",
+        &container,
+    ])
+    .map(|s| {
+        s.lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 fn is_open(port: u16) -> bool {
@@ -220,7 +236,13 @@ pub fn db_check_ports(ports: Vec<u16>) -> Vec<u16> {
 
 fn mysql_op(user: &str, password: &str, query: &str, raw: bool) -> Vec<String> {
     // -N drops the header row (used for plain lists); table data keeps it.
-    let mut a: Vec<String> = vec!["-u".into(), user.into(), "-B".into(), "-e".into(), query.into()];
+    let mut a: Vec<String> = vec![
+        "-u".into(),
+        user.into(),
+        "-B".into(),
+        "-e".into(),
+        query.into(),
+    ];
     if raw {
         a.insert(2, "-N".into());
     }
@@ -240,13 +262,26 @@ fn sql_quote(v: &str) -> String {
 }
 
 #[tauri::command]
-pub fn db_docker_list_mysql(container: String, host: String, port: u16, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_list_mysql(
+    container: String,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     let op = mysql_op(&user, &password, "SHOW DATABASES", true);
     run_mysql(&container, &host, port, &op).map(lines_of)
 }
 
 #[tauri::command]
-pub fn db_docker_mysql_tables(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_mysql_tables(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     if !is_safe_ident(&db) {
         return Err("nombre de base inválido".into());
     }
@@ -270,8 +305,17 @@ fn parse_table(out: String) -> TableData {
     };
     let mut lines = out.lines();
     let columns: Vec<String> = match lines.next() {
-        Some(header) => header.split('\t').take(MAX_COLS).map(str::to_string).collect(),
-        None => return TableData { columns: vec![], rows: vec![] },
+        Some(header) => header
+            .split('\t')
+            .take(MAX_COLS)
+            .map(str::to_string)
+            .collect(),
+        None => {
+            return TableData {
+                columns: vec![],
+                rows: vec![],
+            }
+        }
     };
     let rows = lines
         .take(MAX_ROWS)
@@ -281,18 +325,39 @@ fn parse_table(out: String) -> TableData {
 }
 
 #[tauri::command]
-pub fn db_docker_mysql_rows(container: String, host: String, port: u16, db: String, table: String, user: String, password: String) -> Result<TableData, String> {
+pub fn db_docker_mysql_rows(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    user: String,
+    password: String,
+) -> Result<TableData, String> {
     if !is_safe_ident(&db) || !is_safe_ident(&table) {
         return Err("nombre inválido".into());
     }
-    let op = mysql_op(&user, &password, &format!("SELECT * FROM `{}`.`{}` LIMIT 200", db, table), false);
+    let op = mysql_op(
+        &user,
+        &password,
+        &format!("SELECT * FROM `{}`.`{}` LIMIT 200", db, table),
+        false,
+    );
     run_mysql(&container, &host, port, &op).map(parse_table)
 }
 
 // Runs free-form SQL against the `db` database. A dev tool over your own local
 // databases: the query is intentionally arbitrary (like any client).
 #[tauri::command]
-pub fn db_docker_mysql_query(container: String, host: String, port: u16, db: String, sql: String, user: String, password: String) -> Result<TableData, String> {
+pub fn db_docker_mysql_query(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    sql: String,
+    user: String,
+    password: String,
+) -> Result<TableData, String> {
     if !is_safe_ident(&db) {
         return Err("nombre de base inválido".into());
     }
@@ -302,7 +367,14 @@ pub fn db_docker_mysql_query(container: String, host: String, port: u16, db: Str
 
 // Relations (foreign keys) of a MySQL/MariaDB database.
 #[tauri::command]
-pub fn db_docker_mysql_fks(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<ForeignKey>, String> {
+pub fn db_docker_mysql_fks(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    user: String,
+    password: String,
+) -> Result<Vec<ForeignKey>, String> {
     if !is_safe_ident(&db) {
         return Err("nombre de base inválido".into());
     }
@@ -315,7 +387,15 @@ pub fn db_docker_mysql_fks(container: String, host: String, port: u16, db: Strin
 }
 
 #[tauri::command]
-pub fn db_docker_mysql_pk(container: String, host: String, port: u16, db: String, table: String, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_mysql_pk(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     if !is_safe_ident(&db) || !is_safe_ident(&table) {
         return Err("nombre inválido".into());
     }
@@ -343,18 +423,45 @@ fn mysql_where(wheres: &[(String, String)]) -> Result<String, String> {
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn db_docker_mysql_update(container: String, host: String, port: u16, db: String, table: String, column: String, value: String, wheres: Vec<(String, String)>, user: String, password: String) -> Result<(), String> {
+pub fn db_docker_mysql_update(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    column: String,
+    value: String,
+    wheres: Vec<(String, String)>,
+    user: String,
+    password: String,
+) -> Result<(), String> {
     if !is_safe_ident(&db) || !is_safe_ident(&table) || !is_safe_ident(&column) {
         return Err("nombre inválido".into());
     }
     let where_clause = mysql_where(&wheres)?;
-    let query = format!("UPDATE `{}`.`{}` SET `{}` = {} WHERE {}", db, table, column, sql_quote(&value), where_clause);
+    let query = format!(
+        "UPDATE `{}`.`{}` SET `{}` = {} WHERE {}",
+        db,
+        table,
+        column,
+        sql_quote(&value),
+        where_clause
+    );
     let op = mysql_op(&user, &password, &query, false);
     run_mysql(&container, &host, port, &op).map(|_| ())
 }
 
 #[tauri::command]
-pub fn db_docker_mysql_delete(container: String, host: String, port: u16, db: String, table: String, wheres: Vec<(String, String)>, user: String, password: String) -> Result<(), String> {
+pub fn db_docker_mysql_delete(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    wheres: Vec<(String, String)>,
+    user: String,
+    password: String,
+) -> Result<(), String> {
     if !is_safe_ident(&db) || !is_safe_ident(&table) {
         return Err("nombre inválido".into());
     }
@@ -363,22 +470,51 @@ pub fn db_docker_mysql_delete(container: String, host: String, port: u16, db: St
         "SELECT TABLE_NAME FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='{}' AND REFERENCED_TABLE_NAME='{}' AND DELETE_RULE='CASCADE'",
         db, table
     );
-    let cascades = run_mysql(&container, &host, port, &mysql_op(&user, &password, &cascade_query, true)).map(lines_of)?;
+    let cascades = run_mysql(
+        &container,
+        &host,
+        port,
+        &mysql_op(&user, &password, &cascade_query, true),
+    )
+    .map(lines_of)?;
     if !cascades.is_empty() {
-        return Err(format!("Bloqueado: borrar aquí arrastraría en cascada (ON DELETE CASCADE) a: {}", cascades.join(", ")));
+        return Err(format!(
+            "Bloqueado: borrar aquí arrastraría en cascada (ON DELETE CASCADE) a: {}",
+            cascades.join(", ")
+        ));
     }
     let query = format!("DELETE FROM `{}`.`{}` WHERE {}", db, table, where_clause);
-    run_mysql(&container, &host, port, &mysql_op(&user, &password, &query, false)).map(|_| ())
+    run_mysql(
+        &container,
+        &host,
+        port,
+        &mysql_op(&user, &password, &query, false),
+    )
+    .map(|_| ())
 }
 
 // ---------------- MongoDB ----------------
 
 // Run a JS snippet in the mongo shell: mongosh (mongo:5+) with a fallback to the
 // legacy `mongo` shell.
-fn mongo_eval(container: &str, host: &str, port: u16, user: &str, password: &str, script: &str) -> Result<String, String> {
+fn mongo_eval(
+    container: &str,
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    script: &str,
+) -> Result<String, String> {
     let mut op: Vec<String> = vec!["--quiet".into()];
     if !user.is_empty() {
-        op.extend(["-u".into(), user.into(), "-p".into(), password.into(), "--authenticationDatabase".into(), "admin".into()]);
+        op.extend([
+            "-u".into(),
+            user.into(),
+            "-p".into(),
+            password.into(),
+            "--authenticationDatabase".into(),
+            "admin".into(),
+        ]);
     }
     op.extend(["--eval".into(), script.into()]);
     let refs: Vec<&str> = op.iter().map(String::as_str).collect();
@@ -387,17 +523,34 @@ fn mongo_eval(container: &str, host: &str, port: u16, user: &str, password: &str
 }
 
 fn mongo_escape(doc: &str) -> String {
-    doc.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ").replace('\r', "")
+    doc.replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace('\n', " ")
+        .replace('\r', "")
 }
 
 #[tauri::command]
-pub fn db_docker_list_mongo(container: String, host: String, port: u16, user: String, password: String) -> Result<Vec<String>, String> {
-    let script = "db.adminCommand('listDatabases').databases.map(function(d){return d.name}).join('\\n')";
+pub fn db_docker_list_mongo(
+    container: String,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
+    let script =
+        "db.adminCommand('listDatabases').databases.map(function(d){return d.name}).join('\\n')";
     mongo_eval(&container, &host, port, &user, &password, script).map(lines_of)
 }
 
 #[tauri::command]
-pub fn db_docker_mongo_collections(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_mongo_collections(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     if !is_safe_ident(&db) {
         return Err("nombre de base inválido".into());
     }
@@ -406,7 +559,15 @@ pub fn db_docker_mongo_collections(container: String, host: String, port: u16, d
 }
 
 #[tauri::command]
-pub fn db_docker_mongo_docs(container: String, host: String, port: u16, db: String, collection: String, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_mongo_docs(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    collection: String,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     if !is_safe_ident(&db) || !is_safe_ident(&collection) {
         return Err("nombre inválido".into());
     }
@@ -419,7 +580,15 @@ pub fn db_docker_mongo_docs(container: String, host: String, port: u16, db: Stri
 
 // Runs a free-form mongosh script in the context of `db` (dev tool).
 #[tauri::command]
-pub fn db_docker_mongo_query(container: String, host: String, port: u16, db: String, script: String, user: String, password: String) -> Result<String, String> {
+pub fn db_docker_mongo_query(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    script: String,
+    user: String,
+    password: String,
+) -> Result<String, String> {
     if !is_safe_ident(&db) {
         return Err("nombre de base inválido".into());
     }
@@ -430,7 +599,14 @@ pub fn db_docker_mongo_query(container: String, host: String, port: u16, db: Str
 // Mongo relations (heuristic): *Id/*_id or ObjectId fields that point to
 // another collection, guessed by name. References, not enforced FKs.
 #[tauri::command]
-pub fn db_docker_mongo_refs(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<ForeignKey>, String> {
+pub fn db_docker_mongo_refs(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    user: String,
+    password: String,
+) -> Result<Vec<ForeignKey>, String> {
     if !is_safe_ident(&db) {
         return Err("nombre de base inválido".into());
     }
@@ -447,8 +623,10 @@ fn parse_mongo_refs(out: String) -> Vec<ForeignKey> {
             let p: Vec<&str> = l.split('\t').collect();
             if p.len() >= 3 && !p[0].is_empty() && !p[2].is_empty() {
                 Some(ForeignKey {
-                    table: p[0].into(), column: p[1].into(),
-                    ref_table: p[2].into(), ref_column: "_id".into(),
+                    table: p[0].into(),
+                    column: p[1].into(),
+                    ref_table: p[2].into(),
+                    ref_column: "_id".into(),
                 })
             } else {
                 None
@@ -459,7 +637,16 @@ fn parse_mongo_refs(out: String) -> Vec<ForeignKey> {
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn db_docker_mongo_update(container: String, host: String, port: u16, db: String, collection: String, doc: String, user: String, password: String) -> Result<(), String> {
+pub fn db_docker_mongo_update(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    collection: String,
+    doc: String,
+    user: String,
+    password: String,
+) -> Result<(), String> {
     if !is_safe_ident(&db) || !is_safe_ident(&collection) {
         return Err("nombre inválido".into());
     }
@@ -472,7 +659,16 @@ pub fn db_docker_mongo_update(container: String, host: String, port: u16, db: St
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn db_docker_mongo_delete(container: String, host: String, port: u16, db: String, collection: String, doc: String, user: String, password: String) -> Result<(), String> {
+pub fn db_docker_mongo_delete(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    collection: String,
+    doc: String,
+    user: String,
+    password: String,
+) -> Result<(), String> {
     if !is_safe_ident(&db) || !is_safe_ident(&collection) {
         return Err("nombre inválido".into());
     }
@@ -485,14 +681,29 @@ pub fn db_docker_mongo_delete(container: String, host: String, port: u16, db: St
 
 // ---------------- PostgreSQL ----------------
 
-fn psql(container: &str, host: &str, port: u16, db: &str, user: &str, password: &str, extra: &[&str]) -> Result<String, String> {
+fn psql(
+    container: &str,
+    host: &str,
+    port: u16,
+    db: &str,
+    user: &str,
+    password: &str,
+    extra: &[&str],
+) -> Result<String, String> {
     if !is_safe_ident(db) || !is_safe_ident(user) {
         return Err("parámetro inválido".into());
     }
     let mut op: Vec<String> = vec!["-U".into(), user.into(), "-d".into(), db.into()];
     op.extend(extra.iter().map(|s| s.to_string()));
     let refs: Vec<&str> = op.iter().map(String::as_str).collect();
-    run_client(container, host, port, "psql", &refs, &[("PGPASSWORD", password)])
+    run_client(
+        container,
+        host,
+        port,
+        "psql",
+        &refs,
+        &[("PGPASSWORD", password)],
+    )
 }
 
 fn split_qualified(name: &str) -> (String, String) {
@@ -521,7 +732,14 @@ fn pg_where(wheres: &[(String, String)]) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn db_docker_pg_databases(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_pg_databases(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     let out = psql(&container, &host, port, &db, &user, &password, &[
         "-t", "-A", "-c",
         "SELECT datname FROM pg_database WHERE datistemplate=false AND datallowconn ORDER BY datname",
@@ -530,7 +748,14 @@ pub fn db_docker_pg_databases(container: String, host: String, port: u16, db: St
 }
 
 #[tauri::command]
-pub fn db_docker_pg_tables(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_pg_tables(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     let out = psql(&container, &host, port, &db, &user, &password, &[
         "-t", "-A", "-c",
         "SELECT table_schema||'.'||table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') ORDER BY 1",
@@ -539,42 +764,113 @@ pub fn db_docker_pg_tables(container: String, host: String, port: u16, db: Strin
 }
 
 #[tauri::command]
-pub fn db_docker_pg_rows(container: String, host: String, port: u16, db: String, table: String, user: String, password: String) -> Result<TableData, String> {
+pub fn db_docker_pg_rows(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    user: String,
+    password: String,
+) -> Result<TableData, String> {
     let (schema, tbl) = split_qualified(&table);
     if !is_safe_ident(&schema) || !is_safe_ident(&tbl) {
         return Err("nombre inválido".into());
     }
     let query = format!("SELECT * FROM \"{}\".\"{}\" LIMIT 200", schema, tbl);
-    let out = psql(&container, &host, port, &db, &user, &password, &[
-        "-A", "-F", "\t", "-P", "footer=off", "-P", "null=NULL", "-c", &query,
-    ])?;
+    let out = psql(
+        &container,
+        &host,
+        port,
+        &db,
+        &user,
+        &password,
+        &[
+            "-A",
+            "-F",
+            "\t",
+            "-P",
+            "footer=off",
+            "-P",
+            "null=NULL",
+            "-c",
+            &query,
+        ],
+    )?;
     Ok(parse_table(out))
 }
 
 // Runs free-form SQL against `db` (dev tool; arbitrary query).
 #[tauri::command]
-pub fn db_docker_pg_query(container: String, host: String, port: u16, db: String, sql: String, user: String, password: String) -> Result<TableData, String> {
-    let out = psql(&container, &host, port, &db, &user, &password, &[
-        "-A", "-F", "\t", "-P", "footer=off", "-P", "null=NULL", "-c", &sql,
-    ])?;
+pub fn db_docker_pg_query(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    sql: String,
+    user: String,
+    password: String,
+) -> Result<TableData, String> {
+    let out = psql(
+        &container,
+        &host,
+        port,
+        &db,
+        &user,
+        &password,
+        &[
+            "-A",
+            "-F",
+            "\t",
+            "-P",
+            "footer=off",
+            "-P",
+            "null=NULL",
+            "-c",
+            &sql,
+        ],
+    )?;
     Ok(parse_table(out))
 }
 
 // Relations (foreign keys) of a PostgreSQL database.
 #[tauri::command]
-pub fn db_docker_pg_fks(container: String, host: String, port: u16, db: String, user: String, password: String) -> Result<Vec<ForeignKey>, String> {
+pub fn db_docker_pg_fks(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    user: String,
+    password: String,
+) -> Result<Vec<ForeignKey>, String> {
     // schema.table on both sides: Postgres has several schemas, not just public.
     let query = "SELECT tc.table_schema||'.'||tc.table_name, kcu.column_name, ccu.table_schema||'.'||ccu.table_name, ccu.column_name \
         FROM information_schema.table_constraints tc \
         JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name AND tc.table_schema=kcu.table_schema \
         JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.table_schema=tc.table_schema \
         WHERE tc.constraint_type='FOREIGN KEY'";
-    let out = psql(&container, &host, port, &db, &user, &password, &["-t", "-A", "-F", "\t", "-c", query])?;
+    let out = psql(
+        &container,
+        &host,
+        port,
+        &db,
+        &user,
+        &password,
+        &["-t", "-A", "-F", "\t", "-c", query],
+    )?;
     Ok(parse_fks(out))
 }
 
 #[tauri::command]
-pub fn db_docker_pg_pk(container: String, host: String, port: u16, db: String, table: String, user: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_pg_pk(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    user: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     let (schema, tbl) = split_qualified(&table);
     if !is_safe_ident(&schema) || !is_safe_ident(&tbl) {
         return Err("nombre inválido".into());
@@ -583,24 +879,68 @@ pub fn db_docker_pg_pk(container: String, host: String, port: u16, db: String, t
         "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey) WHERE i.indrelid='\"{}\".\"{}\"'::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum)",
         schema, tbl
     );
-    let out = psql(&container, &host, port, &db, &user, &password, &["-t", "-A", "-c", &query])?;
+    let out = psql(
+        &container,
+        &host,
+        port,
+        &db,
+        &user,
+        &password,
+        &["-t", "-A", "-c", &query],
+    )?;
     Ok(lines_of(out))
 }
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn db_docker_pg_update(container: String, host: String, port: u16, db: String, table: String, column: String, value: String, wheres: Vec<(String, String)>, user: String, password: String) -> Result<(), String> {
+pub fn db_docker_pg_update(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    column: String,
+    value: String,
+    wheres: Vec<(String, String)>,
+    user: String,
+    password: String,
+) -> Result<(), String> {
     let (schema, tbl) = split_qualified(&table);
     if !is_safe_ident(&schema) || !is_safe_ident(&tbl) || !is_safe_ident(&column) {
         return Err("nombre inválido".into());
     }
     let where_clause = pg_where(&wheres)?;
-    let query = format!("UPDATE \"{}\".\"{}\" SET \"{}\" = {} WHERE {}", schema, tbl, column, pg_quote(&value), where_clause);
-    psql(&container, &host, port, &db, &user, &password, &["-c", &query]).map(|_| ())
+    let query = format!(
+        "UPDATE \"{}\".\"{}\" SET \"{}\" = {} WHERE {}",
+        schema,
+        tbl,
+        column,
+        pg_quote(&value),
+        where_clause
+    );
+    psql(
+        &container,
+        &host,
+        port,
+        &db,
+        &user,
+        &password,
+        &["-c", &query],
+    )
+    .map(|_| ())
 }
 
 #[tauri::command]
-pub fn db_docker_pg_delete(container: String, host: String, port: u16, db: String, table: String, wheres: Vec<(String, String)>, user: String, password: String) -> Result<(), String> {
+pub fn db_docker_pg_delete(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    table: String,
+    wheres: Vec<(String, String)>,
+    user: String,
+    password: String,
+) -> Result<(), String> {
     let (schema, tbl) = split_qualified(&table);
     if !is_safe_ident(&schema) || !is_safe_ident(&tbl) {
         return Err("nombre inválido".into());
@@ -610,17 +950,47 @@ pub fn db_docker_pg_delete(container: String, host: String, port: u16, db: Strin
         "SELECT conrelid::regclass::text FROM pg_constraint WHERE confrelid='\"{}\".\"{}\"'::regclass AND confdeltype='c'",
         schema, tbl
     );
-    let cascades = lines_of(psql(&container, &host, port, &db, &user, &password, &["-t", "-A", "-c", &cascade_query])?);
+    let cascades = lines_of(psql(
+        &container,
+        &host,
+        port,
+        &db,
+        &user,
+        &password,
+        &["-t", "-A", "-c", &cascade_query],
+    )?);
     if !cascades.is_empty() {
-        return Err(format!("Bloqueado: borrar aquí arrastraría en cascada (ON DELETE CASCADE) a: {}", cascades.join(", ")));
+        return Err(format!(
+            "Bloqueado: borrar aquí arrastraría en cascada (ON DELETE CASCADE) a: {}",
+            cascades.join(", ")
+        ));
     }
-    let query = format!("DELETE FROM \"{}\".\"{}\" WHERE {}", schema, tbl, where_clause);
-    psql(&container, &host, port, &db, &user, &password, &["-c", &query]).map(|_| ())
+    let query = format!(
+        "DELETE FROM \"{}\".\"{}\" WHERE {}",
+        schema, tbl, where_clause
+    );
+    psql(
+        &container,
+        &host,
+        port,
+        &db,
+        &user,
+        &password,
+        &["-c", &query],
+    )
+    .map(|_| ())
 }
 
 // ---------------- Redis (db index → keys → value by type) ----------------
 
-fn redis_cli(container: &str, host: &str, port: u16, db: &str, password: &str, args: &[&str]) -> Result<String, String> {
+fn redis_cli(
+    container: &str,
+    host: &str,
+    port: u16,
+    db: &str,
+    password: &str,
+    args: &[&str],
+) -> Result<String, String> {
     if db.is_empty() || !db.chars().all(|c| c.is_ascii_digit()) {
         return Err("parámetro inválido".into());
     }
@@ -635,9 +1005,21 @@ fn redis_cli(container: &str, host: &str, port: u16, db: &str, password: &str, a
 }
 
 #[tauri::command]
-pub fn db_docker_redis_dbs(container: String, host: String, port: u16, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_redis_dbs(
+    container: String,
+    host: String,
+    port: u16,
+    password: String,
+) -> Result<Vec<String>, String> {
     // INFO keyspace lists only the logical DBs that hold keys (db0:keys=2,...).
-    let out = redis_cli(&container, &host, port, "0", &password, &["INFO", "keyspace"])?;
+    let out = redis_cli(
+        &container,
+        &host,
+        port,
+        "0",
+        &password,
+        &["INFO", "keyspace"],
+    )?;
     let dbs = out
         .lines()
         .filter_map(|l| {
@@ -650,7 +1032,13 @@ pub fn db_docker_redis_dbs(container: String, host: String, port: u16, password:
 }
 
 #[tauri::command]
-pub fn db_docker_redis_keys(container: String, host: String, port: u16, db: String, password: String) -> Result<Vec<String>, String> {
+pub fn db_docker_redis_keys(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    password: String,
+) -> Result<Vec<String>, String> {
     let out = redis_cli(&container, &host, port, &db, &password, &["--scan"])?;
     Ok(lines_of(out).into_iter().take(1000).collect())
 }
@@ -662,15 +1050,45 @@ pub struct RedisValue {
 }
 
 #[tauri::command]
-pub fn db_docker_redis_value(container: String, host: String, port: u16, db: String, key: String, password: String) -> Result<RedisValue, String> {
-    let kind = redis_cli(&container, &host, port, &db, &password, &["TYPE", &key])?.trim().to_string();
+pub fn db_docker_redis_value(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    key: String,
+    password: String,
+) -> Result<RedisValue, String> {
+    let kind = redis_cli(&container, &host, port, &db, &password, &["TYPE", &key])?
+        .trim()
+        .to_string();
     let value = match kind.as_str() {
         "string" => redis_cli(&container, &host, port, &db, &password, &["GET", &key])?,
         "hash" => redis_cli(&container, &host, port, &db, &password, &["HGETALL", &key])?,
-        "list" => redis_cli(&container, &host, port, &db, &password, &["LRANGE", &key, "0", "-1"])?,
+        "list" => redis_cli(
+            &container,
+            &host,
+            port,
+            &db,
+            &password,
+            &["LRANGE", &key, "0", "-1"],
+        )?,
         "set" => redis_cli(&container, &host, port, &db, &password, &["SMEMBERS", &key])?,
-        "zset" => redis_cli(&container, &host, port, &db, &password, &["ZRANGE", &key, "0", "-1", "WITHSCORES"])?,
-        "stream" => redis_cli(&container, &host, port, &db, &password, &["XRANGE", &key, "-", "+", "COUNT", "50"])?,
+        "zset" => redis_cli(
+            &container,
+            &host,
+            port,
+            &db,
+            &password,
+            &["ZRANGE", &key, "0", "-1", "WITHSCORES"],
+        )?,
+        "stream" => redis_cli(
+            &container,
+            &host,
+            port,
+            &db,
+            &password,
+            &["XRANGE", &key, "-", "+", "COUNT", "50"],
+        )?,
         _ => String::new(),
     };
     Ok(RedisValue { kind, value })
@@ -678,7 +1096,14 @@ pub fn db_docker_redis_value(container: String, host: String, port: u16, db: Str
 
 // Runs a free-form redis-cli command against the `db` database (dev tool).
 #[tauri::command]
-pub fn db_docker_redis_command(container: String, host: String, port: u16, db: String, command: String, password: String) -> Result<String, String> {
+pub fn db_docker_redis_command(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    command: String,
+    password: String,
+) -> Result<String, String> {
     let args: Vec<&str> = command.split_whitespace().collect();
     if args.is_empty() {
         return Err("comando vacío".into());
@@ -692,19 +1117,40 @@ mod tests {
 
     #[test]
     fn host_flags_per_client() {
-        assert_eq!(host_flags("mysql", "127.0.0.1", 3306), vec!["-h", "127.0.0.1", "-P", "3306"]);
-        assert_eq!(host_flags("psql", "127.0.0.1", 5432), vec!["-h", "127.0.0.1", "-p", "5432"]);
-        assert_eq!(host_flags("mongosh", "localhost", 27017), vec!["--host", "localhost", "--port", "27017"]);
-        assert_eq!(host_flags("redis-cli", "127.0.0.1", 6379), vec!["-h", "127.0.0.1", "-p", "6379"]);
+        assert_eq!(
+            host_flags("mysql", "127.0.0.1", 3306),
+            vec!["-h", "127.0.0.1", "-P", "3306"]
+        );
+        assert_eq!(
+            host_flags("psql", "127.0.0.1", 5432),
+            vec!["-h", "127.0.0.1", "-p", "5432"]
+        );
+        assert_eq!(
+            host_flags("mongosh", "localhost", 27017),
+            vec!["--host", "localhost", "--port", "27017"]
+        );
+        assert_eq!(
+            host_flags("redis-cli", "127.0.0.1", 6379),
+            vec!["-h", "127.0.0.1", "-p", "6379"]
+        );
         assert!(host_flags("psql", "h", 1).contains(&"-p".to_string())); // lowercase for postgres
         assert!(host_flags("mysql", "h", 1).contains(&"-P".to_string())); // uppercase for mysql
     }
 
     #[test]
     fn mysql_op_orders_password_and_raw() {
-        assert_eq!(mysql_op("root", "", "SHOW DATABASES", true), vec!["-u", "root", "-N", "-B", "-e", "SHOW DATABASES"]);
-        assert_eq!(mysql_op("root", "pw", "Q", false), vec!["-u", "root", "-ppw", "-B", "-e", "Q"]);
-        assert_eq!(mysql_op("root", "pw", "Q", true), vec!["-u", "root", "-ppw", "-N", "-B", "-e", "Q"]);
+        assert_eq!(
+            mysql_op("root", "", "SHOW DATABASES", true),
+            vec!["-u", "root", "-N", "-B", "-e", "SHOW DATABASES"]
+        );
+        assert_eq!(
+            mysql_op("root", "pw", "Q", false),
+            vec!["-u", "root", "-ppw", "-B", "-e", "Q"]
+        );
+        assert_eq!(
+            mysql_op("root", "pw", "Q", true),
+            vec!["-u", "root", "-ppw", "-N", "-B", "-e", "Q"]
+        );
     }
 
     #[test]
@@ -729,7 +1175,10 @@ mod tests {
 
     #[test]
     fn split_qualified_defaults_to_public() {
-        assert_eq!(split_qualified("public.users"), ("public".into(), "users".into()));
+        assert_eq!(
+            split_qualified("public.users"),
+            ("public".into(), "users".into())
+        );
         assert_eq!(split_qualified("users"), ("public".into(), "users".into()));
     }
 
@@ -756,10 +1205,19 @@ mod tests {
     #[test]
     fn parse_table_caps_rows_cols_and_cells() {
         // 300 rows, 100 columns, 2000-char cells → an unbounded wide JOIN.
-        let header = (0..100).map(|c| format!("c{c}")).collect::<Vec<_>>().join("\t");
+        let header = (0..100)
+            .map(|c| format!("c{c}"))
+            .collect::<Vec<_>>()
+            .join("\t");
         let big_cell = "x".repeat(2000);
-        let row = (0..100).map(|_| big_cell.clone()).collect::<Vec<_>>().join("\t");
-        let body = std::iter::repeat(row).take(300).collect::<Vec<_>>().join("\n");
+        let row = (0..100)
+            .map(|_| big_cell.clone())
+            .collect::<Vec<_>>()
+            .join("\t");
+        let body = std::iter::repeat(row)
+            .take(300)
+            .collect::<Vec<_>>()
+            .join("\n");
         let t = parse_table(format!("{header}\n{body}"));
         assert_eq!(t.columns.len(), 80, "columnas acotadas");
         assert_eq!(t.rows.len(), 200, "filas acotadas");

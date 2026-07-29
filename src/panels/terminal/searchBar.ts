@@ -33,7 +33,10 @@ export function createSearchBar(searchAddon: SearchAddon): SearchBar {
 
   input.addEventListener('input', searchNext)
   input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') e.shiftKey ? searchPrev() : searchNext()
+    if (e.key === 'Enter') {
+      if (e.shiftKey) searchPrev()
+      else searchNext()
+    }
     if (e.key === 'Escape') hide()
   })
   next.addEventListener('click', searchNext)

@@ -17,7 +17,7 @@ import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
 import { TauriMemoryRepository } from './adapters/TauriMemoryRepository'
-import { LocalStorageWorkspaceStateRepository } from './adapters/LocalStorageWorkspaceStateRepository'
+import { TauriWorkspaceStateRepository } from './adapters/TauriWorkspaceStateRepository'
 import { createSessionManager } from './app/createSessionManager'
 import { createAiChat } from './ui/aiChat'
 import { getThemeName, applyAppTheme } from './panels/terminal/themePreference'
@@ -45,7 +45,7 @@ const channelRepo = new M3UChannelRepository(tvM3U)
 const worldRepo = new IptvOrgChannelRepository()
 const favoritesRepo = new LocalStorageFavoritesRepository()
 const memoryRepo = new TauriMemoryRepository()
-const stateRepo = new LocalStorageWorkspaceStateRepository()
+const stateRepo = new TauriWorkspaceStateRepository()
 
 const panels = createPanelRegistry()
 panels.register(tvPanelDefinition(channelRepo, favoritesRepo, worldRepo))

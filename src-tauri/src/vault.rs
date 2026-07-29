@@ -19,7 +19,7 @@ pub struct VaultEntry {
     pub id: String,
     pub service: String,
     pub username: String,
-    pub password: String,  // plaintext only while in memory; encrypted at rest
+    pub password: String, // plaintext only while in memory; encrypted at rest
     pub url: String,
     pub notes: String,
 }
@@ -59,7 +59,7 @@ pub struct VaultState(pub Mutex<Option<UnlockedVault>>);
 
 pub struct UnlockedVault {
     pub key: [u8; 32],
-    pub kdf_salt: Vec<u8>,   // key-derivation salt — fixed per vault, stored in file
+    pub kdf_salt: Vec<u8>, // key-derivation salt — fixed per vault, stored in file
     pub entries: Vec<VaultEntry>,
 }
 
@@ -80,14 +80,18 @@ pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), S
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|e| e.to_string())?;
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|e| e.to_string())?;
     Ok((nonce_bytes.to_vec(), ciphertext))
 }
 
 pub fn decrypt(key: &[u8; 32], nonce_bytes: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     let nonce = Nonce::from_slice(nonce_bytes);
-    cipher.decrypt(nonce, ciphertext).map_err(|_| "Contraseña maestra incorrecta.".to_string())
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "Contraseña maestra incorrecta.".to_string())
 }
 
 pub fn new_id() -> String {
@@ -162,15 +166,26 @@ pub fn vault_setup(password: String, state: tauri::State<VaultState>) -> Result<
     rand::thread_rng().fill_bytes(&mut kdf_salt);
     let key = derive_key(&password, &kdf_salt)?;
     write_vault(&key, &kdf_salt, &[])?;
-    *state.0.lock().unwrap() = Some(UnlockedVault { key, kdf_salt: kdf_salt.to_vec(), entries: vec![] });
+    *state.0.lock().unwrap() = Some(UnlockedVault {
+        key,
+        kdf_salt: kdf_salt.to_vec(),
+        entries: vec![],
+    });
     Ok(())
 }
 
 #[tauri::command]
-pub fn vault_unlock(password: String, state: tauri::State<VaultState>) -> Result<Vec<VaultEntryPublic>, String> {
+pub fn vault_unlock(
+    password: String,
+    state: tauri::State<VaultState>,
+) -> Result<Vec<VaultEntryPublic>, String> {
     let (entries, key, kdf_salt) = read_and_decrypt(&password)?;
     let public: Vec<VaultEntryPublic> = entries.iter().map(|e| e.into()).collect();
-    *state.0.lock().unwrap() = Some(UnlockedVault { key, kdf_salt, entries });
+    *state.0.lock().unwrap() = Some(UnlockedVault {
+        key,
+        kdf_salt,
+        entries,
+    });
     Ok(public)
 }
 
@@ -188,12 +203,23 @@ pub fn vault_list(state: tauri::State<VaultState>) -> Result<Vec<VaultEntryPubli
 
 #[tauri::command]
 pub fn vault_add(
-    service: String, username: String, password: String, url: String, notes: String,
+    service: String,
+    username: String,
+    password: String,
+    url: String,
+    notes: String,
     state: tauri::State<VaultState>,
 ) -> Result<VaultEntryPublic, String> {
     let mut guard = state.0.lock().unwrap();
     let vault = guard.as_mut().ok_or("Vault bloqueado.")?;
-    let entry = VaultEntry { id: new_id(), service, username, password, url, notes };
+    let entry = VaultEntry {
+        id: new_id(),
+        service,
+        username,
+        password,
+        url,
+        notes,
+    };
     let public = VaultEntryPublic::from(&entry);
     vault.entries.push(entry);
     write_vault(&vault.key, &vault.kdf_salt, &vault.entries)?;
@@ -221,23 +247,36 @@ pub fn vault_verify_password(password: String) -> bool {
 pub fn vault_get_password(id: String, state: tauri::State<VaultState>) -> Result<String, String> {
     let guard = state.0.lock().unwrap();
     let vault = guard.as_ref().ok_or("Vault bloqueado.")?;
-    vault.entries.iter().find(|e| e.id == id)
+    vault
+        .entries
+        .iter()
+        .find(|e| e.id == id)
         .map(|e| e.password.clone())
         .ok_or_else(|| "Entrada no encontrada.".to_string())
 }
 
 #[tauri::command]
 pub fn vault_update(
-    id: String, service: String, username: String, password: String, url: String, notes: String,
+    id: String,
+    service: String,
+    username: String,
+    password: String,
+    url: String,
+    notes: String,
     state: tauri::State<VaultState>,
 ) -> Result<VaultEntryPublic, String> {
     let mut guard = state.0.lock().unwrap();
     let vault = guard.as_mut().ok_or("Vault bloqueado.")?;
-    let entry = vault.entries.iter_mut().find(|e| e.id == id)
+    let entry = vault
+        .entries
+        .iter_mut()
+        .find(|e| e.id == id)
         .ok_or("Entrada no encontrada.")?;
     entry.service = service;
     entry.username = username;
-    if !password.is_empty() { entry.password = password; }
+    if !password.is_empty() {
+        entry.password = password;
+    }
     entry.url = url;
     entry.notes = notes;
     let public = VaultEntryPublic::from(&*entry);

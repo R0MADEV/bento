@@ -140,11 +140,16 @@ export function createJiraPanel(): { element: HTMLElement } {
         issues.forEach(it => {
           const row = document.createElement('button')
           row.className = 'jira-issue'
-          row.innerHTML =
-            `<span class="jira-key">${it.key}</span>` +
-            `<span class="jira-summary"></span>` +
-            `<span class="jira-status ${statusClass(it.statusCategory)}">${it.status}</span>`
-          row.querySelector('.jira-summary')!.textContent = it.summary
+          const key = document.createElement('span')
+          key.className = 'jira-key'
+          key.textContent = it.key
+          const summary = document.createElement('span')
+          summary.className = 'jira-summary'
+          summary.textContent = it.summary
+          const status = document.createElement('span')
+          status.className = `jira-status ${statusClass(it.statusCategory)}`
+          status.textContent = it.status
+          row.append(key, summary, status)
           row.addEventListener('click', () => renderDetail(it))
           list.appendChild(row)
         })
@@ -171,10 +176,16 @@ export function createJiraPanel(): { element: HTMLElement } {
     const openBtn = iconBtn('globe', 'Abrir en Jira', () => openUrl(browseUrl(cfg.site, it.key)).catch(() => {}))
     const meta = document.createElement('div')
     meta.className = 'jira-detail-meta'
-    meta.innerHTML =
-      `<span class="jira-key">${it.key}</span>` +
-      `<span class="jira-status ${statusClass(it.statusCategory)}">${it.status}</span>` +
-      `<span class="jira-type">${it.type}</span>`
+    const key = document.createElement('span')
+    key.className = 'jira-key'
+    key.textContent = it.key
+    const status = document.createElement('span')
+    status.className = `jira-status ${statusClass(it.statusCategory)}`
+    status.textContent = it.status
+    const issueType = document.createElement('span')
+    issueType.className = 'jira-type'
+    issueType.textContent = it.type
+    meta.append(key, status, issueType)
     const summary = document.createElement('div')
     summary.className = 'jira-detail-summary'
     summary.textContent = it.summary

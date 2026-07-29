@@ -1,9 +1,9 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::Write;
 use tauri::{AppHandle, Manager};
 
 const MAX_TEXT_LENGTH: usize = 20_000;
@@ -319,8 +319,15 @@ fn find_transcript_by_summary_external_id(
     .map_err(|e| e.to_string())
 }
 
-fn upsert_summary_entry(conn: &Connection, transcript: &MemoryTranscript, summary: &str) -> Result<MemoryEntry, String> {
-    let external_id = format!("{}:session-summary:{}", transcript.agent, transcript.session_id);
+fn upsert_summary_entry(
+    conn: &Connection,
+    transcript: &MemoryTranscript,
+    summary: &str,
+) -> Result<MemoryEntry, String> {
+    let external_id = format!(
+        "{}:session-summary:{}",
+        transcript.agent, transcript.session_id
+    );
     let title = format!(
         "Resumen de sesion: {}",
         transcript
@@ -338,7 +345,7 @@ fn upsert_summary_entry(conn: &Connection, transcript: &MemoryTranscript, summar
                 title,
                 summary.chars().take(500).collect::<String>(),
                 summary,
-                encode(&vec!["session-summary".to_string(), transcript.agent.clone()])?,
+                encode(&["session-summary".to_string(), transcript.agent.clone()])?,
                 format!("{}-regen", transcript.agent),
                 transcript.updated_at,
                 transcript.project_path,
@@ -390,10 +397,16 @@ fn upsert_summary_entry(conn: &Connection, transcript: &MemoryTranscript, summar
     Ok(entry)
 }
 
-fn regenerate_transcript_summary(agent: &str, cwd: &str, transcript: &str) -> Result<String, String> {
+fn regenerate_transcript_summary(
+    agent: &str,
+    cwd: &str,
+    transcript: &str,
+) -> Result<String, String> {
     let script_path = std::env::var("BENTO_MEMORY_REGEN_SCRIPT")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/bento-memory-regenerate.mjs"));
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/bento-memory-regenerate.mjs")
+        });
     let node_bin = std::env::var("BENTO_MEMORY_NODE_BIN").unwrap_or_else(|_| "node".to_string());
     let payload = serde_json::json!({
         "agent": agent,
@@ -409,7 +422,9 @@ fn regenerate_transcript_summary(agent: &str, cwd: &str, transcript: &str) -> Re
         .spawn()
         .map_err(|e| e.to_string())?;
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(payload.as_bytes()).map_err(|e| e.to_string())?;
+        stdin
+            .write_all(payload.as_bytes())
+            .map_err(|e| e.to_string())?;
     }
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -547,7 +562,10 @@ pub fn memory_migrate(app: AppHandle, entries: Vec<MemoryEntry>) -> Result<usize
 }
 
 #[tauri::command]
-pub fn memory_transcript_list(app: AppHandle, project_path: String) -> Result<Vec<MemoryTranscript>, String> {
+pub fn memory_transcript_list(
+    app: AppHandle,
+    project_path: String,
+) -> Result<Vec<MemoryTranscript>, String> {
     let conn = connection(&app)?;
     let mut stmt = conn.prepare(
         "SELECT id, project_path, agent, session_id, title, transcript, summary, source, external_id, created_at, updated_at
@@ -562,21 +580,30 @@ pub fn memory_transcript_list(app: AppHandle, project_path: String) -> Result<Ve
 }
 
 #[tauri::command]
-pub fn memory_summary_job_list(app: AppHandle, project_path: String) -> Result<Vec<MemorySummaryJob>, String> {
+pub fn memory_summary_job_list(
+    app: AppHandle,
+    project_path: String,
+) -> Result<Vec<MemorySummaryJob>, String> {
     let conn = connection(&app)?;
     let select = "SELECT id, project_path, agent, session_id, transcript_external_id, transcript_hash,
                   status, error, attempts, metadata_json, created_at, updated_at FROM memory_summary_jobs";
     if project_path.trim().is_empty() {
-        let mut stmt = conn.prepare(&format!("{select} ORDER BY updated_at DESC LIMIT 100"))
+        let mut stmt = conn
+            .prepare(&format!("{select} ORDER BY updated_at DESC LIMIT 100"))
             .map_err(|e| e.to_string())?;
-        return stmt.query_map([], row_to_summary_job)
+        return stmt
+            .query_map([], row_to_summary_job)
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string());
     }
-    let mut stmt = conn.prepare(&format!("{select} WHERE project_path = ?1 ORDER BY updated_at DESC LIMIT 100"))
+    let mut stmt = conn
+        .prepare(&format!(
+            "{select} WHERE project_path = ?1 ORDER BY updated_at DESC LIMIT 100"
+        ))
         .map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![project_path.trim()], row_to_summary_job)
+    let rows = stmt
+        .query_map(params![project_path.trim()], row_to_summary_job)
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
@@ -584,7 +611,10 @@ pub fn memory_summary_job_list(app: AppHandle, project_path: String) -> Result<V
 }
 
 #[tauri::command]
-pub fn memory_transcript_create(app: AppHandle, entry: MemoryTranscript) -> Result<MemoryTranscript, String> {
+pub fn memory_transcript_create(
+    app: AppHandle,
+    entry: MemoryTranscript,
+) -> Result<MemoryTranscript, String> {
     let conn = connection(&app)?;
     validate_transcript(&entry)?;
     conn.execute(
@@ -616,15 +646,26 @@ pub fn memory_regenerate_summary(
     external_id: String,
 ) -> Result<Option<MemoryEntry>, String> {
     let conn = connection(&app)?;
-    let Some(mut transcript) = find_transcript_by_summary_external_id(&conn, &project_path, &external_id)? else {
+    let Some(mut transcript) =
+        find_transcript_by_summary_external_id(&conn, &project_path, &external_id)?
+    else {
         return Ok(None);
     };
     conn.execute(
         "UPDATE memory_summary_jobs SET status = 'processing', error = '', updated_at = ?1
          WHERE project_path = ?2 AND transcript_external_id = ?3",
-        params![chrono_like_now(), transcript.project_path, transcript.external_id],
-    ).map_err(|e| e.to_string())?;
-    let summary = match regenerate_transcript_summary(&transcript.agent, &transcript.project_path, &transcript.transcript) {
+        params![
+            chrono_like_now(),
+            transcript.project_path,
+            transcript.external_id
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let summary = match regenerate_transcript_summary(
+        &transcript.agent,
+        &transcript.project_path,
+        &transcript.transcript,
+    ) {
         Ok(value) => value,
         Err(error) => {
             conn.execute(
@@ -639,8 +680,16 @@ pub fn memory_regenerate_summary(
         || summary.eq_ignore_ascii_case("SIN_MEMORIA")
         || summary.to_lowercase().contains("not logged in")
     {
-        let status = if summary.eq_ignore_ascii_case("SIN_MEMORIA") { "skipped" } else { "failed" };
-        let error = if status == "failed" { "El resumidor no devolvió un resultado válido." } else { "" };
+        let status = if summary.eq_ignore_ascii_case("SIN_MEMORIA") {
+            "skipped"
+        } else {
+            "failed"
+        };
+        let error = if status == "failed" {
+            "El resumidor no devolvió un resultado válido."
+        } else {
+            ""
+        };
         conn.execute(
             "UPDATE memory_summary_jobs SET status = ?1, error = ?2, attempts = attempts + 1, updated_at = ?3
              WHERE project_path = ?4 AND transcript_external_id = ?5",
@@ -670,10 +719,14 @@ pub fn memory_regenerate_summary(
 
 fn chrono_like_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = now.as_secs() as i64;
-    let tm = time::OffsetDateTime::from_unix_timestamp(secs).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-    tm.format(&time::format_description::well_known::Rfc3339).unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
+    let tm =
+        time::OffsetDateTime::from_unix_timestamp(secs).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    tm.format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
 }
 
 #[cfg(test)]

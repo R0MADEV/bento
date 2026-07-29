@@ -1,0 +1,3 @@
+# ts-rs rewrites these files during bindings:check. A fixed line ending keeps
+# clean checkouts identical after generation on Windows, Linux and macOS.
+src/generated/bindings/*.ts text eol=lf

@@ -15,10 +15,14 @@ import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
 import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
 import { setActiveProjectPath } from '../ui/activeProject'
+import { appT, getAppLocale, setAppLocale } from '../core/i18n'
+import { parseSavedState } from '../core/session/savedState'
 
 export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
   root.className = 'session-manager'
+  root.dataset.ready = 'false'
+  root.setAttribute('aria-busy', 'true')
 
   // macOS: the title bar is an overlay. When the session bar is not at the
   // top, this top strip reserves the space for the traffic lights and lets
@@ -33,6 +37,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
   const tabsArea = document.createElement('div')
   tabsArea.className = 'session-tabs'
+  tabsArea.setAttribute('role', 'tablist')
   bar.appendChild(tabsArea)
 
   if (!isMac) bar.appendChild(createWindowControls())
@@ -80,7 +85,9 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       const layouts: Record<string, unknown> = { ...savedLayouts }
       views.forEach((view, id) => { layouts[id] = view.serialize() })
       savedLayouts = layouts
-      stateRepo.save({ sessions: state.sessions, activeId: state.activeId, layouts })
+      stateRepo.save({ schemaVersion: 1, sessions: state.sessions, activeId: state.activeId, layouts }).catch(error => {
+        console.error('Could not persist workspace state', error)
+      })
     }, 400)
   }
 
@@ -122,10 +129,24 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   }
 
   const showPopover = (anchor: HTMLElement, name: string, titles: string[]): void => {
-    const items = titles.length
-      ? titles.map(t => `<div class="session-popover-item">${t}</div>`).join('')
-      : '<div class="session-popover-empty">(vacía)</div>'
-    popover.innerHTML = `<div class="session-popover-title">${name}</div>${items}`
+    popover.replaceChildren()
+    const title = document.createElement('div')
+    title.className = 'session-popover-title'
+    title.textContent = name
+    popover.appendChild(title)
+    if (titles.length) {
+      for (const panelTitle of titles) {
+        const item = document.createElement('div')
+        item.className = 'session-popover-item'
+        item.textContent = panelTitle
+        popover.appendChild(item)
+      }
+    } else {
+      const empty = document.createElement('div')
+      empty.className = 'session-popover-empty'
+      empty.textContent = appT('empty')
+      popover.appendChild(empty)
+    }
     // Show first so getBoundingClientRect returns real dimensions.
     popover.classList.remove('hidden')
     setWebOverlay(true)
@@ -158,6 +179,9 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   ) => {
     const tab = document.createElement('div')
     tab.className = active ? 'session-tab active' : 'session-tab'
+    tab.setAttribute('role', 'tab')
+    tab.setAttribute('tabindex', active ? '0' : '-1')
+    tab.setAttribute('aria-selected', String(active))
 
     const label = document.createElement('span')
     label.className = 'session-tab-label'
@@ -184,14 +208,18 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       input.addEventListener('blur', save)
     })
 
-    const duplicate = document.createElement('span')
+    const duplicate = document.createElement('button')
+    duplicate.type = 'button'
     duplicate.className = 'session-tab-duplicate'
-    duplicate.title = 'Duplicar sesión'
+    duplicate.title = appT('duplicateSession')
     duplicate.textContent = '⧉'
     duplicate.addEventListener('click', e => { e.stopPropagation(); onDuplicate() })
 
-    const close = document.createElement('span')
+    const close = document.createElement('button')
+    close.type = 'button'
     close.className = 'session-tab-close'
+    close.title = appT('closeSession')
+    close.setAttribute('aria-label', appT('closeSession'))
     close.innerHTML = icon('x')
     close.addEventListener('click', e => { e.stopPropagation(); onClose() })
 
@@ -200,6 +228,11 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     actions.append(duplicate, close)
     tab.append(label, actions)
     tab.addEventListener('click', onSelect)
+    tab.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      onSelect()
+    })
     tab.addEventListener('mouseenter', () => showPopover(tab, name, getTitles()))
     tab.addEventListener('mouseleave', hidePopover)
     return tab
@@ -232,7 +265,8 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     const add = document.createElement('button')
     add.className = 'session-add'
     add.innerHTML = icon('plus')
-    add.title = 'Nueva sesión'
+    add.title = appT('newSession')
+    add.setAttribute('aria-label', appT('newSession'))
     add.addEventListener('click', () => { state = addSession(state); render() })
     tabsArea.appendChild(add)
 
@@ -257,25 +291,25 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const buildCommands = (): Command[] => {
     const active = state.activeId ? views.get(state.activeId) : undefined
     const commands: Command[] = [
-      { id: 'new-terminal', label: 'Nueva terminal', keywords: ['terminal', 'shell'], run: () => active?.addPanel('terminal') },
+      { id: 'new-terminal', label: appT('newTerminal'), keywords: ['terminal', 'shell'], run: () => active?.addPanel('terminal') },
       ...loadProfiles().map(p => ({
         id: `profile-${p.id}`,
         label: `Terminal: ${p.name}`,
         keywords: ['terminal', 'perfil', 'profile', p.shell, p.theme],
         run: () => active?.addPanel('terminal'),
       })),
-      { id: 'new-tv', label: 'Nuevo panel TV', keywords: ['tv', 'canal'], run: () => active?.addPanel('tv') },
-      { id: 'new-web', label: 'Nuevo panel Web', keywords: ['web', 'navegador', 'url'], run: () => active?.addPanel('web') },
-      { id: 'new-notes', label: 'Nuevas notas', keywords: ['notas', 'notes', 'texto'], run: () => active?.addPanel('notes') },
-      { id: 'new-http', label: 'Nuevo cliente HTTP', keywords: ['http', 'api', 'rest', 'postman', 'request'], run: () => active?.addPanel('http') },
-      { id: 'new-scripts', label: 'Nuevo panel Scripts', keywords: ['scripts', 'script', 'comandos', 'sh'], run: () => active?.addPanel('scripts') },
-      { id: 'new-db', label: 'Nuevo panel Bases de datos', keywords: ['db', 'base de datos', 'database', 'mysql', 'mongo', 'docker'], run: () => active?.addPanel('db') },
-      { id: 'new-jira', label: 'Nuevo panel Jira', keywords: ['jira', 'tickets', 'tareas', 'atlassian', 'issues'], run: () => active?.addPanel('jira') },
-      { id: 'new-docker', label: 'Nuevo panel Docker', keywords: ['docker', 'contenedores', 'containers', 'logs'], run: () => active?.addPanel('docker') },
-      { id: 'new-tasks', label: 'Nuevo panel Tareas', keywords: ['tareas', 'tasks', 'worktree', 'git', 'paralelo'], run: () => active?.addPanel('tasks') },
-      { id: 'new-memory', label: 'Nuevo panel Memoria', keywords: ['memoria', 'memory', 'contexto', 'decisiones', 'resumen'], run: () => active?.addPanel('memory') },
+      { id: 'new-tv', label: appT('newTv'), keywords: ['tv', 'canal'], run: () => active?.addPanel('tv') },
+      { id: 'new-web', label: appT('newWeb'), keywords: ['web', 'navegador', 'url'], run: () => active?.addPanel('web') },
+      { id: 'new-notes', label: appT('newNotes'), keywords: ['notas', 'notes', 'texto'], run: () => active?.addPanel('notes') },
+      { id: 'new-http', label: appT('newHttp'), keywords: ['http', 'api', 'rest', 'postman', 'request'], run: () => active?.addPanel('http') },
+      { id: 'new-scripts', label: appT('newScripts'), keywords: ['scripts', 'script', 'comandos', 'sh'], run: () => active?.addPanel('scripts') },
+      { id: 'new-db', label: appT('newDb'), keywords: ['db', 'base de datos', 'database', 'mysql', 'mongo', 'docker'], run: () => active?.addPanel('db') },
+      { id: 'new-jira', label: appT('newJira'), keywords: ['jira', 'tickets', 'tareas', 'atlassian', 'issues'], run: () => active?.addPanel('jira') },
+      { id: 'new-docker', label: appT('newDocker'), keywords: ['docker', 'contenedores', 'containers', 'logs'], run: () => active?.addPanel('docker') },
+      { id: 'new-tasks', label: appT('newTasks'), keywords: ['tareas', 'tasks', 'worktree', 'git', 'paralelo'], run: () => active?.addPanel('tasks') },
+      { id: 'new-memory', label: appT('newMemory'), keywords: ['memoria', 'memory', 'contexto', 'decisiones', 'resumen'], run: () => active?.addPanel('memory') },
       {
-        id: 'bind-project', label: 'Atar sesión a la carpeta de la terminal activa',
+        id: 'bind-project', label: appT('bindProject'),
         keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],
         run: () => {
           const cwd = active?.activeCwd()
@@ -284,13 +318,13 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
           render()
         },
       },
-      { id: 'new-session', label: 'Nueva sesión', keywords: ['session', 'espacio'], run: () => { state = addSession(state); render() } },
+      { id: 'new-session', label: appT('newSession'), keywords: ['session', 'espacio'], run: () => { state = addSession(state); render() } },
       {
-        id: 'export-workspace', label: 'Exportar workspace', keywords: ['exportar', 'guardar', 'json'],
+        id: 'export-workspace', label: appT('exportWorkspace'), keywords: ['exportar', 'guardar', 'json'],
         run: () => {
           const layouts: Record<string, unknown> = { ...savedLayouts }
           views.forEach((view, id) => { layouts[id] = view.serialize() })
-          const data = JSON.stringify({ sessions: state.sessions, activeId: state.activeId, layouts }, null, 2)
+          const data = JSON.stringify({ schemaVersion: 1, sessions: state.sessions, activeId: state.activeId, layouts }, null, 2)
           const a = document.createElement('a')
           a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
           a.download = 'bento-workspace.json'
@@ -298,7 +332,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         },
       },
       {
-        id: 'import-workspace', label: 'Importar workspace', keywords: ['importar', 'abrir', 'json'],
+        id: 'import-workspace', label: appT('importWorkspace'), keywords: ['importar', 'abrir', 'json'],
         run: () => {
           const input = document.createElement('input')
           input.type = 'file'
@@ -308,14 +342,14 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
             if (!file) return
             file.text().then(text => {
               try {
-                const parsed = JSON.parse(text)
-                if (!Array.isArray(parsed.sessions)) throw new Error('Formato inválido')
+                const parsed = parseSavedState(text)
+                if (!parsed) throw new Error(appT('invalidFormat'))
                 views.forEach((_, id) => disposeView(id))
-                savedLayouts = parsed.layouts ?? {}
+                savedLayouts = parsed.layouts
                 state = { sessions: parsed.sessions, activeId: parsed.activeId }
                 render()
               } catch (e) {
-                alert(`Error al importar: ${e}`)
+                alert(appT('importError', { error: String(e) }))
               }
             })
           })
@@ -325,31 +359,31 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     ]
     state.sessions.forEach(s => {
       if (s.id !== state.activeId) {
-        commands.push({ id: `goto-${s.id}`, label: `Ir a ${s.name}`, keywords: ['sesión'], run: () => { state = setActiveSession(state, s.id); render() } })
+        commands.push({ id: `goto-${s.id}`, label: appT('goTo', { name: s.name }), keywords: ['sesión'], run: () => { state = setActiveSession(state, s.id); render() } })
       }
     })
 const barPos = getBarPosition()
     const barOptions: { pos: BarPosition; label: string }[] = [
-      { pos: 'top', label: 'arriba' },
-      { pos: 'bottom', label: 'abajo' },
-      { pos: 'left', label: 'izquierda' },
-      { pos: 'right', label: 'derecha' },
+      { pos: 'top', label: appT('top') },
+      { pos: 'bottom', label: appT('bottom') },
+      { pos: 'left', label: appT('left') },
+      { pos: 'right', label: appT('right') },
     ]
     barOptions.forEach(({ pos, label }) => {
       commands.push({
         id: `bar-${pos}`,
-        label: `${barPos === pos ? '✓' : '○'} Sesiones: ${label}`,
+        label: `${barPos === pos ? '✓' : '○'} ${appT('sessionsPosition', { position: label })}`,
         keywords: ['barra', 'sesiones', 'posición', 'mover', label],
         run: () => setBarPosition(pos),
       })
     })
     themeNames.forEach(name => {
-      commands.push({ id: `theme-${name}`, label: `Tema: ${themeLabels[name] ?? name}`, keywords: ['theme', 'color'], run: () => setTheme(name) })
+      commands.push({ id: `theme-${name}`, label: appT('theme', { name: themeLabels[name] ?? name }), keywords: ['theme', 'color'], run: () => setTheme(name) })
     })
     const decorated = getDecorations()
     commands.push({
       id: 'toggle-decorations',
-      label: `${decorated ? '✓' : '○'} Bordes de ventana`,
+      label: `${decorated ? '✓' : '○'} ${appT('windowBorders')}`,
       keywords: ['decoraciones', 'bordes', 'frameless', 'tiling', 'wayland', 'ventana'],
       run: () => {
         const next = !getDecorations()
@@ -357,22 +391,31 @@ const barPos = getBarPosition()
         invoke('set_decorations', { enabled: next }).catch(() => {})
       },
     })
+    commands.push(
+      { id: 'language-es', label: `${getAppLocale() === 'es' ? '✓' : '○'} ${appT('languageSpanish')}`, keywords: ['idioma', 'language', 'español', 'spanish'], run: () => { setAppLocale('es'); location.reload() } },
+      { id: 'language-en', label: `${getAppLocale() === 'en' ? '✓' : '○'} ${appT('languageEnglish')}`, keywords: ['idioma', 'language', 'inglés', 'english'], run: () => { setAppLocale('en'); location.reload() } },
+    )
     return commands
   }
-  root.appendChild(createCommandPalette(buildCommands))
-
   invoke('set_decorations', { enabled: getDecorations() }).catch(() => {})
 
-  const saved = stateRepo.load()
-  if (saved && saved.sessions.length > 0) {
-    savedLayouts = saved.layouts
-    const savedActiveExists = saved.sessions.some(s => s.id === saved.activeId)
-    const activeId = savedActiveExists ? saved.activeId : saved.sessions[0].id
-    state = { sessions: saved.sessions, activeId }
-  } else {
-    state = addSession(state)
-  }
-  render()
+  stateRepo.load().catch(error => {
+    console.error('Could not load workspace state', error)
+    return null
+  }).then(saved => {
+    if (saved && saved.sessions.length > 0) {
+      savedLayouts = saved.layouts
+      const savedActiveExists = saved.sessions.some(s => s.id === saved.activeId)
+      const activeId = savedActiveExists ? saved.activeId : saved.sessions[0].id
+      state = { sessions: saved.sessions, activeId }
+    } else {
+      state = addSession(state)
+    }
+    root.appendChild(createCommandPalette(buildCommands))
+    render()
+    root.dataset.ready = 'true'
+    root.setAttribute('aria-busy', 'false')
+  })
 
   return root
 }

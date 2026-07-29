@@ -45,3 +45,15 @@ Browser: `http://localhost:5173`
 ## Testing
 
 Aún no. En Fase 2, decidimos si xunit/vitest o E2E (Cypress/Playwright).
+# Generated Rust bindings
+
+Structured Tauri DTOs are defined in Rust and exported to
+`src/generated/bindings` with `ts-rs`:
+
+```bash
+npm run bindings:generate
+npm run bindings:check
+```
+
+Do not edit generated bindings manually. CI fails when a Rust contract changes
+without its corresponding TypeScript output.

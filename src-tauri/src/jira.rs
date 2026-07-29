@@ -34,7 +34,8 @@ pub fn jira_config_get() -> Result<JiraConfig, String> {
 #[tauri::command]
 pub fn jira_config_set(site: String, email: String, token: String) -> Result<(), String> {
     let path = config_path()?;
-    let json = serde_json::to_string_pretty(&JiraConfig { site, email, token }).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&JiraConfig { site, email, token })
+        .map_err(|e| e.to_string())?;
     fs::write(&path, json).map_err(|e| e.to_string())?;
     // Restrict to the owner: the file holds an API token.
     #[cfg(unix)]

@@ -9,6 +9,7 @@ describe('parseSavedState', () => {
       layouts: { 'session-1': { foo: 'bar' } },
     })
     expect(parseSavedState(raw)).toEqual({
+      schemaVersion: 1,
       sessions: [{ id: 'session-1', name: 'Sesión 1' }],
       activeId: 'session-1',
       layouts: { 'session-1': { foo: 'bar' } },
@@ -18,6 +19,12 @@ describe('parseSavedState', () => {
   it('defaults layouts to an empty object when missing', () => {
     const raw = JSON.stringify({ sessions: [{ id: 's', name: 'S' }], activeId: 's' })
     expect(parseSavedState(raw)?.layouts).toEqual({})
+  })
+
+  it('migrates unversioned state to version 1 and rejects future schemas', () => {
+    const legacy = JSON.stringify({ sessions: [{ id: 's', name: 'S' }], activeId: 's' })
+    expect(parseSavedState(legacy)?.schemaVersion).toBe(1)
+    expect(parseSavedState(JSON.stringify({ schemaVersion: 2, sessions: [] }))).toBeNull()
   })
 
   it('returns null for invalid JSON', () => {

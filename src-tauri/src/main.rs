@@ -1,11 +1,17 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+#![cfg_attr(test, allow(dead_code, unused_imports))]
 
+mod command_error;
 mod db;
 mod docker;
 mod git;
+mod git_paths;
 mod jira;
-mod memory_import;
 mod memory;
+mod memory_import;
 mod memory_sources;
 mod notes;
 mod pty;
@@ -14,6 +20,7 @@ mod traffic_lights;
 mod vault;
 mod web_panel;
 mod window_prefs;
+mod workspace_io;
 
 use std::sync::Arc;
 
@@ -51,7 +58,8 @@ async fn http_request(
     headers: Vec<(String, String)>,
     body: Option<String>,
 ) -> Result<HttpResponse, String> {
-    let m = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|e| e.to_string())?;
+    let m =
+        reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|e| e.to_string())?;
     let mut req = reqwest::Client::new().request(m, &url);
     for (k, v) in &headers {
         if !k.is_empty() {
@@ -72,7 +80,12 @@ async fn http_request(
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
     let body = res.text().await.map_err(|e| e.to_string())?;
-    Ok(HttpResponse { status, status_text, headers: resp_headers, body })
+    Ok(HttpResponse {
+        status,
+        status_text,
+        headers: resp_headers,
+        body,
+    })
 }
 
 // macOS binds Cmd+Z to the native Edit > Undo menu item, whose undo is broken in
@@ -110,6 +123,7 @@ fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(not(test))]
 fn main() {
     let context = tauri::generate_context!();
     #[cfg(all(feature = "e2e", target_os = "macos"))]
@@ -143,6 +157,9 @@ fn main() {
             http_get,
             http_request,
             app_identifier,
+            workspace_io::workspace_load,
+            workspace_io::workspace_save,
+            workspace_io::workspace_reset,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
@@ -279,3 +296,9 @@ fn main() {
         .run(context)
         .expect("error while running tauri application");
 }
+
+// Unit tests exercise the command modules directly and do not need a desktop
+// runtime or compiled frontend assets. Keeping this entry point asset-free
+// makes `cargo test` work in a clean checkout before `npm run build`.
+#[cfg(test)]
+fn main() {}

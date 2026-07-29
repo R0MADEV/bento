@@ -1,6 +1,7 @@
 export interface MenuItem {
   label: string
   onClick: () => void
+  testId?: string
 }
 
 export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
@@ -26,9 +27,11 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   }
 
   items.forEach(item => {
-    const el = document.createElement('div')
+    const el = document.createElement('button')
+    el.type = 'button'
     el.className = 'context-menu-item'
     el.textContent = item.label
+    if (item.testId) el.dataset.testid = item.testId
     el.addEventListener('click', () => {
       close()
       item.onClick()

@@ -1,6 +1,14 @@
 name: Build Bento
 
+permissions:
+  contents: read
+
+concurrency:
+  group: bento-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -41,12 +49,36 @@ jobs:
         run: choco install sqlite -y --no-progress
 
       - name: Install frontend deps
-        run: npm install
+        run: npm ci
+
+      - name: Audit frontend dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Lint frontend
+        run: npm run lint
 
       - name: Test
         run: npm test
 
-      - name: Build
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `tauri::generate_context!` validates frontendDist at Rust compile time.
+      # Create dist before bindings/clippy compile the Tauri binary on clean runners.
+      - name: Build frontend
+        run: npm run build
+
+      - name: Verify generated Rust bindings
+        run: npm run bindings:check
+
+      - name: Lint Rust
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Test with coverage
+        if: runner.os == 'Linux'
+        run: npm run test:coverage
+
+      - name: Build desktop bundles
         run: npm run tauri:build
 
       - name: Upload artifacts
@@ -54,3 +86,66 @@ jobs:
         with:
           name: bento-${{ matrix.platform }}
           path: src-tauri/target/release/bundle/
+
+  e2e-tasks:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install native dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libayatana-appindicator3-dev build-essential curl wget file libxdo-dev webkit2gtk-driver xvfb
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build isolated E2E application
+        run: npm run build:e2e:app
+
+      - name: Install official Tauri WebDriver (Linux)
+        if: runner.os == 'Linux'
+        run: cargo install tauri-driver --locked
+
+      - name: Run Tasks E2E (Linux)
+        if: runner.os == 'Linux'
+        env:
+          # GitHub's Linux runner is headless. Keep WebKitGTK on X11's software
+          # path so its webview and embedded WebDriver initialize under Xvfb.
+          GDK_BACKEND: x11
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          NO_AT_BRIDGE: '1'
+          BENTO_E2E_PROVIDER: external
+        run: xvfb-run -a npm run test:e2e:tasks
+
+      - name: Run Tasks E2E (macOS and Windows)
+        if: runner.os != 'Linux'
+        run: npm run test:e2e:tasks
+
+      - name: Upload E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics-${{ matrix.platform }}
+          path: artifacts/e2e/
+          if-no-files-found: ignore
