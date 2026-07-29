@@ -34,13 +34,34 @@ const run = (command, args, cwd, prompt) => new Promise(resolve => {
   })
 })
 
+const configuredArgs = (name, fallback) => {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  try {
+    const args = JSON.parse(raw)
+    return Array.isArray(args) && args.every(arg => typeof arg === 'string') ? args : fallback
+  } catch {
+    return fallback
+  }
+}
+
 export async function generateTranscriptSummary(agent, cwd, transcript, metadata = '') {
   const prompt = buildSummaryPrompt(cwd, transcript, metadata)
   const outputFile = join(tmpdir(), `bento-memory-${randomUUID()}.txt`)
   try {
     const output = agent === 'claude'
-      ? await run(process.env.BENTO_MEMORY_CLAUDE_BIN || 'claude', ['-p', '--tools', '', '--output-format', 'text'], cwd, prompt)
-      : await run(process.env.BENTO_MEMORY_CODEX_BIN || 'codex', ['exec', '--ephemeral', '--ignore-user-config', '--sandbox', 'read-only', '--skip-git-repo-check', '--output-last-message', outputFile], cwd, prompt)
+      ? await run(
+        process.env.BENTO_MEMORY_CLAUDE_BIN || 'claude',
+        configuredArgs('BENTO_MEMORY_CLAUDE_ARGS', ['-p', '--tools', '', '--output-format', 'text']),
+        cwd,
+        prompt,
+      )
+      : await run(
+        process.env.BENTO_MEMORY_CODEX_BIN || 'codex',
+        configuredArgs('BENTO_MEMORY_CODEX_ARGS', ['exec', '--ephemeral', '--ignore-user-config', '--sandbox', 'read-only', '--skip-git-repo-check', '--output-last-message', outputFile]),
+        cwd,
+        prompt,
+      )
     const summary = (agent === 'claude' ? output : await readFile(outputFile, 'utf8').catch(() => '')).trim()
     return summary
   } finally {

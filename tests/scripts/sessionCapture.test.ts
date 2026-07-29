@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -48,10 +48,9 @@ describe('sessionCapture', () => {
     const dir = tempDir()
     const transcriptPath = join(dir, 'session.jsonl')
     const dbPath = join(dir, 'memory.sqlite3')
-    const fakeClaude = join(dir, 'fake-claude')
+    const fakeClaude = join(dir, 'fake-claude.mjs')
     writeFileSync(transcriptPath, JSON.stringify({ type: 'user', message: { role: 'user', content: 'Implementa la cola persistente' } }))
-    writeFileSync(fakeClaude, '#!/bin/sh\necho "Cambios: cola persistente. Decisiones: SQLite. Verificacion: pruebas. Riesgos: ninguno. Siguiente paso: validar."\n')
-    chmodSync(fakeClaude, 0o755)
+    writeFileSync(fakeClaude, 'console.log("Cambios: cola persistente. Decisiones: SQLite. Verificacion: pruebas. Riesgos: ninguno. Siguiente paso: validar.")\n')
 
     const result = spawnSync(process.execPath, [resolve('scripts/bento-memory-session-end.mjs'), 'claude'], {
       cwd: resolve('.'),
@@ -61,7 +60,8 @@ describe('sessionCapture', () => {
         ...process.env,
         BENTO_MEMORY_DB: dbPath,
         BENTO_MEMORY_SUMMARY_WORKER: '1',
-        BENTO_MEMORY_CLAUDE_BIN: fakeClaude,
+        BENTO_MEMORY_CLAUDE_BIN: process.execPath,
+        BENTO_MEMORY_CLAUDE_ARGS: JSON.stringify([fakeClaude]),
       },
     })
     expect(result.status, result.stderr).toBe(0)
@@ -70,6 +70,7 @@ describe('sessionCapture', () => {
       input: "SELECT status, attempts FROM memory_summary_jobs; SELECT length(transcript) AS transcript_length, length(summary) AS summary_length FROM memory_transcripts;",
       encoding: 'utf8',
     })
+    expect(query.error, query.error?.message).toBeUndefined()
     expect(query.status, query.stderr).toBe(0)
     expect(query.stdout).toContain('completed')
     expect(query.stdout).toContain('transcript_length')

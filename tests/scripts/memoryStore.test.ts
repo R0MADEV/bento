@@ -25,11 +25,13 @@ function withDb(run: (dbPath: string) => void): void {
 }
 
 function sqlite(dbPath: string, sql: string, json = false): string {
-  const result = spawnSync('/usr/bin/sqlite3', json ? ['-json', dbPath] : [dbPath], {
+  const binary = process.env.BENTO_MEMORY_SQLITE_BIN || 'sqlite3'
+  const result = spawnSync(binary, json ? ['-json', dbPath] : [dbPath], {
     input: `${MEMORY_SCHEMA}\n${sql}\n`,
     encoding: 'utf8',
   })
-  if (result.status !== 0) throw new Error(result.stderr || `sqlite3 fallo con codigo ${result.status}`)
+  if (result.error) throw new Error(`No se pudo ejecutar ${binary}: ${result.error.message}`)
+  if (result.status !== 0) throw new Error(result.stderr || `sqlite3 falló con código ${result.status}`)
   return result.stdout.trim()
 }
 
