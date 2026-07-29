@@ -36,6 +36,13 @@ struct HttpResponse {
     body: String,
 }
 
+// The E2E runner checks this before touching UI state. This prevents an
+// accidentally supplied production binary from sharing the user's WebView data.
+#[tauri::command]
+fn app_identifier(app: tauri::AppHandle) -> String {
+    app.config().identifier.clone()
+}
+
 // General HTTP request for the HTTP-client panel (any method, headers, body).
 #[tauri::command]
 async fn http_request(
@@ -104,9 +111,25 @@ fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    #[cfg(all(feature = "e2e", target_os = "macos"))]
+    let context = {
+        let mut context = context;
+        for window in &mut context.config_mut().app.windows {
+            window.data_store_identifier = Some([
+                183, 46, 91, 12, 231, 95, 74, 90, 166, 211, 22, 73, 194, 8, 117, 49,
+            ]);
+        }
+        context
+    };
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    // The embedded WebDriver is test-only. Production bundles are built
+    // without the `e2e` feature and expose no automation server.
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         .setup(|app| {
             #[cfg(target_os = "macos")]
             install_menu(app)?;
@@ -119,6 +142,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             http_get,
             http_request,
+            app_identifier,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
@@ -252,6 +276,6 @@ fn main() {
             docker::docker_compose_logs_follow,
             docker::docker_compose_logs_stop,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

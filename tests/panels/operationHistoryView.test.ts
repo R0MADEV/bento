@@ -1,9 +1,12 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { buildOperationHistoryView } from '../../src/panels/tasks/OperationHistoryView'
+import { makeLocalStorage } from '../helpers/localStorage'
 
 describe('operation history view', () => {
   it('filters the branch, renders failures and exposes accessible controls', () => {
+    vi.stubGlobal('localStorage', makeLocalStorage())
+    localStorage.setItem('bento.tasks.locale', 'es')
     const onBack = vi.fn()
     const onClear = vi.fn()
     const view = buildOperationHistoryView({

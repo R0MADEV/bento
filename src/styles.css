@@ -3474,8 +3474,9 @@ details[open] > .tasks-diff-summary::before { transform: rotate(90deg); }
 .tasks-pr-closed { background: color-mix(in srgb, #f7768e 20%, transparent); color: #f7768e; }
 .tasks-backup-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; color: #e0af68; background: color-mix(in srgb, #e0af68 15%, transparent); border: 1px solid color-mix(in srgb, #e0af68 45%, transparent); }
 .tasks-rebase-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; cursor: pointer; color: #ff9e64; background: color-mix(in srgb, #ff9e64 15%, transparent); border: 1px solid color-mix(in srgb, #ff9e64 45%, transparent); }
-.tasks-base-select { max-width: 150px; min-width: 92px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--fg-dim); font-size: 11px; outline: none; }
-.tasks-base-select:focus { border-color: var(--accent); color: var(--fg); }
+.tasks-base-select, .tasks-locale-select { max-width: 150px; min-width: 92px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--fg-dim); font-size: 11px; outline: none; }
+.tasks-locale-select { min-width: 42px; max-width: 76px; }
+.tasks-base-select:focus, .tasks-locale-select:focus { border-color: var(--accent); color: var(--fg); }
 .tasks-fetch-age { flex-shrink: 0; font-size: 10px; color: var(--fg-dim); white-space: nowrap; }
 .tasks-fetch-age--stale { color: #e0af68; }
 .tasks-upstream-badge { flex-shrink: 0; padding: 1px 6px; border-radius: 9px; font-size: 10px; color: var(--fg-dim); background: var(--surface-2); white-space: nowrap; }
