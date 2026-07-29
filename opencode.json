@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "bento-memory": {
+      "type": "local",
+      "command": [
+        "sh",
+        "-lc",
+        "exec node \"$(git rev-parse --show-toplevel)/scripts/bento-memory-mcp.mjs\""
+      ],
+      "enabled": true,
+      "timeout": 15000
+    }
+  }
+}

@@ -14,6 +14,7 @@ import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition }
 import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
 import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
+import { setActiveProjectPath } from '../ui/activeProject'
 
 export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
@@ -206,6 +207,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
   function render(): void {
     hidePopover()
+    setActiveProjectPath(state.sessions.find(s => s.id === state.activeId)?.projectPath)
     tabsArea.innerHTML = ''
     state.sessions.forEach((s) => {
       tabsArea.appendChild(
@@ -271,6 +273,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-jira', label: 'Nuevo panel Jira', keywords: ['jira', 'tickets', 'tareas', 'atlassian', 'issues'], run: () => active?.addPanel('jira') },
       { id: 'new-docker', label: 'Nuevo panel Docker', keywords: ['docker', 'contenedores', 'containers', 'logs'], run: () => active?.addPanel('docker') },
       { id: 'new-tasks', label: 'Nuevo panel Tareas', keywords: ['tareas', 'tasks', 'worktree', 'git', 'paralelo'], run: () => active?.addPanel('tasks') },
+      { id: 'new-memory', label: 'Nuevo panel Memoria', keywords: ['memoria', 'memory', 'contexto', 'decisiones', 'resumen'], run: () => active?.addPanel('memory') },
       {
         id: 'bind-project', label: 'Atar sesión a la carpeta de la terminal activa',
         keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],

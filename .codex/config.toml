@@ -1,0 +1,18 @@
+# Shared project memory for Codex CLI, desktop app, and IDE extension.
+[mcp_servers.bento-memory]
+command = "sh"
+args = ["-lc", "exec node \"$(git rev-parse --show-toplevel)/scripts/bento-memory-mcp.mjs\""]
+startup_timeout_sec = 15
+tool_timeout_sec = 30
+
+# Codex sends a JSON payload with cwd and transcript_path on stdin. The script
+# forks its summarizer, so it returns before SessionEnd's short timeout.
+# Optional: BENTO_MEMORY_TRANSCRIPT_RETENTION_DAYS removes only old transcripts
+# whose summaries were completed. It is disabled by default (0 days).
+[[hooks.SessionEnd]]
+
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = 'node "$(git rev-parse --show-toplevel)/scripts/bento-memory-session-end.mjs" codex'
+timeout = 5
+statusMessage = "Guardando resumen de sesión en Bento"

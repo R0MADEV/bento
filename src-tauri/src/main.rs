@@ -4,6 +4,9 @@ mod db;
 mod docker;
 mod git;
 mod jira;
+mod memory_import;
+mod memory;
+mod memory_sources;
 mod notes;
 mod pty;
 mod scripts;
@@ -163,6 +166,24 @@ fn main() {
             db::db_docker_redis_command,
             jira::jira_config_get,
             jira::jira_config_set,
+            memory_import::memory_import_claude,
+            memory_import::memory_import_codex,
+            memory::memory_list,
+            memory::memory_list_all,
+            memory::memory_create,
+            memory::memory_update,
+            memory::memory_remove,
+            memory::memory_migrate,
+            memory::memory_transcript_list,
+            memory::memory_transcript_create,
+            memory::memory_summary_job_list,
+            memory::memory_regenerate_summary,
+            memory_sources::memory_source_list,
+            memory_sources::memory_source_create,
+            memory_sources::memory_source_remove,
+            memory_sources::memory_source_scan,
+            memory_sources::memory_source_scan_path,
+            memory_sources::memory_source_import,
             vault::vault_exists,
             vault::vault_is_unlocked,
             vault::vault_setup,
