@@ -18,6 +18,7 @@ describe('command palette view', () => {
     expect(palette.getAttribute('aria-label')).toBe('Command palette')
     expect(palette.querySelector('[role="listbox"]')).not.toBeNull()
     expect(palette.querySelector('[role="option"]')?.textContent).toBe('<img src=x onerror=alert(1)>')
+    expect(palette.querySelector('[role="option"]')?.getAttribute('data-command-id')).toBe('unsafe')
     expect(palette.querySelector('img')).toBeNull()
   })
 })

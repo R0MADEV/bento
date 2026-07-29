@@ -55,6 +55,7 @@ export function createCommandPalette(getCommands: () => Command[]): HTMLElement 
       const row = document.createElement('div')
       row.className = i === selected ? 'cmdk-item selected' : 'cmdk-item'
       row.id = `bento-command-${i}`
+      row.dataset.commandId = cmd.id
       row.setAttribute('role', 'option')
       row.setAttribute('aria-selected', String(i === selected))
       const label = document.createElement('span')

@@ -124,6 +124,12 @@ jobs:
 
       - name: Run Tasks E2E (Linux)
         if: runner.os == 'Linux'
+        env:
+          # GitHub's Linux runner is headless. Keep WebKitGTK on X11's software
+          # path so its webview and embedded WebDriver initialize under Xvfb.
+          GDK_BACKEND: x11
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          NO_AT_BRIDGE: '1'
         run: xvfb-run -a npm run test:e2e:tasks
 
       - name: Run Tasks E2E (macOS and Windows)

@@ -12,6 +12,7 @@ process.env.BENTO_E2E_CONFIG_DIR = join(root, 'config')
 const driver = provider === 'external' && !process.env.BENTO_E2E_DRIVER_URL
   ? spawn(process.env.TAURI_DRIVER ?? 'tauri-driver', [], { stdio: 'inherit' }) : null
 let appProcess = null
+let appExit = null
 const repo = join(root, 'repo espacio ñ')
 const task = join(root, 'tarea unicode ñ')
 const conflict = join(root, 'conflicto espacio ñ')
@@ -22,13 +23,19 @@ let isolatedProfile = false
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 function startApp() {
   if (provider !== 'embedded') return
+  appExit = null
   appProcess = spawn(app, [], { stdio: 'inherit', env: { ...process.env, TAURI_WEBDRIVER_PORT: embeddedPort } })
+  appProcess.once('exit', (code, signal) => { appExit = { code, signal } })
 }
 async function stopApp() {
   if (!appProcess || appProcess.exitCode !== null) { appProcess = null; return }
   const stopped = new Promise(resolve => appProcess.once('exit', resolve))
   appProcess.kill('SIGTERM')
-  await Promise.race([stopped, delay(5000)])
+  const stoppedGracefully = await Promise.race([stopped.then(() => true), delay(5000).then(() => false)])
+  if (!stoppedGracefully && appProcess.exitCode === null) {
+    appProcess.kill('SIGKILL')
+    await Promise.race([stopped, delay(2000)])
+  }
   appProcess = null
 }
 
@@ -81,6 +88,9 @@ async function createSession() {
   const until = Date.now() + 20000
   let lastError
   while (Date.now() < until) {
+    if (appExit) {
+      throw new Error(`Bento exited before WebDriver became ready (code=${appExit.code}, signal=${appExit.signal})`)
+    }
     try {
       const value = await request('/session', { capabilities: { alwaysMatch: capabilities } })
       sessionId = value.sessionId ?? value.capabilities?.sessionId
@@ -138,9 +148,8 @@ async function openTasksPanel() {
   }
   if (!existing.length) {
     await execute(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));`)
-    const input = await waitFor('css selector', '.cmdk-input')
-    await type(input, 'Nuevo panel Tareas')
-    await click(await waitFor('xpath', "//*[contains(@class,'cmdk-item') and contains(.,'Nuevo panel Tareas')]"))
+    await waitFor('css selector', '.cmdk-input')
+    await click(await waitFor('css selector', '[data-command-id="new-tasks"]'))
   }
   return waitFor('css selector', '[data-testid="tasks-panel"]')
 }
