@@ -1,17 +1,17 @@
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 
-const app = process.env.BENTO_E2E_APP
-if (!app) throw new Error('Set BENTO_E2E_APP to the absolute path of the built Bento binary.')
+const app = process.env.BENTO_E2E_APP ?? resolve('src-tauri', 'target', 'debug', process.platform === 'win32' ? 'bento.exe' : 'bento')
 const provider = process.env.BENTO_E2E_PROVIDER ?? 'embedded'
 const embeddedPort = process.env.BENTO_E2E_PORT ?? '4445'
 const driverUrl = process.env.BENTO_E2E_DRIVER_URL ?? `http://127.0.0.1:${provider === 'embedded' ? embeddedPort : '4444'}`
+const root = mkdtempSync(join(tmpdir(), 'bento-tasks-e2e-'))
+process.env.BENTO_E2E_CONFIG_DIR = join(root, 'config')
 const driver = provider === 'external' && !process.env.BENTO_E2E_DRIVER_URL
   ? spawn(process.env.TAURI_DRIVER ?? 'tauri-driver', [], { stdio: 'inherit' }) : null
 let appProcess = null
-const root = mkdtempSync(join(tmpdir(), 'bento-tasks-e2e-'))
 const repo = join(root, 'repo')
 const task = join(root, 'task')
 const conflict = join(root, 'conflict')
@@ -133,7 +133,13 @@ async function keys(values) {
   await request(route('/actions'), undefined, 'DELETE')
 }
 async function openTasksPanel() {
-  const existing = await findAll('css selector', '[data-testid="tasks-panel"]')
+  await waitFor('css selector', '.session-manager[data-ready="true"]')
+  let existing = await findAll('css selector', '[data-testid="tasks-panel"]')
+  const restoredUntil = Date.now() + 2000
+  while (!existing.length && Date.now() < restoredUntil) {
+    await delay(100)
+    existing = await findAll('css selector', '[data-testid="tasks-panel"]')
+  }
   if (!existing.length) {
     await execute(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));`)
     const input = await waitFor('css selector', '.cmdk-input')
@@ -150,10 +156,19 @@ async function selectRepo(expectedBranch = 'task/e2e') {
   await delay(700)
   await refresh()
   await openTasksPanel()
-  await waitFor(
-    'css selector',
-    expectedBranch ? `[data-testid="tasks-row"][data-branch="${expectedBranch}"]` : '[data-testid="tasks-row"]',
-  )
+  const selector = expectedBranch ? `[data-testid="tasks-row"][data-branch="${expectedBranch}"]` : '[data-testid="tasks-row"]'
+  try {
+    await waitFor('css selector', selector)
+  } catch (error) {
+    const ui = await execute(`const panel = document.querySelector('[data-testid="tasks-panel"]'); return {
+      ready: document.querySelector('.session-manager')?.dataset.ready,
+      panelId: panel?.dataset.panelId,
+      storedRepo: panel ? localStorage.getItem('bento.tasks.repo.' + panel.dataset.panelId) : null,
+      text: panel?.innerText?.slice(0, 1000),
+    };`).catch(debugError => ({ debugError: String(debugError) }))
+    const backend = await invoke('git_worktree_list', { repo }).catch(debugError => ({ debugError: String(debugError) }))
+    throw new Error(`${String(error)}\nUI: ${JSON.stringify(ui)}\nBackend: ${JSON.stringify(backend)}`)
+  }
 }
 async function invoke(command, args) {
   const result = await request(route('/execute/async'), {
@@ -189,6 +204,7 @@ async function run() {
     throw new Error(`Refusing to run against non-isolated app identifier: ${identifier}. Build with npm run build:e2e:app.`)
   }
   isolatedProfile = true
+  await invoke('workspace_reset', {})
   await execute('localStorage.clear(); sessionStorage.clear();')
   await refresh()
   console.log('E2E: opening Tasks panel')
@@ -253,13 +269,14 @@ async function run() {
   await invoke('git_reset', { path: task, target: 'HEAD^', mode: 'mixed' })
   await refresh()
   await waitFor('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"]')
-  await click(await waitFor('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"] [data-testid="tasks-actions"]'))
-  await click(await waitFor('xpath', "//*[contains(@class,'context-menu-item') and (contains(.,'respaldos') or contains(.,'Backup'))]"))
+  await clickWhen('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"] [data-testid="tasks-actions"]')
+  await clickWhen('xpath', "//*[contains(@class,'context-menu-item') and (contains(.,'respaldos') or contains(.,'Backup'))]")
   await waitFor('css selector', '[data-testid="tasks-backup-history"]')
   console.log('Bento task-panel E2E passed: commit, drag/drop, restart recovery, conflict resolver and backups.')
 }
 
 try { await run() } finally {
+  if (sessionId && isolatedProfile) await invoke('workspace_reset', {}).catch(() => {})
   if (sessionId && isolatedProfile) await execute('localStorage.clear(); sessionStorage.clear();').catch(() => {})
   if (sessionId) await fetch(`${driverUrl}/session/${sessionId}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => {})
   driver?.kill('SIGTERM')
