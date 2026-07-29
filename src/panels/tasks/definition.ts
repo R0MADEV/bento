@@ -4,8 +4,8 @@ import { lazyPanel } from '../lazyPanel'
 export const tasksPanelDefinition: PanelDefinition = {
   type: 'tasks',
   title: 'Tareas',
-  create: () => lazyPanel(async () => {
+  create: (ctx) => lazyPanel(async () => {
     const { createTasksPanel } = await import('./TasksPanel')
-    return createTasksPanel()
+    return createTasksPanel(ctx.panelId)
   }),
 }
