@@ -3,7 +3,7 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
 import { parseContainers, isRunning } from '../../core/docker/containers'
-import { showContextMenu } from '../../ui/contextMenu'
+import { showContextMenu, type MenuItem } from '../../ui/contextMenu'
 import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
 import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
@@ -492,7 +492,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     const hasPr = !!pr && (pr.state === 'OPEN' || pr.state === 'DRAFT')
 
     const menuItems = () => {
-      const items = [
+      const items: MenuItem[] = [
         ...(rebase?.active ? [{ label: `Continuar rebase${rebase.total ? ` · ${rebase.current ?? 0}/${rebase.total}` : ''}`, onClick: () => { selectRow(row); showRebasePaused(wt, rebase) } }] : []),
         { label: taskT('viewChanges'), onClick: () => { selectRow(row); showChanges(wt) } },
         { label: taskT('viewHistory'), onClick: () => { selectRow(row); showCommitLog(wt) } },
@@ -535,7 +535,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         }
         items.push(
           { label: `Resetear a origin/${baseBranch}…`, onClick: () => { selectRow(row); showResetView(wt) } },
-          { label: taskT('backups'), onClick: () => { selectRow(row); showBackupHistory(wt) } },
+          { label: taskT('backups'), testId: 'tasks-backups-action', onClick: () => { selectRow(row); showBackupHistory(wt) } },
           { label: taskT('operations'), onClick: () => { selectRow(row); showOperationHistory(wt) } },
           ...(backup?.available && backup.different ? [{ label: `Deshacer reescritura → ${backup.short ?? 'respaldo'}`, onClick: restoreBackup }] : []),
           { label: taskT('rename'), onClick: renameTask },

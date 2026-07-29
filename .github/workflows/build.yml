@@ -8,6 +8,7 @@ concurrency:
   cancel-in-progress: true
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -114,13 +115,17 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libayatana-appindicator3-dev build-essential curl wget file libxdo-dev xvfb
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf libssl-dev libayatana-appindicator3-dev build-essential curl wget file libxdo-dev webkit2gtk-driver xvfb
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build isolated E2E application
         run: npm run build:e2e:app
+
+      - name: Install official Tauri WebDriver (Linux)
+        if: runner.os == 'Linux'
+        run: cargo install tauri-driver --locked
 
       - name: Run Tasks E2E (Linux)
         if: runner.os == 'Linux'
@@ -130,8 +135,17 @@ jobs:
           GDK_BACKEND: x11
           WEBKIT_DISABLE_COMPOSITING_MODE: '1'
           NO_AT_BRIDGE: '1'
+          BENTO_E2E_PROVIDER: external
         run: xvfb-run -a npm run test:e2e:tasks
 
       - name: Run Tasks E2E (macOS and Windows)
         if: runner.os != 'Linux'
         run: npm run test:e2e:tasks
+
+      - name: Upload E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics-${{ matrix.platform }}
+          path: artifacts/e2e/
+          if-no-files-found: ignore

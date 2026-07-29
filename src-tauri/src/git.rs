@@ -198,7 +198,10 @@ fn git_output(repo: &str, args: &[&str]) -> Result<String, String> {
 }
 
 fn parse_worktrees(raw: &str) -> Vec<WorktreeInfo> {
-    raw.trim()
+    // Git for Windows may emit CRLF even when stdout is captured through a
+    // pipe. Normalize record separators before splitting porcelain blocks.
+    raw.replace("\r\n", "\n")
+        .trim()
         .split("\n\n")
         .filter_map(|block| {
             let mut path = None;
@@ -1280,6 +1283,18 @@ fn write_sequence_editor_script(
     Ok((todo_path, script_path))
 }
 
+fn sequence_editor_command(path: &Path, windows: bool) -> String {
+    let raw = path.to_string_lossy();
+    let normalized = if windows {
+        raw.replace('\\', "/")
+    } else {
+        raw.into_owned()
+    };
+    // Git executes GIT_SEQUENCE_EDITOR through a POSIX-style shell, including
+    // Git for Windows. Single-quote the executable and escape embedded quotes.
+    format!("'{}'", normalized.replace('\'', "'\"'\"'"))
+}
+
 // Starts an interactive rebase over origin/<base>. `todo_lines` are the rebase instructions
 // (e.g. ["pick abc1234 Fix login", "drop def5678 Bad commit"]).
 // If git stops at an `edit` step this returns Ok(()) — check git_rebase_status afterwards.
@@ -1318,6 +1333,7 @@ pub async fn git_rebase_start(
         create_history_backup(&path)?;
         let todo_content = todo_lines.join("\n") + "\n";
         let (todo_path, script_path) = write_sequence_editor_script(&todo_content)?;
+        let sequence_editor = sequence_editor_command(&script_path, cfg!(windows));
 
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let out = Command::new(&bin)
@@ -1327,7 +1343,7 @@ pub async fn git_rebase_start(
             .arg("-i")
             .arg("--autostash")
             .arg(&target)
-            .env("GIT_SEQUENCE_EDITOR", &script_path)
+            .env("GIT_SEQUENCE_EDITOR", sequence_editor)
             .env("GIT_EDITOR", "true") // suppress editor prompts for squash messages
             .output()
             .map_err(|e| e.to_string())?;
@@ -1752,26 +1768,42 @@ pub async fn git_add_files(
     path: String,
     files: Vec<String>,
 ) -> Result<(), crate::command_error::CommandError> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let safe_files = files
-            .iter()
-            .map(|file| crate::git_paths::existing_worktree_file(&path, file))
-            .collect::<Result<Vec<_>, _>>()?;
-        let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || add_files_blocking(&path, &files))
+        .await
+        .map_err(|e| crate::command_error::CommandError::runtime(e.to_string()))?
+        .map_err(crate::command_error::CommandError::git)
+}
+
+fn add_files_blocking(path: &str, files: &[String]) -> Result<(), String> {
+    // Validate using canonical paths, but pass the original relative paths
+    // to Git. Absolute canonical paths are rejected by Git when the
+    // worktree itself was reached through a symlink (notably /var ->
+    // /private/var on macOS), even though the file is inside the worktree.
+    for file in files {
+        crate::git_paths::existing_worktree_file(path, file)?;
+    }
+    let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
+    for attempt in 0..=30 {
         let mut cmd = Command::new(&bin);
-        cmd.arg("-C").arg(&path).arg("add").arg("--");
-        for file in &safe_files {
+        cmd.arg("-C").arg(path).arg("add").arg("--");
+        for file in files {
             cmd.arg(file);
         }
         let out = cmd.output().map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        if out.status.success() {
+            return Ok(());
         }
-        Ok(())
-    })
-    .await
-    .map_err(|e| crate::command_error::CommandError::runtime(e.to_string()))?
-    .map_err(crate::command_error::CommandError::git)
+        let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let index_is_busy = error.contains("index.lock") && error.contains("File exists");
+        if !index_is_busy || attempt == 30 {
+            return Err(error);
+        }
+        // A status/rebase command may briefly own the shared worktree index.
+        // Never delete its lock: wait for the owner and retry only this known
+        // transient error.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    unreachable!()
 }
 
 // Reads a file from a worktree — used by the inline conflict resolver.
@@ -1913,6 +1945,36 @@ mod tests {
         fs::write(path.join("file.txt"), content).unwrap();
         run(path, &["add", "file.txt"]);
         run(path, &["commit", "-qm", message]);
+    }
+
+    #[test]
+    fn stages_validated_relative_worktree_files() {
+        let repo = repo("add-files");
+        fs::write(repo.0.join("file.txt"), "resolved\n").unwrap();
+        add_files_blocking(repo.0.to_str().unwrap(), &["file.txt".into()]).unwrap();
+        assert_eq!(
+            run(&repo.0, &["diff", "--cached", "--name-only"]).trim(),
+            "file.txt"
+        );
+    }
+
+    #[test]
+    fn waits_for_a_transient_git_index_lock_before_staging() {
+        let repo = repo("add-files-lock");
+        fs::write(repo.0.join("file.txt"), "resolved\n").unwrap();
+        let lock = repo.0.join(".git/index.lock");
+        fs::write(&lock, "busy").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            fs::remove_file(lock).unwrap();
+        });
+
+        add_files_blocking(repo.0.to_str().unwrap(), &["file.txt".into()]).unwrap();
+        release.join().unwrap();
+        assert_eq!(
+            run(&repo.0, &["diff", "--cached", "--name-only"]).trim(),
+            "file.txt"
+        );
     }
 
     #[test]
@@ -2160,6 +2222,25 @@ mod tests {
         assert_eq!(worktrees[0].path, "/repo");
         assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
         assert!(!worktrees[0].bare);
+    }
+
+    #[test]
+    fn parses_windows_crlf_worktree_records() {
+        let raw = "worktree C:\\repo\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\nworktree C:\\repo task\r\nHEAD def456\r\nbranch refs/heads/task/e2e\r\n";
+        let worktrees = parse_worktrees(raw);
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].path, "C:\\repo");
+        assert_eq!(worktrees[1].path, "C:\\repo task");
+        assert_eq!(worktrees[1].branch.as_deref(), Some("task/e2e"));
+    }
+
+    #[test]
+    fn quotes_windows_sequence_editor_for_gits_shell() {
+        let path = Path::new(r"C:\Users\Runner Admin\Temp\bento-rebase-editor.cmd");
+        assert_eq!(
+            sequence_editor_command(path, true),
+            "'C:/Users/Runner Admin/Temp/bento-rebase-editor.cmd'"
+        );
     }
 
     #[test]

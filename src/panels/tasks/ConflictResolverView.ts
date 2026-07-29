@@ -8,6 +8,11 @@ interface ConflictResolverOptions {
   onBack: () => void
 }
 
+function errorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function buildConflictResolverView({ path, file, onBack }: ConflictResolverOptions): HTMLElement {
   const wrap = document.createElement('div')
   wrap.className = 'tasks-conflict-resolver'
@@ -25,6 +30,7 @@ export function buildConflictResolverView({ path, file, onBack }: ConflictResolv
   const footer = document.createElement('div')
   footer.className = 'tasks-rebase-paused-actions'
   const progress = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
+  progress.dataset.testid = 'tasks-conflict-status'
   const save = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: taskT('saveResolved'), disabled: true })
   save.dataset.testid = 'tasks-conflict-save'
   footer.append(progress, save)
@@ -84,11 +90,11 @@ export function buildConflictResolverView({ path, file, onBack }: ConflictResolv
       await invoke('git_write_file', { path, file, content: reconstructFromHunks(segments) })
       await invoke('git_add_files', { path, files: [file] })
       onBack()
-    } catch (error) { progress.textContent = String(error).slice(0, 100); save.disabled = false }
+    } catch (error) { progress.textContent = errorMessage(error).slice(0, 240); save.disabled = false }
   })
   body.textContent = taskT('loading')
   invoke<string>('git_read_file', { path, file }).then(content => {
     segments = parseConflictHunks(content); render(); refresh()
-  }).catch(error => { body.textContent = String(error) })
+  }).catch(error => { body.textContent = errorMessage(error) })
   return wrap
 }
