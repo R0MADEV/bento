@@ -1381,12 +1381,15 @@ pub async fn git_resolve_conflict(path: String, file: String, side: String) -> R
 
 // Stages specific files (used after manually resolving conflicts in an editor).
 #[tauri::command]
-pub async fn git_add_files(path: String, files: Vec<String>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn git_add_files(path: String, files: Vec<String>) -> Result<(), crate::command_error::CommandError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let safe_files = files.iter()
+            .map(|file| crate::git_paths::existing_worktree_file(&path, file))
+            .collect::<Result<Vec<_>, _>>()?;
         let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
         let mut cmd = Command::new(&bin);
         cmd.arg("-C").arg(&path).arg("add").arg("--");
-        for f in &files { cmd.arg(f); }
+        for file in &safe_files { cmd.arg(file); }
         let out = cmd.output().map_err(|e| e.to_string())?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
@@ -1394,27 +1397,32 @@ pub async fn git_add_files(path: String, files: Vec<String>) -> Result<(), Strin
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| crate::command_error::CommandError::runtime(e.to_string()))?
+    .map_err(crate::command_error::CommandError::git)
 }
 
 // Reads a file from a worktree — used by the inline conflict resolver.
 #[tauri::command]
-pub async fn git_read_file(path: String, file: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        fs::read_to_string(Path::new(&path).join(&file)).map_err(|e| e.to_string())
+pub async fn git_read_file(path: String, file: String) -> Result<String, crate::command_error::CommandError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let safe_path = crate::git_paths::existing_worktree_file(&path, &file)?;
+        fs::read_to_string(safe_path).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| crate::command_error::CommandError::runtime(e.to_string()))?
+    .map_err(crate::command_error::CommandError::git)
 }
 
 // Writes resolved content back to a worktree file — used by the inline conflict resolver.
 #[tauri::command]
-pub async fn git_write_file(path: String, file: String, content: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        fs::write(Path::new(&path).join(&file), content).map_err(|e| e.to_string())
+pub async fn git_write_file(path: String, file: String, content: String) -> Result<(), crate::command_error::CommandError> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let safe_path = crate::git_paths::existing_worktree_file(&path, &file)?;
+        fs::write(safe_path, content).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| crate::command_error::CommandError::runtime(e.to_string()))?
+    .map_err(crate::command_error::CommandError::git)
 }
 
 // Resets HEAD to `target` (e.g. "origin/main").
@@ -1459,7 +1467,7 @@ pub async fn open_in_editor(path: String) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
         #[cfg(target_os = "windows")]
-        Command::new("cmd").args(["/C", "start", "", &path]).spawn().map_err(|e| e.to_string())?;
+        Command::new("explorer.exe").arg(&path).spawn().map_err(|e| e.to_string())?;
         Ok(())
     })
     .await

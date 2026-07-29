@@ -14,13 +14,13 @@ fn notes_dir() -> Result<PathBuf, String> {
 }
 
 // Only a plain .md filename is allowed — reject path traversal.
-fn safe_path(dir: &PathBuf, name: &str) -> Result<PathBuf, String> {
+fn safe_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, String> {
     let invalid = name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..");
     if invalid {
         return Err("invalid note name".into());
     }
     let path = dir.join(name);
-    if path.parent() != Some(dir.as_path()) {
+    if path.parent() != Some(dir) {
         return Err("invalid note path".into());
     }
     Ok(path)

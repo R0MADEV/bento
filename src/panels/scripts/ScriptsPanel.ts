@@ -158,7 +158,15 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
       const row = document.createElement('button')
       row.className = 'scripts-item'
       row.title = `Ejecutar: ${scriptCommand(f.path)}`
-      row.innerHTML = `${icon('play')}<span class="scripts-item-name">${f.name}</span><span class="scripts-item-dir">${f.dir}</span>`
+      const iconSlot = document.createElement('span')
+      iconSlot.innerHTML = icon('play')
+      const name = document.createElement('span')
+      name.className = 'scripts-item-name'
+      name.textContent = f.name
+      const directory = document.createElement('span')
+      directory.className = 'scripts-item-dir'
+      directory.textContent = f.dir
+      row.append(iconSlot, name, directory)
       row.addEventListener('click', () => run(f.path))
       listEl.appendChild(row)
     })

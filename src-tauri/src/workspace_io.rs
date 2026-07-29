@@ -13,10 +13,21 @@ pub struct WorkspaceSession {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceState {
+    #[serde(default = "workspace_schema_version")]
+    schema_version: u32,
     sessions: Vec<WorkspaceSession>,
     active_id: Option<String>,
     #[serde(default)]
     layouts: HashMap<String, serde_json::Value>,
+}
+
+fn workspace_schema_version() -> u32 { 1 }
+
+fn validate_workspace(state: WorkspaceState) -> Result<WorkspaceState, String> {
+    if state.schema_version != workspace_schema_version() {
+        return Err(format!("unsupported workspace schema version: {}", state.schema_version));
+    }
+    Ok(state)
 }
 
 fn workspace_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -36,7 +47,8 @@ fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
 
 fn read_workspace(path: &std::path::Path) -> Result<WorkspaceState, String> {
     let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&raw).map_err(|error| error.to_string())
+    let state = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    validate_workspace(state)
 }
 
 fn load_workspace_path(path: &std::path::Path) -> Result<Option<WorkspaceState>, String> {
@@ -95,6 +107,7 @@ mod tests {
     #[test]
     fn workspace_contract_uses_frontend_field_names() {
         let state = WorkspaceState {
+            schema_version: workspace_schema_version(),
             sessions: vec![WorkspaceSession { id: "session-1".into(), name: "Session 1".into(), project_path: Some("/repo".into()) }],
             active_id: Some("session-1".into()),
             layouts: HashMap::new(),
@@ -106,6 +119,7 @@ mod tests {
 
     fn state(name: &str) -> WorkspaceState {
         WorkspaceState {
+            schema_version: workspace_schema_version(),
             sessions: vec![WorkspaceSession { id: "session-1".into(), name: name.into(), project_path: None }],
             active_id: Some("session-1".into()),
             layouts: HashMap::new(),

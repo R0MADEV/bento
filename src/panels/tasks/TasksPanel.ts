@@ -1,10 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
-import { parseContainers, isRunning, type Container } from '../../core/docker/containers'
-import { renderContainerLogs, renderContainerTerminal } from '../docker/containerDetail'
+import { parseContainers, isRunning } from '../../core/docker/containers'
 import { showContextMenu } from '../../ui/contextMenu'
 import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
@@ -27,11 +25,7 @@ import { buildRebasePlanPreview } from './RebasePlanView'
 import { buildCommitFileList, escapeCodeHtml as escHtml, fileStateMap, renderPatchHtml } from './TaskCodeView'
 import { commitFilesRaw, recommendationMap, taskGit } from './taskGitClient'
 import { TaskPanelStore } from './TaskPanelStore'
-
-interface IsolateResult {
-  subnet: string
-  urls: { service: string; url: string }[]
-}
+import { createTaskDockerView, type IsolateResult } from './TaskDockerView'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -44,12 +38,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   let lastRunningPaths = new Set<string>()
   let baseBranch = panelStore.base()
   let jiraCfg: JiraConfig | null = null
-  let issueMap = new Map<string, TaskIssue | null>()
-  let aheadBehindMap = new Map<string, { ahead: number; behind: number }>()
-  let prStatusMap = new Map<string, PrStatus | null>()
-  let backupStatusMap = new Map<string, BackupStatus>()
-  let rebaseStatusMap = new Map<string, RebaseStatus>()
-  let upstreamStatusMap = new Map<string, UpstreamStatus>()
+  const issueMap = new Map<string, TaskIssue | null>()
+  const aheadBehindMap = new Map<string, { ahead: number; behind: number }>()
+  const prStatusMap = new Map<string, PrStatus | null>()
+  const backupStatusMap = new Map<string, BackupStatus>()
+  const rebaseStatusMap = new Map<string, RebaseStatus>()
+  const upstreamStatusMap = new Map<string, UpstreamStatus>()
   let fetchedAt = 0
   let diffRefreshInterval: ReturnType<typeof setInterval> | null = null
 
@@ -84,7 +78,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   repoBtn.title = taskT('selectRepo')
   const updateRepoBtn = (): void => {
     const name = repoPath ? repoPath.replace(/\/$/, '').split('/').pop()! : taskT('selectRepoShort')
-    repoBtn.innerHTML = `${icon('folder')}<span>${name}</span>`
+    repoBtn.replaceChildren()
+    const iconSlot = document.createElement('span')
+    iconSlot.innerHTML = icon('folder')
+    const label = document.createElement('span')
+    label.textContent = name
+    repoBtn.append(iconSlot, label)
   }
   updateRepoBtn()
   repoBtn.addEventListener('click', async () => {
@@ -143,6 +142,21 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     Object.assign(document.createElement('div'), { className: cls, textContent: text })
 
   const showDetail = (...nodes: HTMLElement[]): void => { detailPane.replaceChildren(...nodes) }
+  const buildSubHead = (title: string, goBack: () => void, ...extra: HTMLElement[]): HTMLElement => {
+    const head = document.createElement('div')
+    head.className = 'tasks-sub-head'
+    head.append(
+      iconBtn('arrow-left', taskT('back'), goBack),
+      Object.assign(document.createElement('span'), { className: 'tasks-sub-title', textContent: title }),
+      ...extra,
+    )
+    return head
+  }
+  const dockerView = createTaskDockerView({
+    showDetail,
+    resetDetail: () => { stopDiffRefresh(); detailCleanup(); detailCleanup = () => {} },
+    setCleanup: cleanup => { detailCleanup = cleanup },
+  })
 
   showDetail(note(taskT('selectTask'), 'db-detail-hint'))
 
@@ -463,7 +477,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
     const renameTask = async (): Promise<void> => {
       const current = wt.branch ?? ''
-      // eslint-disable-next-line no-alert
+
       const newName = window.prompt(taskT('renamePrompt', { current }), current)
       if (!newName || newName === current) return
       try {
@@ -506,7 +520,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       }
       if (!isMain) {
         items.push(
-          { label: 'Docker', onClick: () => { selectRow(row); isolateDocker(wt) } },
+          { label: 'Docker', onClick: () => { selectRow(row); void dockerView.isolate(wt) } },
           { label: taskT('fetch'), onClick: () => runSync('fetch') },
           { label: `Merge origin/${baseBranch}`, onClick: () => runSync('merge') },
           { label: `Rebase sobre origin/${baseBranch}`, onClick: () => runSync('rebase') },
@@ -1715,186 +1729,6 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     showDetail(wrap)
   }
 
-  // ---- detail: docker ----
-  async function isolateDocker(wt: Worktree): Promise<void> {
-    stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
-    try {
-      const result = await invoke<IsolateResult>('docker_compose_isolate', { worktreePath: wt.path })
-      buildDockerDetail(result, wt)
-    } catch (e) {
-      const msg = String(e)
-      showDetail(note(msg === 'no-compose' ? taskT('noCompose') : msg,
-        msg === 'no-compose' ? 'db-detail-hint' : 'db-detail-error'))
-    }
-  }
-
-  function buildDockerDetail(result: IsolateResult, wt: Worktree): void {
-    stopDiffRefresh()
-    detailCleanup()
-    const worktreeDir = wt.path.replace(/\/$/, '').split('/').pop()!
-
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-docker-detail'
-
-    const statusLabel = Object.assign(document.createElement('span'), { className: 'tasks-compose-status' })
-
-    const upBtn = iconBtn('play', taskT('startStack'), async () => {
-      upBtn.disabled = true; statusLabel.textContent = taskT('starting')
-      await invoke('docker_compose_up', { worktreePath: wt.path }).catch(e => { statusLabel.textContent = String(e) })
-      upBtn.disabled = false
-      if (statusLabel.textContent === taskT('starting')) statusLabel.textContent = ''
-    })
-    const downBtn = iconBtn('stop', taskT('stopStack'), async () => {
-      downBtn.disabled = true; statusLabel.textContent = taskT('stopping')
-      await invoke('docker_compose_down', { worktreePath: wt.path }).catch(e => { statusLabel.textContent = String(e) })
-      downBtn.disabled = false
-      if (statusLabel.textContent === taskT('stopping')) statusLabel.textContent = ''
-    })
-    const stackLogsBtn = iconBtn('list', taskT('stackLogs'), () => showStackLogs(wt, worktreeDir))
-
-    const controls = document.createElement('div')
-    controls.className = 'tasks-compose-controls'
-    controls.append(upBtn, downBtn, stackLogsBtn, statusLabel)
-    wrap.appendChild(controls)
-
-    if (result.urls.length > 0) {
-      const urlList = document.createElement('div')
-      urlList.className = 'tasks-url-list'
-      for (const { service, url } of result.urls) {
-        const a = Object.assign(document.createElement('a'), { className: 'tasks-url-link', href: '#', textContent: `${service} → ${url}` })
-        a.addEventListener('click', e => { e.preventDefault(); openUrl(url).catch(() => {}) })
-        urlList.appendChild(a)
-      }
-      wrap.appendChild(urlList)
-    }
-
-    const containerList = document.createElement('div')
-    containerList.className = 'tasks-container-list'
-    wrap.appendChild(containerList)
-
-    const refresh = async (): Promise<void> => {
-      const all = parseContainers(await invoke<string>('docker_list').catch(() => ''))
-      const mine = all.filter(c => c.name.startsWith(`${worktreeDir}-`))
-      containerList.replaceChildren()
-      if (mine.length === 0) {
-        containerList.appendChild(note(taskT('emptyContainers'), 'tasks-note'))
-        return
-      }
-      for (const c of mine) {
-        const shortName = c.name.slice(worktreeDir.length + 1)
-        const running = isRunning(c)
-        const row = document.createElement('div')
-        row.className = 'tasks-ctr-row'
-        const dot = Object.assign(document.createElement('span'), { className: `docker-dot ${running ? 'docker-up' : 'docker-down'}` })
-        const lbl = Object.assign(document.createElement('span'), { className: 'tasks-ctr-name', textContent: shortName })
-        const btns = document.createElement('div')
-        btns.className = 'tasks-ctr-btns'
-        const restartBtn = iconBtn(running ? 'power' : 'play', running ? taskT('restart') : taskT('start'), async () => {
-          await invoke(running ? 'docker_restart' : 'docker_start', { id: c.name }).catch(() => {})
-          refresh()
-        })
-        const logsBtn = iconBtn('list', 'Logs', () => showContainerLogs(c, shortName, () => buildDockerDetail(result, wt)))
-        const termBtn = iconBtn('terminal', 'Terminal', () => showContainerTerminal(c, shortName, () => buildDockerDetail(result, wt)))
-        logsBtn.disabled = !running; termBtn.disabled = !running
-        btns.append(restartBtn, logsBtn, termBtn)
-        row.append(dot, lbl, btns)
-        containerList.appendChild(row)
-      }
-    }
-
-    refresh()
-    const interval = setInterval(refresh, 3000)
-    detailCleanup = () => clearInterval(interval)
-    showDetail(wrap)
-  }
-
-  // ---- stack logs ----
-  function showStackLogs(wt: Worktree, worktreeDir: string): void {
-    stopDiffRefresh()
-    detailCleanup()
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-term-wrap'
-    const logsBody = document.createElement('div')
-    logsBody.className = 'tasks-logs-body'
-
-    let rawLogs = '', live = false
-    let unlisten: (() => void) | null = null
-    const event = `docker-compose-logs-${worktreeDir}`
-    const pre = document.createElement('pre')
-    pre.className = 'docker-logs'
-
-    const stopLive = (): void => {
-      if (!live) return
-      live = false
-      liveBtn.innerHTML = icon('play'); liveBtn.title = 'Seguir logs en vivo'; liveBtn.classList.remove('active')
-      invoke('docker_compose_logs_stop', { worktreePath: wt.path }).catch(() => {})
-      unlisten?.(); unlisten = null
-    }
-    const startLive = async (): Promise<void> => {
-      live = true
-      liveBtn.innerHTML = icon('stop'); liveBtn.title = 'Parar el seguimiento'; liveBtn.classList.add('active')
-      rawLogs = ''; pre.textContent = ''
-      try {
-        await invoke('docker_compose_logs_follow', { worktreePath: wt.path, tail: 200 })
-        unlisten = await listen<string>(event, e => {
-          rawLogs += e.payload; pre.textContent += e.payload; pre.scrollTop = pre.scrollHeight
-        })
-      } catch (e) { pre.textContent = String(e) }
-    }
-
-    const liveBtn = iconBtn('play', 'Seguir logs en vivo', () => live ? stopLive() : startLive())
-    const refreshBtn = iconBtn('refresh', 'Recargar', () => {
-      if (live) { stopLive(); startLive() } else {
-        pre.textContent = taskT('loading')
-        invoke<string>('docker_logs', { id: worktreeDir, tail: 500 }).catch(() => '').then(r => { rawLogs = r; pre.textContent = r || taskT('noLogs') })
-      }
-    })
-
-    const head = document.createElement('div')
-    head.className = 'docker-logs-head'
-    head.append(Object.assign(document.createElement('span'), { textContent: 'Stack logs' }), liveBtn, refreshBtn)
-
-    logsBody.append(head, pre)
-    wrap.append(buildSubHead('Stack logs', () => buildDockerDetail({ subnet: '', urls: [] } as IsolateResult, wt)), logsBody)
-    showDetail(wrap)
-    detailCleanup = stopLive
-    startLive()
-  }
-
-  // ---- container: logs ----
-  function showContainerLogs(c: Container, shortName: string, goBack: () => void): void {
-    stopDiffRefresh()
-    detailCleanup()
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-term-wrap'
-    const logsBody = document.createElement('div')
-    logsBody.className = 'tasks-logs-body'
-    wrap.append(buildSubHead(shortName, goBack), logsBody)
-    showDetail(wrap)
-    detailCleanup = renderContainerLogs(c, logsBody)
-  }
-
-  // ---- container: terminal ----
-  async function showContainerTerminal(c: Container, shortName: string, goBack: () => void): Promise<void> {
-    stopDiffRefresh()
-    detailCleanup()
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-term-wrap'
-    const termBody = document.createElement('div')
-    termBody.className = 'tasks-term-body'
-    wrap.append(buildSubHead(shortName, goBack), termBody)
-    showDetail(wrap)
-    detailCleanup = await renderContainerTerminal(c, termBody, goBack)
-  }
-
-  function buildSubHead(title: string, goBack: () => void, ...extra: HTMLElement[]): HTMLElement {
-    const head = document.createElement('div')
-    head.className = 'tasks-sub-head'
-    head.append(iconBtn('arrow-left', taskT('back'), goBack), Object.assign(document.createElement('span'), { className: 'tasks-sub-title', textContent: title }), ...extra)
-    return head
-  }
-
   // ---- mutations ----
   async function createTask(name: string): Promise<void> {
     if (!name || !repoPath) return
@@ -1909,7 +1743,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       const result = await invoke<IsolateResult>('docker_compose_isolate', { worktreePath: path }).catch((e: unknown) => {
         const msg = String(e); if (msg !== 'no-compose') showDetail(note(msg, 'db-detail-error')); return null
       })
-      if (result && wt) buildDockerDetail(result, wt)
+      if (result && wt) dockerView.show(result, wt)
     } catch (e) { listWrap.replaceChildren(note(String(e), 'db-detail-error')) }
   }
 

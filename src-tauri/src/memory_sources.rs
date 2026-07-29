@@ -171,7 +171,7 @@ fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn title_from_content(path: &Path, content: &str) -> String {
-    for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    if let Some(line) = content.lines().map(str::trim).find(|line| !line.is_empty()) {
         if let Some(stripped) = line.strip_prefix("# ") {
             return clip(stripped, 120);
         }

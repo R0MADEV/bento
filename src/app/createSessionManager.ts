@@ -16,6 +16,7 @@ import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
 import { setActiveProjectPath } from '../ui/activeProject'
 import { appT, getAppLocale, setAppLocale } from '../core/i18n'
+import { parseSavedState } from '../core/session/savedState'
 
 export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
@@ -36,6 +37,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
   const tabsArea = document.createElement('div')
   tabsArea.className = 'session-tabs'
+  tabsArea.setAttribute('role', 'tablist')
   bar.appendChild(tabsArea)
 
   if (!isMac) bar.appendChild(createWindowControls())
@@ -83,7 +85,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       const layouts: Record<string, unknown> = { ...savedLayouts }
       views.forEach((view, id) => { layouts[id] = view.serialize() })
       savedLayouts = layouts
-      stateRepo.save({ sessions: state.sessions, activeId: state.activeId, layouts }).catch(error => {
+      stateRepo.save({ schemaVersion: 1, sessions: state.sessions, activeId: state.activeId, layouts }).catch(error => {
         console.error('Could not persist workspace state', error)
       })
     }, 400)
@@ -127,10 +129,24 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   }
 
   const showPopover = (anchor: HTMLElement, name: string, titles: string[]): void => {
-    const items = titles.length
-      ? titles.map(t => `<div class="session-popover-item">${t}</div>`).join('')
-      : `<div class="session-popover-empty">${appT('empty')}</div>`
-    popover.innerHTML = `<div class="session-popover-title">${name}</div>${items}`
+    popover.replaceChildren()
+    const title = document.createElement('div')
+    title.className = 'session-popover-title'
+    title.textContent = name
+    popover.appendChild(title)
+    if (titles.length) {
+      for (const panelTitle of titles) {
+        const item = document.createElement('div')
+        item.className = 'session-popover-item'
+        item.textContent = panelTitle
+        popover.appendChild(item)
+      }
+    } else {
+      const empty = document.createElement('div')
+      empty.className = 'session-popover-empty'
+      empty.textContent = appT('empty')
+      popover.appendChild(empty)
+    }
     // Show first so getBoundingClientRect returns real dimensions.
     popover.classList.remove('hidden')
     setWebOverlay(true)
@@ -163,6 +179,9 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   ) => {
     const tab = document.createElement('div')
     tab.className = active ? 'session-tab active' : 'session-tab'
+    tab.setAttribute('role', 'tab')
+    tab.setAttribute('tabindex', active ? '0' : '-1')
+    tab.setAttribute('aria-selected', String(active))
 
     const label = document.createElement('span')
     label.className = 'session-tab-label'
@@ -189,14 +208,18 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       input.addEventListener('blur', save)
     })
 
-    const duplicate = document.createElement('span')
+    const duplicate = document.createElement('button')
+    duplicate.type = 'button'
     duplicate.className = 'session-tab-duplicate'
     duplicate.title = appT('duplicateSession')
     duplicate.textContent = '⧉'
     duplicate.addEventListener('click', e => { e.stopPropagation(); onDuplicate() })
 
-    const close = document.createElement('span')
+    const close = document.createElement('button')
+    close.type = 'button'
     close.className = 'session-tab-close'
+    close.title = appT('closeSession')
+    close.setAttribute('aria-label', appT('closeSession'))
     close.innerHTML = icon('x')
     close.addEventListener('click', e => { e.stopPropagation(); onClose() })
 
@@ -205,6 +228,11 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     actions.append(duplicate, close)
     tab.append(label, actions)
     tab.addEventListener('click', onSelect)
+    tab.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      onSelect()
+    })
     tab.addEventListener('mouseenter', () => showPopover(tab, name, getTitles()))
     tab.addEventListener('mouseleave', hidePopover)
     return tab
@@ -237,7 +265,8 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     const add = document.createElement('button')
     add.className = 'session-add'
     add.innerHTML = icon('plus')
-    add.title = 'Nueva sesión'
+    add.title = appT('newSession')
+    add.setAttribute('aria-label', appT('newSession'))
     add.addEventListener('click', () => { state = addSession(state); render() })
     tabsArea.appendChild(add)
 
@@ -295,7 +324,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         run: () => {
           const layouts: Record<string, unknown> = { ...savedLayouts }
           views.forEach((view, id) => { layouts[id] = view.serialize() })
-          const data = JSON.stringify({ sessions: state.sessions, activeId: state.activeId, layouts }, null, 2)
+          const data = JSON.stringify({ schemaVersion: 1, sessions: state.sessions, activeId: state.activeId, layouts }, null, 2)
           const a = document.createElement('a')
           a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }))
           a.download = 'bento-workspace.json'
@@ -313,10 +342,10 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
             if (!file) return
             file.text().then(text => {
               try {
-                const parsed = JSON.parse(text)
-                if (!Array.isArray(parsed.sessions)) throw new Error(appT('invalidFormat'))
+                const parsed = parseSavedState(text)
+                if (!parsed) throw new Error(appT('invalidFormat'))
                 views.forEach((_, id) => disposeView(id))
-                savedLayouts = parsed.layouts ?? {}
+                savedLayouts = parsed.layouts
                 state = { sessions: parsed.sessions, activeId: parsed.activeId }
                 render()
               } catch (e) {

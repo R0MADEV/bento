@@ -278,9 +278,9 @@ fn parse_compose_info(content: &str) -> Option<(String, String, Vec<ComposeServi
 // running container. Returns None if the container is not running or has no binding.
 fn get_actual_host_port(container_name: &str, internal_port: u16) -> Option<u16> {
     let bin = docker_bin()?;
-    let format = format!("{{{{json .HostConfig.PortBindings}}}}");
+    let format = "{{json .HostConfig.PortBindings}}";
     let out = Command::new(&bin)
-        .args(["inspect", "--format", &format, container_name])
+        .args(["inspect", "--format", format, container_name])
         .output().ok().filter(|o| o.status.success())?;
     let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
     // Parse: {"3000/tcp":[{"HostIp":"","HostPort":"20231"}], ...}
@@ -332,7 +332,7 @@ fn get_exposed_ports(container_name: &str) -> Vec<u16> {
             cols.next(); // remote_address
             let state = match cols.next() { Some(v) => v, None => continue };
             if state != "0A" { continue; }
-            if let Some(port_hex) = local.split(':').last() {
+            if let Some(port_hex) = local.rsplit(':').next() {
                 if let Ok(p) = u16::from_str_radix(port_hex, 16) {
                     // Skip ephemeral ports (>= 32768) — these are HMR sockets,
                     // random kernel-assigned ports, etc., not real service ports.
@@ -650,7 +650,7 @@ pub async fn docker_compose_isolate(worktree_path: String) -> Result<IsolateResu
         let mut urls: Vec<ServiceUrl> = vec![];
 
         for svc in &services {
-            let last_octet_str = svc.ip.split('.').last().unwrap_or("0");
+            let last_octet_str = svc.ip.rsplit('.').next().unwrap_or("0");
             let last_octet: u16 = last_octet_str.parse().unwrap_or(0);
             let new_ip = format!("{}.{}", new_prefix, last_octet_str);
             let new_container = format!("{}-{}", worktree_dir, svc.name);

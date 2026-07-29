@@ -12,9 +12,9 @@ process.env.BENTO_E2E_CONFIG_DIR = join(root, 'config')
 const driver = provider === 'external' && !process.env.BENTO_E2E_DRIVER_URL
   ? spawn(process.env.TAURI_DRIVER ?? 'tauri-driver', [], { stdio: 'inherit' }) : null
 let appProcess = null
-const repo = join(root, 'repo')
-const task = join(root, 'task')
-const conflict = join(root, 'conflict')
+const repo = join(root, 'repo espacio ñ')
+const task = join(root, 'tarea unicode ñ')
+const conflict = join(root, 'conflicto espacio ñ')
 const remote = join(root, 'remote.git')
 let sessionId = ''
 let isolatedProfile = false
@@ -128,10 +128,6 @@ const type = (id, text) => request(route(`/element/${id}/value`), { text, value:
 const textOf = id => request(route(`/element/${id}/text`))
 const execute = (script, args = []) => request(route('/execute/sync'), { script, args })
 const refresh = () => request(route('/refresh'), {})
-async function keys(values) {
-  await request(route('/actions'), { actions: [{ type: 'key', id: 'keyboard', actions: values.map(value => ({ type: 'keyDown', value })).concat(values.toReversed().map(value => ({ type: 'keyUp', value }))) }] })
-  await request(route('/actions'), undefined, 'DELETE')
-}
 async function openTasksPanel() {
   await waitFor('css selector', '.session-manager[data-ready="true"]')
   let existing = await findAll('css selector', '[data-testid="tasks-panel"]')
@@ -149,7 +145,7 @@ async function openTasksPanel() {
   return waitFor('css selector', '[data-testid="tasks-panel"]')
 }
 async function selectRepo(expectedBranch = 'task/e2e') {
-  const panel = await openTasksPanel()
+  await openTasksPanel()
   await execute(`const panel = document.querySelector('[data-testid="tasks-panel"]'); localStorage.setItem('bento.tasks.repo.' + panel.dataset.panelId, arguments[0]);`, [repo])
   // Workspace layout persistence is debounced by Bento; let the newly-created
   // panel reach storage before reloading it with the repository preference.
@@ -167,7 +163,7 @@ async function selectRepo(expectedBranch = 'task/e2e') {
       text: panel?.innerText?.slice(0, 1000),
     };`).catch(debugError => ({ debugError: String(debugError) }))
     const backend = await invoke('git_worktree_list', { repo }).catch(debugError => ({ debugError: String(debugError) }))
-    throw new Error(`${String(error)}\nUI: ${JSON.stringify(ui)}\nBackend: ${JSON.stringify(backend)}`)
+    throw new Error(`${String(error)}\nUI: ${JSON.stringify(ui)}\nBackend: ${JSON.stringify(backend)}`, { cause: error })
   }
 }
 async function invoke(command, args) {
@@ -209,6 +205,16 @@ async function run() {
   await refresh()
   console.log('E2E: opening Tasks panel')
   await selectRepo()
+
+  console.log('E2E: switching locale without interpreting user content')
+  await execute(`localStorage.setItem('bento.locale', 'en');`)
+  await refresh()
+  await waitFor('css selector', '.session-manager[data-ready="true"]')
+  await waitUntil(
+    async () => await execute(`return document.querySelector('.cmdk-input')?.placeholder;`).catch(() => null) === 'Type a command…',
+    'the English command-palette locale',
+  )
+  await waitFor('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"]')
 
   // Real commit through the Bento UI.
   console.log('E2E: committing through the UI')

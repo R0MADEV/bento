@@ -238,7 +238,13 @@ export function createHttpPanel(panelId = '') {
         const item = document.createElement('button')
         item.className = 'http-ep'
         item.title = `${e.method} ${e.url}`
-        item.innerHTML = `<span class="http-ep-method ${e.method.toLowerCase()}">${e.method}</span><span class="http-ep-name">${e.summary || e.url}</span>`
+        const method = document.createElement('span')
+        method.className = `http-ep-method ${e.method.toLowerCase().replace(/[^a-z]/g, '')}`
+        method.textContent = e.method
+        const name = document.createElement('span')
+        name.className = 'http-ep-name'
+        name.textContent = e.summary || e.url
+        item.append(method, name)
         item.addEventListener('click', () => fillFromEndpoint(e))
         colList.appendChild(item)
       })

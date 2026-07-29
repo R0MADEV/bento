@@ -42,8 +42,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const fits = new Set<() => void>()
   const fitAll = () => fits.forEach(f => f())
 
-  let api: DockviewApi
-
   const typeOf = (panelId: string): string => panelId.slice(0, panelId.lastIndexOf('-'))
 
   const usedNumbers = (type: string): number[] => {
@@ -87,7 +85,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const addInActiveGroup = (type: string): void =>
     addPanel(type, api.activeGroup ? { referenceGroup: api.activeGroup, direction: 'within' } : undefined)
 
-  api = createDockview(dockHost, {
+  const api: DockviewApi = createDockview(dockHost, {
     createComponent({ id, name }) {
       const def = panels.get(name)
       if (!def) throw new Error(appT('panelNotRegistered', { name }))
@@ -191,7 +189,11 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   panels.list().forEach(d => {
     const btn = document.createElement('button')
     btn.className = 'workspace-empty-btn'
-    btn.innerHTML = `${icon(d.type)}<span>${d.title}</span>`
+    const iconSlot = document.createElement('span')
+    iconSlot.innerHTML = icon(d.type)
+    const label = document.createElement('span')
+    label.textContent = d.title
+    btn.append(iconSlot, label)
     btn.addEventListener('click', () => addInActiveGroup(d.type))
 
     const hints = panelHints[d.type] ?? []

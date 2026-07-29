@@ -1,5 +1,12 @@
 name: Build Bento
 
+permissions:
+  contents: read
+
+concurrency:
+  group: bento-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -41,7 +48,13 @@ jobs:
         run: choco install sqlite -y --no-progress
 
       - name: Install frontend deps
-        run: npm install
+        run: npm ci
+
+      - name: Audit frontend dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Lint frontend
+        run: npm run lint
 
       - name: Test
         run: npm test
@@ -51,6 +64,13 @@ jobs:
 
       - name: Verify generated Rust bindings
         run: npm run bindings:check
+
+      - name: Lint Rust
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Test with coverage
+        if: runner.os == 'Linux'
+        run: npm run test:coverage
 
       - name: Build
         run: npm run tauri:build

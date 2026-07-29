@@ -36,6 +36,13 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 e2e = ["dep:tauri-plugin-wdio-webdriver"]
 
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(cargo_clippy)'] }
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
 [profile.release]
 opt-level = "z"
 lto = true

@@ -338,7 +338,7 @@ fn upsert_summary_entry(conn: &Connection, transcript: &MemoryTranscript, summar
                 title,
                 summary.chars().take(500).collect::<String>(),
                 summary,
-                encode(&vec!["session-summary".to_string(), transcript.agent.clone()])?,
+                encode(&["session-summary".to_string(), transcript.agent.clone()])?,
                 format!("{}-regen", transcript.agent),
                 transcript.updated_at,
                 transcript.project_path,

@@ -1,8 +1,10 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 mod db;
+mod command_error;
 mod docker;
 mod git;
+mod git_paths;
 mod jira;
 mod memory_import;
 mod memory;

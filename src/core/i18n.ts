@@ -4,7 +4,7 @@ const LOCALE_KEY = 'bento.locale'
 
 const messages = {
   es: {
-    empty: '(vacía)', duplicateSession: 'Duplicar sesión', newSession: 'Nueva sesión', session: 'Sesión', copy: 'copia',
+    empty: '(vacía)', duplicateSession: 'Duplicar sesión', closeSession: 'Cerrar sesión', newSession: 'Nueva sesión', session: 'Sesión', copy: 'copia',
     newTerminal: 'Nueva terminal', newTv: 'Nuevo panel TV', newWeb: 'Nuevo panel Web', newNotes: 'Nuevas notas',
     newHttp: 'Nuevo cliente HTTP', newScripts: 'Nuevo panel Scripts', newDb: 'Nuevo panel Bases de datos',
     newJira: 'Nuevo panel Jira', newDocker: 'Nuevo panel Docker', newTasks: 'Nuevo panel Tareas', newMemory: 'Nuevo panel Memoria',
@@ -16,10 +16,10 @@ const messages = {
     splitUp: 'Dividir arriba', splitDown: 'Dividir abajo', newTab: 'Nueva pestaña ({name})',
     panelDb: 'Bases de datos', panelDocker: 'Docker', panelHttp: 'HTTP', panelJira: 'Jira', panelMemory: 'Memoria', panelNotes: 'Notas',
     panelScripts: 'Scripts', panelTasks: 'Tareas', panelTerminal: 'Terminal', panelTv: 'TV', panelVault: 'Vault', panelWeb: 'Web',
-    languageSpanish: 'Idioma: Español', languageEnglish: 'Idioma: Inglés',
+    languageSpanish: 'Idioma: Español', languageEnglish: 'Idioma: Inglés', commandPalette: 'Paleta de comandos', commandPlaceholder: 'Escribe un comando…',
   },
   en: {
-    empty: '(empty)', duplicateSession: 'Duplicate session', newSession: 'New session', session: 'Session', copy: 'copy',
+    empty: '(empty)', duplicateSession: 'Duplicate session', closeSession: 'Close session', newSession: 'New session', session: 'Session', copy: 'copy',
     newTerminal: 'New terminal', newTv: 'New TV panel', newWeb: 'New Web panel', newNotes: 'New notes',
     newHttp: 'New HTTP client', newScripts: 'New Scripts panel', newDb: 'New Databases panel',
     newJira: 'New Jira panel', newDocker: 'New Docker panel', newTasks: 'New Tasks panel', newMemory: 'New Memory panel',
@@ -31,7 +31,7 @@ const messages = {
     splitUp: 'Split above', splitDown: 'Split below', newTab: 'New tab ({name})',
     panelDb: 'Databases', panelDocker: 'Docker', panelHttp: 'HTTP', panelJira: 'Jira', panelMemory: 'Memory', panelNotes: 'Notes',
     panelScripts: 'Scripts', panelTasks: 'Tasks', panelTerminal: 'Terminal', panelTv: 'TV', panelVault: 'Vault', panelWeb: 'Web',
-    languageSpanish: 'Language: Spanish', languageEnglish: 'Language: English',
+    languageSpanish: 'Language: Spanish', languageEnglish: 'Language: English', commandPalette: 'Command palette', commandPlaceholder: 'Type a command…',
   },
 } as const
 

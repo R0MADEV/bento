@@ -1,20 +1,29 @@
 import { filterCommands, type Command } from '../core/command/command'
+import { appT } from '../core/i18n'
 
 // Command palette (Cmd/Ctrl+K). getCommands is called on open, so it reflects
 // the current state (sessions, themes, etc.).
 export function createCommandPalette(getCommands: () => Command[]): HTMLElement {
   const overlay = document.createElement('div')
   overlay.className = 'cmdk hidden'
+  overlay.setAttribute('role', 'dialog')
+  overlay.setAttribute('aria-modal', 'true')
+  overlay.setAttribute('aria-label', appT('commandPalette'))
 
   const panel = document.createElement('div')
   panel.className = 'cmdk-panel'
 
   const input = document.createElement('input')
   input.className = 'cmdk-input'
-  input.placeholder = 'Escribe un comando...'
+  input.placeholder = appT('commandPlaceholder')
+  input.setAttribute('role', 'combobox')
+  input.setAttribute('aria-autocomplete', 'list')
+  input.setAttribute('aria-controls', 'bento-command-list')
 
   const list = document.createElement('div')
   list.className = 'cmdk-list'
+  list.id = 'bento-command-list'
+  list.setAttribute('role', 'listbox')
 
   panel.append(input, list)
   overlay.appendChild(panel)
@@ -45,7 +54,17 @@ export function createCommandPalette(getCommands: () => Command[]): HTMLElement 
     results.forEach((cmd, i) => {
       const row = document.createElement('div')
       row.className = i === selected ? 'cmdk-item selected' : 'cmdk-item'
-      row.innerHTML = `<span>${cmd.label}</span>${cmd.hint ? `<kbd>${cmd.hint}</kbd>` : ''}`
+      row.id = `bento-command-${i}`
+      row.setAttribute('role', 'option')
+      row.setAttribute('aria-selected', String(i === selected))
+      const label = document.createElement('span')
+      label.textContent = cmd.label
+      row.appendChild(label)
+      if (cmd.hint) {
+        const hint = document.createElement('kbd')
+        hint.textContent = cmd.hint
+        row.appendChild(hint)
+      }
       row.addEventListener('click', () => run(cmd))
       row.addEventListener('mousemove', e => {
         if (e.clientX === lastX && e.clientY === lastY) return
@@ -62,8 +81,10 @@ export function createCommandPalette(getCommands: () => Command[]): HTMLElement 
     list.querySelectorAll('.cmdk-item').forEach((el, i) => {
       const isSelected = i === selected
       el.classList.toggle('selected', isSelected)
+      el.setAttribute('aria-selected', String(isSelected))
       if (isSelected) el.scrollIntoView({ block: 'nearest' })
     })
+    input.setAttribute('aria-activedescendant', results.length ? `bento-command-${selected}` : '')
   }
 
   const open = (): void => {
