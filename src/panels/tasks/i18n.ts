@@ -1,6 +1,6 @@
-export type TaskLocale = 'es' | 'en'
+import { getAppLocale, setAppLocale, type AppLocale } from '../../core/i18n'
 
-const LOCALE_KEY = 'bento.tasks.locale'
+export type TaskLocale = AppLocale
 
 const messages = {
   es: {
@@ -112,15 +112,13 @@ const messages = {
 export type TaskMessageKey = keyof typeof messages.es
 
 export function getTaskLocale(): TaskLocale {
-  const saved = localStorage.getItem(LOCALE_KEY)
-  if (saved === 'es' || saved === 'en') return saved
-  return navigator.language.toLowerCase().startsWith('es') ? 'es' : 'en'
+  return getAppLocale()
 }
 
-export function setTaskLocale(locale: TaskLocale): void { localStorage.setItem(LOCALE_KEY, locale) }
+export function setTaskLocale(locale: TaskLocale): void { setAppLocale(locale) }
 
 export function taskT(key: TaskMessageKey, values: Record<string, string | number> = {}): string {
   let result: string = messages[getTaskLocale()][key]
-  for (const [name, value] of Object.entries(values)) result = result.replaceAll(`{${name}}`, String(value))
+  for (const [name, value] of Object.entries(values)) result = result.split(`{${name}}`).join(String(value))
   return result
 }

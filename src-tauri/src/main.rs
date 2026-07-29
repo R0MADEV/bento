@@ -14,6 +14,7 @@ mod traffic_lights;
 mod vault;
 mod web_panel;
 mod window_prefs;
+mod workspace_io;
 
 use std::sync::Arc;
 
@@ -143,6 +144,9 @@ fn main() {
             http_get,
             http_request,
             app_identifier,
+            workspace_io::workspace_load,
+            workspace_io::workspace_save,
+            workspace_io::workspace_reset,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,

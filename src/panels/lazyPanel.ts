@@ -1,4 +1,5 @@
 import type { PanelInstance, PanelApi } from './registry'
+import { localizePanel } from '../core/panelI18n'
 
 // Defers loading a panel's module until it is instantiated: the initial
 // bundle doesn't drag in heavy dependencies (xterm, hls.js) from panels the
@@ -12,10 +13,12 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
   let disposed = false
   let titleCb: ((title: string) => void) | undefined
   let readyApi: PanelApi | undefined
+  let disposeLocalization: (() => void) | undefined
 
   load().then(instance => {
     if (disposed) { instance.dispose?.(); return }
     inner = instance
+    disposeLocalization = localizePanel(instance.element)
     element.replaceChildren(instance.element)
     if (titleCb) instance.onTitleChange?.(titleCb)
     if (readyApi) instance.onReady?.(readyApi)
@@ -26,7 +29,7 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
     element,
     fit: () => inner?.fit?.(),
     focus: () => inner?.focus?.(),
-    dispose: () => { disposed = true; inner?.dispose?.() },
+    dispose: () => { disposed = true; disposeLocalization?.(); inner?.dispose?.() },
     // Remembers the callback until the panel loads; then re-registers it.
     onTitleChange: cb => { titleCb = cb; return () => { titleCb = undefined } },
     onReady: api => { readyApi = api; inner?.onReady?.(api) },

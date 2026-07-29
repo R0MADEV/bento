@@ -4,12 +4,12 @@ import { parseSavedState, type SavedState } from '../core/session/savedState'
 const KEY = 'bento.workspace.state'
 
 export class LocalStorageWorkspaceStateRepository implements WorkspaceStateRepository {
-  load(): SavedState | null {
+  async load(): Promise<SavedState | null> {
     const raw = localStorage.getItem(KEY)
     return raw ? parseSavedState(raw) : null
   }
 
-  save(state: SavedState): void {
+  async save(state: SavedState): Promise<void> {
     localStorage.setItem(KEY, JSON.stringify(state))
   }
 }

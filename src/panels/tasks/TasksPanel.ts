@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-dialog'
-import { parseWorktreeList, parseStatus, taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
+import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
 import { parseContainers, isRunning, type Container } from '../../core/docker/containers'
 import { renderContainerLogs, renderContainerTerminal } from '../docker/containerDetail'
 import { showContextMenu } from '../../ui/contextMenu'
@@ -11,171 +11,38 @@ import { icon } from '../../ui/icons'
 import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
 import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
 import { parseConflictFiles } from '../../core/git/conflictWorkflow'
-import {
-  appendOperation, mapWithConcurrency, previewRebase,
-  type GitOperationEntry, type RebaseAction, type RebasePlanItem,
-} from '../../core/git/rebaseWorkflow'
+import { mapWithConcurrency, previewRebase, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
 import {
   loadJiraConfig, fetchIssue, fetchTransitions, applyTransition, browseUrl,
   type JiraConfig, type TaskIssue,
 } from './taskJiraClient'
 import { buildOperationHistoryView } from './OperationHistoryView'
-import type { BackupStatus, PrStatus, RebaseStatus, RewritePreflight, UpstreamStatus } from './gitTypes'
+import type { BackupStatus, CommitEntry, PrStatus, RebaseStatus, RewritePreflight, UpstreamStatus } from './gitTypes'
 import { buildPrStatusView } from './PrStatusView'
 import { getTaskLocale, setTaskLocale, taskT, type TaskLocale } from './i18n'
 import { buildBackupHistoryView } from './BackupHistoryView'
 import { buildConflictResolverView } from './ConflictResolverView'
 import { buildChangesFileView } from './ChangesFileView'
 import { buildRebasePlanPreview } from './RebasePlanView'
+import { buildCommitFileList, escapeCodeHtml as escHtml, fileStateMap, renderPatchHtml } from './TaskCodeView'
+import { commitFilesRaw, recommendationMap, taskGit } from './taskGitClient'
+import { TaskPanelStore } from './TaskPanelStore'
 
 interface IsolateResult {
   subnet: string
   urls: { service: string; url: string }[]
 }
 
-interface CommitEntry {
-  hash: string
-  short: string
-  subject: string
-  date: string
-  author: string
-}
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-// Parses the custom \x1f-separated log format produced by git_log
-function parseLogEntries(raw: string): CommitEntry[] {
-  return raw.trim().split('\n').filter(Boolean).map(line => {
-    const [hash = '', short = '', subject = '', date = '', author = ''] = line.split('\x1f')
-    return { hash, short, subject, date, author }
-  })
-}
-
-function renderPatchHtml(raw: string): string {
-  return raw.split('\n').map((line, index) => {
-    const cls = line.startsWith('+') && !line.startsWith('+++') ? ' tasks-diff-line-add'
-      : line.startsWith('-') && !line.startsWith('---') ? ' tasks-diff-line-del'
-        : line.startsWith('@@') ? ' tasks-diff-hunk' : ''
-    return `<span class="tasks-diff-code-line${cls}"><span class="tasks-diff-line-no">${index + 1}</span>${escHtml(line)}</span>`
-  }).join('')
-}
-
-function fileStateMap(raw: string): Map<string, string> {
-  const states = new Map<string, string>()
-  for (const line of raw.split('\n').filter(Boolean)) {
-    const x = line[0] ?? ' '
-    const y = line[1] ?? ' '
-    let path = line.slice(3).trim()
-    if (path.includes(' -> ')) path = path.split(' -> ').at(-1) ?? path
-    const state = x === '?' && y === '?' ? 'untracked'
-      : x !== ' ' && y !== ' ' ? 'staged + modificado'
-        : x !== ' ' ? 'staged' : 'sin stage'
-    states.set(path.replace(/^"|"$/g, ''), state)
-  }
-  return states
-}
-
-function renderSourceHtml(raw: string): string {
-  return raw.split('\n').map((line, index) => {
-    const highlighted = escHtml(line).replace(
-      /\b(const|let|var|function|class|interface|type|export|import|from|return|if|else|for|while|match|pub|fn|struct|impl|async|await|try|catch)\b/g,
-      '<span class="tasks-source-keyword">$1</span>',
-    )
-    return `<span class="tasks-diff-code-line"><span class="tasks-diff-line-no">${index + 1}</span>${highlighted}</span>`
-  }).join('')
-}
-
-// Builds a file list from `git diff-tree --name-status` output: "<M|A|D>\t<path>" lines.
-// When loadPatch is provided, each file expands its code diff inline.
-function buildFileList(
-  raw: string,
-  loadPatch?: (file: string) => Promise<string>,
-  loadFullFile?: (file: string) => Promise<string>,
-): HTMLElement[] {
-  const STATUS_LABEL: Record<string, string> = { M: 'M', A: 'A', D: 'D', R: 'R', C: 'C', T: 'T' }
-  const STATUS_CLASS: Record<string, string> = { M: 'fl-mod', A: 'fl-add', D: 'fl-del', R: 'fl-ren', C: 'fl-ren', T: 'fl-mod' }
-  return raw.trim().split('\n').filter(Boolean).map(line => {
-    const parts = line.split('\t')
-    const statusCode = parts[0]?.trim()[0] ?? 'M'
-    const paths = parts.slice(1)
-    const filePath = paths.length > 1 ? paths.join(' → ') : paths[0] ?? line
-    const targetPath = paths.at(-1) ?? filePath
-    const entry = document.createElement('div')
-    entry.className = 'tasks-commit-file-entry'
-    const row = document.createElement(loadPatch ? 'button' : 'div')
-    row.className = `tasks-commit-file-row${loadPatch ? ' tasks-commit-file-row--openable' : ''}`
-    row.append(
-      Object.assign(document.createElement('span'), { className: `tasks-file-status ${STATUS_CLASS[statusCode] ?? 'fl-mod'}`, textContent: STATUS_LABEL[statusCode] ?? statusCode }),
-      Object.assign(document.createElement('span'), { className: 'tasks-file-path', textContent: filePath }),
-    )
-    entry.appendChild(row)
-
-    if (loadPatch) {
-      const patch = document.createElement('pre')
-      patch.className = 'tasks-commit-file-diff hidden'
-      let loaded = false
-      row.title = taskT('changedCode')
-      row.addEventListener('click', async () => {
-        const opening = patch.classList.contains('hidden')
-        patch.classList.toggle('hidden', !opening)
-        row.classList.toggle('tasks-commit-file-row--expanded', opening)
-        if (!opening || loaded) return
-        patch.textContent = taskT('loadingCode')
-        try {
-          const diff = await loadPatch(targetPath)
-          patch.innerHTML = diff.trim() ? renderPatchHtml(diff) : `<span>${taskT('noTextPatch')}</span>`
-          loaded = true
-        } catch (e) {
-          patch.textContent = String(e)
-        }
-      })
-      entry.appendChild(patch)
-    }
-
-    if (loadFullFile) {
-      const fullBtn = Object.assign(document.createElement('button'), {
-        className: 'tasks-file-full-btn',
-        textContent: taskT('fullFile'),
-        title: taskT('viewFullCommitFile'),
-      })
-      const full = document.createElement('pre')
-      full.className = 'tasks-commit-file-diff tasks-full-file hidden'
-      let fullLoaded = false
-      fullBtn.addEventListener('click', async () => {
-        const opening = full.classList.contains('hidden')
-        full.classList.toggle('hidden', !opening)
-        if (!opening || fullLoaded) return
-        full.textContent = taskT('loadFile')
-        try {
-          const content = await loadFullFile(targetPath)
-          full.innerHTML = renderSourceHtml(content)
-          fullLoaded = true
-        } catch (e) { full.textContent = String(e) }
-      })
-      entry.append(fullBtn, full)
-    }
-
-    return entry
-  })
-}
-
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
-  // Per-panel keys so multiple tasks panels can track different repos independently
-  const REPO_KEY = `bento.tasks.repo.${panelId}`
-  const SELECTED_KEY = `bento.tasks.selected.${panelId}`
-  const BASE_KEY = `bento.tasks.base.${panelId}`
-  const OPERATIONS_KEY = `bento.tasks.gitOperations.${panelId}`
-
+  const panelStore = new TaskPanelStore(panelId)
   let worktrees: Worktree[] = []
-  let repoPath = localStorage.getItem(REPO_KEY) ?? ''
+  let repoPath = panelStore.repository()
   let detailCleanup: () => void = () => {}
   let selectedRow: HTMLElement | null = null
   let filterText = ''
   let lastStatuses = new Map<string, number>()
   let lastRunningPaths = new Set<string>()
-  let baseBranch = localStorage.getItem(BASE_KEY) ?? 'main'
+  let baseBranch = panelStore.base()
   let jiraCfg: JiraConfig | null = null
   let issueMap = new Map<string, TaskIssue | null>()
   let aheadBehindMap = new Map<string, { ahead: number; behind: number }>()
@@ -186,19 +53,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   let fetchedAt = 0
   let diffRefreshInterval: ReturnType<typeof setInterval> | null = null
 
-  const readOperations = (): GitOperationEntry[] => {
-    try { return JSON.parse(localStorage.getItem(OPERATIONS_KEY) ?? '[]') as GitOperationEntry[] }
-    catch { return [] }
-  }
   const recordOperation = (wt: Worktree, operation: string, status: 'success' | 'error', detail: string): void => {
-    const entries = appendOperation(readOperations(), {
-      repository: repoPath,
-      branch: wt.branch ?? '(detached)',
-      operation,
-      status,
-      detail: detail.replace(/(?:token|password|authorization)\s*[:=]\s*\S+/gi, '$1=[oculto]').slice(0, 500),
-    })
-    localStorage.setItem(OPERATIONS_KEY, JSON.stringify(entries))
+    panelStore.recordOperation(repoPath, wt.branch ?? '(detached)', operation, status, detail)
   }
 
   const selectRow = (row: HTMLElement): void => {
@@ -235,8 +91,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     const picked = await pickFolder({ directory: true, defaultPath: repoPath || undefined }).catch(() => null)
     if (!picked || typeof picked !== 'string') return
     repoPath = picked
-    localStorage.setItem(REPO_KEY, repoPath)
-    localStorage.removeItem(BASE_KEY)
+    panelStore.setRepository(repoPath)
     updateRepoBtn()
     load()
   })
@@ -245,7 +100,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   baseSelect.title = taskT('baseBranch')
   baseSelect.addEventListener('change', () => {
     baseBranch = baseSelect.value
-    localStorage.setItem(BASE_KEY, baseBranch)
+    panelStore.setBase(baseBranch)
     load()
   })
   const fetchAgeEl = document.createElement('span')
@@ -461,8 +316,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       const needsCleanTree = mode !== 'fetch'
       let autostash = false
       if (needsCleanTree) {
-        const status = await invoke<string>('git_status', { path: wt.path }).catch(() => '')
-        const hasChanges = parseStatus(status).total > 0
+        const hasChanges = (await taskGit.safeStatus(wt.path)).total > 0
         if (hasChanges) {
           const doStash = await askConfirm(
             taskT('dirtySyncQuestion', { branch: wt.branch ?? '' }),
@@ -645,7 +499,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           label: `Usar base de la PR → ${pr.baseRefName}`,
           onClick: () => {
             baseBranch = pr.baseRefName!
-            localStorage.setItem(BASE_KEY, baseBranch)
+            panelStore.setBase(baseBranch)
             load()
           },
         })
@@ -688,7 +542,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
     row.addEventListener('click', () => {
       selectRow(row)
-      localStorage.setItem(SELECTED_KEY, wt.path)
+      panelStore.setSelected(wt.path)
       if (rebase?.active) showRebasePaused(wt, rebase)
       else showChanges(wt)
     })
@@ -723,22 +577,22 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     try {
       const [raw, statusRaw, rebaseStatus] = await Promise.all([
         invoke<string>('git_diff', { path: wt.path }),
-        invoke<string>('git_status', { path: wt.path }).catch(() => ''),
+        taskGit.safeStatus(wt.path),
         invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false })),
       ])
       const rebaseActive = rebaseStatus.active
-      showDetail(buildDiffView(raw, wt, { statusRaw, rebaseActive }))
+      showDetail(buildDiffView(raw, wt, { statusRaw: statusRaw.raw, rebaseActive }))
       // Auto-refresh: re-fetch diff every 5 s and update if content changed
-      let lastSnapshot = `${statusRaw}\0${raw}`
+      let lastSnapshot = `${statusRaw.raw}\0${raw}`
       diffRefreshInterval = setInterval(async () => {
         const [newRaw, newStatus] = await Promise.all([
           invoke<string>('git_diff', { path: wt.path }).catch(() => null),
-          invoke<string>('git_status', { path: wt.path }).catch(() => ''),
+          taskGit.safeStatus(wt.path),
         ])
-        const snapshot = `${newStatus}\0${newRaw ?? ''}`
+        const snapshot = `${newStatus.raw}\0${newRaw ?? ''}`
         if (newRaw !== null && snapshot !== lastSnapshot) {
           lastSnapshot = snapshot
-          showDetail(buildDiffView(newRaw, wt, { statusRaw: newStatus, rebaseActive }))
+          showDetail(buildDiffView(newRaw, wt, { statusRaw: newStatus.raw, rebaseActive }))
         }
       }, 5000)
       detailCleanup = () => stopDiffRefresh()
@@ -824,13 +678,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         commitBtn.textContent = 'Commit'
         const [newRaw, newStatus] = await Promise.all([
           invoke<string>('git_diff', { path: wt.path }),
-          invoke<string>('git_status', { path: wt.path }).catch(() => ''),
+          taskGit.safeStatus(wt.path),
         ])
-        showDetail(buildDiffView(newRaw, wt, { statusRaw: newStatus, rebaseActive: opts.rebaseActive }))
+        showDetail(buildDiffView(newRaw, wt, { statusRaw: newStatus.raw, rebaseActive: opts.rebaseActive }))
         showCommitStatus(wasAmend ? '✓ Commit enmendado' : '✓ Commit creado')
         // Update sidebar badge and ahead/behind
-        const s = await invoke<string>('git_status', { path: wt.path }).catch(() => '')
-        lastStatuses.set(wt.path, parseStatus(s).total)
+        lastStatuses.set(wt.path, (await taskGit.safeStatus(wt.path)).total)
         const abRaw = await invoke<string>('git_ahead_behind', { path: wt.path, base: baseBranch }).catch(() => '')
         aheadBehindMap.set(wt.path, parseAheadBehind(abRaw))
         applyFilter()
@@ -923,38 +776,26 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     detailCleanup(); detailCleanup = () => {}
     showDetail(note(taskT('loadingCommits'), 'db-detail-loading'))
     try {
-      const raw = await invoke<string>('git_rebase_log', { path: wt.path, base: baseBranch })
-      const entries = parseLogEntries(raw)
+      const entries = await taskGit.rebaseLog(wt.path, baseBranch)
       if (entries.length === 0) {
         showDetail(note(taskT('noOwnCommits', { base: baseBranch }), 'db-detail-hint'))
         return
       }
 
       const incomingFiles = new Set(files ?? diffFileNames(incomingDiff))
-      const [recommendationRaw, blameRaw] = await Promise.all([
-        invoke<string>('git_recommend_commits', {
-          path: wt.path, base: baseBranch, files: [...incomingFiles],
-        }).catch(() => ''),
-        invoke<string>('git_blame_recommend', {
-          path: wt.path, base: baseBranch, patch: incomingDiff,
-        }).catch(() => ''),
+      const [recommendations, blameRecommendations] = await Promise.all([
+        taskGit.recommendations(wt.path, baseBranch, [...incomingFiles]).catch(() => []),
+        taskGit.blameRecommendations(wt.path, baseBranch, incomingDiff).catch(() => []),
       ])
-      const historyScores = new Map<string, { score: number; files: string[] }>()
-      for (const line of recommendationRaw.split('\n').filter(Boolean)) {
-        const [hash = '', score = '0', paths = ''] = line.split('\x1f')
-        historyScores.set(hash, { score: Number(score), files: paths.split(',').filter(Boolean) })
-      }
-      const blameScores = new Map<string, { score: number; files: string[] }>()
-      for (const line of blameRaw.split('\n').filter(Boolean)) {
-        const [hash = '', score = '0', paths = ''] = line.split('\x1f')
-        blameScores.set(hash, { score: Number(score), files: paths.split(',').filter(Boolean) })
-      }
+      const historyScores = recommendationMap(recommendations)
+      const blameScores = recommendationMap(blameRecommendations)
       const enriched = await Promise.all(entries.map(async (entry, originalIndex) => {
-        const filesRaw = await invoke<string>('git_show_files', { path: wt.path, hash: entry.hash }).catch(() => '')
+        const commitFiles = await taskGit.files(wt.path, entry.hash).catch(() => [])
+        const filesRaw = commitFilesRaw(commitFiles)
         const overlap = matchingPaths(incomingFiles, changedPaths(filesRaw))
         const history = historyScores.get(entry.hash) ?? { score: 0, files: [] }
         const blame = blameScores.get(entry.hash) ?? { score: 0, files: [] }
-        return { entry, filesRaw, overlap, history, blame, originalIndex }
+        return { entry, commitFiles, overlap, history, blame, originalIndex }
       }))
       enriched.sort((a, b) =>
         (b.overlap.length * 10000 + b.blame.score * 100 + b.history.score)
@@ -976,7 +817,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
       const list = document.createElement('div')
       list.className = 'tasks-fixup-list'
-      for (const { entry, filesRaw, overlap, history, blame } of enriched) {
+      for (const { entry, commitFiles, overlap, history, blame } of enriched) {
         const item = document.createElement('div')
         item.className = `tasks-fixup-item${overlap.length || history.score || blame.score ? ' tasks-fixup-item--match' : ''}`
         const header = document.createElement('div')
@@ -987,8 +828,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           const opening = filesEl.classList.contains('hidden')
           filesEl.classList.toggle('hidden', !opening)
           if (!opening || filesEl.childElementCount > 0) return
-          filesEl.replaceChildren(...buildFileList(
-            filesRaw,
+          filesEl.replaceChildren(...buildCommitFileList(
+            commitFiles,
             file => invoke<string>('git_show_commit_diff', { path: wt.path, hash: entry.hash, file }),
             file => invoke<string>('git_show_file', { path: wt.path, hash: entry.hash, file }),
           ))
@@ -1083,10 +924,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     showDetail(buildOperationHistoryView({
       branch,
       repository: repoPath,
-      entries: readOperations(),
+      entries: panelStore.operations(),
       onBack: () => showChanges(wt),
       onClear: () => {
-        localStorage.setItem(OPERATIONS_KEY, JSON.stringify(readOperations().filter(entry => entry.repository !== repoPath || entry.branch !== branch)))
+        panelStore.clearOperations(repoPath, branch)
         showOperationHistory(wt)
       },
     }))
@@ -1215,8 +1056,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     detailCleanup(); detailCleanup = () => {}
     showDetail(note(taskT('loadingHistory'), 'db-detail-loading'))
     try {
-      const raw = await invoke<string>('git_log', { path: wt.path, limit: 50, noMerges: false })
-      const entries = parseLogEntries(raw)
+      const entries = await taskGit.log(wt.path)
       const wrap = document.createElement('div')
       wrap.className = 'tasks-log-wrap'
       wrap.append(buildSubHead(taskT('historyTitle', { branch: wt.branch ?? '' }), () => showChanges(wt)))
@@ -1244,9 +1084,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           if (filesLoaded) return
           filesLoaded = true
           filesEl.textContent = taskT('loading')
-          const raw = await invoke<string>('git_show_files', { path: wt.path, hash: e.hash }).catch(() => '')
-          filesEl.replaceChildren(...buildFileList(
-            raw,
+          const files = await taskGit.files(wt.path, e.hash).catch(() => [])
+          filesEl.replaceChildren(...buildCommitFileList(
+            files,
             file => invoke<string>('git_show_commit_diff', { path: wt.path, hash: e.hash, file }),
             file => invoke<string>('git_show_file', { path: wt.path, hash: e.hash, file }),
           ))
@@ -1272,16 +1112,14 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       const st = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path })
       if (st.active) { showRebasePaused(wt, st); return }
 
-      const [raw, mergeRaw] = await Promise.all([
-        invoke<string>('git_rebase_log', { path: wt.path, base: baseBranch }),
-        invoke<string>('git_merge_log', { path: wt.path, base: baseBranch }).catch(() => ''),
+      const [entries, merges] = await Promise.all([
+        taskGit.rebaseLog(wt.path, baseBranch),
+        taskGit.mergeLog(wt.path, baseBranch).catch(() => []),
       ])
-      const entries = parseLogEntries(raw)
       if (entries.length === 0) {
         showDetail(note(taskT('noOwnCommits', { base: baseBranch }), 'db-detail-hint'))
         return
       }
-      const merges = parseLogEntries(mergeRaw)
       if (merges.length) showMergeRebaseWarning(wt, entries, merges)
       else showRebaseEditor(wt, entries)
     } catch (e) { showDetail(note(String(e), 'db-detail-error')) }
@@ -1511,9 +1349,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           if (filesLoaded) return
           filesLoaded = true
           filesEl.textContent = taskT('loading')
-          const raw = await invoke<string>('git_show_files', { path: wt.path, hash: item.hash }).catch(() => '')
-          filesEl.replaceChildren(...buildFileList(
-            raw,
+          const files = await taskGit.files(wt.path, item.hash).catch(() => [])
+          filesEl.replaceChildren(...buildCommitFileList(
+            files,
             file => invoke<string>('git_show_commit_diff', { path: wt.path, hash: item.hash, file }),
             file => invoke<string>('git_show_file', { path: wt.path, hash: item.hash, file }),
           ))
@@ -1850,8 +1688,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     // Detect and display conflicted files so the user can open them directly
     const isConflict = /conflict|CONFLICT/i.test(errorText)
     if (isConflict) {
-      invoke<string>('git_status', { path: wt.path }).then(status => {
-        const conflicts = parseConflictFiles(status)
+      taskGit.status(wt.path).then(status => {
+        const conflicts = parseConflictFiles(status.raw)
         if (conflicts.length === 0) return
         const conflictsEl = document.createElement('div')
         conflictsEl.className = 'tasks-conflicts'
@@ -2076,7 +1914,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   }
 
   async function deleteWorktree(wt: Worktree): Promise<void> {
-    const { total } = parseStatus(await invoke<string>('git_status', { path: wt.path }).catch(() => ''))
+    const { total } = await taskGit.safeStatus(wt.path)
     const ok = await askConfirm(
       total > 0 ? taskT('deleteDirtyQuestion', { branch: wt.branch ?? '', count: total }) : taskT('deleteQuestion', { branch: wt.branch ?? '' }),
       { title: taskT('deleteTask'), kind: total > 0 ? 'warning' : 'info' },
@@ -2102,21 +1940,20 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     filterInput.style.display = ''
     listWrap.replaceChildren(note(taskT('loading'), 'db-detail-loading'))
     try {
-      const [defaultBranch, remoteBranchesRaw] = await Promise.all([
+      const [defaultBranch, remoteBranches] = await Promise.all([
         invoke<string>('git_default_branch', { repo: repoPath }).catch(() => 'main'),
-        invoke<string>('git_remote_branches', { repo: repoPath }).catch(() => ''),
+        taskGit.remoteBranches(repoPath).catch(() => [] as string[]),
       ])
-      const remoteBranches = remoteBranchesRaw.split('\n').filter(Boolean)
       if (!remoteBranches.includes(defaultBranch)) remoteBranches.unshift(defaultBranch)
-      const savedBase = localStorage.getItem(BASE_KEY)
+      const savedBase = panelStore.savedBase()
       baseBranch = savedBase && remoteBranches.includes(savedBase) ? savedBase : defaultBranch
-      localStorage.setItem(BASE_KEY, baseBranch)
+      panelStore.setBase(baseBranch)
       baseSelect.replaceChildren(...remoteBranches.map(branch => Object.assign(document.createElement('option'), {
         value: branch,
         textContent: `base: ${branch}`,
         selected: branch === baseBranch,
       })))
-      worktrees = parseWorktreeList(await invoke<string>('git_worktree_list', { repo: repoPath }))
+      worktrees = await taskGit.worktrees(repoPath)
       if (worktrees[0]) {
         const fetchInfo = await invoke<{ fetchedAt: number }>('git_fetch_info', { path: worktrees[0].path }).catch(() => ({ fetchedAt: 0 }))
         fetchedAt = fetchInfo.fetchedAt
@@ -2134,8 +1971,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
       const [statuses, allContainers] = await Promise.all([
         mapWithConcurrency(worktrees, 6, async wt => {
-          const s = await invoke<string>('git_status', { path: wt.path }).catch(() => '')
-          return [wt.path, parseStatus(s).total] as [string, number]
+          const status = await taskGit.safeStatus(wt.path)
+          return [wt.path, status.total] as [string, number]
         }).then(entries => new Map(entries)),
         invoke<string>('docker_list').catch(() => '').then(parseContainers),
       ])
@@ -2152,9 +1989,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         // PR status — silent fallback if gh is not installed
         prStatusMap.set(wt.path, await invoke<PrStatus | null>('git_pr_status', { path: wt.path }).catch(() => null))
 
-        backupStatusMap.set(wt.path, await invoke<BackupStatus>('git_backup_status', { path: wt.path }).catch(() => ({ available: false })))
+        backupStatusMap.set(wt.path, await invoke<BackupStatus>('git_backup_status', { path: wt.path }).catch(() => ({ available: false, different: null, hash: null, short: null, subject: null })))
 
-        rebaseStatusMap.set(wt.path, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false })))
+        rebaseStatusMap.set(wt.path, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false, sha: null, short: null, subject: null, body: null, branch: null, current: null, total: null, conflicts: [] })))
 
         const upstream = await invoke<UpstreamStatus | null>('git_upstream_status', { path: wt.path }).catch(() => null)
         if (upstream) upstreamStatusMap.set(wt.path, upstream); else upstreamStatusMap.delete(wt.path)
@@ -2169,7 +2006,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       renderList(statuses, runningPaths)
 
       // Recover an active rebase first; otherwise restore the previously selected task.
-      const savedPath = localStorage.getItem(SELECTED_KEY)
+      const savedPath = panelStore.selected()
       const activeWt = worktrees.find(w => rebaseStatusMap.get(w.path)?.active)
       const selectedWt = activeWt ?? (savedPath ? worktrees.find(w => w.path === savedPath) : undefined)
       if (selectedWt) {
@@ -2177,7 +2014,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         const idx = worktrees.indexOf(selectedWt)
         if (rows[idx]) {
           selectRow(rows[idx])
-          localStorage.setItem(SELECTED_KEY, selectedWt.path)
+          panelStore.setSelected(selectedWt.path)
           const rebase = rebaseStatusMap.get(selectedWt.path)
           if (rebase?.active) showRebasePaused(selectedWt, rebase)
           else showChanges(selectedWt)

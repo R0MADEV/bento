@@ -7,8 +7,56 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
+pub struct WorktreeInfo {
+    path: String,
+    branch: Option<String>,
+    head: String,
+    bare: bool,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
+pub struct GitStatus {
+    raw: String,
+    staged: u32,
+    unstaged: u32,
+    untracked: u32,
+    total: u32,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
+pub struct CommitEntry {
+    hash: String,
+    short: String,
+    subject: String,
+    date: String,
+    author: String,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/generated/bindings/")]
+pub struct CommitFile {
+    status: String,
+    paths: Vec<String>,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/generated/bindings/")]
+pub struct CommitRecommendation {
+    hash: String,
+    score: u32,
+    files: Vec<String>,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
 pub struct RewritePreflight {
     branch: String,
     base: String,
@@ -21,12 +69,14 @@ pub struct RewritePreflight {
     hooks: Vec<String>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
-pub struct FetchInfo { fetched_at: u64 }
+#[ts(export, export_to = "../../src/generated/bindings/")]
+pub struct FetchInfo { #[ts(type = "number")] fetched_at: u64 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
 pub struct BackupStatus {
     available: bool,
     different: Option<bool>,
@@ -35,18 +85,21 @@ pub struct BackupStatus {
     subject: Option<String>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
 pub struct BackupEntry {
     reference: String,
     hash: String,
     short: String,
     subject: String,
+    #[ts(type = "number")]
     created_at: u64,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
 pub struct UpstreamStatus {
     branch: String,
     upstream: Option<String>,
@@ -56,8 +109,9 @@ pub struct UpstreamStatus {
     behind: u32,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
 pub struct RebaseStatus {
     active: bool,
     sha: Option<String>,
@@ -70,8 +124,9 @@ pub struct RebaseStatus {
     conflicts: Vec<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
 pub struct PrCheck {
     name: Option<String>,
     context: Option<String>,
@@ -80,12 +135,14 @@ pub struct PrCheck {
     status: Option<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/generated/bindings/")]
 pub struct PrStatus {
     state: String,
     title: String,
     url: String,
+    #[ts(type = "number")]
     number: u64,
     base_ref_name: Option<String>,
     is_draft: Option<bool>,
@@ -131,6 +188,55 @@ fn git_output(repo: &str, args: &[&str]) -> Result<String, String> {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+fn parse_worktrees(raw: &str) -> Vec<WorktreeInfo> {
+    raw.trim().split("\n\n").filter_map(|block| {
+        let mut path = None;
+        let mut head = None;
+        let mut branch = None;
+        let mut bare = false;
+        for line in block.lines() {
+            if let Some(value) = line.strip_prefix("worktree ") { path = Some(value.to_string()); }
+            if let Some(value) = line.strip_prefix("HEAD ") { head = Some(value.to_string()); }
+            if let Some(value) = line.strip_prefix("branch refs/heads/") { branch = Some(value.to_string()); }
+            if line == "bare" { bare = true; }
+        }
+        if bare { return None; }
+        Some(WorktreeInfo { path: path?, head: head?, branch, bare })
+    }).collect()
+}
+
+fn parse_status(raw: String) -> GitStatus {
+    let mut staged = 0;
+    let mut unstaged = 0;
+    let mut untracked = 0;
+    let mut total = 0;
+    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
+        total += 1;
+        let bytes = line.as_bytes();
+        let x = bytes.first().copied().unwrap_or(b' ');
+        let y = bytes.get(1).copied().unwrap_or(b' ');
+        if x == b'?' && y == b'?' { untracked += 1; }
+        else {
+            if x != b' ' { staged += 1; }
+            if y != b' ' { unstaged += 1; }
+        }
+    }
+    GitStatus { raw, staged, unstaged, untracked, total }
+}
+
+fn parse_commit_log(raw: String) -> Vec<CommitEntry> {
+    raw.lines().filter_map(|line| {
+        let mut fields = line.split('\x1f');
+        Some(CommitEntry {
+            hash: fields.next()?.to_string(),
+            short: fields.next().unwrap_or_default().to_string(),
+            subject: fields.next().unwrap_or_default().to_string(),
+            date: fields.next().unwrap_or_default().to_string(),
+            author: fields.next().unwrap_or_default().to_string(),
+        })
+    }).collect()
 }
 
 // Accepts [A-Za-z0-9._/-], rejects `..` and spaces.
@@ -227,20 +333,20 @@ fn collect_worktree_diff(path: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn git_worktree_list(repo: String) -> Result<String, String> {
+pub async fn git_worktree_list(repo: String) -> Result<Vec<WorktreeInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         // Prune stale worktree refs (folders deleted manually without `git worktree remove`).
         let _ = git_output(&repo, &["worktree", "prune"]);
-        git_output(&repo, &["worktree", "list", "--porcelain"])
+        git_output(&repo, &["worktree", "list", "--porcelain"]).map(|raw| parse_worktrees(&raw))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_status(path: String) -> Result<String, String> {
+pub async fn git_status(path: String) -> Result<GitStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git_output(&path, &["status", "--porcelain"])
+        git_output(&path, &["status", "--porcelain"]).map(parse_status)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -315,7 +421,7 @@ pub async fn git_default_branch(repo: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn git_remote_branches(repo: String) -> Result<String, String> {
+pub async fn git_remote_branches(repo: String) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_git_repo(&repo) {
             return Err("not a git repository".into());
@@ -328,8 +434,8 @@ pub async fn git_remote_branches(repo: String) -> Result<String, String> {
         Ok(raw.lines()
             .filter_map(|line| line.strip_prefix("origin/"))
             .filter(|branch| *branch != "HEAD" && is_safe_branch(branch))
-            .collect::<Vec<_>>()
-            .join("\n"))
+            .map(str::to_string)
+            .collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -602,7 +708,7 @@ pub async fn git_branch_rename(path: String, new_name: String) -> Result<(), Str
 
 // Returns newline-separated entries: "<hash>\x1f<short>\x1f<subject>\x1f<date>\x1f<author>"
 #[tauri::command]
-pub async fn git_log(path: String, limit: u32, no_merges: Option<bool>) -> Result<String, String> {
+pub async fn git_log(path: String, limit: u32, no_merges: Option<bool>) -> Result<Vec<CommitEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let n = limit.clamp(1, 200).to_string();
         let mut args = vec![
@@ -613,7 +719,7 @@ pub async fn git_log(path: String, limit: u32, no_merges: Option<bool>) -> Resul
         ];
         if no_merges.unwrap_or(false) { args.push("--no-merges".to_string()); }
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        git_output(&path, &refs)
+        git_output(&path, &refs).map(parse_commit_log)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -636,7 +742,7 @@ pub async fn git_graph(path: String, base: String) -> Result<String, String> {
 // Returns every non-merge commit owned by the task branch, in the same
 // oldest-to-newest order used by `git rebase -i origin/<base>`.
 #[tauri::command]
-pub async fn git_rebase_log(path: String, base: String) -> Result<String, String> {
+pub async fn git_rebase_log(path: String, base: String) -> Result<Vec<CommitEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_safe_branch(&base) {
             return Err(format!("unsafe base branch: {base}"));
@@ -650,21 +756,21 @@ pub async fn git_rebase_log(path: String, base: String) -> Result<String, String
             "--format=%H\x1f%h\x1f%s\x1f%ad\x1f%an",
             "--date=relative",
             &range,
-        ])
+        ]).map(parse_commit_log)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_merge_log(path: String, base: String) -> Result<String, String> {
+pub async fn git_merge_log(path: String, base: String) -> Result<Vec<CommitEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
         let range = format!("origin/{base}..HEAD");
         git_output(&path, &[
             "log", "--reverse", "--merges",
             "--format=%H\x1f%h\x1f%s\x1f%ad\x1f%an", "--date=relative", &range,
-        ])
+        ]).map(parse_commit_log)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1120,9 +1226,16 @@ pub async fn git_rebase_status(path: String) -> Result<RebaseStatus, String> {
 
 // Lists files changed in a commit: returns lines of "<status>\t<file>" (M, A, D, R…).
 #[tauri::command]
-pub async fn git_show_files(path: String, hash: String) -> Result<String, String> {
+pub async fn git_show_files(path: String, hash: String) -> Result<Vec<CommitFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        git_output(&path, &["diff-tree", "--no-commit-id", "-r", "--name-status", &hash])
+        git_output(&path, &["diff-tree", "--no-commit-id", "-r", "--name-status", &hash]).map(|raw| {
+            raw.lines().filter_map(|line| {
+                let mut fields = line.split('\t');
+                let status = fields.next()?.to_string();
+                let paths = fields.map(str::to_string).collect::<Vec<_>>();
+                if paths.is_empty() { None } else { Some(CommitFile { status, paths }) }
+            }).collect()
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1172,7 +1285,7 @@ pub async fn git_show_file(path: String, hash: String, file: String) -> Result<S
 // Scores task commits by how often they appear in the selected files' history.
 // Format: full-hash<US>score<US>comma-separated-files
 #[tauri::command]
-pub async fn git_recommend_commits(path: String, base: String, files: Vec<String>) -> Result<String, String> {
+pub async fn git_recommend_commits(path: String, base: String, files: Vec<String>) -> Result<Vec<CommitRecommendation>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
         let range = format!("origin/{base}..HEAD");
@@ -1187,9 +1300,7 @@ pub async fn git_recommend_commits(path: String, base: String, files: Vec<String
         }
         let mut rows: Vec<_> = scores.into_iter().collect();
         rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-        Ok(rows.into_iter().map(|(hash, (score, paths))| {
-            format!("{hash}\x1f{score}\x1f{}", paths.join(","))
-        }).collect::<Vec<_>>().join("\n"))
+        Ok(rows.into_iter().map(|(hash, (score, files))| CommitRecommendation { hash, score, files }).collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1198,7 +1309,7 @@ pub async fn git_recommend_commits(path: String, base: String, files: Vec<String
 // Attributes the original line ranges touched by an incoming patch to task
 // commits using git blame. Same output format as git_recommend_commits.
 #[tauri::command]
-pub async fn git_blame_recommend(path: String, base: String, patch: String) -> Result<String, String> {
+pub async fn git_blame_recommend(path: String, base: String, patch: String) -> Result<Vec<CommitRecommendation>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !is_safe_branch(&base) { return Err(format!("unsafe base branch: {base}")); }
         if patch.len() > 16 * 1024 * 1024 { return Err("patch is too large".into()); }
@@ -1235,9 +1346,7 @@ pub async fn git_blame_recommend(path: String, base: String, patch: String) -> R
         }
         let mut rows: Vec<_> = scores.into_iter().collect();
         rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-        Ok(rows.into_iter().map(|(hash, (score, paths))| {
-            format!("{hash}\x1f{score}\x1f{}", paths.join(","))
-        }).collect::<Vec<_>>().join("\n"))
+        Ok(rows.into_iter().map(|(hash, (score, files))| CommitRecommendation { hash, score, files }).collect())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1552,5 +1661,32 @@ mod tests {
         assert!(status.contains("file.txt"));
         assert_eq!(fs::read_to_string(repo.0.join("file.txt")).unwrap(), "changed\n");
         run(&repo.0, &["rebase", "--abort"]);
+    }
+
+    #[test]
+    fn parses_typed_worktrees_and_ignores_bare_entries() {
+        let raw = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /bare\nHEAD def456\nbare\n";
+        let worktrees = parse_worktrees(raw);
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].path, "/repo");
+        assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
+        assert!(!worktrees[0].bare);
+    }
+
+    #[test]
+    fn parses_typed_status_counts_and_preserves_porcelain() {
+        let raw = " M a.txt\nM  b.txt\nMM c.txt\n?? d.txt\n".to_string();
+        let status = parse_status(raw.clone());
+        assert_eq!(status.raw, raw);
+        assert_eq!((status.staged, status.unstaged, status.untracked, status.total), (2, 2, 1, 4));
+    }
+
+    #[test]
+    fn parses_typed_commit_log() {
+        let commits = parse_commit_log("abcdef\x1fabc\x1fSubject\x1fnow\x1fAda\n".into());
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].hash, "abcdef");
+        assert_eq!(commits[0].subject, "Subject");
+        assert_eq!(commits[0].author, "Ada");
     }
 }
