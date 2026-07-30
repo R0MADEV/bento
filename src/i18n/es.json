@@ -504,7 +504,13 @@
       "readOnlyHint": "sin PK · solo lectura",
       "ok": "OK.",
       "dockerSource": "docker",
-      "localSource": "local"
+      "localSource": "local",
+      "relationsLabel": "Relaciones:",
+      "keysLabel": "Claves:",
+      "collectionsLabel": "Colecciones:",
+      "tablesLabel": "Tablas:",
+      "allGroup": "Todas",
+      "newQuery": "Nueva consulta"
     },
     "docker": {
       "stop": "Parar",
@@ -709,7 +715,11 @@
       "writeMarkdown": "Escribe… (markdown)",
       "askAiAboutThisNote": "Preguntar a la IA sobre esta nota",
       "uncategorized": "Sin categoría",
-      "tagsPlaceholder": "tags: a, b, c"
+      "tagsPlaceholder": "tags: a, b, c",
+      "editorOnly": "Solo editor",
+      "previewOnly": "Solo vista previa",
+      "splitSideBySide": "Dividir: al lado",
+      "splitTopBottom": "Dividir: abajo"
     },
     "scripts": {
       "noScripts": "Sin scripts",

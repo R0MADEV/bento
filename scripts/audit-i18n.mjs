@@ -70,6 +70,21 @@ for (const file of files) {
       if (name === 'setAttribute' && ts.isStringLiteral(node.arguments[0]) && uiProperties.has(node.arguments[0].text)) {
         if (node.arguments[1]) record(node.arguments[1], sourceFile)
       }
+      if (name === 'showContextMenu' && node.arguments[2]) {
+        const recordMenuLabels = (menuNode) => {
+          if (ts.isArrayLiteralExpression(menuNode)) {
+            menuNode.elements.forEach(recordMenuLabels)
+            return
+          }
+          if (!ts.isObjectLiteralExpression(menuNode)) return
+          menuNode.properties.forEach(property => {
+            if (!ts.isPropertyAssignment(property)) return
+            const propertyName = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : ''
+            if (propertyName === 'label') record(property.initializer, sourceFile)
+          })
+        }
+        recordMenuLabels(node.arguments[2])
+      }
     }
     ts.forEachChild(node, visit)
   }

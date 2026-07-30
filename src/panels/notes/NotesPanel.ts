@@ -21,7 +21,7 @@ export function createNotesPanel() {
   sidebar.className = 'notes-sidebar'
   const addBtn = document.createElement('button')
   addBtn.className = 'notes-add'
-  addBtn.innerHTML = `${icon('plus')}<span>Nueva nota</span>`
+  addBtn.innerHTML = `${icon('plus')}<span>${i18nT('notes.newNote')}</span>`
   const search = document.createElement('input')
   search.className = 'notes-search'
   search.placeholder = i18nT('notes.search')
@@ -104,10 +104,10 @@ export function createNotesPanel() {
   layoutBtn.addEventListener('click', () => {
     const r = layoutBtn.getBoundingClientRect()
     showContextMenu(r.left, r.bottom, [
-      { label: 'Solo editor', onClick: () => setView('edit') },
-      { label: 'Solo vista previa', onClick: () => setView('preview') },
-      { label: 'Dividir: al lado', onClick: () => setView('split-h') },
-      { label: 'Dividir: abajo', onClick: () => setView('split-v') },
+      { label: i18nT('notes.editorOnly'), onClick: () => setView('edit') },
+      { label: i18nT('notes.previewOnly'), onClick: () => setView('preview') },
+      { label: i18nT('notes.splitSideBySide'), onClick: () => setView('split-h') },
+      { label: i18nT('notes.splitTopBottom'), onClick: () => setView('split-v') },
     ])
   })
 
@@ -292,6 +292,7 @@ export function createNotesPanel() {
     focus: () => body.focus(),
     dispose: () => {
       if (saveTimer) clearTimeout(saveTimer)
+      if (commitTimer) clearTimeout(commitTimer)
       if (selectedName) invoke('notes_write', { name: selectedName, content: serializeNote(currentNote()) }).catch(() => {})
     },
   }

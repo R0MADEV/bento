@@ -7,8 +7,9 @@ import { mysqlCreds, mongoCreds, pgCreds } from '../../core/db/credentials'
 import { DEFAULT_PORT, LISTABLE, kindForPort, type DbServer, type DbKind } from '../../core/db/dbServer'
 import { icon } from '../../ui/icons'
 import { askAi, type AiQueryRunner, type AiTool } from '../../ui/askAi'
-import { buildJoinPath, type Relation, type JoinPlan } from '../../core/db/joinPath'
+import { buildJoinPath, type Relation } from '../../core/db/joinPath'
 import { withRowLimit } from '../../core/db/rowLimit'
+import { buildJoinQuery, buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from './queryBuilders'
 
 // Counter for unique datalist ids (several DB panels/views at once).
 let joinListSeq = 0
@@ -18,8 +19,6 @@ const KIND_LABEL: Record<DbKind, string> = {
 }
 
 interface TableData { columns: string[]; rows: string[][] }
-interface ForeignKey { table: string; column: string; ref_table: string; ref_column: string }
-
 const isMongo = (s: DbServer): boolean => s.kind === 'mongodb'
 const isPg = (s: DbServer): boolean => s.kind === 'postgres'
 const isRedis = (s: DbServer): boolean => s.kind === 'redis'
@@ -227,53 +226,6 @@ export function createDbPanel(): { element: HTMLElement } {
     return pre
   }
 
-  // Quotes an identifier according to the engine. Postgres needs it for names
-  // with uppercase letters (it lowercases them if unquoted); it also quotes each
-  // part of `schema.table`. MySQL uses backticks.
-  const qIdent = (s: DbServer, name: string): string =>
-    isPg(s) ? name.split('.').map(p => `"${p}"`).join('.') : `\`${name}\``
-
-  // Example query for a specific table/collection/key, depending on the type.
-  const exampleQuery = (s: DbServer, name: string): string => {
-    if (isMongo(s)) return `db.${name}.find().limit(20).toArray()`
-    if (isRedis(s)) return `GET ${name}`
-    return `SELECT * FROM ${qIdent(s, name)} LIMIT 100`
-  }
-
-  // Joins a table with ALL its related tables at once (a table can have several
-  // FKs). SQL → multi-JOIN; Mongo → several $lookup stages.
-  const buildRelationQuery = (s: DbServer, table: string, fks: ForeignKey[]): string => {
-    if (isMongo(s)) {
-      const stages = fks.map(fk =>
-        `  { $lookup: { from: "${fk.ref_table}", localField: "${fk.column}", foreignField: "_id", as: "${fk.ref_table}" } }`)
-      return `db.${table}.aggregate([\n${stages.join(',\n')},\n  { $limit: 20 }\n]).toArray()`
-    }
-    const joins = fks.map((fk, i) => {
-      const alias = `r${i + 1}`
-      return `JOIN ${qIdent(s, fk.ref_table)} ${alias} ON base.${qIdent(s, fk.column)} = ${alias}.${qIdent(s, fk.ref_column)}`
-    })
-    return `SELECT * FROM ${qIdent(s, table)} base\n${joins.join('\n')}\nLIMIT 100`
-  }
-
-  // Query from a JOIN plan (deterministic builder, no AI).
-  const buildJoinQuery = (s: DbServer, plan: JoinPlan): string => {
-    const aliasOf = new Map<string, string>([[plan.base, 't0']])
-    let sql = `SELECT * FROM ${qIdent(s, plan.base)} t0`
-    plan.steps.forEach((st, i) => {
-      const a = `t${i + 1}`
-      aliasOf.set(st.to, a)
-      sql += `\nJOIN ${qIdent(s, st.to)} ${a} ON ${aliasOf.get(st.from)}.${qIdent(s, st.fromCol)} = ${a}.${qIdent(s, st.toCol)}`
-    })
-    return `${sql}\nLIMIT 100`
-  }
-
-  // Groups relations by source table: each table → all its FKs.
-  const groupRelations = (rels: ForeignKey[]): Map<string, ForeignKey[]> => {
-    const byTable = new Map<string, ForeignKey[]>()
-    rels.forEach(fk => { byTable.set(fk.table, [...(byTable.get(fk.table) ?? []), fk]) })
-    return byTable
-  }
-
   // DB relations: FKs in SQL, heuristic references in Mongo, nothing in Redis.
   const fetchRelations = (s: DbServer, db: string): Promise<ForeignKey[]> => {
     if (isRedis(s)) return Promise.resolve([])
@@ -454,7 +406,7 @@ export function createDbPanel(): { element: HTMLElement } {
     examples.className = 'db-query-examples'
 
     const groupLabel = (g: 'table' | 'rel'): string =>
-      g === 'rel' ? 'Relaciones:' : isRedis(s) ? 'Claves:' : isMongo(s) ? 'Colecciones:' : 'Tablas:'
+      g === 'rel' ? i18nT('db.relationsLabel') : isRedis(s) ? i18nT('db.keysLabel') : isMongo(s) ? i18nT('db.collectionsLabel') : i18nT('db.tablesLabel')
 
     const renderChips = (): void => {
       const q = filter.value.trim().toLowerCase()
@@ -487,9 +439,9 @@ export function createDbPanel(): { element: HTMLElement } {
     toggle.className = 'db-query-toggle'
     if (!isRedis(s)) {
       const groups: Array<[Group, string]> = [
-        ['all', 'Todas'],
+        ['all', i18nT('db.allGroup')],
         ['table', isMongo(s) ? i18nT('db.collections') : i18nT('db.tables')],
-        ['rel', 'Relaciones'],
+        ['rel', i18nT('db.relationsLabel')],
       ]
       groups.forEach(([g, label]) => {
         const b = document.createElement('button')
@@ -892,7 +844,7 @@ export function createDbPanel(): { element: HTMLElement } {
       const names = await listTables(s, db)
       container.replaceChildren()
       // Free-form query (SQL / mongosh / redis-cli depending on the DB type).
-      const queryRow = rowEl(2, 'scripts', 'Nueva consulta', false)
+      const queryRow = rowEl(2, 'scripts', i18nT('db.newQuery'), false)
       queryRow.classList.add('db-leaf', 'db-query-leaf')
       queryRow.addEventListener('click', () => { selectLeaf(queryRow); openQuery(s, db, names) })
       container.appendChild(queryRow)

@@ -504,7 +504,13 @@
       "readOnlyHint": "no PK · read-only",
       "ok": "OK.",
       "dockerSource": "docker",
-      "localSource": "local"
+      "localSource": "local",
+      "relationsLabel": "Relations:",
+      "keysLabel": "Keys:",
+      "collectionsLabel": "Collections:",
+      "tablesLabel": "Tables:",
+      "allGroup": "All",
+      "newQuery": "New query"
     },
     "docker": {
       "stop": "Stop",
@@ -709,7 +715,11 @@
       "writeMarkdown": "Write… (Markdown)",
       "askAiAboutThisNote": "Ask AI about this note",
       "uncategorized": "Uncategorized",
-      "tagsPlaceholder": "tags: a, b, c"
+      "tagsPlaceholder": "tags: a, b, c",
+      "editorOnly": "Editor only",
+      "previewOnly": "Preview only",
+      "splitSideBySide": "Split side by side",
+      "splitTopBottom": "Split top and bottom"
     },
     "scripts": {
       "noScripts": "No scripts",
