@@ -29,6 +29,7 @@ import { createTaskDockerView, type IsolateResult } from './TaskDockerView'
 import { buildResetView } from './ResetView'
 import { buildGraphView } from './GraphView'
 import { buildCommitLogView } from './CommitLogView'
+import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -1038,58 +1039,19 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   }
 
   function showMergeRebaseWarning(wt: Worktree, entries: CommitEntry[], merges: CommitEntry[]): void {
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-rebase-wrap'
-    wrap.append(buildSubHead(taskT('branchHasMerges'), () => showChanges(wt)))
-    wrap.appendChild(Object.assign(document.createElement('p'), {
-      className: 'tasks-rebase-hint tasks-conflict-warning',
-      textContent: taskT('mergesWarning', { count: merges.length }),
-    }))
-    const list = document.createElement('div')
-    list.className = 'tasks-log-list'
-    for (const merge of merges) {
-      const row = document.createElement('div')
-      row.className = 'tasks-log-item'
-      row.append(
-        Object.assign(document.createElement('span'), { className: 'tasks-log-short', textContent: merge.short }),
-        Object.assign(document.createElement('span'), { className: 'tasks-log-subject', textContent: merge.subject }),
-      )
-      list.appendChild(row)
-    }
-    wrap.appendChild(list)
-    const footer = document.createElement('div')
-    footer.className = 'tasks-rebase-footer'
-    const status = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
-    const flattenBtn = Object.assign(document.createElement('button'), { className: 'tasks-amend-btn', textContent: taskT('flatten') })
-    const preserveBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: taskT('preserveMerges') })
-    flattenBtn.addEventListener('click', async () => {
-      const ok = await askConfirm(taskT('flattenQuestion'), { title: taskT('flattenTitle'), kind: 'warning' })
-      if (ok) showRebaseEditor(wt, entries)
+    buildRebaseMergeWarning({
+      worktree: wt,
+      baseBranch,
+      entries,
+      merges,
+      buildSubHead,
+      onBack: () => showChanges(wt),
+      showDetail,
+      showRebaseEditor,
+      showRebasePaused,
+      recordOperation: (operation, status, detail) => recordOperation(wt, operation, status, detail),
+      onComplete: () => { showChanges(wt); load() },
     })
-    preserveBtn.addEventListener('click', async () => {
-      const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => null)
-      if (preflight?.operation) { status.textContent = taskT('operationInProgress', { operation: preflight.operation }); return }
-      const ok = await askConfirm(
-        taskT('preserveQuestion', { count: merges.length, published: preflight?.publishedCommits ? ` ${preflight.publishedCommits} commit(s).` : '' }),
-        { title: taskT('preserveTitle'), kind: 'warning' },
-      )
-      if (!ok) return
-      preserveBtn.disabled = true; flattenBtn.disabled = true
-      status.textContent = taskT('reorganizingMerges')
-      try {
-        const result = await invoke<string>('git_rebase_preserve_merges', { path: wt.path, base: baseBranch })
-        recordOperation(wt, 'rebase --rebase-merges', 'success', `origin/${baseBranch}`)
-        if (result === 'paused') {
-          showRebasePaused(wt, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }))
-        } else { status.textContent = taskT('rebaseDone'); setTimeout(() => { showChanges(wt); load() }, 900) }
-      } catch (e) {
-        recordOperation(wt, 'rebase --rebase-merges', 'error', String(e))
-        status.textContent = String(e).slice(0, 150); preserveBtn.disabled = false; flattenBtn.disabled = false
-      }
-    })
-    footer.append(status, flattenBtn, preserveBtn)
-    wrap.appendChild(footer)
-    showDetail(wrap)
   }
 
   function showRebaseEditor(wt: Worktree, entries: CommitEntry[]): void {
