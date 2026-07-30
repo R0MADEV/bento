@@ -29,6 +29,7 @@ import { buildCommitLogView } from './CommitLogView'
 import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
 import { buildSyncErrorView, buildWorktreeTerminalView } from './TaskAuxiliaryViews'
 import { loadTaskData } from './TaskDataLoader'
+import { buildIncomingChangesView } from './IncomingChangesView'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -746,53 +747,6 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     return wrap
   }
 
-  function buildIncomingChanges(raw: string, selectedFiles?: string[]): HTMLElement {
-    const section = document.createElement('section')
-    section.className = 'tasks-fixup-incoming'
-    const selected = selectedFiles ? new Set(selectedFiles) : null
-    const chunks = raw.split(/(?=^diff --git )/m).filter(Boolean).filter(chunk => {
-      if (!selected) return true
-      const firstLine = chunk.split('\n')[0] ?? ''
-      const fileName = firstLine.match(/^diff --git a\/(.+) b\//)?.[1] ?? firstLine
-      return selected.has(fileName)
-    })
-    section.appendChild(Object.assign(document.createElement('h3'), {
-      className: 'tasks-fixup-incoming-title',
-      textContent: taskT('incomingChanges', { count: chunks.length }),
-    }))
-
-    for (const chunk of chunks) {
-      const firstLine = chunk.split('\n')[0] ?? ''
-      const fileName = firstLine.match(/^diff --git a\/(.+) b\//)?.[1] ?? firstLine
-      const lines = chunk.split('\n')
-      const additions = lines.filter(line => line.startsWith('+') && !line.startsWith('+++')).length
-      const deletions = lines.filter(line => line.startsWith('-') && !line.startsWith('---')).length
-      const details = document.createElement('details')
-      details.className = 'tasks-diff-file'
-      details.open = chunks.length === 1
-      const summary = document.createElement('summary')
-      summary.className = 'tasks-diff-summary'
-      const stats = document.createElement('span')
-      stats.className = 'tasks-diff-stats'
-      if (additions) stats.innerHTML += `<span class="tasks-diff-add">+${additions}</span>`
-      if (deletions) stats.innerHTML += `<span class="tasks-diff-del">-${deletions}</span>`
-      summary.append(
-        Object.assign(document.createElement('span'), { className: 'tasks-diff-name', textContent: fileName }),
-        stats,
-      )
-      const patch = document.createElement('pre')
-      patch.className = 'tasks-diff-body'
-      patch.innerHTML = renderPatchHtml(chunk)
-      details.append(summary, patch)
-      section.appendChild(details)
-    }
-
-    if (chunks.length === 0) {
-      section.appendChild(note(taskT('noSelectedTextDiff'), 'db-detail-hint'))
-    }
-    return section
-  }
-
   // ---- detail: choose an existing commit for fixup ----
   async function showFixupPicker(wt: Worktree, files: string[] | undefined, incomingDiff: string, selectedPatch?: string): Promise<void> {
     stopDiffRefresh()
@@ -836,7 +790,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
             ? taskT('incomingFiles', { count: files.length })
             : taskT('incomingAll'),
       }))
-      wrap.appendChild(buildIncomingChanges(incomingDiff, files))
+      wrap.appendChild(buildIncomingChangesView(incomingDiff, files, note))
 
       const list = document.createElement('div')
       list.className = 'tasks-fixup-list'
