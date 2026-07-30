@@ -2,14 +2,13 @@ import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
-import { parseContainers, isRunning } from '../../core/docker/containers'
 import { showContextMenu, type MenuItem } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
-import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
+import { statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
 import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
-import { mapWithConcurrency, previewRebase, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
+import { previewRebase, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
 import {
-  loadJiraConfig, fetchIssue, fetchTransitions, applyTransition, browseUrl,
+  fetchIssue, fetchTransitions, applyTransition, browseUrl,
   type JiraConfig, type TaskIssue,
 } from './taskJiraClient'
 import { buildOperationHistoryView } from './OperationHistoryView'
@@ -29,6 +28,7 @@ import { buildGraphView } from './GraphView'
 import { buildCommitLogView } from './CommitLogView'
 import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
 import { buildSyncErrorView, buildWorktreeTerminalView } from './TaskAuxiliaryViews'
+import { loadTaskData } from './TaskDataLoader'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -47,7 +47,6 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   const backupStatusMap = new Map<string, BackupStatus>()
   const rebaseStatusMap = new Map<string, RebaseStatus>()
   const upstreamStatusMap = new Map<string, UpstreamStatus>()
-  let fetchedAt = 0
   let diffRefreshInterval: ReturnType<typeof setInterval> | null = null
 
   const recordOperation = (wt: Worktree, operation: string, status: 'success' | 'error', detail: string): void => {
@@ -1590,91 +1589,23 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       listWrap.replaceChildren(note(taskT('selectRepoHint')), buildCreateForm())
       return
     }
-    baseSelect.disabled = false
-    filterInput.style.display = ''
-    listWrap.replaceChildren(note(taskT('loading'), 'db-detail-loading'))
-    try {
-      const [defaultBranch, remoteBranches] = await Promise.all([
-        invoke<string>('git_default_branch', { repo: repoPath }).catch(() => 'main'),
-        taskGit.remoteBranches(repoPath).catch(() => [] as string[]),
-      ])
-      if (!remoteBranches.includes(defaultBranch)) remoteBranches.unshift(defaultBranch)
-      const savedBase = panelStore.savedBase()
-      baseBranch = savedBase && remoteBranches.includes(savedBase) ? savedBase : defaultBranch
-      panelStore.setBase(baseBranch)
-      baseSelect.replaceChildren(...remoteBranches.map(branch => Object.assign(document.createElement('option'), {
-        value: branch,
-        textContent: taskT('baseOption', { branch }),
-        selected: branch === baseBranch,
-      })))
-      worktrees = await taskGit.worktrees(repoPath)
-      if (worktrees[0]) {
-        const fetchInfo = await invoke<{ fetchedAt: number }>('git_fetch_info', { path: worktrees[0].path }).catch(() => ({ fetchedAt: 0 }))
-        fetchedAt = fetchInfo.fetchedAt
-      }
-      if (fetchedAt) {
-        const ageMinutes = Math.max(0, Math.floor((Date.now() / 1000 - fetchedAt) / 60))
-        fetchAgeEl.textContent = ageMinutes < 1 ? taskT('fetchNow') : ageMinutes < 60 ? taskT('fetchMinutes', { count: ageMinutes }) : taskT('fetchHours', { count: Math.floor(ageMinutes / 60) })
-        fetchAgeEl.classList.toggle('tasks-fetch-age--stale', ageMinutes > 60)
-        fetchAgeEl.title = new Date(fetchedAt * 1000).toLocaleString()
-      } else {
-        fetchAgeEl.textContent = taskT('noFetch')
-        fetchAgeEl.classList.add('tasks-fetch-age--stale')
-      }
-      jiraCfg = await loadJiraConfig()
-
-      const [statuses, allContainers] = await Promise.all([
-        mapWithConcurrency(worktrees, 6, async wt => {
-          const status = await taskGit.safeStatus(wt.path)
-          return [wt.path, status.total] as [string, number]
-        }).then(entries => new Map(entries)),
-        invoke<string>('docker_list').catch(() => '').then(parseContainers),
-      ])
-
-      // Fetch git/Jira metadata in parallel for all worktrees
-      await mapWithConcurrency(worktrees, 4, async wt => {
-        const abRaw = await invoke<string>('git_ahead_behind', { path: wt.path, base: baseBranch }).catch(() => '')
-        aheadBehindMap.set(wt.path, parseAheadBehind(abRaw))
-
-        const key = extractIssueKey(wt.branch ?? null)
-        const issue = key && jiraCfg ? await fetchIssue(key, jiraCfg) : null
-        issueMap.set(wt.path, issue)
-
-        // PR status — silent fallback if gh is not installed
-        prStatusMap.set(wt.path, await invoke<PrStatus | null>('git_pr_status', { path: wt.path }).catch(() => null))
-
-        backupStatusMap.set(wt.path, await invoke<BackupStatus>('git_backup_status', { path: wt.path }).catch(() => ({ available: false, different: null, hash: null, short: null, subject: null })))
-
-        rebaseStatusMap.set(wt.path, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false, sha: null, short: null, subject: null, body: null, branch: null, current: null, total: null, conflicts: [] })))
-
-        const upstream = await invoke<UpstreamStatus | null>('git_upstream_status', { path: wt.path }).catch(() => null)
-        if (upstream) upstreamStatusMap.set(wt.path, upstream); else upstreamStatusMap.delete(wt.path)
-      })
-
-      const runningPaths = new Set<string>()
-      for (const wt of worktrees) {
-        const dir = wt.path.replace(/\/$/, '').split('/').pop()!
-        const hasRunning = allContainers.some(c => isRunning(c) && c.name.startsWith(`${dir}-`))
-        if (hasRunning) runningPaths.add(wt.path)
-      }
-      renderList(statuses, runningPaths)
-
-      // Recover an active rebase first; otherwise restore the previously selected task.
-      const savedPath = panelStore.selected()
-      const activeWt = worktrees.find(w => rebaseStatusMap.get(w.path)?.active)
-      const selectedWt = activeWt ?? (savedPath ? worktrees.find(w => w.path === savedPath) : undefined)
-      if (selectedWt) {
-        const rows = listWrap.querySelectorAll<HTMLElement>('.tasks-row')
-        const idx = worktrees.indexOf(selectedWt)
-        if (rows[idx]) {
-          selectRow(rows[idx])
-          panelStore.setSelected(selectedWt.path)
-          const rebase = rebaseStatusMap.get(selectedWt.path)
-          if (rebase?.active) showRebasePaused(selectedWt, rebase)
-          else showChanges(selectedWt)
-        }
-      }
-    } catch (e) { listWrap.replaceChildren(note(String(e), 'db-detail-error')) }
+    await loadTaskData({
+      repoPath,
+      panelStore,
+      baseSelect,
+      filterInput,
+      listWrap,
+      fetchAgeEl,
+      note,
+      setBaseBranch: value => { baseBranch = value },
+      setWorktrees: value => { worktrees = value },
+      setJiraConfig: value => { jiraCfg = value },
+      maps: { issue: issueMap, aheadBehind: aheadBehindMap, pr: prStatusMap, backup: backupStatusMap, rebase: rebaseStatusMap, upstream: upstreamStatusMap },
+      renderList,
+      selectRow,
+      showChanges,
+      showRebasePaused,
+    })
   }
 
   function iconBtn(name: string, title: string, onClick: () => void): HTMLButtonElement {
