@@ -4,11 +4,9 @@ import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-di
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
 import { parseContainers, isRunning } from '../../core/docker/containers'
 import { showContextMenu, type MenuItem } from '../../ui/contextMenu'
-import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
 import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
 import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
-import { parseConflictFiles } from '../../core/git/conflictWorkflow'
 import { mapWithConcurrency, previewRebase, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
 import {
   loadJiraConfig, fetchIssue, fetchTransitions, applyTransition, browseUrl,
@@ -30,6 +28,7 @@ import { buildResetView } from './ResetView'
 import { buildGraphView } from './GraphView'
 import { buildCommitLogView } from './CommitLogView'
 import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
+import { buildSyncErrorView, buildWorktreeTerminalView } from './TaskAuxiliaryViews'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -1533,66 +1532,21 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   async function showWorktreeTerminal(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    const { createTerminalPanel } = await import('../terminal/TerminalPanel')
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-term-wrap'
-    const termBody = document.createElement('div')
-    termBody.className = 'tasks-term-body'
-    const term = createTerminalPanel('', wt.path, () => showChanges(wt))
-    termBody.appendChild(term.element)
-    wrap.append(buildSubHead(`Terminal · ${wt.branch ?? ''}`, () => showChanges(wt)), termBody)
-    showDetail(wrap)
-    requestAnimationFrame(() => term.fit())
-    detailCleanup = () => term.dispose()
+    await buildWorktreeTerminalView({
+      worktreePath: wt.path,
+      branch: wt.branch ?? '',
+      buildSubHead,
+      onBack: () => showChanges(wt),
+      showDetail,
+      setCleanup: cleanup => { detailCleanup = cleanup },
+    })
   }
 
   // ---- detail: git sync error (with conflict detection + AI explain) ----
   function showSyncError(mode: string, errorText: string, wt: Worktree): void {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-sync-error'
-
-    const head = document.createElement('div')
-    head.className = 'tasks-sync-error-head'
-    head.append(
-      Object.assign(document.createElement('span'), { className: 'tasks-sync-error-title', textContent: taskT('errorIn', { mode }) }),
-      iconBtn('chat', taskT('explainAi'), () => {
-        askAi(`/explica este error de git al hacer \`${mode}\`:\n\n\`\`\`\n${errorText.slice(-8000)}\n\`\`\``, true)
-      }),
-    )
-
-    const pre = Object.assign(document.createElement('pre'), { className: 'tasks-sync-error-body', textContent: errorText })
-    wrap.append(head, pre)
-
-    // Detect and display conflicted files so the user can open them directly
-    const isConflict = /conflict|CONFLICT/i.test(errorText)
-    if (isConflict) {
-      taskGit.status(wt.path).then(status => {
-        const conflicts = parseConflictFiles(status.raw)
-        if (conflicts.length === 0) return
-        const conflictsEl = document.createElement('div')
-        conflictsEl.className = 'tasks-conflicts'
-        conflictsEl.appendChild(Object.assign(document.createElement('div'), {
-          className: 'tasks-conflicts-title',
-          textContent: taskT('conflictFiles', { count: conflicts.length }),
-        }))
-        for (const f of conflicts) {
-          const row = document.createElement('div')
-          row.className = 'tasks-conflict-file'
-          row.append(
-            Object.assign(document.createElement('span'), { className: 'tasks-conflict-name', textContent: f }),
-            iconBtn('edit', taskT('openInEditor'), () => {
-              invoke('open_in_editor', { path: `${wt.path}/${f}` }).catch(console.error)
-            }),
-          )
-          conflictsEl.appendChild(row)
-        }
-        wrap.appendChild(conflictsEl)
-      }).catch(() => {})
-    }
-
-    showDetail(wrap)
+    buildSyncErrorView({ mode, errorText, path: wt.path, showDetail, iconButton: iconBtn, status: path => taskGit.status(path) })
   }
 
   // ---- mutations ----
