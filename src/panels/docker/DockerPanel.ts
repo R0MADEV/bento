@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
 import { renderContainerLogs, renderContainerTerminal } from './containerDetail'
@@ -19,7 +20,7 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
   }
 
   const find = (name: string): Container | undefined => containers.find(c => c.name === name)
-  const byProject = (project: string): Container[] => containers.filter(c => (c.project || 'Sin proyecto') === project)
+  const byProject = (project: string): Container[] => containers.filter(c => (c.project || i18nT('docker.noProject')) === project)
 
   const run = async (cmd: string, name: string): Promise<void> => {
     try { await invoke(cmd, { id: name }) } catch (e) { alert(String(e)) }
@@ -35,17 +36,17 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
   }
 
   const md = createMasterDetail({
-    title: 'Contenedores',
+    title: i18nT('docker.containers'),
     collapsibleGroups: true,
-    emptyText: 'No hay contenedores. ¿Está Docker corriendo?',
-    headerActions: [iconBtn('refresh', 'Recargar', () => load())],
+    emptyText: i18nT('docker.thereAreNoContainersIsDockerRunning'),
+    headerActions: [iconBtn('refresh', i18nT('common.reload'), () => load())],
     groupBadge: (_p, ids) => `${runningCount(ids.map(find).filter(Boolean) as Container[])}/${ids.length}`,
     groupActions: project => {
       const group = byProject(project)
       const running = runningCount(group)
       const acts: HTMLElement[] = []
-      if (running < group.length) acts.push(iconBtn('play', 'Arrancar el proyecto', () => projectAction('docker_start', project)))
-      if (running > 0) acts.push(iconBtn('stop', 'Parar el proyecto', () => projectAction('docker_stop', project)))
+      if (running < group.length) acts.push(iconBtn('play', i18nT('docker.startProject'), () => projectAction('docker_start', project)))
+      if (running > 0) acts.push(iconBtn('stop', i18nT('docker.stopProject'), () => projectAction('docker_stop', project)))
       return acts
     },
     onSelect: renderDetail,
@@ -73,16 +74,16 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
     bodyCleanup = () => {}
     const c = find(name)
     if (!c) {
-      md.detail.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: 'Selecciona un contenedor para ver sus detalles y logs.' }))
+      md.detail.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: i18nT('docker.selectAContainerToViewItsDetailsAnd') }))
       return
     }
 
     const body = document.createElement('div')
     body.className = 'docker-body'
     let mode: 'logs' | 'terminal' = 'logs'
-    const goLogs = (): void => { mode = 'logs'; modeBtn.innerHTML = icon('terminal'); modeBtn.title = 'Abrir terminal'; showLogs(body, c) }
-    const goTerminal = (): void => { mode = 'terminal'; modeBtn.innerHTML = icon('list'); modeBtn.title = 'Ver logs'; showTerminal(body, c, goLogs) }
-    const modeBtn = iconBtn('terminal', 'Abrir terminal', () => (mode === 'logs' ? goTerminal() : goLogs()))
+    const goLogs = (): void => { mode = 'logs'; modeBtn.innerHTML = icon('terminal'); modeBtn.title = i18nT('docker.openTerminal'); showLogs(body, c) }
+    const goTerminal = (): void => { mode = 'terminal'; modeBtn.innerHTML = icon('list'); modeBtn.title = i18nT('docker.viewLogs'); showTerminal(body, c, goLogs) }
+    const modeBtn = iconBtn('terminal', i18nT('docker.openTerminal'), () => (mode === 'logs' ? goTerminal() : goLogs()))
 
     const head = document.createElement('div')
     head.className = 'docker-detail-head'
@@ -96,12 +97,12 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
     actions.className = 'docker-detail-actions'
     if (isRunning(c)) {
       actions.append(
-        iconBtn('stop', 'Parar', () => run('docker_stop', c.name)),
-        iconBtn('power', 'Reiniciar (para y arranca)', () => run('docker_restart', c.name)),
+        iconBtn('stop', i18nT('docker.stop'), () => run('docker_stop', c.name)),
+        iconBtn('power', i18nT('docker.restartProject'), () => run('docker_restart', c.name)),
         modeBtn,
       )
     } else {
-      actions.append(iconBtn('play', 'Arrancar', () => run('docker_start', c.name)))
+      actions.append(iconBtn('play', i18nT('docker.start'), () => run('docker_start', c.name)))
     }
     head.append(titleWrap, actions)
 
@@ -117,7 +118,7 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
 
   const toItems = (): MdItem[] =>
     groupByProject(containers).flatMap(g =>
-      g.containers.map(c => ({ id: c.name, label: c.name, group: g.project || 'Sin proyecto', leading: dot(c) })),
+      g.containers.map(c => ({ id: c.name, label: c.name, group: g.project || i18nT('docker.noProject'), leading: dot(c) })),
     )
 
   const load = async (): Promise<void> => {

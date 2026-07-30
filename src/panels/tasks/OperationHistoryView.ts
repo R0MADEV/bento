@@ -17,7 +17,9 @@ export function buildOperationHistoryView(options: OperationHistoryOptions): HTM
   const back = Object.assign(document.createElement('button'), { className: 'db-back-btn', textContent: '←' })
   back.setAttribute('aria-label', taskT('backChanges'))
   back.addEventListener('click', options.onBack)
-  head.append(back, Object.assign(document.createElement('span'), { textContent: `Operaciones Git · ${options.branch}` }))
+  head.append(back, Object.assign(document.createElement('span'), {
+    textContent: taskT('gitOperationsTitle', { branch: options.branch }),
+  }))
   wrap.append(head, Object.assign(document.createElement('p'), {
     className: 'tasks-rebase-hint',
     textContent: taskT('operationHint'),

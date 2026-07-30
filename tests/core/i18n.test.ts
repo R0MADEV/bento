@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { appT, getAppLocale, setAppLocale } from '../../src/core/i18n'
+import { appT, getAppLocale, setAppLocale, t } from '../../src/core/i18n'
 
 describe('application i18n', () => {
   const values = new Map<string, string>()
@@ -32,5 +32,16 @@ describe('application i18n', () => {
   it('interpolates translated values', () => {
     setAppLocale('en')
     expect(appT('goTo', { name: 'Backend' })).toBe('Go to Backend')
+  })
+
+  it('translates semantic panel keys and interpolates their values', () => {
+    setAppLocale('en')
+    expect(t('memory.deleteManyQuestion', { count: 3 })).toBe('Permanently delete 3 memories?')
+    expect(t('docker.noProject')).toBe('No project')
+  })
+
+  it('uses the common catalog for shared panel messages', () => {
+    setAppLocale('en')
+    expect(t('common.aiKeyPlaceholder', { provider: 'OpenAI' })).toBe('OpenAI API key')
   })
 })

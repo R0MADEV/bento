@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import type { ChannelRepository } from '../../ports/ChannelRepository'
 import type { FavoritesRepository } from '../../ports/FavoritesRepository'
 import type { Channel, ChannelData } from '../../core/channel/Channel'
@@ -24,7 +25,7 @@ export function createTVPanel(
 
   const input = document.createElement('input')
   input.type = 'text'
-  input.placeholder = 'Buscar...'
+  input.placeholder = i18nT('common.search2')
   input.className = 'tv-search'
 
   const countrySelect = document.createElement('select')
@@ -39,22 +40,22 @@ export function createTVPanel(
   const worldButton = document.createElement('button')
   worldButton.className = 'tv-btn'
   worldButton.innerHTML = icon('globe')
-  worldButton.title = 'Cargar canales de todo el mundo (más pesado)'
+  worldButton.title = i18nT('tv.loadChannelsFromAroundTheWorldHeavier')
 
   const favButton = document.createElement('button')
   favButton.className = 'tv-btn'
   favButton.innerHTML = icon('star')
-  favButton.title = 'Mostrar solo favoritos'
+  favButton.title = i18nT('tv.showFavoritesOnly')
 
   const fullscreenButton = document.createElement('button')
   fullscreenButton.className = 'tv-btn'
   fullscreenButton.innerHTML = icon('expand')
-  fullscreenButton.title = 'Pantalla completa'
+  fullscreenButton.title = i18nT('tv.fullscreen')
 
   const toggleButton = document.createElement('button')
   toggleButton.className = 'tv-btn'
   toggleButton.innerHTML = icon('panel')
-  toggleButton.title = 'Mostrar/ocultar lista de canales'
+  toggleButton.title = i18nT('tv.showHideChannelList')
 
   toolbar.append(input, countrySelect, categorySelect, status)
   if (worldRepo) toolbar.append(worldButton)
@@ -111,7 +112,7 @@ export function createTVPanel(
   player.onStatus = s => {
     if (s === 'loading') status.textContent = `⏳ ${current}`
     else if (s === 'playing') status.textContent = `▶ ${current}`
-    else status.textContent = `⚠ ${current} — no disponible`
+    else status.textContent = i18nT('tv.unavailable', { channel: current })
   }
 
   const refresh = () => {
@@ -136,9 +137,9 @@ export function createTVPanel(
   const applyData = (next: ChannelData) => {
     data = next
     allChannels = next.channels
-    fillSelect(countrySelect, '🌍 País', countryOptions(next.channels, next.countries))
-    fillSelect(categorySelect, 'Categoría', categoryOptions(next.channels, next.categories))
-    status.textContent = `${next.channels.length} canales`
+    fillSelect(countrySelect, i18nT('tv.country2'), countryOptions(next.channels, next.countries))
+    fillSelect(categorySelect, i18nT('common.category'), categoryOptions(next.channels, next.categories))
+    status.textContent = i18nT('tv.channelCount', { count: next.channels.length })
     refresh()
   }
 
@@ -178,10 +179,10 @@ export function createTVPanel(
     }
   })
 
-  status.textContent = 'Cargando...'
+  status.textContent = i18nT('tv.loading')
   repo.fetchAll()
     .then(applyData)
-    .catch(err => { status.textContent = `Error: ${err.message}` })
+    .catch(err => { status.textContent = i18nT('tv.errorMessage', { message: err.message }) })
 
   return root
 }

@@ -119,9 +119,9 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
     })
     const header = document.createElement('div')
     header.className = 'docker-logs-head'
-    header.append(Object.assign(document.createElement('span'), { textContent: 'Stack logs' }), liveButton, refreshButton)
+    header.append(Object.assign(document.createElement('span'), { textContent: taskT('stackLogs') }), liveButton, refreshButton)
     logsBody.append(header, output)
-    wrap.append(subHeader('Stack logs', goBack), logsBody)
+    wrap.append(subHeader(taskT('stackLogs'), goBack), logsBody)
     options.showDetail(wrap)
     options.setCleanup(stopLive)
     void startLive()

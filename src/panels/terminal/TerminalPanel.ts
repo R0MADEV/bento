@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { WebLinksAddon } from 'xterm-addon-web-links'
@@ -30,7 +31,7 @@ function showCommandDoneToast(termRoot: HTMLElement): void {
   if (existing) return
   const toast = document.createElement('div')
   toast.className = 'term-toast'
-  toast.textContent = '✓ Comando terminado'
+  toast.textContent = i18nT('terminal.commandFinished')
   termRoot.appendChild(toast)
   setTimeout(() => toast.remove(), 3000)
 }
@@ -151,7 +152,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const colorRow = document.createElement('label')
   colorRow.className = 'term-theme-color-row'
-  colorRow.textContent = 'Color personalizado'
+  colorRow.textContent = i18nT('terminal.customColor')
   const colorInput = document.createElement('input')
   colorInput.type = 'color'
   colorInput.value = getTheme(localTheme).background
@@ -160,13 +161,13 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const isWin = navigator.platform.includes('Win')
   const shellOptions = isWin
-    ? [['auto', 'Auto (SHELL)'], ['powershell.exe', 'PowerShell'], ['cmd.exe', 'CMD']]
-    : [['auto', 'Auto (SHELL)'], ['/bin/zsh', 'zsh'], ['/bin/bash', 'bash'], ['fish', 'fish'], ['/bin/sh', 'sh']]
+    ? [['auto', i18nT('terminal.autoShell')], ['powershell.exe', 'PowerShell'], ['cmd.exe', 'CMD']]
+    : [['auto', i18nT('terminal.autoShell')], ['/bin/zsh', 'zsh'], ['/bin/bash', 'bash'], ['fish', 'fish'], ['/bin/sh', 'sh']]
 
   const shellRow = document.createElement('div')
   shellRow.className = 'term-theme-color-row'
   const shellLabel = document.createElement('span')
-  shellLabel.textContent = 'Shell'
+  shellLabel.textContent = i18nT('terminal.shell')
   const shellSelect = document.createElement('select')
   shellSelect.className = 'term-shell-select'
   shellOptions.forEach(([val, label]) => {
@@ -180,11 +181,11 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   const fontRow = document.createElement('div')
   fontRow.className = 'term-theme-color-row'
   const fontLabel = document.createElement('span')
-  fontLabel.textContent = 'Fuente'
+  fontLabel.textContent = i18nT('common.font')
   const fontInput = document.createElement('input')
   fontInput.className = 'term-font-input'
   fontInput.type = 'text'
-  fontInput.placeholder = 'monospace'
+  fontInput.placeholder = i18nT('terminal.monospacePlaceholder')
   fontInput.addEventListener('change', () => {
     localFontFamily = fontInput.value.trim() || DEFAULT_FONT_FAMILY
     term.options.fontFamily = localFontFamily
@@ -198,7 +199,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const themeBtn = document.createElement('button')
   themeBtn.className = 'term-theme-btn'
-  themeBtn.title = 'Cambiar tema de esta terminal'
+  themeBtn.title = i18nT('terminal.changeThisTerminalTheme')
   themeBtn.innerHTML = icon('palette')
   themeBtn.addEventListener('click', e => {
     e.stopPropagation()
@@ -428,7 +429,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const maxBtn = document.createElement('button')
   maxBtn.className = 'term-theme-btn term-max-btn'
-  maxBtn.title = 'Maximizar / restaurar'
+  maxBtn.title = i18nT('terminal.maximizeRestore')
   maxBtn.innerHTML = icon('expand')
 
   const onReady = (panelApi: PanelApi) => {
@@ -453,7 +454,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
           const nameBtn = document.createElement('button')
           nameBtn.className = 'term-profile-name'
           nameBtn.textContent = p.name
-          nameBtn.title = `Shell: ${p.shell} · Tema: ${p.theme} · ${p.fontSize}px${p.fontFamily ? ` · ${p.fontFamily}` : ''}`
+          nameBtn.title = i18nT('terminal.profileDescription', { shell: p.shell, theme: p.theme, fontSize: p.fontSize, fontFamily: p.fontFamily ? ` · ${p.fontFamily}` : '' })
           nameBtn.addEventListener('click', () => {
             followGlobal = false
             localTheme = p.theme
@@ -481,9 +482,9 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
       const saveBtn = document.createElement('button')
       saveBtn.className = 'term-profile-save'
-      saveBtn.textContent = '+ Guardar perfil actual'
+      saveBtn.textContent = i18nT('terminal.saveCurrentProfile')
       saveBtn.addEventListener('click', () => {
-        const name = prompt('Nombre del perfil:')
+        const name = prompt(i18nT('terminal.profileName'))
         if (!name?.trim()) return
         addProfile({
           name: name.trim(),

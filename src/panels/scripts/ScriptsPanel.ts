@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { scriptCommand } from '../../core/scripts/scriptCommand'
@@ -36,21 +37,21 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
   header.className = 'scripts-header'
   const title = document.createElement('span')
   title.className = 'scripts-title'
-  title.textContent = 'Scripts'
+  title.textContent = i18nT('common.scripts')
 
   const termToggle = document.createElement('button')
   termToggle.className = 'scripts-action'
-  termToggle.title = 'Mostrar/ocultar terminal'
+  termToggle.title = i18nT('scripts.showHideTerminal')
   termToggle.innerHTML = icon('terminal')
 
   const addBtn = document.createElement('button')
   addBtn.className = 'scripts-action'
-  addBtn.title = 'Añadir carpeta a escanear'
+  addBtn.title = i18nT('scripts.addFolderToScan')
   addBtn.innerHTML = `${icon('plus')}<span>Carpeta</span>`
 
   const refreshBtn = document.createElement('button')
   refreshBtn.className = 'scripts-action'
-  refreshBtn.title = 'Volver a escanear'
+  refreshBtn.title = i18nT('scripts.scanAgain')
   refreshBtn.innerHTML = icon('refresh')
 
   header.append(title, termToggle, addBtn, refreshBtn)
@@ -62,7 +63,7 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
   filterSelect.className = 'scripts-filter'
   const removeBtn = document.createElement('button')
   removeBtn.className = 'scripts-dir-del'
-  removeBtn.title = 'Quitar la carpeta seleccionada'
+  removeBtn.title = i18nT('scripts.removeSelectedFolder')
   removeBtn.textContent = '×'
   filterRow.append(filterSelect, removeBtn)
 
@@ -142,7 +143,7 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
     if (!dirs.length) {
       const hint = document.createElement('div')
       hint.className = 'scripts-hint'
-      hint.textContent = 'Añade una carpeta para listar tus scripts.'
+      hint.textContent = i18nT('scripts.addAFolderToListYourScripts')
       listEl.appendChild(hint)
       return
     }
@@ -150,14 +151,14 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
     if (!shown.length) {
       const empty = document.createElement('div')
       empty.className = 'scripts-hint'
-      empty.textContent = 'Sin scripts en estas carpetas.'
+      empty.textContent = i18nT('scripts.noScriptsInTheseFolders')
       listEl.appendChild(empty)
       return
     }
     shown.forEach(f => {
       const row = document.createElement('button')
       row.className = 'scripts-item'
-      row.title = `Ejecutar: ${scriptCommand(f.path)}`
+      row.title = i18nT('scripts.runCommand', { command: scriptCommand(f.path) })
       const iconSlot = document.createElement('span')
       iconSlot.innerHTML = icon('play')
       const name = document.createElement('span')

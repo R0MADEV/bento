@@ -136,7 +136,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       const btn = document.createElement('button')
       btn.className = 'group-add-tab'
       btn.textContent = '+'
-      btn.title = 'Añadir panel'
+      btn.title = appT('addPanel')
       const onClick = () => {
         const rect = btn.getBoundingClientRect()
         showContextMenu(rect.left, rect.bottom, panels.list().map(d => ({
@@ -161,7 +161,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
 
   const emptyTitle = document.createElement('div')
   emptyTitle.className = 'workspace-empty-title'
-  emptyTitle.textContent = 'Espacio vacío'
+  emptyTitle.textContent = appT('emptyWorkspace')
 
   const mod = isMac ? '⌘' : 'Ctrl'
 

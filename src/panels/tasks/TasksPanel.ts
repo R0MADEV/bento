@@ -214,7 +214,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       className: 'tasks-branch',
       textContent: wt.branch ?? taskT('detached'),
     })
-    if (isMain) branchEl.title = 'worktree principal'
+    if (isMain) branchEl.title = taskT('mainWorktree')
 
     const pathEl = Object.assign(document.createElement('span'), {
       className: 'tasks-path',
@@ -263,26 +263,31 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       if (ab.ahead > 0) parts.push(`↑${ab.ahead}`)
       if (ab.behind > 0) parts.push(`↓${ab.behind}`)
       abEl.textContent = parts.join(' ')
-      abEl.title = `${ab.ahead} / ${ab.behind} · origin/${baseBranch}`
+      abEl.title = taskT('aheadBehindTitle', { ahead: ab.ahead, behind: ab.behind, branch: baseBranch })
     }
 
     // PR status badge
     const prEl = document.createElement('span')
     if (pr) {
       const stateMap: Record<string, string> = { OPEN: 'tasks-pr-open', DRAFT: 'tasks-pr-draft', MERGED: 'tasks-pr-merged', CLOSED: 'tasks-pr-closed' }
-      const labelMap: Record<string, string> = { OPEN: 'PR', DRAFT: 'Draft PR', MERGED: 'Merged', CLOSED: 'PR cerrado' }
+      const labelMap: Record<string, string> = {
+        OPEN: taskT('openPrShort'),
+        DRAFT: taskT('draftPrShort'),
+        MERGED: taskT('mergedPrShort'),
+        CLOSED: taskT('closedPr'),
+      }
       prEl.className = `tasks-pr-badge ${stateMap[pr.state] ?? ''}`
       const checks = pr.statusCheckRollup ?? []
       const failedChecks = checks.filter(check => /FAIL|ERROR|CANCEL|TIMED_OUT/i.test(check.conclusion ?? check.state ?? ''))
       const pendingChecks = checks.filter(check => /PENDING|QUEUED|IN_PROGRESS|EXPECTED/i.test(check.status ?? check.state ?? ''))
       prEl.textContent = failedChecks.length ? taskT('failedChecks', { count: failedChecks.length })
-        : pendingChecks.length ? `PR · ${pendingChecks.length} pendiente${pendingChecks.length > 1 ? 's' : ''}`
-          : labelMap[pr.state] ?? 'PR'
+        : pendingChecks.length ? taskT('pendingChecks', { count: pendingChecks.length })
+          : labelMap[pr.state] ?? taskT('openPrShort')
       const prSignals = [
         pr.baseRefName ? `base: ${pr.baseRefName}` : '',
-        pr.mergeable === 'CONFLICTING' ? 'conflictos con la base' : '',
+        pr.mergeable === 'CONFLICTING' ? taskT('baseConflicts') : '',
         pr.reviewDecision === 'APPROVED' ? taskT('approved') : pr.reviewDecision === 'CHANGES_REQUESTED' ? taskT('changesRequested') : pr.reviewDecision === 'REVIEW_REQUIRED' ? taskT('reviewPending') : '',
-        failedChecks.length ? `${failedChecks.length} check(s) fallando` : pendingChecks.length ? `${pendingChecks.length} check(s) pendientes` : checks.length ? 'checks correctos' : '',
+        failedChecks.length ? taskT('failingChecks', { count: failedChecks.length }) : pendingChecks.length ? taskT('checksPending', { count: pendingChecks.length }) : checks.length ? taskT('checksPassed') : '',
       ].filter(Boolean)
       prEl.title = `${pr.title}${prSignals.length ? ` · ${prSignals.join(' · ')}` : ''}`
       if (failedChecks.length || pr.mergeable === 'CONFLICTING') prEl.classList.add('tasks-pr-checks-failed')
@@ -298,8 +303,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     const rebaseEl = document.createElement('span')
     if (rebase?.active) {
       rebaseEl.className = 'tasks-rebase-badge'
-      rebaseEl.textContent = rebase.total ? `rebase ${rebase.current ?? 0}/${rebase.total}` : taskT('pausedRebase')
-      rebaseEl.title = 'Pulsa para recuperar el rebase activo'
+      rebaseEl.textContent = rebase.total
+        ? taskT('rebaseProgress', { current: rebase.current ?? 0, total: rebase.total })
+        : taskT('pausedRebase')
+      rebaseEl.title = taskT('resumeRebaseHint')
       rebaseEl.addEventListener('click', e => { e.stopPropagation(); selectRow(row); showRebasePaused(wt, rebase) })
     }
     const upstreamEl = document.createElement('span')
@@ -637,7 +644,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     const amendToggle = Object.assign(document.createElement('button'), {
       className: 'tasks-amend-btn',
       title: taskT('amendHint'),
-      textContent: 'Amend',
+      textContent: taskT('amend'),
     })
     let doAmend = opts.initAmend ?? false
     amendToggle.classList.toggle('tasks-amend-btn--active', doAmend)
@@ -646,12 +653,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       doAmend = !doAmend
       amendToggle.classList.toggle('tasks-amend-btn--active', doAmend)
       msgInput.placeholder = doAmend ? taskT('keepMessage') : taskT('commitMessage')
-      commitBtn.textContent = doAmend ? 'Amend commit' : 'Commit'
+      commitBtn.textContent = doAmend ? taskT('amendCommit') : taskT('commit')
     })
 
     const commitBtn = Object.assign(document.createElement('button'), {
       className: 'tasks-commit-btn',
-      textContent: 'Commit',
+      textContent: taskT('commit'),
     })
     commitBtn.dataset.testid = 'tasks-commit'
     const fixupBtn = Object.assign(document.createElement('button'), {
@@ -689,13 +696,13 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         msgInput.value = ''
         doAmend = false
         amendToggle.classList.remove('tasks-amend-btn--active')
-        commitBtn.textContent = 'Commit'
+        commitBtn.textContent = taskT('commit')
         const [newRaw, newStatus] = await Promise.all([
           invoke<string>('git_diff', { path: wt.path }),
           taskGit.safeStatus(wt.path),
         ])
         showDetail(buildDiffView(newRaw, wt, { statusRaw: newStatus.raw, rebaseActive: opts.rebaseActive }))
-        showCommitStatus(wasAmend ? '✓ Commit enmendado' : '✓ Commit creado')
+        showCommitStatus(wasAmend ? taskT('commitAmended') : taskT('commitCreated'))
         // Update sidebar badge and ahead/behind
         lastStatuses.set(wt.path, (await taskGit.safeStatus(wt.path)).total)
         const abRaw = await invoke<string>('git_ahead_behind', { path: wt.path, base: baseBranch }).catch(() => '')
@@ -703,7 +710,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         applyFilter()
       } catch (e) {
         recordOperation(wt, doAmend ? 'commit --amend' : 'commit', 'error', String(e))
-        commitBtn.textContent = doAmend ? 'Amend commit' : 'Commit'
+        commitBtn.textContent = doAmend ? taskT('amendCommit') : taskT('commit')
         commitBtn.disabled = false
         amendToggle.disabled = false
         fixupBtn.disabled = false
@@ -926,7 +933,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         path: wt.path, branch: wt.branch ?? '', renderPatch: renderPatchHtml,
         onBack: () => showChanges(wt),
         onRestored: async () => { await load(); showChanges(wt) },
-        onOperation: (status, detail) => recordOperation(wt, 'restaurar respaldo', status, detail),
+        onOperation: (status, detail) => recordOperation(wt, taskT('restoreBackup'), status, detail),
       }))
     } catch (e) { showDetail(note(String(e), 'db-detail-error')) }
   }
@@ -934,7 +941,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   function showOperationHistory(wt: Worktree): void {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    const branch = wt.branch ?? '(detached)'
+    const branch = wt.branch ?? taskT('detached')
     showDetail(buildOperationHistoryView({
       branch,
       repository: repoPath,
@@ -1231,7 +1238,11 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         row.dataset.hash = item.hash
         row.tabIndex = 0
         row.setAttribute('role', 'listitem')
-        row.setAttribute('aria-label', `${item.action} ${item.short} ${item.subject}. Alt flecha arriba o abajo para mover.`)
+        row.setAttribute('aria-label', taskT('rebaseItemAria', {
+          action: item.action,
+          hash: item.short,
+          subject: item.subject,
+        }))
 
         const dragHandle = Object.assign(document.createElement('button'), {
           className: 'tasks-rebase-drag',
@@ -1325,12 +1336,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           }))
         }
 
-        const upBtn = iconBtn('chevron-up', 'Subir', () => {
+        const upBtn = iconBtn('chevron-up', taskT('moveUp'), () => {
           if (idx === 0) return
           ;[items[idx - 1], items[idx]] = [items[idx], items[idx - 1]]
           renderList()
         })
-        const downBtn = iconBtn('chevron-down', 'Bajar', () => {
+        const downBtn = iconBtn('chevron-down', taskT('moveDown'), () => {
           if (idx === items.length - 1) return
           ;[items[idx + 1], items[idx]] = [items[idx], items[idx + 1]]
           renderList()
@@ -1470,7 +1481,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     infoEl.append(
       Object.assign(document.createElement('span'), {
         className: 'tasks-rebase-paused-label',
-        textContent: st.total ? `Rebase ${st.current ?? 0}/${st.total}:` : taskT('editing'),
+        textContent: st.total
+          ? taskT('rebaseProgressColon', { current: st.current ?? 0, total: st.total })
+          : taskT('editing'),
       }),
       Object.assign(document.createElement('span'), { className: 'tasks-log-short', textContent: st.short ?? '' }),
       Object.assign(document.createElement('span'), { className: 'tasks-rebase-subject', textContent: st.subject ?? '' }),
@@ -1576,7 +1589,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
           if (!isResolved) {
             const resolveBtn = Object.assign(document.createElement('button'), { className: 'tasks-conflict-btn tasks-conflict-btn-primary', textContent: taskT('resolveHere') })
-            resolveBtn.title = 'Abrir resolver de conflictos en el panel'
+            resolveBtn.title = taskT('openConflictResolver')
             resolveBtn.addEventListener('click', () => {
               clearInterval(intervalId)
               showConflictResolver(wt, file, () => {
@@ -1716,7 +1729,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           row.className = 'tasks-conflict-file'
           row.append(
             Object.assign(document.createElement('span'), { className: 'tasks-conflict-name', textContent: f }),
-            iconBtn('edit', 'Abrir en editor', () => {
+            iconBtn('edit', taskT('openInEditor'), () => {
               invoke('open_in_editor', { path: `${wt.path}/${f}` }).catch(console.error)
             }),
           )
@@ -1784,7 +1797,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       panelStore.setBase(baseBranch)
       baseSelect.replaceChildren(...remoteBranches.map(branch => Object.assign(document.createElement('option'), {
         value: branch,
-        textContent: `base: ${branch}`,
+        textContent: taskT('baseOption', { branch }),
         selected: branch === baseBranch,
       })))
       worktrees = await taskGit.worktrees(repoPath)

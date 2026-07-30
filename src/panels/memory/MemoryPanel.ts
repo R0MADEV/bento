@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { confirm as askConfirm, open as pickFolder } from '@tauri-apps/plugin-dialog'
 import { askAi } from '../../ui/askAi'
@@ -20,10 +21,10 @@ import { matchesMemoryQuery } from '../../core/memory/memorySearch'
 import type { MemoryRepository } from '../../ports/MemoryRepository'
 
 const KIND_LABEL: Record<MemoryKind, string> = {
-  decision: 'Decisión',
-  fact: 'Hecho',
-  task: 'Tarea',
-  note: 'Nota',
+  decision: i18nT('memory.decision'),
+  fact: i18nT('memory.fact'),
+  task: i18nT('memory.task'),
+  note: i18nT('common.note'),
 }
 
 const KIND_OPTIONS: Array<MemoryKind | 'all'> = ['all', 'decision', 'fact', 'task', 'note']
@@ -50,7 +51,7 @@ const timeLabel = (iso: string): string => {
   try { return new Date(iso).toLocaleString() } catch { return iso }
 }
 
-const sourceLabel = (value: string): string => value || 'manual'
+const sourceLabel = (value: string): string => value || i18nT('memory.manual')
 const canRegenerateSummary = (entry?: MemoryEntry): boolean => Boolean(entry?.externalId && entry.externalId.includes(':session-summary:'))
 
 interface MemorySource {
@@ -107,26 +108,26 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   header.className = 'memory-header'
   const title = document.createElement('span')
   title.className = 'memory-title'
-  title.textContent = 'Memoria'
+  title.textContent = i18nT('memory.memory')
   const project = document.createElement('span')
   project.className = 'memory-project'
-  project.textContent = currentProject || 'Global'
+  project.textContent = currentProject || i18nT('common.global')
   const addBtn = document.createElement('button')
   addBtn.className = 'memory-action'
-  addBtn.title = 'Nueva entrada'
+  addBtn.title = i18nT('memory.newEntry')
   addBtn.innerHTML = icon('plus')
   const importClaudeBtn = document.createElement('button')
   importClaudeBtn.className = 'memory-action'
-  importClaudeBtn.title = 'Importar desde Claude'
-  importClaudeBtn.textContent = 'Claude'
+  importClaudeBtn.title = i18nT('memory.importFromClaude')
+  importClaudeBtn.textContent = i18nT('memory.claude')
   const importCodexBtn = document.createElement('button')
   importCodexBtn.className = 'memory-action'
-  importCodexBtn.title = 'Importar desde Codex'
-  importCodexBtn.textContent = 'Codex'
+  importCodexBtn.title = i18nT('memory.importFromCodex')
+  importCodexBtn.textContent = i18nT('memory.codex')
   const refreshBtn = document.createElement('button')
   refreshBtn.className = 'memory-action'
-  refreshBtn.title = 'Recargar memoria'
-  refreshBtn.textContent = 'Recargar'
+  refreshBtn.title = i18nT('memory.reloadMemory')
+  refreshBtn.textContent = i18nT('common.reload')
   header.append(title, project, refreshBtn, importClaudeBtn, importCodexBtn, addBtn)
 
   const controls = document.createElement('div')
@@ -134,14 +135,14 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   const search = document.createElement('input')
   search.className = 'memory-search'
-  search.placeholder = 'Buscar por texto, tag, archivo…'
+  search.placeholder = i18nT('memory.searchByTextTagFile')
 
   const kindFilter = document.createElement('select')
   kindFilter.className = 'memory-filter'
   KIND_OPTIONS.forEach(value => {
     const option = document.createElement('option')
     option.value = value
-    option.textContent = value === 'all' ? 'Todos los tipos' : KIND_LABEL[value]
+    option.textContent = value === 'all' ? i18nT('memory.allTypes') : KIND_LABEL[value]
     kindFilter.appendChild(option)
   })
 
@@ -155,25 +156,25 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   const selectVisibleBtn = document.createElement('button')
   selectVisibleBtn.className = 'memory-action'
-  selectVisibleBtn.textContent = 'Seleccionar visibles'
+  selectVisibleBtn.textContent = i18nT('memory.selectVisible')
   const clearSelectionBtn = document.createElement('button')
   clearSelectionBtn.className = 'memory-action'
-  clearSelectionBtn.textContent = 'Limpiar selección'
+  clearSelectionBtn.textContent = i18nT('memory.clearSelection')
   const archiveSelectedBtn = document.createElement('button')
   archiveSelectedBtn.className = 'memory-action'
-  archiveSelectedBtn.textContent = 'Archivar'
+  archiveSelectedBtn.textContent = i18nT('memory.archive')
   const mergeSelectedBtn = document.createElement('button')
   mergeSelectedBtn.className = 'memory-action'
-  mergeSelectedBtn.textContent = 'Fusionar'
+  mergeSelectedBtn.textContent = i18nT('memory.merge')
   const deleteSelectedBtn = document.createElement('button')
   deleteSelectedBtn.className = 'memory-action danger'
-  deleteSelectedBtn.textContent = 'Borrar'
+  deleteSelectedBtn.textContent = i18nT('common.delete2')
   controls.append(search, kindFilter, sourceFilter, archivedToggle, selectVisibleBtn, clearSelectionBtn, archiveSelectedBtn, mergeSelectedBtn, deleteSelectedBtn)
 
   const summaryJobsPanel = document.createElement('details')
   summaryJobsPanel.className = 'memory-summary-jobs'
   const summaryJobsTitle = document.createElement('summary')
-  summaryJobsTitle.textContent = 'Resúmenes de sesión'
+  summaryJobsTitle.textContent = i18nT('memory.sessionSummaries')
   const summaryJobsList = document.createElement('div')
   summaryJobsList.className = 'memory-summary-jobs-list'
   summaryJobsPanel.append(summaryJobsTitle, summaryJobsList)
@@ -191,7 +192,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   sourcesTitle.textContent = baseSourcesTitle
   const sourcesHint = document.createElement('span')
   sourcesHint.className = 'memory-sources-hint'
-  sourcesHint.textContent = 'Importa resúmenes, notas y snapshots desde carpetas externas.'
+  sourcesHint.textContent = i18nT('memory.importSummariesNotesAndSnapshotsFromExternalFolders')
   const sourcesChevron = document.createElement('span')
   sourcesChevron.className = 'memory-sources-chevron'
   sourcesChevron.innerHTML = icon('chevron')
@@ -203,18 +204,18 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   sourceForm.className = 'memory-source-form'
   const sourceLabelInput = document.createElement('input')
   sourceLabelInput.className = 'memory-input'
-  sourceLabelInput.placeholder = 'Etiqueta'
+  sourceLabelInput.placeholder = i18nT('memory.label')
   const sourcePathInput = document.createElement('input')
   sourcePathInput.className = 'memory-input'
-  sourcePathInput.placeholder = '/ruta/a/resumenes-o-notas'
+  sourcePathInput.placeholder = i18nT('memory.pathToSummariesOrNotes')
   const sourceFormActions = document.createElement('div')
   sourceFormActions.className = 'memory-source-form-actions'
   const pickSourceBtn = document.createElement('button')
   pickSourceBtn.className = 'memory-action'
-  pickSourceBtn.textContent = 'Seleccionar carpeta'
+  pickSourceBtn.textContent = i18nT('memory.selectFolder')
   const addSourceBtn = document.createElement('button')
   addSourceBtn.className = 'memory-action'
-  addSourceBtn.textContent = 'Registrar fuente'
+  addSourceBtn.textContent = i18nT('memory.registerSource')
   const sourceList = document.createElement('div')
   sourceList.className = 'memory-source-list'
   const sourcePreviewPanel = document.createElement('div')
@@ -232,18 +233,18 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   sourcePreviewActions.className = 'memory-source-preview-actions'
   const selectVisiblePreviewBtn = document.createElement('button')
   selectVisiblePreviewBtn.className = 'memory-action'
-  selectVisiblePreviewBtn.textContent = 'Seleccionar visibles'
+  selectVisiblePreviewBtn.textContent = i18nT('memory.selectVisible')
   const clearVisiblePreviewBtn = document.createElement('button')
   clearVisiblePreviewBtn.className = 'memory-action'
-  clearVisiblePreviewBtn.textContent = 'Limpiar visibles'
+  clearVisiblePreviewBtn.textContent = i18nT('memory.clearVisible')
   const sourceProjectFilter = document.createElement('select')
   sourceProjectFilter.className = 'memory-filter memory-source-project-filter'
   const sourcePreview = document.createElement('div')
   sourcePreview.className = 'memory-source-preview'
-  sourcePreview.textContent = 'Sin vista previa de importación.'
+  sourcePreview.textContent = i18nT('memory.noImportPreview')
   const importSelectedSourceBtn = document.createElement('button')
   importSelectedSourceBtn.className = 'memory-action'
-  importSelectedSourceBtn.textContent = 'Importar seleccionados'
+  importSelectedSourceBtn.textContent = i18nT('memory.importSelected')
   importSelectedSourceBtn.disabled = true
   sourcesToggle.append(sourcesChevron, sourcesTitle)
   sourcesHead.append(sourcesToggle, sourcesHint)
@@ -271,31 +272,31 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   status.className = 'memory-status'
   const askBtn = document.createElement('button')
   askBtn.className = 'memory-action'
-  askBtn.title = 'Enviar al chat de IA'
+  askBtn.title = i18nT('common.sendToAiChat')
   askBtn.innerHTML = icon('chat')
   const regenerateBtn = document.createElement('button')
   regenerateBtn.className = 'memory-action'
-  regenerateBtn.title = 'Regenerar resumen desde transcript'
-  regenerateBtn.textContent = 'Regenerar'
+  regenerateBtn.title = i18nT('memory.regenerateSummaryFromTranscript')
+  regenerateBtn.textContent = i18nT('memory.regenerate')
   const archiveBtn = document.createElement('button')
   archiveBtn.className = 'memory-action'
-  archiveBtn.title = 'Archivar entrada'
-  archiveBtn.textContent = 'Archivar'
+  archiveBtn.title = i18nT('memory.archiveEntry')
+  archiveBtn.textContent = i18nT('memory.archive')
   const pinBtn = document.createElement('button')
   pinBtn.className = 'memory-action'
-  pinBtn.title = 'Mantener esta memoria como prioritaria'
-  pinBtn.textContent = 'Fijar'
+  pinBtn.title = i18nT('memory.keepThisMemoryPrioritized')
+  pinBtn.textContent = i18nT('memory.pin')
   const verifyBtn = document.createElement('button')
   verifyBtn.className = 'memory-action'
-  verifyBtn.title = 'Marcar contenido revisado manualmente'
-  verifyBtn.textContent = 'Verificar'
+  verifyBtn.title = i18nT('memory.markContentAsManuallyReviewed')
+  verifyBtn.textContent = i18nT('memory.verify')
   const supersedeBtn = document.createElement('button')
   supersedeBtn.className = 'memory-action'
-  supersedeBtn.title = 'Marcar como obsoleta o reemplazada'
-  supersedeBtn.textContent = 'Obsoleta'
+  supersedeBtn.title = i18nT('memory.markAsObsoleteOrReplaced')
+  supersedeBtn.textContent = i18nT('memory.obsolete')
   const deleteBtn = document.createElement('button')
   deleteBtn.className = 'memory-action danger'
-  deleteBtn.title = 'Eliminar entrada'
+  deleteBtn.title = i18nT('memory.deleteEntry')
   deleteBtn.innerHTML = icon('trash')
   detailHead.append(status, askBtn, regenerateBtn, pinBtn, verifyBtn, supersedeBtn, archiveBtn, deleteBtn)
 
@@ -313,31 +314,31 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   const source = document.createElement('input')
   source.className = 'memory-input'
-  source.placeholder = 'Origen (manual, codex, claude...)'
+  source.placeholder = i18nT('memory.sourceManualCodexClaude')
 
   const titleInput = document.createElement('input')
   titleInput.className = 'memory-input'
-  titleInput.placeholder = 'Título'
+  titleInput.placeholder = i18nT('common.title')
 
   const tags = document.createElement('input')
   tags.className = 'memory-input'
-  tags.placeholder = 'tags: bento, db, sqlite'
+  tags.placeholder = i18nT('memory.tagsPlaceholder')
 
   const files = document.createElement('input')
   files.className = 'memory-input'
-  files.placeholder = 'archivos: src/a.ts, src/b.ts'
+  files.placeholder = i18nT('memory.filesSrcATsSrcBTs')
 
   const summary = document.createElement('textarea')
   summary.className = 'memory-textarea summary'
-  summary.placeholder = 'Resumen corto y reusable'
+  summary.placeholder = i18nT('memory.shortReusableSummary')
 
   const details = document.createElement('textarea')
   details.className = 'memory-textarea'
-  details.placeholder = 'Detalle, contexto, por qué, siguiente paso...'
+  details.placeholder = i18nT('memory.detailsContextWhyNextStep')
 
   const saveBtn = document.createElement('button')
   saveBtn.className = 'memory-primary'
-  saveBtn.textContent = 'Guardar'
+  saveBtn.textContent = i18nT('common.save')
 
   form.append(kind, source, titleInput, tags, files, summary, details, saveBtn)
   detail.append(detailHead, form)
@@ -369,8 +370,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   const currentSource = (): MemorySource | undefined => sources.find(source => source.id === previewSourceId)
   const importSourceLabel = (): string => currentSource()?.label ?? previewLabel()
   const previewLabel = (): string => {
-    if (previewSourceId === '__draft__') return sourceLabelInput.value.trim() || basename(sourcePathInput.value.trim()) || 'Selección actual'
-    return currentSource()?.label ?? 'Selección actual'
+    if (previewSourceId === '__draft__') return sourceLabelInput.value.trim() || basename(sourcePathInput.value.trim()) || i18nT('memory.currentSelection')
+    return currentSource()?.label ?? i18nT('memory.currentSelection')
   }
   const candidateProject = (candidate: ImportedMemoryCandidate): string => {
     if (candidate.source.startsWith('source:') && candidate.tags.includes('lexis')) {
@@ -427,39 +428,38 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     status.textContent = entry
       ? `${KIND_LABEL[entry.kind]} · ${sourceLabel(entry.source)} · ${timeLabel(entry.updatedAt)}`
       : currentProject
-        ? `Proyecto: ${currentProject}`
-        : 'Memoria global'
+        ? i18nT('memory.projectLabel', { project: currentProject })
+        : i18nT('memory.globalMemory')
   }
 
   const renderSummaryJobs = (): void => {
     const pending = summaryJobs.filter(job => job.status === 'pending' || job.status === 'processing')
     const failed = summaryJobs.filter(job => job.status === 'failed')
     const completed = summaryJobs.filter(job => job.status === 'completed' || job.status === 'skipped')
-    summaryJobsTitle.textContent = [
-      'Resúmenes de sesión',
-      pending.length ? `${pending.length} pendientes` : '',
-      failed.length ? `${failed.length} fallidos` : '',
-      completed.length ? `${completed.length} procesados` : '',
-    ].filter(Boolean).join(' · ')
+    summaryJobsTitle.textContent = i18nT('memory.summaryJobs', {
+      pending: pending.length ? i18nT('memory.pendingCount', { count: pending.length }) : '',
+      failed: failed.length ? i18nT('memory.failedCount', { count: failed.length }) : '',
+      completed: completed.length ? i18nT('memory.processedCount', { count: completed.length }) : '',
+    })
     summaryJobsList.innerHTML = ''
     const actionable = [...pending, ...failed]
     if (!actionable.length) {
       summaryJobsList.textContent = summaryJobs.length
-        ? 'No hay resúmenes pendientes ni fallidos.'
-        : 'Todavía no hay cierres de sesión registrados.'
+        ? i18nT('memory.thereAreNoPendingOrFailedSummaries')
+        : i18nT('memory.thereAreNoRecordedSessionClosuresYet')
       return
     }
     actionable.forEach(job => {
       const row = document.createElement('div')
       row.className = `memory-summary-job ${job.status}`
       const text = document.createElement('div')
-      const projectLabel = projectName(job.projectPath) || 'Global'
+      const projectLabel = projectName(job.projectPath) || i18nT('common.global')
       text.textContent = `${job.agent} · ${projectLabel} · ${job.status}${job.error ? ` · ${job.error}` : ''}`
       row.appendChild(text)
       if (job.status === 'failed' || job.status === 'pending') {
         const retry = document.createElement('button')
         retry.className = 'memory-action'
-        retry.textContent = 'Reintentar'
+        retry.textContent = i18nT('memory.retry')
         retry.addEventListener('click', () => { void retrySummaryJob(job) })
         row.appendChild(retry)
       }
@@ -481,8 +481,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     const selectedCount = selectedPreviewCount()
     importSelectedSourceBtn.disabled = selectedCount === 0
     importSelectedSourceBtn.textContent = selectedCount > 0
-      ? `Importar seleccionados (${selectedCount})`
-      : 'Importar seleccionados'
+      ? i18nT('memory.importSelectedCount', { count: selectedCount })
+      : i18nT('memory.importSelected')
     const visibleCount = visiblePreviewCandidates().length
     selectVisiblePreviewBtn.disabled = visibleCount === 0
     clearVisiblePreviewBtn.disabled = visibleCount === 0 || selectedCount === 0
@@ -530,8 +530,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     sourcesPanel.classList.toggle('collapsed', sourcesCollapsed)
     sourcesChevron.classList.toggle('collapsed', sourcesCollapsed)
     sourcesHint.textContent = sourcesCollapsed
-      ? 'Sección contraída. Ábrela para registrar, escanear o importar.'
-      : 'Importa resúmenes, notas y snapshots desde carpetas externas.'
+      ? i18nT('memory.sectionCollapsedOpenItToRegisterScanOr')
+      : i18nT('memory.importSummariesNotesAndSnapshotsFromExternalFolders')
   }
 
   const setSourceActivity = (message?: string, progress?: number): void => {
@@ -563,7 +563,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       const option = document.createElement('option')
       option.value = value
       option.textContent = value === 'all'
-        ? `Todos los proyectos (${previewCandidates.length})`
+        ? i18nT('memory.allProjectsCount', { count: previewCandidates.length })
         : `${projectName(value)} (${counts.get(value) ?? 0})`
       sourceProjectFilter.appendChild(option)
     })
@@ -577,9 +577,9 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     archiveSelectedBtn.disabled = count === 0
     deleteSelectedBtn.disabled = count === 0
     mergeSelectedBtn.disabled = count < 2
-    archiveSelectedBtn.textContent = count > 0 ? `Archivar (${count})` : 'Archivar'
-    deleteSelectedBtn.textContent = count > 0 ? `Borrar (${count})` : 'Borrar'
-    mergeSelectedBtn.textContent = count > 1 ? `Fusionar (${count})` : 'Fusionar'
+    archiveSelectedBtn.textContent = count > 0 ? i18nT('memory.archiveCount', { count }) : i18nT('memory.archive')
+    deleteSelectedBtn.textContent = count > 0 ? i18nT('memory.deleteCount', { count }) : i18nT('common.delete2')
+    mergeSelectedBtn.textContent = count > 1 ? i18nT('memory.mergeCount', { count }) : i18nT('memory.merge')
   }
 
   const refreshSourceFilter = (): void => {
@@ -589,7 +589,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     sources.forEach(value => {
       const option = document.createElement('option')
       option.value = value
-      option.textContent = value === 'all' ? 'Todos los orígenes' : value
+      option.textContent = value === 'all' ? i18nT('memory.allSources') : value
       sourceFilter.appendChild(option)
     })
     sourceFilter.value = sources.includes(previous) ? previous : 'all'
@@ -600,19 +600,19 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     refreshSourceProjectFilter()
     const candidates = visiblePreviewCandidates()
     if (!previewCandidates.length) {
-      sourcePreview.textContent = previewSourceId ? `${label}: sin candidatos importables.` : 'Sin vista previa de importación.'
+      sourcePreview.textContent = previewSourceId ? i18nT('memory.noImportableCandidates', { label }) : i18nT('memory.noImportPreview')
       syncSourceActions()
       return
     }
     if (!candidates.length) {
-      sourcePreview.textContent = 'No hay candidatos para el proyecto filtrado.'
+      sourcePreview.textContent = i18nT('memory.thereAreNoCandidatesForTheFilteredProject')
       syncSourceActions()
       return
     }
     sourcePreview.innerHTML = ''
     const heading = document.createElement('div')
     heading.className = 'memory-source-preview-title'
-    heading.textContent = `Vista previa: ${label} (${candidates.length}/${previewCandidates.length})`
+    heading.textContent = i18nT('memory.previewHeading', { label, visible: candidates.length, total: previewCandidates.length })
     sourcePreview.appendChild(heading)
     candidates.forEach(candidate => {
       const state = previewCandidateState.get(candidate.externalId)
@@ -629,10 +629,10 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       text.className = 'memory-source-preview-copy'
       const title = document.createElement('div')
       title.className = 'memory-source-preview-name'
-      title.textContent = candidate.title || '(sin título)'
+      title.textContent = candidate.title || i18nT('memory.untitled')
       const summary = document.createElement('div')
       summary.className = 'memory-source-preview-summary'
-      summary.textContent = candidate.summary || '(sin resumen)'
+      summary.textContent = candidate.summary || i18nT('memory.noSummary')
       const file = document.createElement('div')
       file.className = 'memory-source-preview-file'
       file.textContent = candidateProject(candidate)
@@ -641,8 +641,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
         const badge = document.createElement('div')
         badge.className = `memory-source-preview-badge ${state.duplicateExternal ? 'existing' : 'merge'}`
         badge.textContent = state.duplicateExternal
-          ? 'Ya importado'
-          : `Se fusionará${state.duplicateTitle ? ` con ${state.duplicateTitle}` : ''}`
+          ? i18nT('memory.alreadyImported')
+          : state.duplicateTitle ? i18nT('memory.willMergeWith', { title: state.duplicateTitle }) : i18nT('memory.willMerge')
         text.appendChild(badge)
       }
       row.append(checkbox, text)
@@ -658,7 +658,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     if (!sources.length) {
       const empty = document.createElement('div')
       empty.className = 'memory-source-empty'
-      empty.textContent = 'No hay fuentes registradas todavía.'
+      empty.textContent = i18nT('memory.thereAreNoRegisteredSourcesYet')
       sourceList.appendChild(empty)
       renderSourcePreview()
       return
@@ -679,15 +679,15 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       actions.className = 'memory-source-item-actions'
       const scanBtn = document.createElement('button')
       scanBtn.className = 'memory-action'
-      scanBtn.textContent = 'Escanear'
+      scanBtn.textContent = i18nT('memory.scan')
       scanBtn.addEventListener('click', () => { void scanSource(item) })
       const importBtn = document.createElement('button')
       importBtn.className = 'memory-action'
-      importBtn.textContent = 'Importar'
+      importBtn.textContent = i18nT('common.import')
       importBtn.addEventListener('click', () => { void importSource(item) })
       const removeBtn = document.createElement('button')
       removeBtn.className = 'memory-action danger'
-      removeBtn.textContent = 'Borrar'
+      removeBtn.textContent = i18nT('common.delete2')
       removeBtn.addEventListener('click', () => { void removeSource(item) })
       actions.append(scanBtn, importBtn, removeBtn)
       row.append(meta, actions)
@@ -719,8 +719,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   const scanSource = async (item: MemorySource): Promise<void> => {
     try {
-      setStatus(`Escaneando ${item.label}…`)
-      setSourceActivity(`Escaneando ${item.label}…`)
+      setStatus(i18nT('memory.scanning', { label: item.label }))
+      setSourceActivity(i18nT('memory.scanning', { label: item.label }))
       previewCandidates = await invoke<ImportedMemoryCandidate[]>('memory_source_scan', {
         projectPath: currentProject,
         id: item.id,
@@ -730,11 +730,11 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       previewSourceId = item.id
       await refreshPreviewCandidateState()
       renderSourcePreview()
-      setSourceActivity(`${previewCandidates.length} candidatos listos en ${item.label}.`, 100)
-      setStatus(`${previewCandidates.length} candidatos detectados en ${item.label}.`)
+      setSourceActivity(i18nT('memory.candidatesReady', { count: previewCandidates.length, label: item.label }), 100)
+      setStatus(i18nT('memory.candidatesDetected', { count: previewCandidates.length, label: item.label }))
     } catch (error) {
       setSourceActivity(undefined)
-      setStatus(`No se pudo escanear la fuente: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.scanSourceFailed', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -747,8 +747,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       return
     }
     try {
-      setStatus('Escaneando carpeta seleccionada…')
-      setSourceActivity('Escaneando carpeta seleccionada…')
+      setStatus(i18nT('memory.scanningSelectedFolder'))
+      setSourceActivity(i18nT('memory.scanningSelectedFolder'))
       previewCandidates = await invoke<ImportedMemoryCandidate[]>('memory_source_scan_path', {
         path,
         label: sourceLabelInput.value.trim() || undefined,
@@ -758,22 +758,22 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       previewSourceId = '__draft__'
       await refreshPreviewCandidateState()
       renderSourcePreview()
-      setSourceActivity(`${previewCandidates.length} candidatos listos en la carpeta seleccionada.`, 100)
-      setStatus(`${previewCandidates.length} candidatos detectados en la carpeta seleccionada.`)
+      setSourceActivity(i18nT('memory.candidatesReady', { count: previewCandidates.length, label: i18nT('memory.selectedFolder') }), 100)
+      setStatus(i18nT('memory.candidatesDetected', { count: previewCandidates.length, label: i18nT('memory.selectedFolder') }))
     } catch (error) {
       previewSourceId = '__draft__'
       previewCandidates = []
       previewCandidateState.clear()
       renderSourcePreview()
       setSourceActivity(undefined)
-      setStatus(`No se pudo previsualizar la carpeta: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.previewFolderFailed', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
   const importSource = async (item: MemorySource): Promise<void> => {
     try {
-      setStatus(`Preparando importación desde ${item.label}…`)
-      setSourceActivity(`Escaneando ${item.label} antes de importar…`)
+      setStatus(i18nT('memory.preparingImport', { label: item.label }))
+      setSourceActivity(i18nT('memory.scanningBeforeImport', { label: item.label }))
       const candidates = await invoke<ImportedMemoryCandidate[]>('memory_source_scan', {
         projectPath: currentProject,
         id: item.id,
@@ -785,7 +785,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       let skipped = 0
       let lastAffectedId: string | null = null
       for (const [index, candidate] of candidates.entries()) {
-        setSourceActivity(`Importando ${item.label} (${index + 1}/${candidates.length})…`, ((index + 1) / Math.max(candidates.length, 1)) * 100)
+        setSourceActivity(i18nT('memory.importingProgress', { label: item.label, current: index + 1, total: candidates.length }), ((index + 1) / Math.max(candidates.length, 1)) * 100)
         const payload: NewMemoryEntry = {
           kind: 'note',
           title: candidate.title,
@@ -825,18 +825,19 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       await reload()
       revealMemoryEntry(lastAffectedId)
       await reloadSources()
-      setSourceActivity(`${saved} importadas, ${merged} fusionadas, ${skipped} omitidas desde ${item.label}.`, 100)
-      setStatus(`${saved} importadas, ${merged} fusionadas, ${skipped} omitidas desde ${item.label}.`)
+      const result = i18nT('memory.importResultSkipped', { saved, merged, skipped, label: item.label })
+      setSourceActivity(result, 100)
+      setStatus(result)
     } catch (error) {
       setSourceActivity(undefined)
-      setStatus(`No se pudo importar la fuente: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.importSourceFailed', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
   const removeSource = async (item: MemorySource): Promise<void> => {
     const confirmed = await askConfirm(
-      `¿Eliminar la fuente “${item.label}”?`,
-      { title: 'Eliminar fuente', kind: 'warning', okLabel: 'Eliminar', cancelLabel: 'Cancelar' },
+      i18nT('memory.deleteSourceQuestion', { label: item.label }),
+      { title: i18nT('memory.deleteSource'), kind: 'warning', okLabel: i18nT('common.delete'), cancelLabel: i18nT('common.cancel') },
     )
     if (!confirmed) return
     try {
@@ -846,9 +847,9 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
         previewCandidates = []
       }
       await reloadSources()
-      setStatus(`Fuente ${item.label} eliminada.`)
+      setStatus(i18nT('memory.sourceDeleted', { label: item.label }))
     } catch (error) {
-      setStatus(`No se pudo eliminar la fuente: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.deleteSourceFailed', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -866,9 +867,9 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     pinBtn.disabled = !entry
     verifyBtn.disabled = !entry
     supersedeBtn.disabled = !entry
-    pinBtn.textContent = entry?.tags.includes(MEMORY_PINNED_TAG) ? 'Desfijar' : 'Fijar'
-    verifyBtn.textContent = entry?.tags.includes(MEMORY_VERIFIED_TAG) ? 'Verificada' : 'Verificar'
-    supersedeBtn.textContent = entry?.tags.includes(MEMORY_SUPERSEDED_TAG) ? 'Restaurar' : 'Obsoleta'
+    pinBtn.textContent = entry?.tags.includes(MEMORY_PINNED_TAG) ? i18nT('memory.unpin') : i18nT('memory.pin')
+    verifyBtn.textContent = entry?.tags.includes(MEMORY_VERIFIED_TAG) ? i18nT('memory.verified') : i18nT('memory.verify')
+    supersedeBtn.textContent = entry?.tags.includes(MEMORY_SUPERSEDED_TAG) ? i18nT('memory.restore') : i18nT('memory.obsolete')
     regenerateBtn.disabled = !canRegenerateSummary(entry)
     setStatus(undefined, entry)
   }
@@ -879,7 +880,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     if (!rows.length) {
       const empty = document.createElement('div')
       empty.className = 'memory-empty'
-      empty.textContent = 'No hay memoria guardada para este filtro.'
+      empty.textContent = i18nT('memory.thereIsNoSavedMemoryForThisFilter')
       list.appendChild(empty)
       return
     }
@@ -902,7 +903,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       badge.textContent = KIND_LABEL[entry.kind]
       const entryTitle = document.createElement('span')
       entryTitle.className = 'memory-item-title'
-      entryTitle.textContent = entry.title || '(sin título)'
+      entryTitle.textContent = entry.title || i18nT('memory.untitled')
       const sourceBadge = document.createElement('span')
       sourceBadge.className = 'memory-source'
       sourceBadge.textContent = sourceLabel(entry.source)
@@ -913,8 +914,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       const text = document.createElement('div')
       text.className = 'memory-item-summary'
       text.textContent = currentProject
-        ? entry.summary || entry.details || '(sin resumen)'
-        : `${entry.projectPath || 'Global'} · ${entry.summary || entry.details || '(sin resumen)'}`
+        ? entry.summary || entry.details || i18nT('memory.noSummary')
+        : `${entry.projectPath || i18nT('common.global')} · ${entry.summary || entry.details || i18nT('memory.noSummary')}`
       item.append(top, text)
       item.addEventListener('click', () => {
         selectedId = entry.id
@@ -929,7 +930,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     try {
       entries = await repo.list(currentProject)
     } catch {
-      setStatus('No se pudo leer la memoria. Pulsa Recargar.')
+      setStatus(i18nT('memory.couldNotReadMemoryPressReload'))
       return
     }
     entries = entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -962,7 +963,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   const retrySummaryJob = async (job: MemorySummaryJob): Promise<void> => {
     try {
-      setStatus(`Regenerando resumen ${job.agent}…`)
+      setStatus(i18nT('memory.regeneratingAgent', { agent: job.agent }))
       const updated = await invoke<MemoryEntry | null>('memory_regenerate_summary', {
         projectPath: job.projectPath,
         externalId: `${job.agent}:session-summary:${job.sessionId}`,
@@ -970,10 +971,10 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       if (updated) selectedId = updated.id
       await reload()
       await reloadSummaryJobs()
-      setStatus(updated ? 'Resumen regenerado.' : 'El resumidor no devolvió memoria reutilizable.', updated ?? undefined)
+      setStatus(updated ? i18nT('memory.summaryRegenerated') : i18nT('memory.theSummarizerReturnedNoReusableMemory'), updated ?? undefined)
     } catch (error) {
       await reloadSummaryJobs()
-      setStatus(`No se pudo regenerar: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.regenerateFailed', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -997,16 +998,16 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       selectedIds.delete(entry.id)
     }
     await reload()
-    setStatus(rows.length === 1 ? 'Memoria archivada.' : `${rows.length} memorias archivadas.`)
+    setStatus(rows.length === 1 ? i18nT('memory.memoryArchived') : i18nT('memory.archivedCount', { count: rows.length }))
   }
 
   const deleteEntries = async (rows: MemoryEntry[]): Promise<void> => {
     if (!rows.length) return
     const confirmed = await askConfirm(
       rows.length === 1
-        ? `¿Eliminar permanentemente la memoria “${rows[0].title || 'Sin título'}”?`
-        : `¿Eliminar permanentemente ${rows.length} memorias?`,
-      { title: 'Eliminar memoria', kind: 'warning', okLabel: 'Eliminar', cancelLabel: 'Cancelar' },
+        ? i18nT('memory.deleteOneQuestion', { title: rows[0].title || i18nT('memory.untitled2') })
+        : i18nT('memory.deleteManyQuestion', { count: rows.length }),
+      { title: i18nT('memory.deleteMemory'), kind: 'warning', okLabel: i18nT('common.delete'), cancelLabel: i18nT('common.cancel') },
     )
     if (!confirmed) return
     for (const entry of rows) {
@@ -1015,7 +1016,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       if (selectedId === entry.id) selectedId = null
     }
     await reload()
-    setStatus(rows.length === 1 ? 'Memoria eliminada.' : `${rows.length} memorias eliminadas.`)
+    setStatus(rows.length === 1 ? i18nT('memory.memoryDeleted') : i18nT('memory.deletedCount', { count: rows.length }))
   }
 
   const mergeSelected = async (): Promise<void> => {
@@ -1041,7 +1042,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     selectedIds.clear()
     selectedId = target.id
     await reload()
-    setStatus(`${rows.length} memorias fusionadas.`, saved)
+    setStatus(i18nT('memory.mergedCount', { count: rows.length }), saved)
   }
 
   addBtn.addEventListener('click', () => {
@@ -1108,7 +1109,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     const label = sourceLabelInput.value.trim() || basename(path)
     sourceLabelInput.value = label
     if (!label || !path) {
-      setStatus('La fuente necesita etiqueta y ruta.')
+      setStatus(i18nT('memory.theSourceNeedsALabelAndPath'))
       return
     }
     try {
@@ -1127,9 +1128,9 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       sourceLabelInput.value = ''
       sourcePathInput.value = ''
       await reloadSources()
-      setStatus(`Fuente ${label} registrada.`)
+      setStatus(i18nT('memory.sourceRegistered', { label }))
     } catch (error) {
-      setStatus(`No se pudo registrar la fuente: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.registerSourceFailed', { error: error instanceof Error ? error.message : String(error) }))
     } finally {
       syncSourceForm()
     }
@@ -1140,25 +1141,25 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   deleteSelectedBtn.addEventListener('click', () => { void deleteEntries(selectedRows()).catch(error => setStatus(String(error))) })
   importSelectedSourceBtn.addEventListener('click', () => { void (async () => {
     if (!previewSourceId) {
-      setStatus('No hay una fuente escaneada para importar.')
+      setStatus(i18nT('memory.thereIsNoScannedSourceToImport'))
       return
     }
     const sourceLabel = importSourceLabel()
     const candidates = selectedPreviewCandidates()
     if (!candidates.length) {
-      setStatus('Selecciona al menos un archivo antes de importar.')
+      setStatus(i18nT('memory.selectAtLeastOneFileBeforeImporting'))
       return
     }
     try {
       importSelectedSourceBtn.disabled = true
-      setStatus(`Importando ${candidates.length} seleccionadas desde ${sourceLabel}…`)
+      setStatus(i18nT('memory.importingSelected', { count: candidates.length, label: sourceLabel }))
       const existing = await targetProjectEntries()
       let saved = 0
       let merged = 0
       let skipped = 0
       let lastAffectedId: string | null = null
       for (const [index, candidate] of candidates.entries()) {
-        setSourceActivity(`Importando selección (${index + 1}/${candidates.length})…`, ((index + 1) / Math.max(candidates.length, 1)) * 100)
+        setSourceActivity(i18nT('memory.importingSelectionProgress', { current: index + 1, total: candidates.length }), ((index + 1) / Math.max(candidates.length, 1)) * 100)
         const payload: NewMemoryEntry = {
           kind: 'note',
           title: candidate.title,
@@ -1199,11 +1200,12 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       revealMemoryEntry(lastAffectedId)
       await refreshPreviewCandidateState()
       renderSourcePreview()
-      setSourceActivity(`${saved} importadas, ${merged} fusionadas, ${skipped} ya existentes desde ${sourceLabel}.`, 100)
-      setStatus(`${saved} importadas, ${merged} fusionadas, ${skipped} ya existentes desde ${sourceLabel}.`)
+      const result = i18nT('memory.importResultExistingFrom', { saved, merged, skipped, label: sourceLabel })
+      setSourceActivity(result, 100)
+      setStatus(result)
     } catch (error) {
       setSourceActivity(undefined)
-      setStatus(`No se pudo importar la selección: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.importSelectionFailed', { error: error instanceof Error ? error.message : String(error) }))
     } finally {
       syncSourceActions()
     }
@@ -1211,15 +1213,15 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   const importEntries = async (sourceName: 'claude' | 'codex'): Promise<void> => {
     if (!currentProject) {
-      setStatus('Abre un proyecto antes de importar memoria.')
+      setStatus(i18nT('memory.openAProjectBeforeImportingMemory'))
       return
     }
     const command = sourceName === 'claude' ? 'memory_import_claude' : 'memory_import_codex'
     try {
-      setStatus(`Importando desde ${sourceName === 'claude' ? 'Claude' : 'Codex'}…`)
+      setStatus(i18nT('memory.importingFrom', { source: sourceName === 'claude' ? 'Claude' : 'Codex' }))
       const imported = await invoke<ImportedMemory[]>(command, { projectPath: currentProject, limit: 8 })
       if (!imported.length) {
-        setStatus('No se encontró historial nuevo para importar.')
+        setStatus(i18nT('memory.noNewHistoryWasFoundToImport'))
         return
       }
       const existing = await targetProjectEntries()
@@ -1260,9 +1262,9 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
         saved++
       }
       await reload()
-      setStatus(`${saved} importadas, ${merged} fusionadas, ${skipped} ya existentes.`)
+      setStatus(i18nT('memory.importResultExisting', { saved, merged, skipped }))
     } catch (error) {
-      setStatus(`No se pudo importar: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.importFailed', { error: error instanceof Error ? error.message : String(error) }))
     }
   }
 
@@ -1288,9 +1290,9 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       if (!entry) throw new Error('La entrada ya no existe.')
       selectedId = entry.id
       await reload()
-      setStatus('Memoria guardada.', entry)
+      setStatus(i18nT('memory.memorySaved'), entry)
     } catch (error) {
-      setStatus(`No se pudo guardar: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.saveFailed', { error: error instanceof Error ? error.message : String(error) }))
     } finally {
       saveBtn.disabled = false
     }
@@ -1306,20 +1308,20 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     if (!entry || !entry.externalId.includes(':session-summary:')) return
     try {
       regenerateBtn.disabled = true
-      setStatus('Regenerando resumen desde el transcript…')
+      setStatus(i18nT('memory.regeneratingSummaryFromTranscript'))
       const updated = await invoke<MemoryEntry | null>('memory_regenerate_summary', {
         projectPath: entry.projectPath,
         externalId: entry.externalId,
       })
       if (!updated) {
-        setStatus('No se pudo regenerar el resumen o no hay transcript asociado.')
+        setStatus(i18nT('memory.theSummaryCouldNotBeRegeneratedOrThere'))
         return
       }
       selectedId = updated.id
       await reload()
-      setStatus('Resumen regenerado.', updated)
+      setStatus(i18nT('memory.summaryRegenerated'), updated)
     } catch (error) {
-      setStatus(`No se pudo regenerar: ${error instanceof Error ? error.message : String(error)}`)
+      setStatus(i18nT('memory.regenerateFailed', { error: error instanceof Error ? error.message : String(error) }))
     } finally {
       regenerateBtn.disabled = !canRegenerateSummary(selected())
     }

@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { normalizeUrl, resolveTargetUrl } from '../../core/web/normalizeUrl'
 import { isWebviewVisible } from '../../core/web/webviewVisibility'
@@ -37,23 +38,23 @@ export function createWebPanel() {
   const input = document.createElement('input')
   input.className = 'web-url-input'
   input.type = 'url'
-  input.placeholder = 'https://…'
+  input.placeholder = i18nT('web.urlPlaceholder')
   input.spellcheck = false
 
   const reloadBtn = document.createElement('button')
   reloadBtn.className = 'web-bar-btn'
-  reloadBtn.title = 'Recargar'
+  reloadBtn.title = i18nT('common.reload')
   reloadBtn.innerHTML = icon('refresh')
 
   const goBtn = document.createElement('button')
   goBtn.className = 'web-bar-btn'
-  goBtn.title = 'Navegar'
+  goBtn.title = i18nT('web.navigate')
   goBtn.innerHTML = icon('arrow-right')
 
   // Per-site engine: Chrome UA (WhatsApp etc.) vs native Safari (Google login).
   const uaSelect = document.createElement('select')
   uaSelect.className = 'web-ua-select'
-  uaSelect.title = 'Motor para este sitio'
+  uaSelect.title = i18nT('web.engineForThisSite')
   ;([['chrome', 'Chrome'], ['default', 'Safari']] as const).forEach(([val, label]) => {
     const opt = document.createElement('option')
     opt.value = val
@@ -63,12 +64,12 @@ export function createWebPanel() {
 
   const starBtn = document.createElement('button')
   starBtn.className = 'web-bar-btn web-star'
-  starBtn.title = 'Guardar en favoritos'
+  starBtn.title = i18nT('web.saveToFavorites')
   starBtn.innerHTML = icon('star')
 
   const bmBtn = document.createElement('button')
   bmBtn.className = 'web-bar-btn'
-  bmBtn.title = 'Favoritos'
+  bmBtn.title = i18nT('web.favorites')
   bmBtn.innerHTML = icon('bookmark')
 
   bar.append(input, uaSelect, starBtn, bmBtn, reloadBtn, goBtn)
@@ -88,11 +89,11 @@ export function createWebPanel() {
   savePop.className = 'web-save hidden'
   const groupInput = document.createElement('input')
   groupInput.className = 'web-save-input'
-  groupInput.placeholder = 'Proyecto / grupo'
+  groupInput.placeholder = i18nT('web.projectGroup')
   const saveOk = document.createElement('button')
   saveOk.className = 'web-bar-btn'
   saveOk.innerHTML = icon('star')
-  saveOk.title = 'Guardar'
+  saveOk.title = i18nT('common.save')
   savePop.append(groupInput, saveOk)
   bar.appendChild(savePop)
 
@@ -206,7 +207,11 @@ export function createWebPanel() {
     container.innerHTML = ''
     const groups = groupBookmarks(loadBookmarks())
     if (!groups.length) {
-      container.innerHTML = '<div class="web-empty-hint">Escribe una URL, o guarda favoritos con ★ para tenerlos aquí</div>'
+      const hint = Object.assign(document.createElement('div'), {
+        className: 'web-empty-hint',
+        textContent: i18nT('web.enterAUrlOrSaveFavoritesWithTo'),
+      })
+      container.replaceChildren(hint)
       return
     }
     groups.forEach(g => {

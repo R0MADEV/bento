@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { errorLines, isErrorLine } from '../../core/docker/logFilter'
@@ -24,12 +25,12 @@ export function renderContainerLogs(c: Container, target: HTMLElement): () => vo
 
   const applyStatic = (): void => {
     pre.textContent = errorsOnly
-      ? (errorLines(rawLogs).join('\n') || '(sin errores en los últimos logs)')
-      : (rawLogs || '(sin logs)')
+      ? (errorLines(rawLogs).join('\n') || i18nT('docker.noErrorsInTheLatestLogs'))
+      : (rawLogs || i18nT('docker.noLogs'))
     pre.scrollTop = pre.scrollHeight
   }
   const loadStatic = async (): Promise<void> => {
-    pre.textContent = 'Cargando…'
+    pre.textContent = i18nT('common.loading')
     try { rawLogs = await invoke<string>('docker_logs', { id: c.name, tail: 500 }) } catch (e) { rawLogs = String(e) }
     applyStatic()
   }
@@ -43,13 +44,13 @@ export function renderContainerLogs(c: Container, target: HTMLElement): () => vo
   const stopLive = (): void => {
     if (!live) return
     live = false
-    liveBtn.innerHTML = icon('play'); liveBtn.title = 'Seguir logs en vivo'; liveBtn.classList.remove('active')
+    liveBtn.innerHTML = icon('play'); liveBtn.title = i18nT('docker.followLiveLogs'); liveBtn.classList.remove('active')
     invoke('docker_logs_stop', { id: c.name }).catch(() => {})
     unlisten?.(); unlisten = null
   }
   const startLive = async (): Promise<void> => {
     live = true
-    liveBtn.innerHTML = icon('stop'); liveBtn.title = 'Parar el seguimiento'; liveBtn.classList.add('active')
+    liveBtn.innerHTML = icon('stop'); liveBtn.title = i18nT('docker.stopFollowing'); liveBtn.classList.add('active')
     rawLogs = ''; pre.textContent = ''
     try {
       await invoke('docker_logs_follow', { id: c.name, tail: 200 })
@@ -57,12 +58,12 @@ export function renderContainerLogs(c: Container, target: HTMLElement): () => vo
     } catch (e) { pre.textContent = String(e) }
   }
 
-  const liveBtn = btn('play', 'Seguir logs en vivo', () => live ? stopLive() : startLive())
+  const liveBtn = btn('play', i18nT('docker.followLiveLogs'), () => live ? stopLive() : startLive())
   const errBtn = btn('alert', 'Solo errores', () => {
     errorsOnly = !errorsOnly; errBtn.classList.toggle('active', errorsOnly)
     if (!live) applyStatic()
   })
-  const refreshBtn = btn('refresh', 'Recargar', () => { if (live) { stopLive(); startLive() } else loadStatic() })
+  const refreshBtn = btn('refresh', i18nT('common.reload'), () => { if (live) { stopLive(); startLive() } else loadStatic() })
   const sendToAi = (): void => {
     const sel = window.getSelection()?.toString().trim()
     const content = (sel || errorLines(rawLogs).join('\n') || rawLogs).slice(-16000)
@@ -77,7 +78,7 @@ export function renderContainerLogs(c: Container, target: HTMLElement): () => vo
 
   const head = document.createElement('div')
   head.className = 'docker-logs-head'
-  head.append(Object.assign(document.createElement('span'), { textContent: 'Logs' }), liveBtn, errBtn, refreshBtn, aiBtn)
+  head.append(Object.assign(document.createElement('span'), { textContent: i18nT('docker.logs') }), liveBtn, errBtn, refreshBtn, aiBtn)
 
   target.replaceChildren(head, pre)
   loadStatic()
@@ -88,7 +89,7 @@ export function renderContainerLogs(c: Container, target: HTMLElement): () => vo
 export async function renderContainerTerminal(c: Container, target: HTMLElement, onBack?: () => void): Promise<() => void> {
   const argv = await invoke<string[]>('docker_exec_argv', { container: c.name }).catch(() => null)
   if (!argv) {
-    target.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: 'No se pudo abrir la terminal.' }))
+    target.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: i18nT('docker.couldNotOpenTheTerminal') }))
     return () => {}
   }
   const term = createTerminalPanel('', '', onBack, argv)

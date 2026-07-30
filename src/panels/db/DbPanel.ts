@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { parseDockerPs } from '../../core/db/dockerPs'
 import { serverKind } from '../../core/db/serverKind'
@@ -48,10 +49,10 @@ export function createDbPanel(): { element: HTMLElement } {
   header.className = 'db-header'
   const title = document.createElement('span')
   title.className = 'db-title'
-  title.textContent = 'Bases de datos'
+  title.textContent = i18nT('db.databases')
   const refreshBtn = document.createElement('button')
   refreshBtn.className = 'db-action'
-  refreshBtn.title = 'Volver a detectar'
+  refreshBtn.title = i18nT('db.detectAgain')
   refreshBtn.innerHTML = icon('refresh')
   header.append(title, refreshBtn)
 
@@ -65,7 +66,7 @@ export function createDbPanel(): { element: HTMLElement } {
   root.append(header, body)
 
   const showDetail = (...nodes: HTMLElement[]): void => { detail.replaceChildren(...nodes) }
-  showDetail(note('Selecciona una tabla o colección para ver sus datos.', 'db-detail-hint'))
+  showDetail(note(i18nT('db.selectATableOrCollectionToViewIts'), 'db-detail-hint'))
 
   // ---- detection (same as before) ----
   const detectDocker = async (): Promise<DbServer[]> => {
@@ -127,7 +128,7 @@ export function createDbPanel(): { element: HTMLElement } {
   const renderRedisValue = (db: string, key: string, v: { kind: string; value: string }): void => {
     const pre = document.createElement('pre')
     pre.className = 'db-doc'
-    pre.textContent = v.value || '(vacío)'
+    pre.textContent = v.value || i18nT('db.empty')
     const scroll = document.createElement('div')
     scroll.className = 'db-docs'
     scroll.appendChild(pre)
@@ -135,7 +136,7 @@ export function createDbPanel(): { element: HTMLElement } {
   }
 
   const openData = async (s: DbServer, db: string, name: string): Promise<void> => {
-    showDetail(note('Cargando…', 'db-detail-loading'))
+    showDetail(note(i18nT('common.loading'), 'db-detail-loading'))
     try {
       if (isRedis(s)) {
         const v = await invoke<{ kind: string; value: string }>('db_docker_redis_value', { ...target(s), db, key: name, password: s.password ?? '' })
@@ -170,7 +171,7 @@ export function createDbPanel(): { element: HTMLElement } {
     // Send to the AI chat: the selection or, if there's none, the current view (table/docs).
     const askBtn = document.createElement('button')
     askBtn.className = 'db-action'
-    askBtn.title = 'Enviar al chat de IA'
+    askBtn.title = i18nT('common.sendToAiChat')
     askBtn.innerHTML = icon('chat')
     askBtn.addEventListener('click', () => {
       const selection = window.getSelection()?.toString().trim()
@@ -188,7 +189,7 @@ export function createDbPanel(): { element: HTMLElement } {
   const MAX_COLS = 60
   const MAX_ROWS = 200
   const renderResultTable = (data: TableData): HTMLElement => {
-    if (!data.columns.length) return note(data.rows.length ? 'OK.' : 'Sin resultados.', 'db-detail-hint')
+    if (!data.columns.length) return note(data.rows.length ? i18nT('db.ok') : i18nT('db.noResults'), 'db-detail-hint')
     const cols = data.columns.slice(0, MAX_COLS)
     const tbl = document.createElement('table')
     tbl.className = 'db-grid'
@@ -210,11 +211,11 @@ export function createDbPanel(): { element: HTMLElement } {
     tbl.append(thead, tbody)
 
     const overflow: string[] = []
-    if (data.columns.length > MAX_COLS) overflow.push(`${data.columns.length} columnas (se muestran ${MAX_COLS})`)
-    if (data.rows.length > MAX_ROWS) overflow.push(`${data.rows.length} filas (se muestran ${MAX_ROWS})`)
+    if (data.columns.length > MAX_COLS) overflow.push(i18nT('db.columnsShown', { count: data.columns.length, shown: MAX_COLS }))
+    if (data.rows.length > MAX_ROWS) overflow.push(i18nT('db.rowsShown', { count: data.rows.length, shown: MAX_ROWS }))
     if (!overflow.length) return tbl
     const wrap = document.createElement('div')
-    wrap.append(note(`Resultado grande: ${overflow.join(', ')}. Evita SELECT * en JOINs anchos; pide solo las columnas que necesites.`, 'db-detail-hint'), tbl)
+    wrap.append(note(i18nT('db.largeResult', { size: overflow.join(', ') }), 'db-detail-hint'), tbl)
     return wrap
   }
 
@@ -222,7 +223,7 @@ export function createDbPanel(): { element: HTMLElement } {
     const pre = document.createElement('pre')
     pre.className = 'db-doc'
     const text = out.trim()
-    pre.textContent = text.length > 200000 ? `${text.slice(0, 200000)}\n… (truncado)` : text || '(sin salida)'
+    pre.textContent = text.length > 200000 ? i18nT('db.truncated', { text: text.slice(0, 200000) }) : text || i18nT('db.noOutput')
     return pre
   }
 
@@ -289,21 +290,21 @@ export function createDbPanel(): { element: HTMLElement } {
     editor.className = 'db-query-input'
     editor.spellcheck = false
     editor.placeholder = isMongo(s)
-      ? 'db.miColeccion.find().limit(20).toArray()'
+      ? i18nT('db.mongoPlaceholder')
       : isRedis(s)
-        ? 'KEYS *        GET miclave        HGETALL mihash'
-        : 'SELECT * FROM mi_tabla LIMIT 100'
+        ? i18nT('db.redisPlaceholder')
+        : i18nT('db.sqlPlaceholder')
     const runBtn = document.createElement('button')
     runBtn.className = 'db-connect'
-    runBtn.textContent = 'Ejecutar  ⌘↵'
+    runBtn.textContent = i18nT('db.runShortcut')
 
     // (B) Generate the query with AI: sends the schema (tables + relations) to the
     // chat and you describe in natural language what you want.
     const aiBtn = document.createElement('button')
     aiBtn.className = 'db-connect db-query-ai'
-    aiBtn.textContent = 'Generar con IA'
+    aiBtn.textContent = i18nT('db.generateWithAi')
     aiBtn.addEventListener('click', async () => {
-      const noun = isMongo(s) ? 'Colecciones' : 'Tablas'
+      const noun = isMongo(s) ? i18nT('db.collections') : i18nT('db.tables')
       const noun2 = isMongo(s) ? 'colecciones' : 'tablas'
       const rels = await relationsReady
       let schema = `Base de datos ${KIND_LABEL[s.kind]} "${db}".\n${noun}: ${names.join(', ')}.`
@@ -330,7 +331,7 @@ export function createDbPanel(): { element: HTMLElement } {
           wrap.append(note(err, 'db-detail-error'))
           const fixBtn = document.createElement('button')
           fixBtn.className = 'db-connect db-query-ai'
-          fixBtn.textContent = '🔧 Arreglar con IA'
+          fixBtn.textContent = i18nT('db.fixWithAi')
           fixBtn.addEventListener('click', () => askAi(
             `La consulta falló al ejecutarse. Corrígela (usa get_columns/get_relations si hace falta) y devuélvela lista para ejecutar.\n\nConsulta:\n${query}\n\nError:\n${err}`,
             true, runner, tools,
@@ -386,12 +387,12 @@ export function createDbPanel(): { element: HTMLElement } {
       const picked: string[] = []
       const jLabel = document.createElement('span')
       jLabel.className = 'db-query-examples-label'
-      jLabel.textContent = '⛓ Unir tablas:'
+      jLabel.textContent = i18nT('db.joinTables')
       const jChips = document.createElement('span')
       jChips.className = 'db-join-chips'
       const jAdd = document.createElement('input')
       jAdd.className = 'db-join-add'
-      jAdd.placeholder = '+ añadir tabla…'
+      jAdd.placeholder = i18nT('db.addTable')
       const listId = `db-join-list-${++joinListSeq}`
       jAdd.setAttribute('list', listId)
       const jList = document.createElement('datalist')
@@ -399,7 +400,7 @@ export function createDbPanel(): { element: HTMLElement } {
       names.forEach(n => { const o = document.createElement('option'); o.value = n; jList.appendChild(o) })
       const jBuild = document.createElement('button')
       jBuild.className = 'db-connect'
-      jBuild.textContent = 'Construir JOIN'
+      jBuild.textContent = i18nT('db.buildJoin')
       const jMsg = document.createElement('span')
       jMsg.className = 'db-join-msg'
 
@@ -409,7 +410,7 @@ export function createDbPanel(): { element: HTMLElement } {
           const c = document.createElement('button')
           c.className = 'db-query-chip db-query-chip-rel'
           c.textContent = `${t} ✕`
-          c.title = 'Quitar'
+          c.title = i18nT('common.remove')
           c.addEventListener('click', () => { picked.splice(picked.indexOf(t), 1); renderPicked() })
           jChips.appendChild(c)
         })
@@ -425,7 +426,7 @@ export function createDbPanel(): { element: HTMLElement } {
         await relationsReady
         const rels: Relation[] = relations.map(f => ({ table: f.table, column: f.column, refTable: f.ref_table, refColumn: f.ref_column }))
         const plan = buildJoinPath(picked, rels)
-        if (!plan) { jMsg.textContent = 'Esas tablas no se conectan por sus relaciones.'; return }
+        if (!plan) { jMsg.textContent = i18nT('db.thoseTablesAreNotConnectedByTheirRelationships'); return }
         editor.value = buildJoinQuery(s, plan)
         editor.focus()
       })
@@ -441,12 +442,12 @@ export function createDbPanel(): { element: HTMLElement } {
     const CHIP_CAP = 200
     let activeGroup: Group = 'all'
     const chipItems: ChipItem[] = names.map(name => ({
-      group: 'table', label: name, title: 'Insertar consulta de ejemplo', fill: () => exampleQuery(s, name),
+      group: 'table', label: name, title: i18nT('db.insertExampleQuery'), fill: () => exampleQuery(s, name),
     }))
 
     const filter = document.createElement('input')
     filter.className = 'db-query-filter'
-    filter.placeholder = 'Filtrar tablas / relaciones…'
+    filter.placeholder = i18nT('db.filterTablesRelationships')
     filter.spellcheck = false
 
     const examples = document.createElement('div')
@@ -477,7 +478,7 @@ export function createDbPanel(): { element: HTMLElement } {
         examples.appendChild(chip)
       })
       if (matches.length > CHIP_CAP) {
-        examples.appendChild(note(`… y ${matches.length - CHIP_CAP} más. Filtra para acotar.`, 'db-detail-hint'))
+        examples.appendChild(note(i18nT('db.moreResults', { count: matches.length - CHIP_CAP }), 'db-detail-hint'))
       }
     }
     filter.addEventListener('input', renderChips)
@@ -487,7 +488,7 @@ export function createDbPanel(): { element: HTMLElement } {
     if (!isRedis(s)) {
       const groups: Array<[Group, string]> = [
         ['all', 'Todas'],
-        ['table', isMongo(s) ? 'Colecciones' : 'Tablas'],
+        ['table', isMongo(s) ? i18nT('db.collections') : i18nT('db.tables')],
         ['rel', 'Relaciones'],
       ]
       groups.forEach(([g, label]) => {
@@ -527,7 +528,7 @@ export function createDbPanel(): { element: HTMLElement } {
 
     const resultArea = document.createElement('div')
     resultArea.className = 'db-grid-scroll'
-    resultArea.append(note('Escribe una consulta y ejecútala.', 'db-detail-hint'))
+    resultArea.append(note(i18nT('db.writeAQueryAndRunIt'), 'db-detail-hint'))
 
     // Postgres safety net: quotes known table names with uppercase letters if
     // they come unquoted (Postgres would lowercase them and fail). Covers what
@@ -606,7 +607,7 @@ export function createDbPanel(): { element: HTMLElement } {
       const plan = renderResultTable(await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) }))
       const wrap = document.createElement('div')
       wrap.append(
-        note('Plan de ejecución. Filas altas o type=ALL (MySQL) / "Seq Scan" (Postgres) señalan la tabla que hace explotar el JOIN: añade un WHERE o quita esa tabla.', 'db-detail-hint'),
+        note(i18nT('db.executionPlanHighRowCountsOrTypeAll'), 'db-detail-hint'),
         plan,
       )
       return wrap
@@ -615,7 +616,7 @@ export function createDbPanel(): { element: HTMLElement } {
     const run = async (): Promise<void> => {
       const text = editor.value.trim()
       if (!text) return
-      resultArea.replaceChildren(note('Ejecutando…', 'db-detail-loading'))
+      resultArea.replaceChildren(note(i18nT('db.running'), 'db-detail-loading'))
       try {
         resultArea.replaceChildren(await executeQuery(text))
       } catch (e) {
@@ -624,10 +625,10 @@ export function createDbPanel(): { element: HTMLElement } {
         if (!isExplainable) { resultArea.replaceChildren(errEl); return }
         const explainBtn = document.createElement('button')
         explainBtn.className = 'db-query-run'
-        explainBtn.textContent = '🔍 Ver por qué (EXPLAIN)'
+        explainBtn.textContent = i18nT('db.seeWhyExplain')
         explainBtn.addEventListener('click', async () => {
           explainBtn.disabled = true
-          explainBtn.textContent = 'Analizando…'
+          explainBtn.textContent = i18nT('db.analyzing')
           try {
             resultArea.replaceChildren(await explain(text))
           } catch (e2) {
@@ -642,7 +643,7 @@ export function createDbPanel(): { element: HTMLElement } {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run() }
     })
 
-    showDetail(detailHead(`${db} · consulta`, KIND_LABEL[s.kind]), bar, resultArea)
+    showDetail(detailHead(i18nT('db.queryLabel', { name: db }), KIND_LABEL[s.kind]), bar, resultArea)
     editor.focus()
   }
 
@@ -705,7 +706,7 @@ export function createDbPanel(): { element: HTMLElement } {
     const scroll = document.createElement('div')
     scroll.className = 'db-grid-scroll'
     if (!data.columns.length) {
-      scroll.append(note('Sin filas.'))
+      scroll.append(note(i18nT('db.noRows')))
     } else {
       const tbl = document.createElement('table')
       tbl.className = 'db-grid'
@@ -736,7 +737,7 @@ export function createDbPanel(): { element: HTMLElement } {
           actions.className = 'db-row-actions'
           const del = document.createElement('button')
           del.className = 'db-del'
-          del.title = 'Borrar fila'
+          del.title = i18nT('db.deleteRow')
           del.innerHTML = icon('trash')
           del.addEventListener('click', () => deleteRow(s, db, table, data.columns, row, pkIdx, tr))
           actions.appendChild(del)
@@ -747,8 +748,8 @@ export function createDbPanel(): { element: HTMLElement } {
       tbl.append(thead, tbody)
       scroll.appendChild(tbl)
     }
-    const hint = editable ? 'doble clic para editar' : 'sin PK · solo lectura'
-    showDetail(detailHead(`${db}.${table}`, `${data.rows.length} filas · ${hint}`), scroll)
+    const hint = editable ? i18nT('db.editHint') : i18nT('db.readOnlyHint')
+    showDetail(detailHead(`${db}.${table}`, i18nT('db.rowsSummary', { count: data.rows.length, suffix: hint })), scroll)
   }
 
   const editDoc = (s: DbServer, db: string, coll: string, pre: HTMLElement): void => {
@@ -760,10 +761,10 @@ export function createDbPanel(): { element: HTMLElement } {
     actions.className = 'db-doc-actions'
     const save = document.createElement('button')
     save.className = 'db-connect'
-    save.textContent = 'Guardar'
+    save.textContent = i18nT('common.save')
     const cancel = document.createElement('button')
     cancel.className = 'db-doc-cancel'
-    cancel.textContent = 'Cancelar'
+    cancel.textContent = i18nT('common.cancel')
     actions.append(save, cancel)
     const wrap = document.createElement('div')
     wrap.className = 'db-doc-wrap'
@@ -779,7 +780,7 @@ export function createDbPanel(): { element: HTMLElement } {
     }
     cancel.addEventListener('click', () => restore(original))
     save.addEventListener('click', async () => {
-      if (!confirm('Reemplazar el documento (por _id)?')) return
+      if (!confirm(i18nT('db.replaceTheDocumentById'))) return
       try {
         await invoke('db_docker_mongo_update', { ...target(s), db, collection: coll, doc: ta.value, ...creds(s) })
         restore(prettyJson(ta.value))
@@ -790,7 +791,7 @@ export function createDbPanel(): { element: HTMLElement } {
   }
 
   const deleteDoc = async (s: DbServer, db: string, coll: string, item: HTMLElement, current: string): Promise<void> => {
-    if (!confirm('¿Borrar este documento?')) return
+    if (!confirm(i18nT('db.deleteThisDocument'))) return
     try {
       await invoke('db_docker_mongo_delete', { ...target(s), db, collection: coll, doc: current, ...creds(s) })
       item.remove()
@@ -803,14 +804,14 @@ export function createDbPanel(): { element: HTMLElement } {
     const scroll = document.createElement('div')
     scroll.className = 'db-docs'
     if (!docs.length) {
-      scroll.append(note('Sin documentos.'))
+      scroll.append(note(i18nT('db.noDocuments')))
     } else {
       docs.forEach(d => {
         const item = document.createElement('div')
         item.className = 'db-doc-item'
         const del = document.createElement('button')
         del.className = 'db-del db-doc-del'
-        del.title = 'Borrar documento'
+        del.title = i18nT('db.deleteDocument')
         del.innerHTML = icon('trash')
         del.addEventListener('click', () => deleteDoc(s, db, coll, item, item.querySelector('.db-doc')?.textContent ?? prettyJson(d)))
         const pre = document.createElement('pre')
@@ -821,7 +822,7 @@ export function createDbPanel(): { element: HTMLElement } {
         scroll.appendChild(item)
       })
     }
-    showDetail(detailHead(`${db}.${coll}`, `${docs.length} documentos · doble clic para editar`), scroll)
+    showDetail(detailHead(`${db}.${coll}`, i18nT('db.documentsSummary', { name: docs.length })), scroll)
   }
 
   // ---- tree ----
@@ -868,25 +869,25 @@ export function createDbPanel(): { element: HTMLElement } {
   }
 
   const credsForm = (container: HTMLElement, s: DbServer, retry: () => void): void => {
-    container.replaceChildren(note('Conexión fallida. Prueba con otras credenciales:', 'db-error'))
+    container.replaceChildren(note(i18nT('db.connectionFailedTryDifferentCredentials'), 'db-error'))
     const userIn = document.createElement('input')
     userIn.className = 'db-input'
-    userIn.placeholder = 'usuario'
+    userIn.placeholder = i18nT('db.userPlaceholder')
     userIn.value = s.user ?? ''
     const passIn = document.createElement('input')
     passIn.className = 'db-input'
     passIn.type = 'password'
-    passIn.placeholder = 'contraseña'
+    passIn.placeholder = i18nT('db.password')
     passIn.value = s.password ?? ''
     const btn = document.createElement('button')
     btn.className = 'db-connect'
-    btn.textContent = 'Conectar'
+    btn.textContent = i18nT('common.connect')
     btn.addEventListener('click', () => { s.user = userIn.value; s.password = passIn.value; retry() })
     container.append(userIn, passIn, btn)
   }
 
   const populateTables = async (s: DbServer, db: string, container: HTMLElement): Promise<void> => {
-    container.replaceChildren(note('Cargando…'))
+    container.replaceChildren(note(i18nT('common.loading')))
     try {
       const names = await listTables(s, db)
       container.replaceChildren()
@@ -895,7 +896,7 @@ export function createDbPanel(): { element: HTMLElement } {
       queryRow.classList.add('db-leaf', 'db-query-leaf')
       queryRow.addEventListener('click', () => { selectLeaf(queryRow); openQuery(s, db, names) })
       container.appendChild(queryRow)
-      if (!names.length) { container.append(note('(sin tablas)')); return }
+      if (!names.length) { container.append(note(i18nT('db.noTables'))); return }
       names.forEach(name => {
         const row = rowEl(2, isMongo(s) || isRedis(s) ? 'list' : 'table', name, false)
         row.classList.add('db-leaf')
@@ -908,11 +909,11 @@ export function createDbPanel(): { element: HTMLElement } {
   }
 
   const populateDatabases = async (s: DbServer, container: HTMLElement): Promise<void> => {
-    container.replaceChildren(note('Conectando…'))
+    container.replaceChildren(note(i18nT('db.connecting')))
     try {
       const names = await listDatabases(s)
       container.replaceChildren()
-      if (!names.length) { container.append(note(isRedis(s) ? 'Redis vacío (sin claves).' : 'Sin bases.')); return }
+      if (!names.length) { container.append(note(isRedis(s) ? i18nT('db.emptyRedisDatabaseNoKeys') : i18nT('db.noDatabases'))); return }
       names.forEach(db => {
         const row = rowEl(1, 'database', isRedis(s) ? `db${db}` : db, true)
         appendExpandable(container, row, child => populateTables(s, db, child))
@@ -925,21 +926,21 @@ export function createDbPanel(): { element: HTMLElement } {
   const renderServers = (servers: DbServer[]): void => {
     tree.replaceChildren()
     if (!servers.length) {
-      tree.append(note('No se detectaron servidores. ¿Está Docker corriendo o hay alguna base de datos local?', 'db-hint'))
+      tree.append(note(i18nT('db.noServersWereDetectedIsDockerRunningOr'), 'db-hint'))
       return
     }
     servers.forEach(s => {
       const row = rowEl(0, 'database', KIND_LABEL[s.kind], true)
       const badge = document.createElement('span')
       badge.className = `db-server-badge db-badge-${s.source}`
-      badge.textContent = s.source === 'docker' ? (s.container ?? 'docker') : 'local'
+      badge.textContent = s.source === 'docker' ? (s.container ?? i18nT('db.dockerSource')) : i18nT('db.localSource')
       const addr = document.createElement('span')
       addr.className = 'db-server-addr'
       addr.textContent = s.source === 'docker' ? `:${s.port}` : `${s.host}:${s.port}`
       row.append(badge, addr)
       appendExpandable(tree, row, async child => {
-        if (!LISTABLE.includes(s.kind)) { child.replaceChildren(note('Listado no soportado todavía.')); return }
-        child.replaceChildren(note('Conectando…'))
+        if (!LISTABLE.includes(s.kind)) { child.replaceChildren(note(i18nT('db.listingIsNotSupportedYet'))); return }
+        child.replaceChildren(note(i18nT('db.connecting')))
         await resolveCreds(s)
         populateDatabases(s, child)
       })
@@ -947,7 +948,7 @@ export function createDbPanel(): { element: HTMLElement } {
   }
 
   const detect = async (): Promise<void> => {
-    tree.replaceChildren(note('Detectando…'))
+    tree.replaceChildren(note(i18nT('db.detecting')))
     const docker = await detectDocker()
     const local = await detectLocal(new Set(docker.map(s => s.port)))
     renderServers([...docker, ...local])

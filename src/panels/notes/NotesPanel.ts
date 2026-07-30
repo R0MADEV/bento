@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { askAi } from '../../ui/askAi'
 import { parseNote, serializeNote, type ParsedNote } from '../../core/notes/noteFile'
@@ -23,7 +24,7 @@ export function createNotesPanel() {
   addBtn.innerHTML = `${icon('plus')}<span>Nueva nota</span>`
   const search = document.createElement('input')
   search.className = 'notes-search'
-  search.placeholder = 'Buscar…'
+  search.placeholder = i18nT('notes.search')
   const list = document.createElement('div')
   list.className = 'notes-list'
   sidebar.append(addBtn, search, list)
@@ -34,14 +35,14 @@ export function createNotesPanel() {
   header.className = 'notes-header'
   const titleInput = document.createElement('input')
   titleInput.className = 'notes-title'
-  titleInput.placeholder = 'Título'
+  titleInput.placeholder = i18nT('common.title')
   const layoutBtn = document.createElement('button')
   layoutBtn.className = 'notes-toggle'
-  layoutBtn.title = 'Vista'
+  layoutBtn.title = i18nT('common.view')
   layoutBtn.innerHTML = icon('eye')
   const askAiBtn = document.createElement('button')
   askAiBtn.className = 'notes-toggle'
-  askAiBtn.title = 'Preguntar a la IA sobre esta nota'
+  askAiBtn.title = i18nT('notes.askAiAboutThisNote')
   askAiBtn.innerHTML = icon('chat')
   askAiBtn.addEventListener('click', () => {
     const content = body.value.trim()
@@ -54,16 +55,16 @@ export function createNotesPanel() {
   metaRow.className = 'notes-meta'
   const categoryInput = document.createElement('input')
   categoryInput.className = 'notes-meta-input'
-  categoryInput.placeholder = 'Categoría'
+  categoryInput.placeholder = i18nT('common.category')
   const tagsInput = document.createElement('input')
   tagsInput.className = 'notes-meta-input'
-  tagsInput.placeholder = 'tags: a, b, c'
+  tagsInput.placeholder = i18nT('notes.tagsPlaceholder')
   metaRow.append(categoryInput, tagsInput)
   const bodyWrap = document.createElement('div')
   bodyWrap.className = 'notes-bodywrap'
   const styleBody = (ta: HTMLTextAreaElement): void => {
     ta.className = 'notes-textarea'
-    ta.placeholder = 'Escribe… (markdown)'
+    ta.placeholder = i18nT('notes.writeMarkdown')
     ta.spellcheck = false
   }
   let body = document.createElement('textarea')
@@ -120,7 +121,7 @@ export function createNotesPanel() {
     }
     const map = new Map<string, Entry[]>()
     entries.filter(matches).forEach(e => {
-      const cat = e.note.category.trim() || 'Sin categoría'
+      const cat = e.note.category.trim() || i18nT('notes.uncategorized')
       const items = map.get(cat) ?? []
       items.push(e)
       map.set(cat, items)

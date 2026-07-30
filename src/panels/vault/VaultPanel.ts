@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { icon } from '../../ui/icons'
 
@@ -47,20 +48,20 @@ export function createVaultPanel(): { element: HTMLElement } {
     lockIcon.innerHTML = icon('lock')
     const title = document.createElement('div')
     title.className = 'vault-lock-title'
-    title.textContent = exists ? 'Vault bloqueado' : 'Crear vault'
+    title.textContent = exists ? i18nT('vault.vaultLocked') : i18nT('vault.createVault')
     const sub = document.createElement('div')
     sub.className = 'vault-lock-sub'
-    sub.textContent = exists ? 'Introduce tu contraseña maestra para acceder.' : 'Elige una contraseña maestra para proteger tus credenciales.'
-    const pwField = field('Contraseña maestra', '', 'password')
+    sub.textContent = exists ? i18nT('vault.enterYourMasterPasswordToContinue') : i18nT('vault.chooseAMasterPasswordToProtectYourCredentials')
+    const pwField = field(i18nT('vault.masterPassword'), '', 'password')
     const status = statusEl()
     const btn = document.createElement('button')
     btn.className = 'vault-primary'
-    btn.textContent = exists ? 'Desbloquear' : 'Crear vault'
+    btn.textContent = exists ? i18nT('vault.unlock') : i18nT('vault.createVault')
     btn.addEventListener('click', async () => {
       const pw = pwField.input.value
       if (!pw) return
       btn.disabled = true
-      status.textContent = exists ? 'Verificando…' : 'Creando…'
+      status.textContent = exists ? i18nT('vault.verifying') : i18nT('common.creating')
       try {
         if (exists) {
           await invoke('vault_unlock', { password: pw })
@@ -86,9 +87,9 @@ export function createVaultPanel(): { element: HTMLElement } {
     header.className = 'vault-header'
     const titleEl = document.createElement('span')
     titleEl.className = 'vault-title'
-    titleEl.textContent = 'Vault'
-    const addBtn = mkBtn('plus', 'Añadir credencial', () => renderForm())
-    const lockBtn = mkBtn('lock', 'Bloquear', async () => {
+    titleEl.textContent = i18nT('vault.panelTitle')
+    const addBtn = mkBtn('plus', i18nT('vault.addCredential'), () => renderForm())
+    const lockBtn = mkBtn('lock', i18nT('vault.lock'), async () => {
       await invoke('vault_lock')
       renderLock()
     })
@@ -100,7 +101,7 @@ export function createVaultPanel(): { element: HTMLElement } {
     if (!entries.length) {
       const empty = document.createElement('div')
       empty.className = 'vault-empty'
-      empty.textContent = 'Sin credenciales. Usa + para añadir una.'
+      empty.textContent = i18nT('vault.noCredentialsYetUseToAddOne')
       list.append(empty)
     } else {
       entries.forEach(e => list.append(makeRow(e)))
@@ -119,13 +120,13 @@ export function createVaultPanel(): { element: HTMLElement } {
 
     const title = document.createElement('div')
     title.className = 'vault-confirm-title'
-    title.textContent = `Eliminar "${e.service}"`
+    title.textContent = i18nT('vault.deleteService', { service: e.service })
 
     const sub = document.createElement('div')
     sub.className = 'vault-lock-sub'
-    sub.textContent = 'Introduce tu contraseña maestra para confirmar.'
+    sub.textContent = i18nT('vault.enterYourMasterPasswordToConfirm')
 
-    const pwField = field('Contraseña maestra', '', 'password')
+    const pwField = field(i18nT('vault.masterPassword'), '', 'password')
     const status = statusEl()
 
     const actions = document.createElement('div')
@@ -133,20 +134,20 @@ export function createVaultPanel(): { element: HTMLElement } {
 
     const cancelBtn = document.createElement('button')
     cancelBtn.className = 'vault-transition-btn'
-    cancelBtn.textContent = 'Cancelar'
+    cancelBtn.textContent = i18nT('common.cancel')
     cancelBtn.addEventListener('click', () => overlay.remove())
 
     const confirmBtn = document.createElement('button')
     confirmBtn.className = 'vault-primary vault-danger'
-    confirmBtn.textContent = 'Eliminar'
+    confirmBtn.textContent = i18nT('common.delete')
     confirmBtn.addEventListener('click', async () => {
       const pw = pwField.input.value
       if (!pw) return
       confirmBtn.disabled = true
-      status.textContent = 'Verificando…'
+      status.textContent = i18nT('vault.verifying')
       const ok = await invoke<boolean>('vault_verify_password', { password: pw })
       if (!ok) {
-        status.textContent = 'Contraseña incorrecta.'
+        status.textContent = i18nT('vault.incorrectPassword')
         confirmBtn.disabled = false
         return
       }
@@ -188,23 +189,23 @@ export function createVaultPanel(): { element: HTMLElement } {
     actions.className = 'vault-row-actions'
 
     // Copy username
-    const copyUser = mkBtn('list', 'Copiar usuario', async () => {
+    const copyUser = mkBtn('list', i18nT('vault.copyUsername'), async () => {
       await navigator.clipboard.writeText(e.username)
       flash(copyUser)
     })
 
     // Copy password
-    const copyPw = mkBtn('copy', 'Copiar contraseña', async () => {
+    const copyPw = mkBtn('copy', i18nT('vault.copyPassword'), async () => {
       const pw = await invoke<string>('vault_get_password', { id: e.id })
       await navigator.clipboard.writeText(pw)
       flash(copyPw)
     })
 
     // Edit
-    const editBtn = mkBtn('settings', 'Editar', () => renderForm(e))
+    const editBtn = mkBtn('settings', i18nT('vault.edit'), () => renderForm(e))
 
     // Delete — requires master password confirmation
-    const delBtn = mkBtn('trash', 'Eliminar', () => confirmDelete(e))
+    const delBtn = mkBtn('trash', i18nT('common.delete'), () => confirmDelete(e))
 
     actions.append(copyUser, copyPw, editBtn, delBtn)
     row.append(avatar, info, actions)
@@ -222,21 +223,21 @@ export function createVaultPanel(): { element: HTMLElement } {
     header.className = 'vault-header'
     const titleEl = document.createElement('span')
     titleEl.className = 'vault-title'
-    titleEl.textContent = existing ? 'Editar credencial' : 'Nueva credencial'
-    const backBtn = mkBtn('arrow-left', 'Volver', () => renderList())
+    titleEl.textContent = existing ? i18nT('vault.editCredential') : i18nT('vault.newCredential')
+    const backBtn = mkBtn('arrow-left', i18nT('common.back'), () => renderList())
     header.append(titleEl, backBtn)
 
-    const service = field('Servicio', existing?.service ?? '')
-    service.input.placeholder = 'GitHub, AWS, servidor prod…'
-    const username = field('Usuario / Email', existing?.username ?? '')
-    const password = field('Contraseña', '', 'password')
-    password.input.placeholder = existing ? '(dejar vacío para no cambiar)' : ''
-    const url = field('URL (opcional)', existing?.url ?? '')
-    const notes = field('Notas (opcional)', existing?.notes ?? '')
+    const service = field(i18nT('vault.service'), existing?.service ?? '')
+    service.input.placeholder = i18nT('vault.servicePlaceholder')
+    const username = field(i18nT('vault.usernameEmail'), existing?.username ?? '')
+    const password = field(i18nT('vault.password'), '', 'password')
+    password.input.placeholder = existing ? i18nT('vault.leaveEmptyToKeepUnchanged') : ''
+    const url = field(i18nT('vault.optionalUrl'), existing?.url ?? '')
+    const notes = field(i18nT('vault.optionalNotes'), existing?.notes ?? '')
 
     // Toggle show/hide password. When revealing an existing entry, it fetches the
     // stored password (not preloaded for security; only when asked to view it).
-    const togglePw = mkBtn('eye', 'Mostrar contraseña', async () => {
+    const togglePw = mkBtn('eye', i18nT('vault.showPassword'), async () => {
       const revealing = password.input.type === 'password'
       if (revealing && existing && !password.input.value) {
         password.input.value = await invoke<string>('vault_get_password', { id: existing.id }).catch(() => '')
@@ -250,15 +251,15 @@ export function createVaultPanel(): { element: HTMLElement } {
     const status = statusEl()
     const save = document.createElement('button')
     save.className = 'vault-primary'
-    save.textContent = existing ? 'Guardar cambios' : 'Guardar'
+    save.textContent = existing ? i18nT('vault.saveChanges') : i18nT('common.save')
     save.addEventListener('click', async () => {
       const s = service.input.value.trim()
       const u = username.input.value.trim()
       const p = password.input.value
-      if (!s || !u) { status.textContent = 'Servicio y usuario son obligatorios.'; return }
-      if (!existing && !p) { status.textContent = 'La contraseña es obligatoria.'; return }
+      if (!s || !u) { status.textContent = i18nT('vault.serviceAndUsernameAreRequired'); return }
+      if (!existing && !p) { status.textContent = i18nT('vault.passwordIsRequired'); return }
       save.disabled = true
-      status.textContent = 'Guardando…'
+      status.textContent = i18nT('vault.saving')
       try {
         if (existing) {
           await invoke('vault_update', { id: existing.id, service: s, username: u, password: p, url: url.input.value.trim(), notes: notes.input.value.trim() })

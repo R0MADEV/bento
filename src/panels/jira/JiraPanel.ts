@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { basicAuth } from '../../core/jira/auth'
@@ -97,16 +98,16 @@ export function createJiraPanel(): { element: HTMLElement } {
   }
 
   const renderConfig = (): void => {
-    const site = field('Site (https://tuorg.atlassian.net)', cfg.site)
-    const email = field('Email', cfg.email)
-    const token = field('API token', cfg.token, 'password')
+    const site = field(i18nT('jira.sitePlaceholder'), cfg.site)
+    const email = field(i18nT('jira.email'), cfg.email)
+    const token = field(i18nT('jira.apiToken'), cfg.token, 'password')
     const hint = document.createElement('a')
     hint.className = 'jira-hint-link'
-    hint.textContent = 'Generar API token →'
+    hint.textContent = i18nT('jira.generateApiToken')
     hint.addEventListener('click', () => openUrl('https://id.atlassian.com/manage-profile/security/api-tokens').catch(() => {}))
     const save = document.createElement('button')
     save.className = 'jira-primary'
-    save.textContent = 'Conectar'
+    save.textContent = i18nT('common.connect')
     save.addEventListener('click', async () => {
       const next = { site: site.input.value.trim(), email: email.input.value.trim(), token: token.input.value.trim() }
       if (!isConfigured(next)) return
@@ -117,7 +118,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     const body = document.createElement('div')
     body.className = 'jira-config'
     body.append(site.row, email.row, token.row, hint, save)
-    show(header('Conectar Jira'), body)
+    show(header(i18nT('jira.connectJira')), body)
   }
 
   const statusClass = (cat: string): string =>
@@ -127,16 +128,16 @@ export function createJiraPanel(): { element: HTMLElement } {
     const search = document.createElement('input')
     search.className = 'jira-search'
     search.value = jql
-    search.placeholder = 'JQL…'
+    search.placeholder = i18nT('jira.jqlPlaceholder')
     const list = document.createElement('div')
     list.className = 'jira-list'
 
     const load = async (q: string): Promise<void> => {
-      list.replaceChildren(note('Cargando…'))
+      list.replaceChildren(note(i18nT('common.loading')))
       try {
         const issues = await searchIssues(q)
         list.replaceChildren()
-        if (!issues.length) { list.append(note('Sin resultados.')); return }
+        if (!issues.length) { list.append(note(i18nT('jira.noResults'))); return }
         issues.forEach(it => {
           const row = document.createElement('button')
           row.className = 'jira-issue'
@@ -160,10 +161,10 @@ export function createJiraPanel(): { element: HTMLElement } {
 
     search.addEventListener('keydown', e => { if (e.key === 'Enter') load(search.value) })
     show(
-      header('Jira',
-        iconBtn('plus', 'Nueva tarjeta', () => renderCreate()),
-        iconBtn('refresh', 'Recargar', () => load(search.value)),
-        iconBtn('settings', 'Conexión', () => renderConfig()),
+      header(i18nT('jira.panelTitle'),
+        iconBtn('plus', i18nT('jira.newIssue'), () => renderCreate()),
+        iconBtn('refresh', i18nT('common.reload'), () => load(search.value)),
+        iconBtn('settings', i18nT('common.connection'), () => renderConfig()),
       ),
       search,
       list,
@@ -172,8 +173,8 @@ export function createJiraPanel(): { element: HTMLElement } {
   }
 
   const renderDetail = async (it: JiraIssue): Promise<void> => {
-    const back = iconBtn('arrow-left', 'Volver', () => renderList())
-    const openBtn = iconBtn('globe', 'Abrir en Jira', () => openUrl(browseUrl(cfg.site, it.key)).catch(() => {}))
+    const back = iconBtn('arrow-left', i18nT('common.back'), () => renderList())
+    const openBtn = iconBtn('globe', i18nT('jira.openInJira'), () => openUrl(browseUrl(cfg.site, it.key)).catch(() => {}))
     const meta = document.createElement('div')
     meta.className = 'jira-detail-meta'
     const key = document.createElement('span')
@@ -191,97 +192,97 @@ export function createJiraPanel(): { element: HTMLElement } {
     summary.textContent = it.summary
     const desc = document.createElement('pre')
     desc.className = 'jira-detail-desc'
-    desc.textContent = 'Cargando descripción…'
-    fetchDescription(it.key).then(d => { desc.textContent = d || '(sin descripción)' }).catch(() => { desc.textContent = '' })
+    desc.textContent = i18nT('jira.loadingDescription')
+    fetchDescription(it.key).then(d => { desc.textContent = d || i18nT('jira.noDescription') }).catch(() => { desc.textContent = '' })
 
     const body = document.createElement('div')
     body.className = 'jira-detail'
     body.append(meta, summary, desc)
-    show(header('Detalle', openBtn, back), body)
+    show(header(i18nT('common.details'), openBtn, back), body)
   }
 
   const renderCreate = (): void => {
-    const back = iconBtn('arrow-left', 'Volver', () => renderList())
-    const project = field('Proyecto (clave, ej. BEN)')
-    const type = field('Tipo', 'Task')
-    const summary = field('Resumen')
-    const assignee = field('Asignar a (email, opcional)', cfg.email)
+    const back = iconBtn('arrow-left', i18nT('common.back'), () => renderList())
+    const project = field(i18nT('jira.projectKeyEGBen'))
+    const type = field(i18nT('common.type'), i18nT('jira.taskIssueType'))
+    const summary = field(i18nT('common.summary'))
+    const assignee = field(i18nT('jira.assignToEmailOptional'), cfg.email)
     const descLabel = document.createElement('label')
     descLabel.className = 'jira-field'
-    descLabel.textContent = 'Descripción'
+    descLabel.textContent = i18nT('jira.description')
     const desc = document.createElement('textarea')
     desc.className = 'jira-textarea'
     descLabel.appendChild(desc)
     const create = document.createElement('button')
     create.className = 'jira-primary'
-    create.textContent = 'Crear tarjeta'
+    create.textContent = i18nT('jira.createIssue')
     const status = note('')
     create.addEventListener('click', async () => {
       const p = project.input.value.trim()
       const s = summary.input.value.trim()
-      if (!p || !s) { status.textContent = 'Proyecto y resumen son obligatorios.'; return }
-      status.textContent = 'Creando…'
+      if (!p || !s) { status.textContent = i18nT('jira.projectAndSummaryAreRequired'); return }
+      status.textContent = i18nT('common.creating')
       try {
         const email = assignee.input.value.trim()
         const accountId = email ? await resolveAccountId(email).catch(() => null) : null
-        if (email && !accountId) { status.textContent = `No se encontró el usuario "${email}" en Jira.`; return }
+        if (email && !accountId) { status.textContent = i18nT('jira.userNotFound', { email }); return }
         const res = await createIssue(p, type.input.value.trim() || 'Task', s, desc.value, accountId ?? undefined) as { key?: string }
-        status.textContent = `Creada: ${res?.key ?? 'ok'}`
+        status.textContent = i18nT('jira.created', { key: res?.key ?? 'ok' })
       } catch (e) {
         status.textContent = String(e)
       }
     })
     const bulkLink = document.createElement('a')
     bulkLink.className = 'jira-hint-link'
-    bulkLink.textContent = 'Importar varias →'
+    bulkLink.textContent = i18nT('jira.importMultiple')
     bulkLink.addEventListener('click', () => renderBulk())
     const body = document.createElement('div')
     body.className = 'jira-config'
     body.append(project.row, type.row, summary.row, assignee.row, descLabel, create, bulkLink, status)
-    show(header('Nueva tarjeta', back), body)
+    show(header(i18nT('jira.newIssue'), back), body)
   }
 
   const renderBulk = (): void => {
-    const back = iconBtn('arrow-left', 'Volver', () => renderCreate())
-    const project = field('Proyecto (clave, ej. KAN)')
-    const type = field('Tipo', 'Task')
-    const assignee = field('Asignar a (email, opcional)', cfg.email)
+    const back = iconBtn('arrow-left', i18nT('common.back'), () => renderCreate())
+    const project = field(i18nT('jira.projectKeyEGKan'))
+    const type = field(i18nT('common.type'), i18nT('jira.taskIssueType'))
+    const assignee = field(i18nT('jira.assignToEmailOptional'), cfg.email)
     const taLabel = document.createElement('label')
     taLabel.className = 'jira-field'
-    taLabel.textContent = 'Una tarjeta por línea — formato: resumen | descripción'
+    taLabel.textContent = i18nT('jira.oneIssuePerLineFormatSummaryDescription')
     const ta = document.createElement('textarea')
     ta.className = 'jira-textarea'
-    ta.placeholder = 'Panel Docker | gestionar contenedores\nSQL runner | ejecutar queries propias'
+    ta.placeholder = i18nT('common.dockerPanelManageContainersSqlRunnerRunCustom')
     taLabel.appendChild(ta)
     const status = note('')
     const create = document.createElement('button')
     create.className = 'jira-primary'
-    create.textContent = 'Crear todas'
+    create.textContent = i18nT('jira.createAll')
     create.addEventListener('click', async () => {
       const p = project.input.value.trim()
       const t = type.input.value.trim() || 'Task'
       const issues = parseBulkIssues(ta.value)
-      if (!p || !issues.length) { status.textContent = 'Proyecto y al menos una línea son obligatorios.'; return }
+      if (!p || !issues.length) { status.textContent = i18nT('jira.projectAndAtLeastOneLineAreRequired'); return }
       let accountId: string | null = null
       const email = assignee.input.value.trim()
       if (email) {
-        status.textContent = 'Resolviendo asignado…'
+        status.textContent = i18nT('jira.resolvingAssignee')
         accountId = await resolveAccountId(email).catch(() => null)
-        if (!accountId) { status.textContent = `No se encontró el usuario "${email}" en Jira.`; return }
+        if (!accountId) { status.textContent = i18nT('jira.userNotFound', { email }); return }
       }
       let ok = 0
       const errors: string[] = []
       for (const it of issues) {
-        status.textContent = `Creando ${ok + errors.length + 1}/${issues.length}…`
+        status.textContent = i18nT('jira.creatingProgress', { current: ok + errors.length + 1, total: issues.length })
         try { await createIssue(p, t, it.summary, it.description, accountId ?? undefined); ok++ }
         catch (e) { errors.push(`${it.summary}: ${String(e).slice(0, 80)}`) }
       }
-      status.textContent = `Creadas ${ok}/${issues.length}.${errors.length ? ' Errores: ' + errors.join(' · ') : ''}`
+      status.textContent = i18nT('jira.createdSummary', { created: ok, total: issues.length, errors: errors.length ? i18nT('jira.errors', { errors: errors.join(' · ') }) : '' })
     })
     const body = document.createElement('div')
     body.className = 'jira-config'
     body.append(project.row, type.row, assignee.row, taLabel, create, status)
-    show(header('Importar tarjetas', back), body)
+    show(header(i18nT('jira.importIssues'), back), body)
   }
 
   // ---- boot ----

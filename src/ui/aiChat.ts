@@ -7,6 +7,7 @@ import {
 import { getAiKey, setAiKey, vaultStatus, type VaultStatus } from './aiKeys'
 import { splitLines, deltaFromLine, isDoneLine } from '../core/ai/sseStream'
 import { renderMarkdown } from '../core/notes/renderMarkdown'
+import { t as i18nT } from '../i18n'
 import { expandInput, SLASH_COMMANDS } from '../core/ai/prompts'
 import { showContextMenu } from './contextMenu'
 import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from './askAi'
@@ -26,7 +27,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
   const toggle = document.createElement('button')
   toggle.className = 'ai-fab'
-  toggle.title = 'Asistente IA (⌘I)'
+  toggle.title = i18nT('common.aiAssistantI')
   toggle.innerHTML = icon('chat')
   root.appendChild(toggle)
 
@@ -50,23 +51,23 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   const modelSelect = document.createElement('input')
   modelSelect.className = 'ai-model'
   modelSelect.setAttribute('list', 'ai-model-list')
-  modelSelect.placeholder = 'modelo'
+  modelSelect.placeholder = i18nT('common.model')
   const modelList = document.createElement('datalist')
   modelList.id = 'ai-model-list'
 
   const expandBtn = document.createElement('button')
   expandBtn.className = 'ai-icon-btn'
-  expandBtn.title = 'Ensanchar / estrechar'
+  expandBtn.title = i18nT('common.expandShrink')
   expandBtn.innerHTML = icon('expand')
 
   const settingsBtn = document.createElement('button')
   settingsBtn.className = 'ai-icon-btn'
-  settingsBtn.title = 'Ajustes'
+  settingsBtn.title = i18nT('common.settings2')
   settingsBtn.innerHTML = icon('settings')
 
   const closeBtn = document.createElement('button')
   closeBtn.className = 'ai-icon-btn'
-  closeBtn.title = 'Cerrar'
+  closeBtn.title = i18nT('common.close')
   closeBtn.innerHTML = icon('x')
 
   header.append(providerSelect, modelSelect, modelList, expandBtn, settingsBtn, closeBtn)
@@ -76,16 +77,16 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   settings.className = 'ai-settings hidden'
   const baseUrlInput = document.createElement('input')
   baseUrlInput.className = 'ai-field'
-  baseUrlInput.placeholder = 'https://api.openai.com/v1'
+  baseUrlInput.placeholder = i18nT('common.aiBaseUrlPlaceholder')
   const keyInput = document.createElement('input')
   keyInput.className = 'ai-field'
   keyInput.type = 'password'
-  keyInput.placeholder = 'API key'
+  keyInput.placeholder = i18nT('common.apiKey')
   keyInput.autocomplete = 'off'
   const systemInput = document.createElement('textarea')
   systemInput.className = 'ai-field ai-system'
   systemInput.rows = 2
-  systemInput.placeholder = 'Ej: Eres un asistente conciso que responde en español.'
+  systemInput.placeholder = i18nT('common.aiSystemPlaceholder')
   const vaultNotice = document.createElement('div')
   vaultNotice.className = 'ai-vault-notice hidden'
   settings.append(
@@ -104,12 +105,12 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   inputRow.className = 'ai-input-row'
   const templatesBtn = document.createElement('button')
   templatesBtn.className = 'ai-icon-btn ai-templates'
-  templatesBtn.title = 'Plantillas (/comandos)'
+  templatesBtn.title = i18nT('common.templatesCommands')
   templatesBtn.textContent = '/'
   const input = document.createElement('textarea')
   input.className = 'ai-input'
   input.rows = 1
-  input.placeholder = 'Escribe un mensaje…  (Enter envía, Shift+Enter salto)'
+  input.placeholder = i18nT('common.aiMessagePlaceholder')
   const sendBtn = document.createElement('button')
   sendBtn.className = 'ai-send'
   sendBtn.innerHTML = icon('send')
@@ -136,16 +137,18 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     modelSelect.value = cfg.model
     baseUrlInput.value = cfg.baseUrl
     systemInput.value = cfg.systemPrompt
-    keyInput.placeholder = `API key de ${providerById(cfg.providerId)?.label ?? 'proveedor'}`
+    keyInput.placeholder = i18nT('common.aiKeyPlaceholder', {
+      provider: providerById(cfg.providerId)?.label ?? i18nT('common.provider'),
+    })
     refreshModelSuggestions()
   }
 
   // Shows the Vault status and adjusts the key field accordingly.
   const showVaultNotice = (status: VaultStatus): void => {
     const msg = status === 'absent'
-      ? '🔒 Crea el Vault (panel Vault) para guardar tu API key de forma segura.'
+      ? i18nT('common.createVaultForAiKey')
       : status === 'locked'
-        ? '🔒 Desbloquea el Vault (panel Vault) para ver o guardar tu API key.'
+        ? i18nT('common.unlockVaultForAiKey')
         : ''
     vaultNotice.textContent = msg
     vaultNotice.classList.toggle('hidden', status === 'unlocked')
@@ -214,12 +217,12 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     thread.querySelectorAll<HTMLElement>('.ai-msg-assistant pre').forEach(pre => {
       const btn = document.createElement('button')
       btn.className = 'ai-run-btn'
-      btn.textContent = '▶ Ejecutar'
+      btn.textContent = i18nT('common.run2')
       btn.addEventListener('click', async () => {
         const code = pre.querySelector('code')?.textContent?.trim()
         if (!code || !runner) return
         btn.disabled = true
-        btn.textContent = 'Ejecutando…'
+        btn.textContent = i18nT('common.running')
         const result = document.createElement('div')
         result.className = 'ai-run-result'
         result.append(await runner(code))
@@ -341,7 +344,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       if (!res.ok) { assistant.content = `⚠️ Error ${res.status}: ${(await res.text()).slice(0, 300)}`; renderThread(); return }
       const data = await res.json() as { choices?: Array<{ message?: ApiMessage }> }
       const m = data.choices?.[0]?.message
-      if (!m) { assistant.content = '⚠️ Respuesta vacía del modelo.'; renderThread(); return }
+      if (!m) { assistant.content = i18nT('common.emptyModelResponse'); renderThread(); return }
       if (m.tool_calls?.length) {
         msgs.push(m)
         assistant.content = '🔧 Consultando el esquema…'
@@ -361,7 +364,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       renderThread()
       return
     }
-    assistant.content += '\n\n_(demasiadas llamadas a herramientas; corta aquí)_'
+    assistant.content += `\n\n${i18nT('common.tooManyToolCalls')}`
     renderThread()
   }
 

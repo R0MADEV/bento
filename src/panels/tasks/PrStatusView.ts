@@ -16,7 +16,9 @@ export function buildPrStatusView({ pr, baseBranch, onBack, onOpen }: PrStatusVi
   const back = Object.assign(document.createElement('button'), { className: 'db-back-btn', textContent: '←' })
   back.setAttribute('aria-label', taskT('backChanges'))
   back.addEventListener('click', onBack)
-  head.append(back, Object.assign(document.createElement('span'), { textContent: `PR #${pr.number} · ${pr.title}` }))
+  head.append(back, Object.assign(document.createElement('span'), {
+    textContent: taskT('prNumberTitle', { number: pr.number, title: pr.title }),
+  }))
   wrap.appendChild(head)
 
   const summary = document.createElement('div')
@@ -39,7 +41,7 @@ export function buildPrStatusView({ pr, baseBranch, onBack, onOpen }: PrStatusVi
     row.className = `tasks-operation-item tasks-operation-item--${failed ? 'error' : pending ? 'pending' : 'success'}`
     row.append(
       Object.assign(document.createElement('span'), { className: 'tasks-operation-status', textContent: failed ? '!' : pending ? '…' : '✓' }),
-      Object.assign(document.createElement('strong'), { textContent: check.name ?? check.context ?? 'Check' }),
+      Object.assign(document.createElement('strong'), { textContent: check.name ?? check.context ?? taskT('check') }),
       Object.assign(document.createElement('span'), { className: 'tasks-log-meta-inline', textContent: state.toLowerCase() }),
     )
     checks.appendChild(row)

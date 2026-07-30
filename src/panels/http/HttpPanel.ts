@@ -1,3 +1,4 @@
+import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { parseHeaders, prettyBody, addHeaderLine, urlParams } from '../../core/http/httpRequest'
 import { parseOpenApi, specTitle, type OpenApiEndpoint } from '../../core/http/openapi'
@@ -16,8 +17,8 @@ const COMMON_HEADERS = [
 
 const BODY_TEMPLATES: { label: string; header?: string; body: string }[] = [
   { label: 'JSON', header: 'Content-Type: application/json', body: '{\n  "": ""\n}' },
-  { label: 'Form urlencoded', header: 'Content-Type: application/x-www-form-urlencoded', body: 'campo=valor&otro=valor' },
-  { label: 'Texto vacío', body: '' },
+  { label: 'Form urlencoded', header: 'Content-Type: application/x-www-form-urlencoded', body: i18nT('http.fieldValueOtherValue') },
+  { label: i18nT('http.emptyText'), body: '' },
 ]
 
 interface HttpResponse {
@@ -59,38 +60,38 @@ export function createHttpPanel(panelId = '') {
   })
   const url = document.createElement('input')
   url.className = 'http-url'
-  url.placeholder = 'https://api.example.com/…'
+  url.placeholder = i18nT('http.urlPlaceholder')
   url.spellcheck = false
   const importBtn = document.createElement('button')
   importBtn.className = 'http-import'
-  importBtn.textContent = 'Importar OpenAPI'
-  importBtn.title = 'Pon la URL de un swagger.json / openapi.json y pulsa aquí'
+  importBtn.textContent = i18nT('http.importOpenapi')
+  importBtn.title = i18nT('http.enterTheUrlOfASwaggerJsonOpenapi')
   const sendBtn = document.createElement('button')
   sendBtn.className = 'http-send'
-  sendBtn.textContent = 'Enviar'
+  sendBtn.textContent = i18nT('common.send')
   bar.append(method, url, importBtn, sendBtn)
 
   const reqHeaders = document.createElement('textarea')
   reqHeaders.className = 'http-area'
-  reqHeaders.placeholder = 'Cabeceras — una por línea:\nContent-Type: application/json'
+  reqHeaders.placeholder = i18nT('common.headersOnePerLineContentTypeApplicationJson')
   reqHeaders.spellcheck = false
   const reqBody = document.createElement('textarea')
   reqBody.className = 'http-area'
-  reqBody.placeholder = 'Cuerpo de la petición (JSON, texto…)'
+  reqBody.placeholder = i18nT('http.requestBodyJsonText')
   reqBody.spellcheck = false
 
-  const headersField = labeled('Cabeceras', reqHeaders, [
-    action('+ común', el => showContextMenu(rectLeft(el), rectBottom(el),
+  const headersField = labeled(i18nT('http.headers'), reqHeaders, [
+    action(i18nT('http.common'), el => showContextMenu(rectLeft(el), rectBottom(el),
       COMMON_HEADERS.map(h => ({ label: h, onClick: () => { reqHeaders.value = addHeaderLine(reqHeaders.value, h); save() } })))),
   ])
   const bodyField = labeled('Body', reqBody, [
-    action('plantilla', el => showContextMenu(rectLeft(el), rectBottom(el),
+    action(i18nT('http.template'), el => showContextMenu(rectLeft(el), rectBottom(el),
       BODY_TEMPLATES.map(t => ({ label: t.label, onClick: () => {
         reqBody.value = t.body
         if (t.header) reqHeaders.value = addHeaderLine(reqHeaders.value, t.header)
         save()
       } })))),
-    action('formato', () => { reqBody.value = prettyBody(reqBody.value); save() }),
+    action(i18nT('common.format'), () => { reqBody.value = prettyBody(reqBody.value); save() }),
   ])
 
   const reqSection = document.createElement('div')
@@ -103,7 +104,7 @@ export function createHttpPanel(panelId = '') {
   response.className = 'http-response'
   const askAiBtn = document.createElement('button')
   askAiBtn.className = 'http-ask-ai'
-  askAiBtn.title = 'Enviar la respuesta al chat de IA'
+  askAiBtn.title = i18nT('http.sendTheResponseToAiChat')
   askAiBtn.innerHTML = icon('chat')
   askAiBtn.addEventListener('click', () => {
     const body = response.textContent?.trim()
@@ -131,7 +132,7 @@ export function createHttpPanel(panelId = '') {
   sidebar.className = 'http-sidebar hidden'
   const search = document.createElement('input')
   search.className = 'http-col-search'
-  search.placeholder = 'Buscar endpoint…'
+  search.placeholder = i18nT('http.searchEndpoints')
   search.spellcheck = false
   const colList = document.createElement('div')
   colList.className = 'http-col-list'
@@ -197,7 +198,7 @@ export function createHttpPanel(panelId = '') {
       const name = document.createElement('span')
       name.className = 'http-col-name'
       name.textContent = `${c.name} (${c.endpoints.length})`
-      name.title = 'Doble clic para renombrar'
+      name.title = i18nT('http.doubleClickToRename')
       name.addEventListener('dblclick', e => {
         e.stopPropagation()
         const input = document.createElement('input')
@@ -223,7 +224,7 @@ export function createHttpPanel(panelId = '') {
       const del = document.createElement('span')
       del.className = 'http-col-del'
       del.innerHTML = icon('x')
-      del.title = 'Quitar colección'
+      del.title = i18nT('http.removeCollection')
       del.addEventListener('click', e => { e.stopPropagation(); collections = removeCollection(collections, c.id); saveCollections(collections); renderCollections() })
       header.append(chevron, name, del)
       header.addEventListener('click', () => {
@@ -268,9 +269,9 @@ export function createHttpPanel(panelId = '') {
       })
       .catch(err => {
         status.className = 'http-status err'
-        status.textContent = `No se pudo importar: ${err}`
+        status.textContent = i18nT('http.importFailed', { error: String(err) })
       })
-      .finally(() => { importBtn.textContent = 'Importar OpenAPI' })
+      .finally(() => { importBtn.textContent = i18nT('http.importOpenapi') })
   }
   importBtn.addEventListener('click', importSpec)
 
@@ -279,7 +280,7 @@ export function createHttpPanel(panelId = '') {
     const missing = urlParams(url.value)
     if (missing.length) {
       status.className = 'http-status warn'
-      status.textContent = `Rellena los parámetros de la URL: ${missing.map(p => `{${p}}`).join(', ')}`
+      status.textContent = i18nT('http.fillUrlParameters', { parameters: missing.map(p => `{${p}}`).join(', ') })
       return
     }
     save()
@@ -300,7 +301,7 @@ export function createHttpPanel(panelId = '') {
       })
       .catch(err => {
         status.className = 'http-status err'
-        status.textContent = 'Error'
+        status.textContent = i18nT('common.error')
         response.textContent = String(err)
       })
   }
