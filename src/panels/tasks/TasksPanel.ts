@@ -22,11 +22,12 @@ import { buildBackupHistoryView } from './BackupHistoryView'
 import { buildConflictResolverView } from './ConflictResolverView'
 import { buildChangesFileView } from './ChangesFileView'
 import { buildRebasePlanPreview } from './RebasePlanView'
-import { buildCommitFileList, escapeCodeHtml as escHtml, fileStateMap, renderPatchHtml } from './TaskCodeView'
+import { buildCommitFileList, fileStateMap, renderPatchHtml } from './TaskCodeView'
 import { commitFilesRaw, recommendationMap, taskGit } from './taskGitClient'
 import { TaskPanelStore } from './TaskPanelStore'
 import { createTaskDockerView, type IsolateResult } from './TaskDockerView'
 import { buildResetView } from './ResetView'
+import { buildGraphView } from './GraphView'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -973,24 +974,14 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   async function showCommitGraph(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    showDetail(note(taskT('loadingGraph'), 'db-detail-loading'))
-    try {
-      const raw = await invoke<string>('git_graph', { path: wt.path, base: baseBranch })
-      const wrap = document.createElement('div')
-      wrap.className = 'tasks-graph-wrap'
-      wrap.append(buildSubHead(taskT('graphTitle', { branch: wt.branch ?? '', base: baseBranch }), () => showChanges(wt)))
-      const legend = Object.assign(document.createElement('p'), {
-        className: 'tasks-rebase-hint',
-        textContent: taskT('graphHint'),
-      })
-      const graph = document.createElement('pre')
-      graph.className = 'tasks-git-graph'
-      graph.innerHTML = raw.split('\n').map(line => escHtml(line)
-        .replace(/\b([0-9a-f]{7,40})\b/, '<span class="tasks-graph-hash">$1</span>')
-        .replace(/\(([^)]+)\)/g, '<span class="tasks-graph-ref">($1)</span>')).join('\n')
-      wrap.append(legend, graph)
-      showDetail(wrap)
-    } catch (e) { showDetail(note(String(e), 'db-detail-error')) }
+    await buildGraphView({
+      worktree: wt,
+      baseBranch,
+      buildSubHead,
+      onBack: () => showChanges(wt),
+      showDetail,
+      note,
+    })
   }
 
   function showPrDetails(wt: Worktree, pr: PrStatus): void {
