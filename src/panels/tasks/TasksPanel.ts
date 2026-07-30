@@ -28,6 +28,7 @@ import { TaskPanelStore } from './TaskPanelStore'
 import { createTaskDockerView, type IsolateResult } from './TaskDockerView'
 import { buildResetView } from './ResetView'
 import { buildGraphView } from './GraphView'
+import { buildCommitLogView } from './CommitLogView'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -1000,49 +1001,17 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     showDetail(note(taskT('loadingHistory'), 'db-detail-loading'))
     try {
       const entries = await taskGit.log(wt.path)
-      const wrap = document.createElement('div')
-      wrap.className = 'tasks-log-wrap'
-      wrap.append(buildSubHead(taskT('historyTitle', { branch: wt.branch ?? '' }), () => showChanges(wt)))
-      const list = document.createElement('div')
-      list.className = 'tasks-log-list'
-      if (entries.length === 0) {
-        list.appendChild(note(taskT('noBranchCommits'), 'db-detail-hint'))
-      }
-      for (const e of entries) {
-        const item = document.createElement('div')
-        item.className = 'tasks-log-item'
-        const shortEl = Object.assign(document.createElement('span'), { className: 'tasks-log-short', textContent: e.short })
-        const subjectEl = Object.assign(document.createElement('span'), { className: 'tasks-log-subject', textContent: e.subject })
-        const metaEl = Object.assign(document.createElement('span'), {
-          className: 'tasks-log-meta',
-          textContent: `${e.author} · ${e.date}`,
-        })
-        let filesLoaded = false
-        const filesEl = document.createElement('div')
-        filesEl.className = 'tasks-commit-files hidden'
-        const expandBtn = iconBtn('chevron-down', taskT('viewCommitFiles'), async () => {
-          const isOpen = !filesEl.classList.contains('hidden')
-          if (isOpen) { filesEl.classList.add('hidden'); expandBtn.title = taskT('viewCommitFiles'); return }
-          filesEl.classList.remove('hidden'); expandBtn.title = taskT('hideFiles')
-          if (filesLoaded) return
-          filesLoaded = true
-          filesEl.textContent = taskT('loading')
-          const files = await taskGit.files(wt.path, e.hash).catch(() => [])
-          filesEl.replaceChildren(...buildCommitFileList(
-            files,
-            file => invoke<string>('git_show_commit_diff', { path: wt.path, hash: e.hash, file }),
-            file => invoke<string>('git_show_file', { path: wt.path, hash: e.hash, file }),
-          ))
-        })
-        expandBtn.className = 'tasks-expand-btn'
-        const header = document.createElement('div')
-        header.className = 'tasks-log-item-header'
-        header.append(shortEl, subjectEl, metaEl, expandBtn)
-        item.append(header, filesEl)
-        list.appendChild(item)
-      }
-      wrap.appendChild(list)
-      showDetail(wrap)
+      buildCommitLogView({
+        worktree: wt,
+        entries,
+        buildSubHead,
+        onBack: () => showChanges(wt),
+        showDetail,
+        note,
+        iconBtn,
+        buildCommitFileList,
+        loadFiles: (path, hash) => taskGit.files(path, hash).catch(() => []),
+      })
     } catch (err) { showDetail(note(String(err), 'db-detail-error')) }
   }
 
