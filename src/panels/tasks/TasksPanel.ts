@@ -26,6 +26,7 @@ import { buildCommitFileList, escapeCodeHtml as escHtml, fileStateMap, renderPat
 import { commitFilesRaw, recommendationMap, taskGit } from './taskGitClient'
 import { TaskPanelStore } from './TaskPanelStore'
 import { createTaskDockerView, type IsolateResult } from './TaskDockerView'
+import { buildResetView } from './ResetView'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -958,84 +959,14 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   function showResetView(wt: Worktree): void {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-
-    const wrap = document.createElement('div')
-    wrap.className = 'tasks-reset-wrap'
-    wrap.append(buildSubHead(taskT('resetTitle', { branch: wt.branch ?? '' }), () => showChanges(wt)))
-
-    const descEl = Object.assign(document.createElement('p'), {
-      className: 'tasks-rebase-hint',
-      textContent: taskT('resetHint'),
-    })
-    wrap.appendChild(descEl)
-
-    const form = document.createElement('div')
-    form.className = 'tasks-reset-form'
-
-    const targetLabel = Object.assign(document.createElement('label'), { className: 'tasks-reset-label', textContent: taskT('resetTo') })
-    const targetInput = Object.assign(document.createElement('input'), {
-      className: 'tasks-name-input',
-      type: 'text',
-      value: `origin/${baseBranch}`,
-    })
-    form.append(targetLabel, targetInput)
-
-    const modeLabel = Object.assign(document.createElement('label'), { className: 'tasks-reset-label', textContent: taskT('mode') })
-    const modeGroup = document.createElement('div')
-    modeGroup.className = 'tasks-reset-modes'
-
-    const modes: { value: string; label: string; desc: string }[] = [
-      { value: 'mixed', label: taskT('mixedLabel'), desc: taskT('mixedDesc') },
-      { value: 'soft',  label: 'Soft', desc: taskT('softDesc') },
-      { value: 'hard',  label: 'Hard ⚠', desc: taskT('hardDesc') },
-    ]
-    let selectedMode = 'mixed'
-    modes.forEach(m => {
-      const row = document.createElement('label')
-      row.className = 'tasks-reset-mode-row'
-      const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'reset-mode', value: m.value })
-      radio.checked = m.value === 'mixed'
-      radio.addEventListener('change', () => { selectedMode = m.value; resetBtn.classList.toggle('tasks-reset-danger', m.value === 'hard') })
-      const nameEl = Object.assign(document.createElement('span'), { className: 'tasks-reset-mode-name', textContent: m.label })
-      const descEl2 = Object.assign(document.createElement('span'), { className: 'tasks-reset-mode-desc', textContent: m.desc })
-      row.append(radio, nameEl, descEl2)
-      modeGroup.appendChild(row)
-    })
-    form.append(modeLabel, modeGroup)
-    wrap.appendChild(form)
-
-    const footer = document.createElement('div')
-    footer.className = 'tasks-rebase-paused-actions'
-    const statusEl = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
-    const resetBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: taskT('reset') })
-
-    resetBtn.addEventListener('click', async () => {
-      const target = targetInput.value.trim()
-      if (!target) return
-      if (selectedMode === 'hard') {
-        const ok = await askConfirm(
-          taskT('hardResetQuestion', { target }),
-          { title: taskT('hardResetTitle'), kind: 'warning' }
-        )
-        if (!ok) return
-      }
-      resetBtn.disabled = true
-      statusEl.textContent = taskT('running')
-      try {
-        await invoke('git_reset', { path: wt.path, target, mode: selectedMode })
-        recordOperation(wt, `reset --${selectedMode}`, 'success', target)
-        statusEl.textContent = taskT('resetDone', { target })
-        setTimeout(() => { showChanges(wt); load() }, 900)
-      } catch (e) {
-        recordOperation(wt, `reset --${selectedMode}`, 'error', String(e))
-        statusEl.textContent = String(e).slice(0, 160)
-        resetBtn.disabled = false
-      }
-    })
-
-    footer.append(statusEl, resetBtn)
-    wrap.appendChild(footer)
-    showDetail(wrap)
+    showDetail(buildResetView({
+      worktree: wt,
+      baseBranch,
+      buildSubHead,
+      onBack: () => showChanges(wt),
+      onComplete: () => { showChanges(wt); load() },
+      recordOperation: (operation, status, detail) => recordOperation(wt, operation, status, detail),
+    }))
   }
 
   // ---- detail: commit log ----
