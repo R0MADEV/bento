@@ -13,4 +13,11 @@ describe('tasks i18n', () => {
     setTaskLocale('es')
     expect(taskT('changes', { count: 3 })).toBe('3 cambios')
   })
+
+  it('translates task action labels with branch context', () => {
+    setTaskLocale('es')
+    expect(taskT('rebaseOrigin', { branch: 'main' })).toBe('Rebase sobre origin/main')
+    setTaskLocale('en')
+    expect(taskT('resetToOrigin', { branch: 'main' })).toBe('Reset to origin/main…')
+  })
 })

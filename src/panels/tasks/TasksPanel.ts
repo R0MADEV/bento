@@ -457,12 +457,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       if (!ok) return
       try {
         await invoke('git_restore_backup', { path: wt.path })
-        recordOperation(wt, 'restaurar respaldo', 'success', backup.short ?? '')
+        recordOperation(wt, taskT('restoringBackup'), 'success', backup.short ?? '')
         flashBadge(taskT('restoredHistory'), 'tasks-badge--ok', 3500)
         await load()
         showChanges(wt)
       } catch (e) {
-        recordOperation(wt, 'restaurar respaldo', 'error', String(e))
+        recordOperation(wt, taskT('restoringBackup'), 'error', String(e))
         selectRow(row)
         showSyncError(taskT('restoringBackup'), String(e), wt)
       }
@@ -500,7 +500,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
     const menuItems = () => {
       const items: MenuItem[] = [
-        ...(rebase?.active ? [{ label: `Continuar rebase${rebase.total ? ` · ${rebase.current ?? 0}/${rebase.total}` : ''}`, onClick: () => { selectRow(row); showRebasePaused(wt, rebase) } }] : []),
+        ...(rebase?.active ? [{ label: taskT('continueRebaseMenu', { progress: rebase.total ? ` · ${rebase.current ?? 0}/${rebase.total}` : '' }), onClick: () => { selectRow(row); showRebasePaused(wt, rebase) } }] : []),
         { label: taskT('viewChanges'), onClick: () => { selectRow(row); showChanges(wt) } },
         { label: taskT('viewHistory'), onClick: () => { selectRow(row); showCommitLog(wt) } },
         { label: taskT('viewGraph'), onClick: () => { selectRow(row); showCommitGraph(wt) } },
@@ -517,7 +517,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       }
       if (pr?.baseRefName && pr.baseRefName !== baseBranch) {
         items.push({
-          label: `Usar base de la PR → ${pr.baseRefName}`,
+          label: taskT('usePrBase', { branch: pr.baseRefName }),
           onClick: () => {
             baseBranch = pr.baseRefName!
             panelStore.setBase(baseBranch)
@@ -527,10 +527,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       }
       if (!isMain) {
         items.push(
-          { label: 'Docker', onClick: () => { selectRow(row); void dockerView.isolate(wt) } },
+          { label: taskT('docker'), onClick: () => { selectRow(row); void dockerView.isolate(wt) } },
           { label: taskT('fetch'), onClick: () => runSync('fetch') },
-          { label: `Merge origin/${baseBranch}`, onClick: () => runSync('merge') },
-          { label: `Rebase sobre origin/${baseBranch}`, onClick: () => runSync('rebase') },
+          { label: taskT('mergeOrigin', { branch: baseBranch }), onClick: () => runSync('merge') },
+          { label: taskT('rebaseOrigin', { branch: baseBranch }), onClick: () => runSync('rebase') },
           { label: taskT('push'), onClick: pushBranch },
         )
         if (ahead > 0 && !hasPr) {
@@ -541,10 +541,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           items.push({ label: taskT('prChecks'), onClick: () => { selectRow(row); showPrDetails(wt, pr) } })
         }
         items.push(
-          { label: `Resetear a origin/${baseBranch}…`, onClick: () => { selectRow(row); showResetView(wt) } },
+          { label: taskT('resetToOrigin', { branch: baseBranch }), onClick: () => { selectRow(row); showResetView(wt) } },
           { label: taskT('backups'), testId: 'tasks-backups-action', onClick: () => { selectRow(row); showBackupHistory(wt) } },
           { label: taskT('operations'), onClick: () => { selectRow(row); showOperationHistory(wt) } },
-          ...(backup?.available && backup.different ? [{ label: `Deshacer reescritura → ${backup.short ?? 'respaldo'}`, onClick: restoreBackup }] : []),
+          ...(backup?.available && backup.different ? [{ label: taskT('undoRewriteBackup', { short: backup.short ?? taskT('backup') }), onClick: restoreBackup }] : []),
           { label: taskT('rename'), onClick: renameTask },
           { label: taskT('deleteTask'), onClick: () => deleteWorktree(wt) },
         )

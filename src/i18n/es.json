@@ -105,6 +105,7 @@
     "hideSimulation": "Ocultar simulación",
     "startRebase": "Iniciar rebase",
     "continueRebase": "Continuar rebase",
+    "continueRebaseMenu": "Continuar rebase{progress}",
     "abortRebase": "Abortar rebase",
     "editCommit": "Editar commit",
     "splitCommit": "Dividir commit",
@@ -332,7 +333,14 @@
     "aheadBehindTitle": "{ahead} / {behind} · origin/{branch}",
     "rebaseProgress": "rebase {current}/{total}",
     "rebaseProgressColon": "Rebase {current}/{total}:",
-    "baseOption": "base: {branch}"
+    "baseOption": "base: {branch}",
+    "usePrBase": "Usar base de la PR → {branch}",
+    "docker": "Docker",
+    "mergeOrigin": "Merge origin/{branch}",
+    "rebaseOrigin": "Rebase sobre origin/{branch}",
+    "resetToOrigin": "Resetear a origin/{branch}…",
+    "undoRewriteBackup": "Deshacer reescritura → {short}",
+    "backup": "respaldo"
   },
   "common": {
     "actions": "Acciones",
