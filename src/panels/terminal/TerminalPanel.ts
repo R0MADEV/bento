@@ -7,16 +7,18 @@ import { Unicode11Addon } from 'xterm-addon-unicode11'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { getTheme, themeNames, themeLabels } from '../../core/terminal/themes'
+import { getTheme, themeNames } from '../../core/terminal/themes'
 import { mix, isDark } from '../../core/terminal/color'
 import { dimsChanged, type Dims } from '../../core/terminal/dims'
 import { splitAtSyncBoundary } from '../../core/terminal/syncOutput'
 import { getThemeName, onThemeChange } from './themePreference'
 import { nextTheme } from '../../core/terminal/nextTheme'
-import { loadProfiles, addProfile, removeProfile } from '../../core/terminal/profiles'
+import type { TerminalProfile } from '../../core/terminal/profiles'
 import { createActivityTracker } from '../../core/terminal/activityTracker'
 import { parseOsc7Path, toDisplayPath } from '../../core/terminal/osc7'
 import { createSearchBar } from './searchBar'
+import { createTerminalAppearanceControls } from './appearanceControls'
+import { createTerminalProfileControls } from './profileControls'
 import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
 import type { PanelApi } from '../registry'
@@ -83,14 +85,11 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   const onRootFocus = () => tracker.onFocus()
   root.addEventListener('focusin', onRootFocus)
 
-  const applyLocalTheme = (name: string) => {
-    const t = getTheme(name)
-    term.options.theme = t
-
+  const applyBackground = (background: string): void => {
     // xterm DOM renderer: update the viewport directly (it doesn't wait for activity)
     const viewport = root.querySelector<HTMLElement>('.xterm-viewport')
-    if (viewport) viewport.style.backgroundColor = t.background
-    root.style.backgroundColor = t.background
+    if (viewport) viewport.style.backgroundColor = background
+    root.style.backgroundColor = background
     term.refresh(0, term.rows - 1)
 
     // The group's tab bar uses --surface (derived from the global theme).
@@ -98,9 +97,15 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     // so the header reflects the color of this terminal's new theme.
     const groupView = root.closest<HTMLElement>('.dv-groupview')
     if (groupView) {
-      const shade = isDark(t.background) ? '#ffffff' : '#000000'
-      groupView.style.setProperty('--surface', mix(t.background, shade, 0.05))
+      const shade = isDark(background) ? '#ffffff' : '#000000'
+      groupView.style.setProperty('--surface', mix(background, shade, 0.05))
     }
+  }
+
+  const applyLocalTheme = (name: string): void => {
+    const theme = getTheme(name)
+    term.options.theme = theme
+    applyBackground(theme.background)
   }
 
   const unsubscribeTheme = onThemeChange(name => {
@@ -118,95 +123,28 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     const base = getTheme(localTheme)
     const custom = { ...base, background: bg, cursorAccent: bg }
     term.options.theme = custom
-    const viewport = root.querySelector<HTMLElement>('.xterm-viewport')
-    if (viewport) viewport.style.backgroundColor = bg
-    root.style.backgroundColor = bg
-    term.refresh(0, term.rows - 1)
-    const groupView = root.closest<HTMLElement>('.dv-groupview')
-    if (groupView) {
-      const shade = isDark(bg) ? '#ffffff' : '#000000'
-      groupView.style.setProperty('--surface', mix(bg, shade, 0.05))
-    }
+    applyBackground(bg)
   }
 
-  const popover = document.createElement('div')
-  popover.className = 'term-theme-popover hidden'
-
-  const swatches = document.createElement('div')
-  swatches.className = 'term-theme-swatches'
-  themeNames.forEach(name => {
-    const t = getTheme(name)
-    const swatch = document.createElement('button')
-    swatch.className = 'term-theme-swatch'
-    swatch.title = themeLabels[name] ?? name
-    swatch.style.background = t.background
-    swatch.style.borderColor = t.blue
-    swatch.addEventListener('click', () => {
+  const appearance = createTerminalAppearanceControls({
+    themeName: localTheme,
+    onThemeSelected: name => {
       followGlobal = false
       localTheme = name
       applyLocalTheme(name)
-      popover.classList.add('hidden')
-    })
-    swatches.appendChild(swatch)
+    },
+    onCustomBackground: applyCustomBackground,
+    onShellChanged: shell => {
+      restartShell(shell)
+    },
+    onFontChanged: font => {
+      localFontFamily = font.trim() || DEFAULT_FONT_FAMILY
+      term.options.fontFamily = localFontFamily
+      fit()
+    },
   })
-
-  const colorRow = document.createElement('label')
-  colorRow.className = 'term-theme-color-row'
-  colorRow.textContent = i18nT('terminal.customColor')
-  const colorInput = document.createElement('input')
-  colorInput.type = 'color'
-  colorInput.value = getTheme(localTheme).background
-  colorInput.addEventListener('input', () => applyCustomBackground(colorInput.value))
-  colorRow.appendChild(colorInput)
-
-  const isWin = navigator.platform.includes('Win')
-  const shellOptions = isWin
-    ? [['auto', i18nT('terminal.autoShell')], ['powershell.exe', 'PowerShell'], ['cmd.exe', 'CMD']]
-    : [['auto', i18nT('terminal.autoShell')], ['/bin/zsh', 'zsh'], ['/bin/bash', 'bash'], ['fish', 'fish'], ['/bin/sh', 'sh']]
-
-  const shellRow = document.createElement('div')
-  shellRow.className = 'term-theme-color-row'
-  const shellLabel = document.createElement('span')
-  shellLabel.textContent = i18nT('terminal.shell')
-  const shellSelect = document.createElement('select')
-  shellSelect.className = 'term-shell-select'
-  shellOptions.forEach(([val, label]) => {
-    const opt = document.createElement('option')
-    opt.value = val
-    opt.textContent = label
-    shellSelect.appendChild(opt)
-  })
-  shellRow.append(shellLabel, shellSelect)
-
-  const fontRow = document.createElement('div')
-  fontRow.className = 'term-theme-color-row'
-  const fontLabel = document.createElement('span')
-  fontLabel.textContent = i18nT('common.font')
-  const fontInput = document.createElement('input')
-  fontInput.className = 'term-font-input'
-  fontInput.type = 'text'
-  fontInput.placeholder = i18nT('terminal.monospacePlaceholder')
-  fontInput.addEventListener('change', () => {
-    localFontFamily = fontInput.value.trim() || DEFAULT_FONT_FAMILY
-    term.options.fontFamily = localFontFamily
-    fit()
-  })
-  fontRow.append(fontLabel, fontInput)
-
-  popover.append(swatches, colorRow, shellRow, fontRow)
-  popover.addEventListener('click', e => e.stopPropagation())
-  root.appendChild(popover)
-
-  const themeBtn = document.createElement('button')
-  themeBtn.className = 'term-theme-btn'
-  themeBtn.title = i18nT('terminal.changeThisTerminalTheme')
-  themeBtn.innerHTML = icon('palette')
-  themeBtn.addEventListener('click', e => {
-    e.stopPropagation()
-    popover.classList.toggle('hidden')
-  })
-  root.appendChild(themeBtn)
-
+  const { popover, themeButton: themeBtn, shellSelect, fontInput } = appearance
+  root.append(popover, themeBtn)
   root.addEventListener('click', () => popover.classList.add('hidden'))
 
   const fitAddon = new FitAddon()
@@ -229,6 +167,14 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const id = `pty-${++ptyCounter}`
   let disposed = false
+  const eventUnlisteners: Array<() => void> = []
+
+  const listenTo = <T>(eventName: string, handler: Parameters<typeof listen<T>>[1]): void => {
+    void listen<T>(eventName, handler).then(unlisten => {
+      if (disposed) unlisten()
+      else eventUnlisteners.push(unlisten)
+    }).catch(() => {})
+  }
 
   // Restore the directory the terminal was in last session, so the (restored)
   // prompt matches reality and `lexis ask` / commands run in the right project.
@@ -236,9 +182,16 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   let lastCwd = (panelId && localStorage.getItem(CWD_KEY(panelId))) || projectPath || ''
 
   const spawnShell = (shellPath: string) => {
-    const resolved = shellPath === 'auto' ? (isWin ? 'powershell.exe' : '/bin/sh') : shellPath
+    const resolved = shellPath === 'auto' ? (navigator.platform.includes('Win') ? 'powershell.exe' : '/bin/sh') : shellPath
     invoke('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null, command: execCommand ?? null })
       .catch(err => term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`))
+  }
+
+  const restartShell = (shellPath: string): void => {
+    invoke('pty_kill', { id }).catch(() => {})
+    term.reset()
+    spawnShell(shellPath)
+    popover.classList.add('hidden')
   }
 
   spawnShell('auto')
@@ -257,13 +210,6 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   }
   let firstOutputSeen = false
   setTimeout(markShellReady, 1500)
-
-  shellSelect.addEventListener('change', () => {
-    invoke('pty_kill', { id }).catch(() => {})
-    term.reset()
-    spawnShell(shellSelect.value)
-    popover.classList.add('hidden')
-  })
 
   // OSC 133;C = command start, 133;D = command end (shell integration)
   let commandRunning = false
@@ -285,7 +231,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   // buffer and only write complete frames (see splitAtSyncBoundary).
   let pending = ''
   let safety: ReturnType<typeof setTimeout> | undefined
-  listen<string>(`pty-output-${id}`, event => {
+  listenTo<string>(`pty-output-${id}`, event => {
     if (!firstOutputSeen) { firstOutputSeen = true; setTimeout(markShellReady, 150) }
     pending += event.payload
     const { flush, keep } = splitAtSyncBoundary(pending)
@@ -301,7 +247,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   // The shell exited on its own (the user typed `exit`): close the panel. Skip
   // if we're already disposing (closing the panel kills the PTY, firing this too).
-  listen(`pty-exit-${id}`, () => { if (!disposed) onExit?.() })
+  listenTo(`pty-exit-${id}`, () => { if (!disposed) onExit?.() })
 
   term.onData(data => {
     invoke('pty_write', { id, data }).catch(() => {})
@@ -405,6 +351,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
       try { localStorage.setItem(CWD_KEY(panelId), lastCwd) } catch { /* storage full */ }
     }
     observer.disconnect()
+    eventUnlisteners.splice(0).forEach(unlisten => unlisten())
     unsubscribeTheme()
     root.removeEventListener('focusin', onRootFocus)
     invoke('pty_kill', { id }).catch(() => {})
@@ -438,68 +385,27 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
       else panelApi.maximize()
     })
 
-    const profilesSection = document.createElement('div')
-    profilesSection.className = 'term-profiles-section'
-
-    const renderProfiles = () => {
-      profilesSection.innerHTML = ''
-      const profiles = loadProfiles()
-
-      if (profiles.length) {
-        const list = document.createElement('div')
-        list.className = 'term-profile-list'
-        profiles.forEach(p => {
-          const row = document.createElement('div')
-          row.className = 'term-profile-row'
-          const nameBtn = document.createElement('button')
-          nameBtn.className = 'term-profile-name'
-          nameBtn.textContent = p.name
-          nameBtn.title = i18nT('terminal.profileDescription', { shell: p.shell, theme: p.theme, fontSize: p.fontSize, fontFamily: p.fontFamily ? ` · ${p.fontFamily}` : '' })
-          nameBtn.addEventListener('click', () => {
-            followGlobal = false
-            localTheme = p.theme
-            applyLocalTheme(p.theme)
-            setFontSize(p.fontSize)
-            if (p.fontFamily) {
-              localFontFamily = p.fontFamily
-              fontInput.value = p.fontFamily
-              term.options.fontFamily = p.fontFamily
-            }
-            invoke('pty_kill', { id }).catch(() => {})
-            term.reset()
-            spawnShell(p.shell)
-            popover.classList.add('hidden')
-          })
-          const delBtn = document.createElement('button')
-          delBtn.className = 'term-profile-del'
-          delBtn.textContent = '×'
-          delBtn.addEventListener('click', () => { removeProfile(p.id); renderProfiles() })
-          row.append(nameBtn, delBtn)
-          list.appendChild(row)
-        })
-        profilesSection.appendChild(list)
-      }
-
-      const saveBtn = document.createElement('button')
-      saveBtn.className = 'term-profile-save'
-      saveBtn.textContent = i18nT('terminal.saveCurrentProfile')
-      saveBtn.addEventListener('click', () => {
-        const name = prompt(i18nT('terminal.profileName'))
-        if (!name?.trim()) return
-        addProfile({
-          name: name.trim(),
-          shell: shellSelect.value,
-          theme: localTheme,
-          fontSize: term.options.fontSize ?? BASE_FONT_SIZE,
-          fontFamily: localFontFamily !== DEFAULT_FONT_FAMILY ? localFontFamily : undefined,
-        })
-        renderProfiles()
-      })
-      profilesSection.appendChild(saveBtn)
-    }
-
-    renderProfiles()
-    popover.appendChild(profilesSection)
+    const profiles = createTerminalProfileControls({
+      getSettings: () => ({
+        shell: shellSelect.value,
+        theme: localTheme,
+        fontSize: term.options.fontSize ?? BASE_FONT_SIZE,
+        fontFamily: localFontFamily !== DEFAULT_FONT_FAMILY ? localFontFamily : undefined,
+      }),
+      onSelect: (profile: TerminalProfile) => {
+        followGlobal = false
+        localTheme = profile.theme
+        applyLocalTheme(profile.theme)
+        setFontSize(profile.fontSize)
+        if (profile.fontFamily) {
+          localFontFamily = profile.fontFamily
+          fontInput.value = profile.fontFamily
+          term.options.fontFamily = profile.fontFamily
+        }
+        restartShell(profile.shell)
+      },
+    })
+    popover.appendChild(profiles.element)
   }
 
   root.appendChild(maxBtn)
