@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
-import { showContextMenu, type MenuItem } from '../../ui/contextMenu'
+import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
 import { statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
 import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
@@ -30,6 +30,7 @@ import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
 import { buildSyncErrorView, buildWorktreeTerminalView } from './TaskAuxiliaryViews'
 import { loadTaskData } from './TaskDataLoader'
 import { buildIncomingChangesView } from './IncomingChangesView'
+import { taskRowActions } from './TaskRowActions'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -501,59 +502,15 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     const ahead = ab?.ahead ?? 0
     const hasPr = !!pr && (pr.state === 'OPEN' || pr.state === 'DRAFT')
 
-    const menuItems = () => {
-      const items: MenuItem[] = [
-        ...(rebase?.active ? [{ label: taskT('continueRebaseMenu', { progress: rebase.total ? ` · ${rebase.current ?? 0}/${rebase.total}` : '' }), onClick: () => { selectRow(row); showRebasePaused(wt, rebase) } }] : []),
-        { label: taskT('viewChanges'), onClick: () => { selectRow(row); showChanges(wt) } },
-        { label: taskT('viewHistory'), onClick: () => { selectRow(row); showCommitLog(wt) } },
-        { label: taskT('viewGraph'), onClick: () => { selectRow(row); showCommitGraph(wt) } },
-        { label: taskT('interactiveRebase'), onClick: () => { selectRow(row); showInteractiveRebase(wt) } },
-        { label: taskT('openEditor'), onClick: () => { invoke('open_in_editor', { path: wt.path }).catch(console.error) } },
-        { label: taskT('terminal'), onClick: () => { selectRow(row); showWorktreeTerminal(wt) } },
-        { label: taskT('copyBranch'), onClick: copyBranch },
-      ]
-      if (issue && jiraCfg) {
-        items.push(
-          { label: taskT('openJira'), onClick: openInJira },
-          { label: taskT('changeStatus'), onClick: () => { changeJiraStatus() } },
-        )
-      }
-      if (pr?.baseRefName && pr.baseRefName !== baseBranch) {
-        items.push({
-          label: taskT('usePrBase', { branch: pr.baseRefName }),
-          onClick: () => {
-            baseBranch = pr.baseRefName!
-            panelStore.setBase(baseBranch)
-            load()
-          },
-        })
-      }
-      if (!isMain) {
-        items.push(
-          { label: taskT('docker'), onClick: () => { selectRow(row); void dockerView.isolate(wt) } },
-          { label: taskT('fetch'), onClick: () => runSync('fetch') },
-          { label: taskT('mergeOrigin', { branch: baseBranch }), onClick: () => runSync('merge') },
-          { label: taskT('rebaseOrigin', { branch: baseBranch }), onClick: () => runSync('rebase') },
-          { label: taskT('push'), onClick: pushBranch },
-        )
-        if (ahead > 0 && !hasPr) {
-          items.push({ label: taskT('createPrFor', { base: baseBranch }), onClick: createPR })
-        }
-        if (pr?.url) {
-          items.push({ label: taskT('viewPr'), onClick: () => openUrl(pr.url).catch(() => {}) })
-          items.push({ label: taskT('prChecks'), onClick: () => { selectRow(row); showPrDetails(wt, pr) } })
-        }
-        items.push(
-          { label: taskT('resetToOrigin', { branch: baseBranch }), onClick: () => { selectRow(row); showResetView(wt) } },
-          { label: taskT('backups'), testId: 'tasks-backups-action', onClick: () => { selectRow(row); showBackupHistory(wt) } },
-          { label: taskT('operations'), onClick: () => { selectRow(row); showOperationHistory(wt) } },
-          ...(backup?.available && backup.different ? [{ label: taskT('undoRewriteBackup', { short: backup.short ?? taskT('backup') }), onClick: restoreBackup }] : []),
-          { label: taskT('rename'), onClick: renameTask },
-          { label: taskT('deleteTask'), onClick: () => deleteWorktree(wt) },
-        )
-      }
-      return items
-    }
+    const menuItems = () => taskRowActions({
+      worktree: wt, row, isMain, baseBranch, ahead, hasPr, issue: !!issue, jiraConfigured: !!jiraCfg, pr, backup, rebase,
+      selectRow, showRebasePaused, showChanges, showHistory: showCommitLog, showGraph: showCommitGraph,
+      showInteractiveRebase, showTerminal: showWorktreeTerminal, showPrDetails, showReset: showResetView,
+      showBackups: showBackupHistory, showOperations: showOperationHistory,
+      isolateDocker: wt => { void dockerView.isolate(wt) }, runSync, copyBranch, openJira: openInJira,
+      changeJiraStatus, push: pushBranch, createPr: createPR, restoreBackup, rename: renameTask,
+      deleteTask: () => deleteWorktree(wt), setBase: branch => { baseBranch = branch; panelStore.setBase(branch) }, reload: load,
+    })
 
     const menuBtn = iconBtn('more', taskT('actions'), () => {
       const r = menuBtn.getBoundingClientRect()
