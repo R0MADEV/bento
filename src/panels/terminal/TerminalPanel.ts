@@ -253,6 +253,20 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     invoke('pty_write', { id, data }).catch(() => {})
   })
 
+  term.onSelectionChange(() => {
+    const sel = term.getSelection()
+    if (!sel) return
+    navigator.clipboard.writeText(sel).then(() => {
+      const existing = root.querySelector('.term-copy-toast')
+      if (existing) return
+      const toast = document.createElement('div')
+      toast.className = 'term-toast term-copy-toast'
+      toast.textContent = i18nT('terminal.copied')
+      root.appendChild(toast)
+      setTimeout(() => toast.remove(), 1500)
+    }).catch(() => {})
+  })
+
   const BASE_FONT_SIZE = 13
   const MIN_FONT_SIZE = 8
   const MAX_FONT_SIZE = 32

@@ -204,6 +204,8 @@ fn main() {
             db::db_docker_redis_dbs,
             db::db_docker_redis_keys,
             db::db_docker_redis_value,
+            db::db_docker_redis_set,
+            db::db_docker_redis_ttl,
             db::db_docker_redis_command,
             jira::jira_config_get,
             jira::jira_config_set,
