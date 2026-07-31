@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { open as pickFolder } from '@tauri-apps/plugin-dialog'
+import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { icon } from '../../ui/icons'
 import { parseDiffFiles } from '../diff/diffStats'
 import { diffGit } from '../diff/diffGitClient'
@@ -277,12 +278,22 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     prInfoEl.textContent = ''
     commentBar.classList.add('hidden')
     try {
-      const pr = await invoke<{ number: number; title: string } | null>('gh_pr_view_branch', {
+      const pr = await invoke<{ number: number; title: string; url: string } | null>('gh_pr_view_branch', {
         path: repoPath,
         branch: ghBranch(selectedBranch),
       })
       if (pr) {
-        prInfoEl.textContent = `PR #${pr.number}: ${pr.title}`
+        prInfoEl.replaceChildren()
+        const link = Object.assign(document.createElement('a'), {
+          className: 'review-pr-link',
+          textContent: `PR #${pr.number}: ${pr.title}`,
+          href: '#',
+        })
+        link.addEventListener('click', e => {
+          e.preventDefault()
+          openUrl(pr.url).catch(() => {})
+        })
+        prInfoEl.append(link)
         commentBar.classList.remove('hidden')
       }
     } catch { /* no PR */ }
