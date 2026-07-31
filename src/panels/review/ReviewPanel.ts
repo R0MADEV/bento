@@ -179,6 +179,9 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     }
   })
 
+  // Strips remote prefix: "origin/feat/foo" → "feat/foo"
+  const ghBranch = (b: string): string => b.replace(/^[^/]+\//, '')
+
   // ── Select branch → load diff + PR ───────────────────────────────────────
   const selectBranch = (branch: string): void => {
     selectedBranch = branch
@@ -245,7 +248,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           try {
             await invoke('gh_pr_comment', {
               path: repoPath,
-              branch: selectedBranch,
+              branch: ghBranch(selectedBranch),
               body: `**\`${f.file}\`**\n\n${body}`,
             })
             inlineInput.value = ''
@@ -276,7 +279,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     try {
       const pr = await invoke<{ number: number; title: string } | null>('gh_pr_view_branch', {
         path: repoPath,
-        branch: selectedBranch,
+        branch: ghBranch(selectedBranch),
       })
       if (pr) {
         prInfoEl.textContent = `PR #${pr.number}: ${pr.title}`
@@ -291,7 +294,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     if (!body) { commentInput.focus(); return }
     commentBtn.disabled = true
     try {
-      await invoke('gh_pr_comment', { path: repoPath, branch: selectedBranch, body })
+      await invoke('gh_pr_comment', { path: repoPath, branch: ghBranch(selectedBranch), body })
       commentInput.value = ''
       showCommentStatus(reviewT('commentSent'))
     } catch (e) {
