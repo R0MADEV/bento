@@ -296,9 +296,16 @@ fn parse_table(out: String) -> TableData {
     const MAX_ROWS: usize = 200;
     const MAX_COLS: usize = 80;
     const MAX_CELL: usize = 500;
+    const MAX_JSON_CELL: usize = 50_000;
     let clip = |s: &str| -> String {
-        if s.chars().take(MAX_CELL + 1).count() > MAX_CELL {
-            format!("{}…", s.chars().take(MAX_CELL).collect::<String>())
+        let trimmed = s.trim_start();
+        let limit = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            MAX_JSON_CELL
+        } else {
+            MAX_CELL
+        };
+        if s.chars().take(limit + 1).count() > limit {
+            format!("{}…", s.chars().take(limit).collect::<String>())
         } else {
             s.to_string()
         }
@@ -1092,6 +1099,32 @@ pub fn db_docker_redis_value(
         _ => String::new(),
     };
     Ok(RedisValue { kind, value })
+}
+
+#[tauri::command]
+pub fn db_docker_redis_set(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    key: String,
+    value: String,
+    password: String,
+) -> Result<(), String> {
+    redis_cli(&container, &host, port, &db, &password, &["SET", &key, &value]).map(|_| ())
+}
+
+#[tauri::command]
+pub fn db_docker_redis_ttl(
+    container: String,
+    host: String,
+    port: u16,
+    db: String,
+    key: String,
+    password: String,
+) -> Result<i64, String> {
+    redis_cli(&container, &host, port, &db, &password, &["TTL", &key])
+        .map(|s| s.trim().parse::<i64>().unwrap_or(-2))
 }
 
 // Runs a free-form redis-cli command against the `db` database (dev tool).

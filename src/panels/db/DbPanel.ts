@@ -10,9 +10,11 @@ import { askAi, type AiQueryRunner, type AiTool } from '../../ui/askAi'
 import { buildJoinPath, type Relation } from '../../core/db/joinPath'
 import { withRowLimit } from '../../core/db/rowLimit'
 import { buildJoinQuery, buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from './queryBuilders'
+import { parseStructuredJson } from './jsonValues'
 
 // Counter for unique datalist ids (several DB panels/views at once).
 let joinListSeq = 0
+let closeOpenPanel: (() => void) | null = null
 
 const KIND_LABEL: Record<DbKind, string> = {
   mysql: 'MySQL', mariadb: 'MariaDB', mongodb: 'MongoDB', postgres: 'PostgreSQL', redis: 'Redis',
@@ -38,6 +40,297 @@ const note = (text: string, cls = 'db-note'): HTMLElement => {
 
 const prettyJson = (json: string): string => {
   try { return JSON.stringify(JSON.parse(json), null, 2) } catch { return json }
+}
+
+const mkSpan = (cls: string, text: string): HTMLSpanElement => {
+  const s = document.createElement('span')
+  s.className = cls
+  s.textContent = text
+  return s
+}
+
+// Matches: key+colon | string value | number | true/false/null | punctuation
+const JSON_TOKEN_RE = /("(?:[^"\\]|\\.)*")(\s*:)|("(?:[^"\\]|\\.)*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b|([{}[\],])/g
+
+const primitiveClass = (val: unknown): string => {
+  if (typeof val === 'string') return 'js'
+  if (typeof val === 'number') return 'jn'
+  return 'jl'
+}
+
+const buildJsonTree = (val: unknown, depth: number): HTMLElement => {
+  if (val === null || typeof val !== 'object') {
+    return mkSpan(primitiveClass(val), JSON.stringify(val))
+  }
+  const isArr = Array.isArray(val)
+  const entries: [string, unknown][] = isArr
+    ? (val as unknown[]).map((v, i) => [String(i), v])
+    : Object.entries(val as Record<string, unknown>)
+  const openB = isArr ? '[' : '{'
+  const closeB = isArr ? ']' : '}'
+  if (depth >= 6) return mkSpan('jt-hint', `${openB}…${entries.length}${closeB}`)
+  const initialOpen = depth < 2
+
+  const node = document.createElement('div')
+  node.className = 'jt-node'
+
+  const header = document.createElement('span')
+  header.className = 'jt-header'
+  const toggle = document.createElement('button')
+  toggle.className = 'jt-toggle'
+  toggle.textContent = initialOpen ? '▼' : '▶'
+  const hint = document.createElement('span')
+  hint.className = 'jt-hint'
+  hint.textContent = `${entries.length}${closeB}`
+  hint.style.display = initialOpen ? 'none' : 'inline'
+  header.append(toggle, mkSpan('jp', openB), hint)
+
+  const body = document.createElement('div')
+  body.className = 'jt-body'
+  body.style.display = initialOpen ? 'block' : 'none'
+  entries.forEach(([key, childVal]) => {
+    const row = document.createElement('div')
+    row.className = 'jt-row'
+    if (!isArr) {
+      row.appendChild(mkSpan('jk', `"${key}"`))
+      row.appendChild(document.createTextNode(': '))
+    }
+    row.appendChild(buildJsonTree(childVal, depth + 1))
+    body.appendChild(row)
+  })
+
+  const close = document.createElement('span')
+  close.className = 'jp jt-close'
+  close.textContent = closeB
+  close.style.display = initialOpen ? 'block' : 'none'
+
+  toggle.addEventListener('click', e => {
+    e.stopPropagation()
+    const nowOpen = body.style.display === 'none'
+    body.style.display = nowOpen ? 'block' : 'none'
+    hint.style.display = nowOpen ? 'none' : 'inline'
+    close.style.display = nowOpen ? 'block' : 'none'
+    toggle.textContent = nowOpen ? '▼' : '▶'
+  })
+
+  node.append(header, body, close)
+  return node
+}
+
+const highlightJson = (pre: HTMLPreElement, src: string): void => {
+  const frag = document.createDocumentFragment()
+  let cursor = 0
+  let m: RegExpExecArray | null
+  JSON_TOKEN_RE.lastIndex = 0
+  while ((m = JSON_TOKEN_RE.exec(src)) !== null) {
+    if (m.index > cursor) frag.appendChild(document.createTextNode(src.slice(cursor, m.index)))
+    if (m[1] !== undefined) {
+      frag.appendChild(mkSpan('jk', m[1]))
+      frag.appendChild(document.createTextNode(m[2] ?? ''))
+    } else if (m[3] !== undefined) {
+      frag.appendChild(mkSpan('js', m[3]))
+    } else if (m[4] !== undefined) {
+      frag.appendChild(mkSpan('jn', m[4]))
+    } else if (m[5] !== undefined) {
+      frag.appendChild(mkSpan('jl', m[5]))
+    } else if (m[6] !== undefined) {
+      frag.appendChild(mkSpan('jp', m[6]))
+    }
+    cursor = m.index + m[0].length
+  }
+  if (cursor < src.length) frag.appendChild(document.createTextNode(src.slice(cursor)))
+  pre.replaceChildren(frag)
+}
+
+const renderCellValue = (td: HTMLTableCellElement, value: string): void => {
+  td.replaceChildren()
+  td.classList.toggle('db-null', value === 'NULL')
+  td.classList.remove('db-json-td')
+
+  const json = parseStructuredJson(value)
+  const isLongText = !json && (value.includes('\n') || value.length > 40 || value.endsWith('…'))
+
+  if (!json && !isLongText) {
+    td.textContent = value
+    return
+  }
+
+  td.classList.add('db-json-td')
+  const cell = document.createElement('div')
+  cell.className = 'db-json-cell'
+  const summaryEl = document.createElement('div')
+  summaryEl.className = 'db-json-summary'
+
+  const closeCell = (): void => {
+    cell.classList.remove('db-json-open')
+    document.removeEventListener('pointerdown', onPointerDown)
+    document.removeEventListener('keydown', onKeyDown)
+    closeOpenPanel = null
+  }
+
+  const onPointerDown = (e: PointerEvent): void => {
+    if (!cell.contains(e.target as Node)) closeCell()
+  }
+
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') closeCell()
+  }
+
+  summaryEl.addEventListener('click', () => {
+    const nowOpen = cell.classList.toggle('db-json-open')
+    if (nowOpen) {
+      closeOpenPanel?.()
+      closeOpenPanel = closeCell
+      document.addEventListener('pointerdown', onPointerDown)
+      document.addEventListener('keydown', onKeyDown)
+      requestAnimationFrame(() => {
+        const rect = panel.getBoundingClientRect()
+        panel.classList.toggle('db-json-flip', rect.bottom > window.innerHeight - 8)
+      })
+    } else {
+      closeCell()
+    }
+  })
+
+  if (json) {
+    summaryEl.title = i18nT('db.expandJson')
+    const badge = document.createElement('span')
+    badge.className = 'db-json-badge'
+    badge.textContent = i18nT('db.jsonBadge')
+    const preview = document.createElement('span')
+    preview.className = 'db-json-preview'
+    preview.textContent = json.truncated
+      ? i18nT('db.jsonTruncated')
+      : json.kind === 'array'
+        ? i18nT('db.jsonItems', { count: json.size })
+        : i18nT('db.jsonKeys', { count: json.size })
+    summaryEl.append(badge, preview)
+  } else {
+    const textPreview = document.createElement('span')
+    textPreview.className = 'db-text-preview'
+    textPreview.textContent = value.split('\n')[0].trim()
+    summaryEl.appendChild(textPreview)
+  }
+
+  const rawContent = json ? json.formatted : value
+  let contentEl: HTMLElement
+  if (json && !json.truncated) {
+    contentEl = document.createElement('div')
+    contentEl.className = 'db-json-content'
+    contentEl.appendChild(buildJsonTree(JSON.parse(json.formatted), 0))
+  } else {
+    contentEl = document.createElement('pre')
+    contentEl.className = 'db-json-content'
+    contentEl.textContent = rawContent
+  }
+  contentEl.addEventListener('dblclick', event => event.stopPropagation())
+
+  const copyBtn = document.createElement('button')
+  copyBtn.className = 'db-json-copy'
+  copyBtn.title = i18nT('db.jsonCopy')
+  copyBtn.textContent = '⎘'
+  copyBtn.addEventListener('click', e => {
+    e.stopPropagation()
+    void navigator.clipboard.writeText(rawContent).then(() => {
+      copyBtn.textContent = '✓'
+      setTimeout(() => { copyBtn.textContent = '⎘' }, 1200)
+    })
+  })
+
+  const panel = document.createElement('div')
+  panel.className = 'db-json-panel'
+  panel.append(copyBtn, contentEl)
+  cell.append(summaryEl, panel)
+  td.appendChild(cell)
+}
+
+const makeFilterInput = (onChange: (q: string) => void): HTMLInputElement => {
+  const input = document.createElement('input')
+  input.className = 'db-filter'
+  input.placeholder = i18nT('db.filterRows')
+  input.type = 'search'
+  let t: ReturnType<typeof setTimeout> | null = null
+  input.addEventListener('input', () => {
+    if (t) clearTimeout(t)
+    t = setTimeout(() => onChange(input.value.toLowerCase()), 150)
+  })
+  return input
+}
+
+const makeCsvBtn = (getData: () => { cols: string[]; rows: string[][]; filename: string }): HTMLButtonElement => {
+  const btn = document.createElement('button')
+  btn.className = 'db-action'
+  btn.title = i18nT('db.exportCsv')
+  btn.innerHTML = icon('download')
+  btn.addEventListener('click', () => {
+    const { cols, rows, filename } = getData()
+    const csv = [cols, ...rows].map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n')
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(a.href)
+  })
+  return btn
+}
+
+const buildWheres = (pkIdx: number[], columns: string[], row: string[]): [string, string][] =>
+  pkIdx.map(i => [columns[i], row[i]])
+
+const makeResultWrap = (tbl: HTMLElement, toolbarItems: HTMLElement[]): HTMLElement => {
+  const toolbar = document.createElement('div')
+  toolbar.className = 'db-result-toolbar'
+  toolbar.append(...toolbarItems)
+  const wrap = document.createElement('div')
+  wrap.className = 'db-result-wrap'
+  wrap.append(toolbar, tbl)
+  return wrap
+}
+
+const sqlEscQ = (v: string): string => v.replace(/'/g, "''")
+
+const parseRedisLines = (raw: string): string[] =>
+  raw.split('\n')
+    .map(l => l.trim())
+    .filter(l => /^\d+\)/.test(l))
+    .map(l => {
+      const m = l.match(/^\d+\)\s+(.*)$/)
+      if (!m) return ''
+      let v = m[1]
+      if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+      return v
+    })
+
+const fetchColumns = async (s: DbServer, db: string, table: string): Promise<string[]> => {
+  try {
+    if (isMongo(s)) {
+      const esc = sqlEscQ
+      const script = `Object.keys(db.getSiblingDB('${esc(db)}').getCollection('${esc(table)}').findOne()||{}).join('\\n')`
+      const out = await invoke<string>('db_docker_mongo_query', { ...target(s), db, script, ...creds(s) })
+      return out.split('\n').map(x => x.trim()).filter(Boolean)
+    }
+    if (isPg(s)) {
+      const parts = table.split('.')
+      const tbl = parts.pop() ?? table
+      const schema = parts.pop() ?? 'public'
+      const sql = `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='${sqlEscQ(schema)}' AND table_name='${sqlEscQ(tbl)}' ORDER BY ordinal_position`
+      const data = await invoke<TableData>('db_docker_pg_query', { ...target(s), db, sql, ...creds(s) })
+      return data.rows.map(r => `${r[0]} (${r[1]})`)
+    }
+    const sql = `SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='${sqlEscQ(db)}' AND TABLE_NAME='${sqlEscQ(table)}' ORDER BY ORDINAL_POSITION`
+    const data = await invoke<TableData>('db_docker_mysql_query', { ...target(s), db, sql, ...creds(s) })
+    return data.rows.map(r => `${r[0]} (${r[1]})`)
+  } catch {
+    return []
+  }
+}
+
+interface EditMeta {
+  s: DbServer
+  db: string
+  table: string
+  pkIdx: number[]
+  fkColMap: Map<string, { ref_table: string; ref_column: string }>
 }
 
 export function createDbPanel(): { element: HTMLElement } {
@@ -124,22 +417,114 @@ export function createDbPanel(): { element: HTMLElement } {
     return invoke<string[]>(cmd, { ...target(s), db, ...creds(s) })
   }
 
-  const renderRedisValue = (db: string, key: string, v: { kind: string; value: string }): void => {
-    const pre = document.createElement('pre')
-    pre.className = 'db-doc'
-    pre.textContent = v.value || i18nT('db.empty')
-    const scroll = document.createElement('div')
-    scroll.className = 'db-docs'
-    scroll.appendChild(pre)
-    showDetail(detailHead(`db${db} · ${key}`, v.kind), scroll)
+  const renderRedisValue = (s: DbServer, db: string, key: string, v: { kind: string; value: string }, ttl: number): void => {
+    const ttlLabel = ttl > 0 ? i18nT('db.ttlSeconds', { ttl }) : ttl === -1 ? i18nT('db.ttlPersists') : ''
+    const kindStr = ttlLabel ? `${v.kind} · ${ttlLabel}` : v.kind
+    const lines = v.value ? parseRedisLines(v.value) : []
+    const rawValue = v.value || ''
+
+    const buildContent = (): HTMLElement => {
+      if (!v.value) return note(i18nT('db.empty'))
+
+      if (v.kind === 'hash' && lines.length >= 2) {
+        const tbl = document.createElement('table')
+        tbl.className = 'db-redis-table'
+        const thead = document.createElement('thead')
+        const htr = document.createElement('tr')
+        ;['Field', 'Value'].forEach(h => { const th = document.createElement('th'); th.textContent = h; htr.appendChild(th) })
+        thead.appendChild(htr)
+        const tbody = document.createElement('tbody')
+        for (let i = 0; i < lines.length - 1; i += 2) {
+          const field = lines[i], val = lines[i + 1]
+          const tr = document.createElement('tr')
+          const keyTd = document.createElement('td'); keyTd.textContent = field; tr.appendChild(keyTd)
+          const valTd = document.createElement('td'); valTd.textContent = val
+          valTd.classList.add('db-editable')
+          valTd.addEventListener('dblclick', () => {
+            const inp = document.createElement('input'); inp.className = 'db-cell-input'; inp.value = val
+            valTd.replaceChildren(inp); inp.focus(); inp.select()
+            let done = false
+            inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur() } if (e.key === 'Escape') { done = true; valTd.textContent = val } })
+            inp.addEventListener('blur', async () => {
+              if (done) return; done = true
+              if (inp.value === val) { valTd.textContent = val; return }
+              try {
+                await invoke('db_docker_redis_command', { ...target(s), db, command: `HSET ${key} ${field} ${inp.value}`, password: s.password ?? '' })
+                valTd.textContent = inp.value
+              } catch (e2) { alert(String(e2)); valTd.textContent = val }
+            })
+          })
+          tr.appendChild(valTd); tbody.appendChild(tr)
+        }
+        tbl.append(thead, tbody); return tbl
+      }
+
+      if ((v.kind === 'list' || v.kind === 'set') && lines.length) {
+        const ol = document.createElement('ol'); ol.className = 'db-redis-list'
+        lines.forEach(item => { const li = document.createElement('li'); li.textContent = item; ol.appendChild(li) })
+        return ol
+      }
+
+      if (v.kind === 'zset' && lines.length >= 2) {
+        const tbl = document.createElement('table'); tbl.className = 'db-redis-table'
+        const thead = document.createElement('thead'); const htr = document.createElement('tr')
+        ;[i18nT('db.member'), i18nT('db.score')].forEach(h => { const th = document.createElement('th'); th.textContent = h; htr.appendChild(th) })
+        thead.appendChild(htr); const tbody = document.createElement('tbody')
+        for (let i = 0; i < lines.length - 1; i += 2) {
+          const tr = document.createElement('tr')
+          ;[lines[i], lines[i + 1]].forEach(v2 => { const td = document.createElement('td'); td.textContent = v2; tr.appendChild(td) })
+          tbody.appendChild(tr)
+        }
+        tbl.append(thead, tbody); return tbl
+      }
+
+      // string / stream / unknown: existing behavior with optional editing
+      const pre = document.createElement('pre'); pre.className = 'db-doc'
+      const parsed = parseStructuredJson(rawValue)
+      if (parsed && !parsed.truncated) highlightJson(pre, parsed.formatted)
+      else pre.textContent = prettyJson(rawValue)
+
+      if (v.kind === 'string') {
+        pre.addEventListener('dblclick', () => {
+          const ta = document.createElement('textarea'); ta.className = 'db-doc-edit'; ta.value = rawValue
+          const acts = document.createElement('div'); acts.className = 'db-doc-actions'
+          const saveBtn = document.createElement('button'); saveBtn.className = 'db-connect'; saveBtn.textContent = i18nT('common.save')
+          const cancelBtn = document.createElement('button'); cancelBtn.className = 'db-doc-cancel'; cancelBtn.textContent = i18nT('common.cancel')
+          acts.append(saveBtn, cancelBtn)
+          const wrap = document.createElement('div'); wrap.className = 'db-doc-wrap'; wrap.append(ta, acts)
+          pre.replaceWith(wrap); ta.focus()
+          cancelBtn.addEventListener('click', () => wrap.replaceWith(pre))
+          saveBtn.addEventListener('click', async () => {
+            try {
+              await invoke('db_docker_redis_set', { ...target(s), db, key, value: ta.value, password: s.password ?? '' })
+              pre.textContent = ta.value; wrap.replaceWith(pre)
+            } catch (e) { alert(String(e)) }
+          })
+        })
+      }
+      return pre
+    }
+
+    const content = buildContent()
+    const copyBtn = document.createElement('button')
+    copyBtn.className = 'db-action'; copyBtn.title = i18nT('db.jsonCopy'); copyBtn.textContent = '⎘'
+    copyBtn.addEventListener('click', () => {
+      void navigator.clipboard.writeText(rawValue).then(() => { copyBtn.textContent = '✓'; setTimeout(() => { copyBtn.textContent = '⎘' }, 1200) })
+    })
+    const toolbar = document.createElement('div'); toolbar.className = 'db-result-toolbar'; toolbar.appendChild(copyBtn)
+    const scroll = document.createElement('div'); scroll.className = 'db-docs'; scroll.appendChild(content)
+    showDetail(detailHead(`db${db} · ${key}`, kindStr), toolbar, scroll)
   }
 
   const openData = async (s: DbServer, db: string, name: string): Promise<void> => {
     showDetail(note(i18nT('common.loading'), 'db-detail-loading'))
     try {
       if (isRedis(s)) {
-        const v = await invoke<{ kind: string; value: string }>('db_docker_redis_value', { ...target(s), db, key: name, password: s.password ?? '' })
-        renderRedisValue(db, name, v)
+        const [v, ttl] = await Promise.all([
+          invoke<{ kind: string; value: string }>('db_docker_redis_value', { ...target(s), db, key: name, password: s.password ?? '' }),
+          invoke<number>('db_docker_redis_ttl', { ...target(s), db, key: name, password: s.password ?? '' }).catch(() => -2),
+        ])
+        renderRedisValue(s, db, name, v, ttl)
         return
       }
       if (isMongo(s)) {
@@ -150,7 +535,11 @@ export function createDbPanel(): { element: HTMLElement } {
           invoke<TableData>(sqlCmd(s, 'rows'), { ...target(s), db, table: name, ...creds(s) }),
           invoke<string[]>(sqlCmd(s, 'pk'), { ...target(s), db, table: name, ...creds(s) }).catch(() => [] as string[]),
         ])
-        renderGrid(s, db, name, data, pk)
+        const fkColMap = new Map<string, { ref_table: string; ref_column: string }>()
+        fetchRelations(s, db).then(fks => {
+          fks.filter(f => f.table === name).forEach(f => fkColMap.set(f.column, { ref_table: f.ref_table, ref_column: f.ref_column }))
+        }).catch(() => {})
+        renderGrid(s, db, name, data, pk, fkColMap, () => openData(s, db, name))
       }
     } catch (e) {
       showDetail(note(String(e), 'db-detail-error'))
@@ -187,34 +576,127 @@ export function createDbPanel(): { element: HTMLElement } {
   // (the full data is still there; this only bounds what gets drawn).
   const MAX_COLS = 60
   const MAX_ROWS = 200
-  const renderResultTable = (data: TableData): HTMLElement => {
+  const renderResultTable = (data: TableData, em?: EditMeta, loadMore?: (offset: number) => Promise<string[][]>): HTMLElement => {
     if (!data.columns.length) return note(data.rows.length ? i18nT('db.ok') : i18nT('db.noResults'), 'db-detail-hint')
     const cols = data.columns.slice(0, MAX_COLS)
+    let sortCol = -1
+    let sortDir: 'asc' | 'desc' = 'asc'
+    let currentFilter = ''
+
     const tbl = document.createElement('table')
     tbl.className = 'db-grid'
     const thead = document.createElement('thead')
     const htr = document.createElement('tr')
-    cols.forEach(col => { const th = document.createElement('th'); th.textContent = col; htr.appendChild(th) })
+    cols.forEach((col, i) => {
+      const th = document.createElement('th')
+      th.textContent = col
+      th.className = 'db-grid-th'
+      th.addEventListener('click', () => {
+        if (sortCol === i) {
+          sortDir = sortDir === 'asc' ? 'desc' : 'asc'
+        } else {
+          sortCol = i; sortDir = 'asc'
+        }
+        htr.querySelectorAll('th').forEach((t, j) => {
+          t.classList.toggle('db-sort-asc', j === sortCol && sortDir === 'asc')
+          t.classList.toggle('db-sort-desc', j === sortCol && sortDir === 'desc')
+        })
+        renderRows()
+      })
+      htr.appendChild(th)
+    })
+    if (em?.pkIdx.length) htr.appendChild(document.createElement('th'))
     thead.appendChild(htr)
     const tbody = document.createElement('tbody')
-    data.rows.slice(0, MAX_ROWS).forEach(row => {
-      const tr = document.createElement('tr')
-      row.slice(0, MAX_COLS).forEach(cell => {
-        const td = document.createElement('td')
-        td.textContent = cell
-        if (cell === 'NULL') td.classList.add('db-null')
-        tr.appendChild(td)
-      })
-      tbody.appendChild(tr)
-    })
     tbl.append(thead, tbody)
+
+    const getSortedRows = (): string[][] => {
+      let rows = data.rows
+      if (sortCol >= 0) {
+        rows = [...rows].sort((a, b) => {
+          const av = a[sortCol] ?? '', bv = b[sortCol] ?? ''
+          const an = parseFloat(av), bn = parseFloat(bv)
+          const numeric = !isNaN(an) && !isNaN(bn) && av.trim() !== '' && bv.trim() !== ''
+          const cmp = numeric ? an - bn : av.localeCompare(bv)
+          return sortDir === 'asc' ? cmp : -cmp
+        })
+      }
+      return currentFilter ? rows.filter(row => row.some(cell => cell.toLowerCase().includes(currentFilter))) : rows
+    }
+
+    const countEl = document.createElement('span')
+    countEl.className = 'db-result-count'
+    const total = data.rows.length
+
+    const renderRows = (): void => {
+      const rows = getSortedRows()
+      countEl.textContent = currentFilter ? `${rows.length} / ${total}` : `${rows.length}`
+      tbody.replaceChildren()
+      rows.forEach(row => {
+        const tr = document.createElement('tr')
+        row.slice(0, MAX_COLS).forEach((cell, colIdx) => {
+          const td = document.createElement('td')
+          renderCellValue(td, cell)
+          if (em) {
+            td.classList.add('db-editable')
+            td.addEventListener('dblclick', () =>
+              editCell(em.s, em.db, em.table, data.columns, row, colIdx, em.pkIdx, td, em.fkColMap.get(data.columns[colIdx])))
+          }
+          tr.appendChild(td)
+        })
+        if (em?.pkIdx.length) {
+          const actTd = document.createElement('td')
+          actTd.className = 'db-row-actions'
+          const del = document.createElement('button')
+          del.className = 'db-del'
+          del.title = i18nT('db.deleteRow')
+          del.innerHTML = icon('trash')
+          del.addEventListener('click', () => deleteRow(em.s, em.db, em.table, data.columns, row, em.pkIdx, tr, () => {
+            const idx = data.rows.indexOf(row)
+            if (idx >= 0) data.rows.splice(idx, 1)
+            renderRows()
+          }))
+          actTd.appendChild(del)
+          tr.appendChild(actTd)
+        }
+        tbody.appendChild(tr)
+      })
+    }
+
+    const filterInput = makeFilterInput(q => { currentFilter = q; renderRows() })
+    const csvBtn = makeCsvBtn(() => ({ cols, rows: getSortedRows().map(r => r.slice(0, MAX_COLS)), filename: 'result.csv' }))
+    renderRows()
 
     const overflow: string[] = []
     if (data.columns.length > MAX_COLS) overflow.push(i18nT('db.columnsShown', { count: data.columns.length, shown: MAX_COLS }))
-    if (data.rows.length > MAX_ROWS) overflow.push(i18nT('db.rowsShown', { count: data.rows.length, shown: MAX_ROWS }))
-    if (!overflow.length) return tbl
-    const wrap = document.createElement('div')
-    wrap.append(note(i18nT('db.largeResult', { size: overflow.join(', ') }), 'db-detail-hint'), tbl)
+
+    const wrap = makeResultWrap(tbl, [filterInput, countEl, csvBtn])
+    if (overflow.length) wrap.prepend(note(i18nT('db.largeResult', { size: overflow.join(', ') }), 'db-detail-hint'))
+
+    if (loadMore && data.rows.length >= MAX_ROWS) {
+      const loadBtn = document.createElement('button')
+      loadBtn.className = 'db-load-more'
+      loadBtn.textContent = i18nT('db.loadMore')
+      loadBtn.addEventListener('click', async () => {
+        loadBtn.disabled = true
+        loadBtn.textContent = i18nT('common.loading')
+        try {
+          const more = await loadMore(data.rows.length)
+          if (!more.length) { loadBtn.remove(); return }
+          data.rows.push(...more)
+          countEl.textContent = `${data.rows.length}`
+          renderRows()
+          if (more.length < MAX_ROWS) loadBtn.remove()
+          else { loadBtn.disabled = false; loadBtn.textContent = i18nT('db.loadMore') }
+        } catch (e) {
+          loadBtn.disabled = false
+          loadBtn.textContent = i18nT('db.loadMore')
+          alert(String(e))
+        }
+      })
+      wrap.appendChild(loadBtn)
+    }
+
     return wrap
   }
 
@@ -305,7 +787,7 @@ export function createDbPanel(): { element: HTMLElement } {
           schema: { type: 'function', function: { name: 'get_columns', description: `Columnas reales (nombre y tipo) de las ${noun2} indicadas. Úsalo antes de escribir la consulta.`, parameters: arrayParam(tableDesc) } },
           run: async args => {
             const wanted = Array.isArray(args.tables) ? (args.tables as string[]).slice(0, 30) : []
-            const parts = await Promise.all(wanted.map(async t => `${t}: ${(await getColumns(t)).join(', ') || '(desconocidas)'}`))
+            const parts = await Promise.all(wanted.map(async t => `${t}: ${(await fetchColumns(s, db, t)).join(', ') || '(desconocidas)'}`))
             return parts.join('\n') || '(sin columnas)'
           },
         },
@@ -327,9 +809,43 @@ export function createDbPanel(): { element: HTMLElement } {
       askAi(`${schema}\n\nEscríbeme ${dialect} para: ${guide}`, false, runner, tools)
     })
 
+    const histBtn = document.createElement('button')
+    histBtn.className = 'db-connect'
+    histBtn.title = i18nT('db.queryHistory')
+    histBtn.textContent = '⏱'
+    const histDrop = document.createElement('div')
+    histDrop.className = 'db-hist-drop hidden'
+    let offHistClick: (() => void) | null = null
+    histBtn.addEventListener('click', e => {
+      e.stopPropagation()
+      if (offHistClick) { document.removeEventListener('click', offHistClick); offHistClick = null }
+      const h = getHistory()
+      histDrop.replaceChildren()
+      if (!h.length) {
+        histDrop.append(note(i18nT('db.noHistory'), 'db-detail-hint'))
+      } else {
+        h.forEach(q => {
+          const btn = document.createElement('button')
+          btn.className = 'db-hist-item'
+          btn.textContent = q.split('\n')[0].slice(0, 80)
+          btn.title = q
+          btn.addEventListener('click', () => { editor.value = q; histDrop.classList.add('hidden'); editor.focus() })
+          histDrop.appendChild(btn)
+        })
+      }
+      histDrop.classList.toggle('hidden')
+      if (!histDrop.classList.contains('hidden')) {
+        offHistClick = (): void => { histDrop.classList.add('hidden'); offHistClick = null }
+        setTimeout(() => { if (offHistClick) document.addEventListener('click', offHistClick, { once: true }) }, 0)
+      }
+    })
+    const histWrap = document.createElement('div')
+    histWrap.className = 'db-hist-wrap'
+    histWrap.append(histBtn, histDrop)
+
     const actions = document.createElement('div')
     actions.className = 'db-query-actions'
-    actions.append(runBtn, aiBtn)
+    actions.append(runBtn, aiBtn, histWrap)
 
     // Deterministic JOIN builder (no AI): you pick tables and Bento finds the
     // JOIN path through the foreign keys. SQL only.
@@ -504,31 +1020,11 @@ export function createDbPanel(): { element: HTMLElement } {
       return out
     }
 
-    // Real columns (name + type) of a table/collection, for the AI's get_columns
-    // tool. Covers MySQL, MariaDB, PostgreSQL and Mongo.
-    const sqlEsc = (v: string): string => v.replace(/'/g, "''")
-    const getColumns = async (table: string): Promise<string[]> => {
-      try {
-        if (isMongo(s)) {
-          const script = `Object.keys(db.getSiblingDB('${sqlEsc(db)}').getCollection('${sqlEsc(table)}').findOne()||{}).join('\\n')`
-          const out = await invoke<string>('db_docker_mongo_query', { ...target(s), db, script, ...creds(s) })
-          return out.split('\n').map(x => x.trim()).filter(Boolean)
-        }
-        if (isPg(s)) {
-          const parts = table.split('.')
-          const tbl = parts.pop() ?? table
-          const schema = parts.pop() ?? 'public'
-          const sql = `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='${sqlEsc(schema)}' AND table_name='${sqlEsc(tbl)}' ORDER BY ordinal_position`
-          const data = await invoke<TableData>('db_docker_pg_query', { ...target(s), db, sql, ...creds(s) })
-          return data.rows.map(r => `${r[0]} (${r[1]})`)
-        }
-        // MySQL / MariaDB (same client)
-        const sql = `SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='${sqlEsc(db)}' AND TABLE_NAME='${sqlEsc(table)}' ORDER BY ORDINAL_POSITION`
-        const data = await invoke<TableData>('db_docker_mysql_query', { ...target(s), db, sql, ...creds(s) })
-        return data.rows.map(r => `${r[0]} (${r[1]})`)
-      } catch {
-        return []
-      }
+    const HIST_KEY = `bento.db.qhist.${s.kind}.${db}`
+    const getHistory = (): string[] => { try { return JSON.parse(localStorage.getItem(HIST_KEY) ?? '[]') as string[] } catch { return [] } }
+    const saveHistory = (q: string): void => {
+      const h = [q, ...getHistory().filter(x => x !== q)].slice(0, 20)
+      localStorage.setItem(HIST_KEY, JSON.stringify(h))
     }
 
     // Runs a query and returns the element with the result (table or text).
@@ -542,7 +1038,40 @@ export function createDbPanel(): { element: HTMLElement } {
       // query executes few rows). With depth=1 it plans greedily instantly.
       // Postgres doesn't suffer from this.
       const sql = isPg(s) ? pgFixIdents(limited) : `SET SESSION optimizer_search_depth=1; ${limited}`
-      return renderResultTable(await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) }))
+      const data = await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) })
+
+      // Enable editing when the query is a plain SELECT * FROM <table> with no joins or aggregations.
+      // Pagination: offer "load more" when the query had no explicit LIMIT (withRowLimit added one).
+      const trimmedText = text.trim().replace(/;\s*$/, '')
+      const limitWasAdded = !/\blimit\b\s+\d/i.test(trimmedText) && /^(select|with)\b/i.test(trimmedText)
+      const loadMore = limitWasAdded
+        ? async (offset: number): Promise<string[][]> => {
+            const pageSql = `${trimmedText} LIMIT 200 OFFSET ${offset}`
+            const moreSql = isPg(s) ? pgFixIdents(pageSql) : `SET SESSION optimizer_search_depth=1; ${pageSql}`
+            const more = await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql: moreSql, ...creds(s) })
+            return more.rows
+          }
+        : undefined
+
+      const simpleMatch = /^\s*select\s+\*\s+from\s+((?:"[^"]+"\."[^"]+"|"[^"]+"|`[^`]+`|\w+(?:\.\w+)*))\s*(?:limit\s+\d+\s*)?;?\s*$/i.exec(text.trim())
+      if (simpleMatch) {
+        const rawTable = simpleMatch[1].replace(/["'`]/g, '')
+        const matched = names.find(n => n === rawTable || n.split('.').pop() === rawTable.split('.').pop())
+        if (matched) {
+          try {
+            const [pk, allFks] = await Promise.all([
+              invoke<string[]>(sqlCmd(s, 'pk'), { ...target(s), db, table: matched, ...creds(s) }).catch(() => [] as string[]),
+              relationsReady.catch(() => [] as ForeignKey[]),
+            ])
+            const pkIdx = pk.map(c => data.columns.indexOf(c)).filter(i => i >= 0)
+            const fkColMap = new Map<string, { ref_table: string; ref_column: string }>()
+            allFks.filter(f => f.table === matched).forEach(f => fkColMap.set(f.column, { ref_table: f.ref_table, ref_column: f.ref_column }))
+            return renderResultTable(data, { s, db, table: matched, pkIdx, fkColMap }, loadMore)
+          } catch { /* fall through to read-only */ }
+        }
+      }
+
+      return renderResultTable(data, undefined, loadMore)
     }
 
     // EXPLAIN: asks the engine for the execution plan WITHOUT running the query. It's
@@ -570,7 +1099,9 @@ export function createDbPanel(): { element: HTMLElement } {
       if (!text) return
       resultArea.replaceChildren(note(i18nT('db.running'), 'db-detail-loading'))
       try {
-        resultArea.replaceChildren(await executeQuery(text))
+        const result = await executeQuery(text)
+        saveHistory(text)
+        resultArea.replaceChildren(result)
       } catch (e) {
         const errEl = note(String(e), 'db-detail-error')
         const isExplainable = !isMongo(s) && !isRedis(s) && /^\s*(select|with)\b/i.test(text)
@@ -602,57 +1133,148 @@ export function createDbPanel(): { element: HTMLElement } {
   const editCell = (
     s: DbServer, db: string, table: string, columns: string[],
     row: string[], colIdx: number, pkIdx: number[], td: HTMLElement,
+    fkRef?: { ref_table: string; ref_column: string },
   ): void => {
     const column = columns[colIdx]
     const old = row[colIdx]
-    const input = document.createElement('input')
-    input.className = 'db-cell-input'
-    input.value = old === 'NULL' ? '' : old
-    td.replaceChildren(input)
-    input.focus()
-    input.select()
-    let done = false
-    const restore = (): void => { td.textContent = old; td.classList.toggle('db-null', old === 'NULL') }
-    const commit = async (): Promise<void> => {
-      if (done) return
-      done = true
-      const value = input.value
-      if (value === old) { restore(); return }
-      const wheres = pkIdx.map(i => [columns[i], row[i]] as [string, string])
-      const summary = `UPDATE ${table}\nSET ${column} = '${value}'\nWHERE ${wheres.map(([c, v]) => `${c}=${v}`).join(' AND ')}`
+    const restore = (): void => { renderCellValue(td as HTMLTableCellElement, old) }
+
+    const applyUpdate = async (value: string, setNull = false): Promise<void> => {
+      const wheres = buildWheres(pkIdx, columns, row)
+      const summary = setNull
+        ? `UPDATE ${table}\nSET ${column} = NULL\nWHERE ${wheres.map(([c, v]) => `${c}=${v}`).join(' AND ')}`
+        : `UPDATE ${table}\nSET ${column} = '${value}'\nWHERE ${wheres.map(([c, v]) => `${c}=${v}`).join(' AND ')}`
       if (!confirm(summary)) { restore(); return }
       try {
+        if (setNull) {
+          const ident = (id: string): string => isPg(s) ? `"${id}"` : `\`${id}\``
+          const w = wheres.map(([c, v]) => `${ident(c)} = '${v.replace(/'/g, "''")}'`).join(' AND ')
+          const tblQ = isPg(s)
+            ? table.split('.').map(p => `"${p}"`).join('.')
+            : `\`${db}\`.\`${table}\``
+          await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `UPDATE ${tblQ} SET ${ident(column)} = NULL WHERE ${w}`, ...creds(s) })
+          row[colIdx] = 'NULL'
+          renderCellValue(td as HTMLTableCellElement, 'NULL')
+          return
+        }
         await invoke(sqlCmd(s, 'update'), { ...target(s), db, table, column, value, wheres, ...creds(s) })
         row[colIdx] = value
-        td.textContent = value
-        td.classList.remove('db-null')
+        renderCellValue(td as HTMLTableCellElement, value)
       } catch (e) {
-        alert(String(e))
-        restore()
+        const err = String(e)
+        const isFk = /foreign key/i.test(err)
+        if (isFk && !isPg(s)) {
+          if (!confirm(i18nT('db.fkBypass'))) { restore(); return }
+          try {
+            const q = value.replace(/'/g, "''")
+            const w = wheres.map(([c, v]) => `\`${c}\` = '${v.replace(/'/g, "''")}'`).join(' AND ')
+            await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `SET FOREIGN_KEY_CHECKS=0; UPDATE \`${table}\` SET \`${column}\` = '${q}' WHERE ${w}; SET FOREIGN_KEY_CHECKS=1`, ...creds(s) })
+            row[colIdx] = value
+            renderCellValue(td as HTMLTableCellElement, value)
+          } catch (e2) { alert(String(e2)); restore() }
+        } else {
+          alert(isFk ? i18nT('db.fkError') : err)
+          restore()
+        }
       }
     }
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); input.blur() }
-      else if (e.key === 'Escape') { done = true; restore() }
-    })
-    input.addEventListener('blur', commit)
+
+    if (fkRef) {
+      td.replaceChildren(document.createTextNode('…'))
+      void invoke<TableData>(sqlCmd(s, 'rows'), { ...target(s), db, table: fkRef.ref_table, ...creds(s) })
+        .then(refData => {
+          const refColIdx = refData.columns.indexOf(fkRef.ref_column)
+          if (refColIdx < 0) { showInput(); return }
+          const sel = document.createElement('select')
+          sel.className = 'db-cell-input'
+          refData.rows.forEach(r => {
+            const o = document.createElement('option')
+            o.value = r[refColIdx]
+            const lbl = r.slice(0, 3).join(' · ')
+            o.textContent = lbl.length > 60 ? lbl.slice(0, 57) + '…' : lbl
+            if (r[refColIdx] === old) o.selected = true
+            sel.appendChild(o)
+          })
+          td.replaceChildren(sel)
+          sel.focus()
+          let done = false
+          sel.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); sel.blur() }
+            if (e.key === 'Escape') { done = true; restore() }
+          })
+          sel.addEventListener('blur', () => {
+            if (done) return
+            done = true
+            if (sel.value !== old) void applyUpdate(sel.value)
+            else restore()
+          })
+        })
+        .catch(showInput)
+      return
+    }
+
+    showInput()
+
+    function showInput(): void {
+      const input = document.createElement('input')
+      input.className = 'db-cell-input'
+      input.value = old === 'NULL' ? '' : old
+      const nullBtn = document.createElement('button')
+      nullBtn.className = 'db-null-btn'
+      nullBtn.textContent = 'NULL'
+      nullBtn.title = i18nT('db.setNull')
+      const wrap = document.createElement('div')
+      wrap.className = 'db-cell-edit-wrap'
+      wrap.append(input, nullBtn)
+      td.replaceChildren(wrap)
+      input.focus()
+      input.select()
+      let done = false
+      nullBtn.addEventListener('mousedown', e => {
+        e.preventDefault()
+        done = true
+        void applyUpdate('', true)
+      })
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur() }
+        else if (e.key === 'Escape') { done = true; restore() }
+        else if (e.key === 'Tab') {
+          e.preventDefault()
+          const forward = !e.shiftKey
+          input.blur()
+          requestAnimationFrame(() => {
+            const tr = td.closest('tr')!
+            const tdsInRow = Array.from(tr.querySelectorAll('td[tabindex]')) as HTMLElement[]
+            ;(tdsInRow[tdsInRow.indexOf(td) + (forward ? 1 : -1)] as HTMLElement | undefined)?.focus()
+          })
+        }
+      })
+      input.addEventListener('blur', () => {
+        if (done) return
+        done = true
+        if (input.value === old) { restore(); return }
+        void applyUpdate(input.value)
+      })
+    }
   }
 
   const deleteRow = async (
     s: DbServer, db: string, table: string, columns: string[],
     row: string[], pkIdx: number[], tr: HTMLElement,
+    onDeleted?: () => void,
   ): Promise<void> => {
-    const wheres = pkIdx.map(i => [columns[i], row[i]] as [string, string])
+    const wheres = buildWheres(pkIdx, columns, row)
     if (!confirm(`DELETE FROM ${table}\nWHERE ${wheres.map(([c, v]) => `${c}=${v}`).join(' AND ')}`)) return
     try {
       await invoke(sqlCmd(s, 'delete'), { ...target(s), db, table, wheres, ...creds(s) })
-      tr.remove()
+      if (onDeleted) onDeleted()
+      else tr.remove()
     } catch (e) {
       alert(String(e))
     }
   }
 
-  const renderGrid = (s: DbServer, db: string, table: string, data: TableData, pk: string[]): void => {
+  const renderGrid = (s: DbServer, db: string, table: string, data: TableData, pk: string[], fkColMap: Map<string, { ref_table: string; ref_column: string }>, onRefresh?: () => void): void => {
     const pkIdx = pk.map(c => data.columns.indexOf(c)).filter(i => i >= 0)
     const editable = pkIdx.length > 0
     const scroll = document.createElement('div')
@@ -664,41 +1286,218 @@ export function createDbPanel(): { element: HTMLElement } {
       tbl.className = 'db-grid'
       const thead = document.createElement('thead')
       const htr = document.createElement('tr')
-      data.columns.forEach(col => {
+      let sortCol = -1
+      let sortDir: 'asc' | 'desc' = 'asc'
+
+      data.columns.forEach((col, i) => {
         const th = document.createElement('th')
         th.textContent = col
+        th.className = 'db-grid-th'
+        th.addEventListener('click', () => {
+          if (sortCol === i) {
+            sortDir = sortDir === 'asc' ? 'desc' : 'asc'
+          } else {
+            sortCol = i; sortDir = 'asc'
+          }
+          htr.querySelectorAll('th').forEach((t, j) => {
+            t.classList.toggle('db-sort-asc', j === sortCol && sortDir === 'asc')
+            t.classList.toggle('db-sort-desc', j === sortCol && sortDir === 'desc')
+          })
+          sortRows()
+        })
         htr.appendChild(th)
       })
-      if (editable) htr.appendChild(document.createElement('th'))
+      htr.appendChild(document.createElement('th'))
       thead.appendChild(htr)
       const tbody = document.createElement('tbody')
+      const rowEls: Array<{ tr: HTMLTableRowElement; cells: string[] }> = []
+
+      const showRowDetail = (row: string[]): void => {
+        const overlay = document.createElement('div'); overlay.className = 'db-row-modal'
+        const panel = document.createElement('div'); panel.className = 'db-row-modal-panel'
+        const head = document.createElement('div'); head.className = 'db-row-modal-head'
+        const title = document.createElement('span'); title.textContent = table
+        const closeBtn = document.createElement('button'); closeBtn.className = 'db-action'; closeBtn.innerHTML = icon('x')
+        closeBtn.addEventListener('click', () => overlay.remove())
+        head.append(title, closeBtn)
+        const body = document.createElement('div'); body.className = 'db-row-modal-body'
+        data.columns.forEach((col, i) => {
+          const val = row[i]
+          const rowDiv = document.createElement('div'); rowDiv.className = 'db-row-modal-row'
+          const keyEl = document.createElement('span'); keyEl.className = 'db-row-modal-key'; keyEl.textContent = col
+          const valEl = document.createElement('div'); valEl.className = 'db-row-modal-val'
+          const json = parseStructuredJson(val)
+          if (json && !json.truncated) valEl.appendChild(buildJsonTree(JSON.parse(json.formatted), 0))
+          else if (val === 'NULL') { const s2 = document.createElement('span'); s2.className = 'db-null'; s2.textContent = 'NULL'; valEl.appendChild(s2) }
+          else valEl.textContent = val
+          rowDiv.append(keyEl, valEl); body.appendChild(rowDiv)
+        })
+        panel.append(head, body); overlay.appendChild(panel); document.body.appendChild(overlay)
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove() })
+        const onEsc = (e: KeyboardEvent): void => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onEsc) } }
+        document.addEventListener('keydown', onEsc)
+      }
+
       data.rows.forEach(row => {
         const tr = document.createElement('tr')
         row.forEach((cell, colIdx) => {
           const td = document.createElement('td')
-          td.textContent = cell
-          if (cell === 'NULL') td.classList.add('db-null')
+          renderCellValue(td, cell)
           if (editable) {
             td.classList.add('db-editable')
-            td.addEventListener('dblclick', () => editCell(s, db, table, data.columns, row, colIdx, pkIdx, td))
+            td.setAttribute('tabIndex', '0')
+            td.addEventListener('dblclick', () =>
+              editCell(s, db, table, data.columns, row, colIdx, pkIdx, td, fkColMap.get(data.columns[colIdx])))
+            td.addEventListener('keydown', e => {
+              if (e.key === 'Enter') { e.preventDefault(); editCell(s, db, table, data.columns, row, colIdx, pkIdx, td, fkColMap.get(data.columns[colIdx])) }
+              const tds = Array.from(tr.querySelectorAll('td[tabindex]')) as HTMLElement[]
+              const ti = tds.indexOf(td)
+              const trs = Array.from(tbody.children) as HTMLElement[]
+              const ri = trs.indexOf(tr)
+              if (e.key === 'ArrowRight') { e.preventDefault(); tds[ti + 1]?.focus() }
+              else if (e.key === 'ArrowLeft') { e.preventDefault(); tds[ti - 1]?.focus() }
+              else if (e.key === 'ArrowDown') { e.preventDefault(); ;(trs[ri + 1]?.querySelectorAll('td[tabindex]')[ti] as HTMLElement | undefined)?.focus() }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); ;(trs[ri - 1]?.querySelectorAll('td[tabindex]')[ti] as HTMLElement | undefined)?.focus() }
+            })
           }
           tr.appendChild(td)
         })
+        const actions = document.createElement('td'); actions.className = 'db-row-actions'
+        const detailBtn = document.createElement('button'); detailBtn.className = 'db-del'; detailBtn.title = i18nT('db.rowDetail'); detailBtn.innerHTML = icon('eye')
+        detailBtn.addEventListener('click', () => showRowDetail(row)); actions.appendChild(detailBtn)
+        const copyBtn2 = document.createElement('button'); copyBtn2.className = 'db-del'; copyBtn2.title = i18nT('db.copyRow'); copyBtn2.innerHTML = icon('copy')
+        copyBtn2.addEventListener('click', () => {
+          const obj: Record<string, string> = {}
+          data.columns.forEach((col, i) => { obj[col] = row[i] })
+          void navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).then(() => { copyBtn2.innerHTML = '✓'; setTimeout(() => { copyBtn2.innerHTML = icon('copy') }, 1200) })
+        })
+        actions.appendChild(copyBtn2)
         if (editable) {
-          const actions = document.createElement('td')
-          actions.className = 'db-row-actions'
-          const del = document.createElement('button')
-          del.className = 'db-del'
-          del.title = i18nT('db.deleteRow')
-          del.innerHTML = icon('trash')
+          const del = document.createElement('button'); del.className = 'db-del'; del.title = i18nT('db.deleteRow'); del.innerHTML = icon('trash')
           del.addEventListener('click', () => deleteRow(s, db, table, data.columns, row, pkIdx, tr))
           actions.appendChild(del)
-          tr.appendChild(actions)
         }
+        tr.appendChild(actions)
+        rowEls.push({ tr, cells: row })
         tbody.appendChild(tr)
       })
       tbl.append(thead, tbody)
-      scroll.appendChild(tbl)
+
+      const sortRows = (): void => {
+        if (sortCol < 0) return
+        const sorted = [...rowEls].sort((a, b) => {
+          const av = a.cells[sortCol] ?? ''
+          const bv = b.cells[sortCol] ?? ''
+          const an = parseFloat(av), bn = parseFloat(bv)
+          const numeric = !isNaN(an) && !isNaN(bn) && av.trim() !== '' && bv.trim() !== ''
+          const cmp = numeric ? an - bn : av.localeCompare(bv)
+          return sortDir === 'asc' ? cmp : -cmp
+        })
+        sorted.forEach(({ tr }) => tbody.appendChild(tr))
+      }
+
+      const countEl = document.createElement('span')
+      countEl.className = 'db-result-count'
+      countEl.textContent = `${data.rows.length}`
+
+      const filterInput = makeFilterInput(q => {
+        let visible = 0
+        rowEls.forEach(({ tr, cells }) => {
+          const show = !q || cells.some(c => c.toLowerCase().includes(q))
+          tr.style.display = show ? '' : 'none'
+          if (show) visible++
+        })
+        countEl.textContent = q ? `${visible} / ${data.rows.length}` : `${data.rows.length}`
+      })
+      const csvBtn = makeCsvBtn(() => ({
+        cols: data.columns,
+        rows: rowEls.filter(({ tr }) => tr.style.display !== 'none').map(({ cells }) => cells),
+        filename: `${table}.csv`,
+      }))
+
+      const showInsertRow = (): void => {
+        tbody.querySelector('.db-insert-row')?.remove()
+        const itr = document.createElement('tr')
+        itr.className = 'db-insert-row'
+        const cellStates: Array<{ input: HTMLInputElement; isNull: boolean }> = []
+        data.columns.forEach(col => {
+          const td = document.createElement('td')
+          const input = document.createElement('input')
+          input.className = 'db-cell-input'
+          input.placeholder = col
+          const state = { input, isNull: false }
+          cellStates.push(state)
+          const nullBtn = document.createElement('button')
+          nullBtn.className = 'db-null-btn'
+          nullBtn.textContent = 'NULL'
+          nullBtn.addEventListener('click', () => {
+            state.isNull = !state.isNull
+            nullBtn.classList.toggle('db-null-active', state.isNull)
+            input.disabled = state.isNull
+            input.value = state.isNull ? '' : input.value
+          })
+          const wrap = document.createElement('div')
+          wrap.className = 'db-cell-edit-wrap'
+          wrap.append(input, nullBtn)
+          td.appendChild(wrap)
+          itr.appendChild(td)
+        })
+        const actTd = document.createElement('td')
+        actTd.className = 'db-row-actions'
+        const okBtn = document.createElement('button')
+        okBtn.className = 'db-connect'
+        okBtn.textContent = '✓'
+        okBtn.title = i18nT('db.insertRow')
+        okBtn.addEventListener('click', async () => {
+          const ident = (id: string): string => isPg(s) ? `"${id}"` : `\`${id}\``
+          const quote = (v: string): string => isPg(s)
+            ? `'${v.replace(/'/g, "''")}'`
+            : `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+          const vals: Array<[string, string | null]> = []
+          cellStates.forEach(({ input: inp, isNull }, i) => {
+            if (isNull) vals.push([data.columns[i], null])
+            else if (inp.value !== '') vals.push([data.columns[i], inp.value])
+          })
+          if (!vals.length) { alert(i18nT('db.insertNeedValue')); return }
+          const colSql = vals.map(([c]) => ident(c)).join(', ')
+          const valSql = vals.map(([, v]) => v === null ? 'NULL' : quote(v)).join(', ')
+          const tblQ = isPg(s)
+            ? table.split('.').map(p => `"${p}"`).join('.')
+            : `\`${db}\`.\`${table}\``
+          okBtn.disabled = true
+          try {
+            await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `INSERT INTO ${tblQ} (${colSql}) VALUES (${valSql})`, ...creds(s) })
+            onRefresh?.()
+          } catch (e) { okBtn.disabled = false; alert(String(e)) }
+        })
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'db-doc-cancel'
+        cancelBtn.textContent = '✕'
+        cancelBtn.addEventListener('click', () => itr.remove())
+        actTd.append(okBtn, cancelBtn)
+        itr.appendChild(actTd)
+        tbody.appendChild(itr)
+        cellStates[0]?.input.focus()
+      }
+
+      const toolbarItems: HTMLElement[] = [filterInput, countEl, csvBtn]
+      if (onRefresh) {
+        const refreshBtn = document.createElement('button')
+        refreshBtn.className = 'db-action'
+        refreshBtn.title = i18nT('common.refresh')
+        refreshBtn.innerHTML = icon('refresh')
+        refreshBtn.addEventListener('click', onRefresh)
+        toolbarItems.push(refreshBtn)
+      }
+      if (editable && onRefresh) {
+        const addBtn = document.createElement('button')
+        addBtn.className = 'db-action'
+        addBtn.title = i18nT('db.insertRow')
+        addBtn.innerHTML = icon('plus')
+        addBtn.addEventListener('click', showInsertRow)
+        toolbarItems.push(addBtn)
+      }
+      scroll.appendChild(makeResultWrap(tbl, toolbarItems))
     }
     const hint = editable ? i18nT('db.editHint') : i18nT('db.readOnlyHint')
     showDetail(detailHead(`${db}.${table}`, i18nT('db.rowsSummary', { count: data.rows.length, suffix: hint })), scroll)
@@ -723,13 +1522,7 @@ export function createDbPanel(): { element: HTMLElement } {
     wrap.append(ta, actions)
     pre.replaceWith(wrap)
     ta.focus()
-    const restore = (text: string): void => {
-      const p = document.createElement('pre')
-      p.className = 'db-doc'
-      p.textContent = text
-      p.addEventListener('dblclick', () => editDoc(s, db, coll, p))
-      wrap.replaceWith(p)
-    }
+    const restore = (text: string): void => { wrap.replaceWith(makeDocPre(s, db, coll, text)) }
     cancel.addEventListener('click', () => restore(original))
     save.addEventListener('click', async () => {
       if (!confirm(i18nT('db.replaceTheDocumentById'))) return
@@ -740,6 +1533,14 @@ export function createDbPanel(): { element: HTMLElement } {
         alert(String(e))
       }
     })
+  }
+
+  const makeDocPre = (s: DbServer, db: string, coll: string, text: string): HTMLPreElement => {
+    const pre = document.createElement('pre')
+    pre.className = 'db-doc'
+    pre.textContent = text
+    pre.addEventListener('dblclick', () => editDoc(s, db, coll, pre))
+    return pre
   }
 
   const deleteDoc = async (s: DbServer, db: string, coll: string, item: HTMLElement, current: string): Promise<void> => {
@@ -755,26 +1556,63 @@ export function createDbPanel(): { element: HTMLElement } {
   const renderDocs = (s: DbServer, db: string, coll: string, docs: string[]): void => {
     const scroll = document.createElement('div')
     scroll.className = 'db-docs'
-    if (!docs.length) {
-      scroll.append(note(i18nT('db.noDocuments')))
-    } else {
-      docs.forEach(d => {
-        const item = document.createElement('div')
-        item.className = 'db-doc-item'
-        const del = document.createElement('button')
-        del.className = 'db-del db-doc-del'
-        del.title = i18nT('db.deleteDocument')
-        del.innerHTML = icon('trash')
-        del.addEventListener('click', () => deleteDoc(s, db, coll, item, item.querySelector('.db-doc')?.textContent ?? prettyJson(d)))
-        const pre = document.createElement('pre')
-        pre.className = 'db-doc'
-        pre.textContent = prettyJson(d)
-        pre.addEventListener('dblclick', () => editDoc(s, db, coll, pre))
-        item.append(del, pre)
-        scroll.appendChild(item)
+
+    const addNewDocRow = (): void => {
+      scroll.querySelector('.db-new-doc-wrap')?.remove()
+      const ta = document.createElement('textarea'); ta.className = 'db-doc-edit'; ta.value = '{\n  \n}'
+      const acts = document.createElement('div'); acts.className = 'db-doc-actions'
+      const saveBtn = document.createElement('button'); saveBtn.className = 'db-connect'; saveBtn.textContent = i18nT('common.save')
+      const cancelBtn = document.createElement('button'); cancelBtn.className = 'db-doc-cancel'; cancelBtn.textContent = i18nT('common.cancel')
+      acts.append(saveBtn, cancelBtn)
+      const wrap = document.createElement('div'); wrap.className = 'db-doc-wrap db-new-doc-wrap'; wrap.append(ta, acts)
+      scroll.prepend(wrap); ta.focus()
+      cancelBtn.addEventListener('click', () => wrap.remove())
+      saveBtn.addEventListener('click', async () => {
+        try {
+          const esc = (v: string): string => v.replace(/'/g, "\\'")
+          await invoke<string>('db_docker_mongo_query', { ...target(s), db, script: `db.getSiblingDB('${esc(db)}').getCollection('${esc(coll)}').insertOne(${ta.value})`, ...creds(s) })
+          wrap.remove()
+          const fresh = await invoke<string[]>('db_docker_mongo_docs', { ...target(s), db, collection: coll, ...creds(s) })
+          renderDocs(s, db, coll, fresh)
+        } catch (e) { alert(String(e)) }
       })
     }
-    showDetail(detailHead(`${db}.${coll}`, i18nT('db.documentsSummary', { name: docs.length })), scroll)
+
+    const items: Array<{ el: HTMLElement; text: string }> = []
+    const DOCS_PAGE = 20
+    let docsShown = 0
+
+    const addDocBatch = (): void => {
+      scroll.querySelector('.db-load-more')?.remove()
+      docs.slice(docsShown, docsShown + DOCS_PAGE).forEach(d => {
+        const item = document.createElement('div'); item.className = 'db-doc-item'
+        const del = document.createElement('button'); del.className = 'db-del db-doc-del'
+        del.title = i18nT('db.deleteDocument'); del.innerHTML = icon('trash')
+        del.addEventListener('click', () => deleteDoc(s, db, coll, item, item.querySelector('.db-doc')?.textContent ?? prettyJson(d)))
+        const pre = makeDocPre(s, db, coll, prettyJson(d))
+        item.append(del, pre); scroll.appendChild(item)
+        items.push({ el: item, text: prettyJson(d).toLowerCase() })
+      })
+      docsShown += DOCS_PAGE
+      if (docsShown < docs.length) {
+        const btn = document.createElement('button'); btn.className = 'db-load-more'
+        btn.textContent = i18nT('db.loadMore'); btn.addEventListener('click', addDocBatch)
+        scroll.appendChild(btn)
+      }
+    }
+
+    if (!docs.length) scroll.append(note(i18nT('db.noDocuments')))
+    else addDocBatch()
+
+    const addBtn = document.createElement('button'); addBtn.className = 'db-action'; addBtn.title = i18nT('db.newDoc'); addBtn.innerHTML = icon('plus')
+    addBtn.addEventListener('click', addNewDocRow)
+    const filterInput = makeFilterInput(q => {
+      items.forEach(({ el, text }) => { el.style.display = !q || text.includes(q) ? '' : 'none' })
+    })
+    filterInput.placeholder = i18nT('db.filterDocs')
+    const toolbar = document.createElement('div'); toolbar.className = 'db-result-toolbar'
+    toolbar.append(addBtn, filterInput)
+    showDetail(detailHead(`${db}.${coll}`, i18nT('db.documentsSummary', { name: docs.length })), toolbar, scroll)
   }
 
   // ---- tree ----
@@ -803,16 +1641,23 @@ export function createDbPanel(): { element: HTMLElement } {
     row: HTMLButtonElement,
     onFirstExpand: (children: HTMLElement) => void,
   ): void => {
-    const children = document.createElement('div')
-    children.className = 'db-children hidden'
+    let children: HTMLElement | null = null
     let loaded = false
     row.addEventListener('click', () => {
-      const open = children.classList.contains('hidden')
-      row.classList.toggle('open', open)
-      children.classList.toggle('hidden', !open)
-      if (open && !loaded) { loaded = true; onFirstExpand(children) }
+      if (!children) {
+        children = document.createElement('div')
+        children.className = 'db-children'
+        row.insertAdjacentElement('afterend', children)
+        row.classList.add('open')
+        if (!loaded) { loaded = true; onFirstExpand(children) }
+        return
+      }
+      const willOpen = children.classList.contains('hidden')
+      row.classList.toggle('open', willOpen)
+      children.classList.toggle('hidden', !willOpen)
+      if (willOpen && !loaded) { loaded = true; onFirstExpand(children) }
     })
-    parent.append(row, children)
+    parent.appendChild(row)
   }
 
   const selectLeaf = (row: HTMLElement): void => {
@@ -849,12 +1694,44 @@ export function createDbPanel(): { element: HTMLElement } {
       queryRow.addEventListener('click', () => { selectLeaf(queryRow); openQuery(s, db, names) })
       container.appendChild(queryRow)
       if (!names.length) { container.append(note(i18nT('db.noTables'))); return }
-      names.forEach(name => {
-        const row = rowEl(2, isMongo(s) || isRedis(s) ? 'list' : 'table', name, false)
+      const isLeaf = isMongo(s) || isRedis(s)
+      const TREE_PAGE = 30
+      let offset = 0
+      const addRow = (name: string): void => {
+        const row = rowEl(2, isRedis(s) ? 'list' : isMongo(s) ? 'list' : 'table', name, !isLeaf)
         row.classList.add('db-leaf')
         row.addEventListener('click', () => { selectLeaf(row); openData(s, db, name) })
-        container.appendChild(row)
-      })
+        if (isLeaf) {
+          container.appendChild(row)
+        } else {
+          appendExpandable(container, row, async children => {
+            children.append(note(i18nT('common.loading')))
+            const cols = await fetchColumns(s, db, name)
+            children.replaceChildren()
+            if (!cols.length) { children.append(note('—')); return }
+            cols.forEach(colStr => {
+              const div = document.createElement('div')
+              div.className = 'db-col-row'
+              div.textContent = colStr
+              children.appendChild(div)
+            })
+          })
+        }
+      }
+      const showPage = (): void => {
+        container.querySelector('.db-tree-more')?.remove()
+        names.slice(offset, offset + TREE_PAGE).forEach(addRow)
+        offset += TREE_PAGE
+        if (offset < names.length) {
+          const more = document.createElement('button')
+          more.className = 'db-row db-tree-more'
+          more.style.paddingLeft = `${8 + 2 * 14}px`
+          more.textContent = i18nT('db.showMore', { count: names.length - offset })
+          more.addEventListener('click', showPage)
+          container.appendChild(more)
+        }
+      }
+      showPage()
     } catch (e) {
       container.replaceChildren(note(String(e), 'db-error'))
     }

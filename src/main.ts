@@ -34,6 +34,26 @@ Object.keys(localStorage).filter(k => k.startsWith('bento.terminal.history.')).f
 // Tint the whole UI with the saved theme on startup
 applyAppTheme(getThemeName())
 
+// Global UI zoom: Cmd/Ctrl + / - / 0
+const ZOOM_KEY = 'bento.zoom'
+const ZOOM_STEP = 0.1
+const clampZoom = (z: number): number => Math.max(0.5, Math.min(2, Math.round(z * 10) / 10))
+const applyZoom = (z: number): void => {
+  const v = clampZoom(z)
+  document.documentElement.style.zoom = String(v)
+  localStorage.setItem(ZOOM_KEY, String(v))
+}
+const savedZoom = parseFloat(localStorage.getItem(ZOOM_KEY) ?? '1')
+if (savedZoom !== 1) applyZoom(savedZoom)
+
+document.addEventListener('keydown', e => {
+  if (!e.metaKey && !e.ctrlKey) return
+  const current = parseFloat(document.documentElement.style.zoom || '1')
+  if (e.key === '=' || e.key === '+') { e.preventDefault(); applyZoom(current + ZOOM_STEP) }
+  else if (e.key === '-') { e.preventDefault(); applyZoom(current - ZOOM_STEP) }
+  else if (e.key === '0') { e.preventDefault(); applyZoom(1) }
+})
+
 // On macOS the title bar is an overlay: leave room for the traffic lights
 if (isMac) {
   document.body.classList.add('is-mac')
