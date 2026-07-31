@@ -4015,7 +4015,9 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-inline-form { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
 /* Comment bar */
 .review-comment-bar { flex-shrink: 0; border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
-.review-pr-info { font-size: 11px; color: var(--accent); font-weight: 600; }
+.review-pr-info { font-size: 11px; }
+.review-pr-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.review-pr-link:hover { text-decoration: underline; }
 .review-comment-input { resize: vertical; padding: 6px 8px; font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--fg); font-family: inherit; }
 .review-comment-input:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .review-comment-btn { align-self: flex-end; padding: 5px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); cursor: pointer; }
