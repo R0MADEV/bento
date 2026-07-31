@@ -1045,6 +1045,50 @@ pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result
     .map_err(|e| e.to_string())?
 }
 
+// Resolves a git ref to its full SHA.
+#[tauri::command]
+pub async fn git_rev_parse(path: String, reference: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_output(&path, &["rev-parse", &reference]).map(|s| s.trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Posts an inline review comment on a specific file+line via gh api.
+#[tauri::command]
+pub async fn gh_pr_inline_comment(
+    path: String,
+    pr_number: u64,
+    commit_id: String,
+    file: String,
+    line: u64,
+    body: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api", &endpoint,
+                "-f", &format!("body={body}"),
+                "-f", &format!("commit_id={commit_id}"),
+                "-f", &format!("path={file}"),
+                "-F", &format!("line={line}"),
+                "-f", "side=RIGHT",
+                "--jq", ".html_url",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn git_push(path: String, force_with_lease: Option<bool>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
