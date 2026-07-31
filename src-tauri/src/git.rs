@@ -1027,19 +1027,19 @@ pub async fn gh_pr_view_branch(path: String, branch: String) -> Result<Option<se
     .map_err(|e| e.to_string())?
 }
 
-// Posts a comment on the PR associated with a branch via gh CLI.
+// Posts a comment on the PR and returns its URL.
 #[tauri::command]
-pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result<(), String> {
+pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["pr", "comment", &branch, "--body", &body])
+            .args(["pr", "comment", &branch, "--body", &body, "--json", "url", "--jq", ".url"])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
-        Ok(())
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     })
     .await
     .map_err(|e| e.to_string())?

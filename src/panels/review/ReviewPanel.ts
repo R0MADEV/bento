@@ -18,6 +18,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let baseBranch = localStorage.getItem(BASE_KEY) ?? ''
   let selectedBranch = ''
   let allBranches: string[] = []
+  let currentPrNumber: number | null = null
   let intervalId: ReturnType<typeof setInterval> | null = null
   let autoRefresh = false
 
@@ -120,6 +121,22 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const setEmptyVisible = (on: boolean): void => {
     emptyState.classList.toggle('hidden', !on)
     body.classList.toggle('hidden', on)
+  }
+
+  const showSentLink = (el: HTMLElement, url: string): void => {
+    el.replaceChildren()
+    el.className = 'review-comment-status review-comment-ok'
+    if (url) {
+      const a = Object.assign(document.createElement('a'), {
+        className: 'review-pr-link',
+        textContent: reviewT('commentSent') + ' →',
+        href: '#',
+      })
+      a.addEventListener('click', e => { e.preventDefault(); openUrl(url).catch(() => {}) })
+      el.append(a)
+    } else {
+      el.textContent = reviewT('commentSent')
+    }
   }
 
   const showCommentStatus = (text: string, isError = false): void => {
@@ -247,15 +264,14 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           if (!body) return
           inlineSend.disabled = true
           try {
-            await invoke('gh_pr_comment', {
+            const url = await invoke<string>('gh_pr_comment', {
               path: repoPath,
-              branch: ghBranch(selectedBranch),
+              branch: prIdentifier(),
               body: `**\`${f.file}\`**\n\n${body}`,
             })
             inlineInput.value = ''
-            inlineStatus.textContent = reviewT('commentSent')
-            inlineStatus.className = 'review-comment-status review-comment-ok'
-            setTimeout(() => { inlineStatus.textContent = ''; inlineForm.classList.add('hidden') }, 2000)
+            showSentLink(inlineStatus, url)
+            setTimeout(() => { inlineStatus.replaceChildren(); inlineForm.classList.add('hidden') }, 4000)
           } catch (err) {
             inlineStatus.textContent = String(err)
             inlineStatus.className = 'review-comment-status review-comment-err'
@@ -275,7 +291,8 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   }
 
   const loadPrInfo = async (): Promise<void> => {
-    prInfoEl.textContent = ''
+    currentPrNumber = null
+    prInfoEl.replaceChildren()
     commentBar.classList.add('hidden')
     try {
       const pr = await invoke<{ number: number; title: string; url: string } | null>('gh_pr_view_branch', {
@@ -283,21 +300,22 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         branch: ghBranch(selectedBranch),
       })
       if (pr) {
-        prInfoEl.replaceChildren()
+        currentPrNumber = pr.number
         const link = Object.assign(document.createElement('a'), {
           className: 'review-pr-link',
           textContent: `PR #${pr.number}: ${pr.title}`,
           href: '#',
         })
-        link.addEventListener('click', e => {
-          e.preventDefault()
-          openUrl(pr.url).catch(() => {})
-        })
+        link.addEventListener('click', e => { e.preventDefault(); openUrl(pr.url).catch(() => {}) })
         prInfoEl.append(link)
         commentBar.classList.remove('hidden')
       }
     } catch { /* no PR */ }
   }
+
+  // Identifier to pass to gh: PR number if known, else branch name
+  const prIdentifier = (): string =>
+    currentPrNumber !== null ? String(currentPrNumber) : ghBranch(selectedBranch)
 
   // ── Send PR comment ───────────────────────────────────────────────────────
   commentBtn.addEventListener('click', async () => {
@@ -305,9 +323,9 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     if (!body) { commentInput.focus(); return }
     commentBtn.disabled = true
     try {
-      await invoke('gh_pr_comment', { path: repoPath, branch: ghBranch(selectedBranch), body })
+      const url = await invoke<string>('gh_pr_comment', { path: repoPath, branch: prIdentifier(), body })
       commentInput.value = ''
-      showCommentStatus(reviewT('commentSent'))
+      showSentLink(commentStatus, url)
     } catch (e) {
       showCommentStatus(String(e), true)
     } finally {
