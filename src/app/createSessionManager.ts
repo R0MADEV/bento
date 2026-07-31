@@ -308,6 +308,8 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-docker', label: appT('newDocker'), keywords: ['docker', 'contenedores', 'containers', 'logs'], run: () => active?.addPanel('docker') },
       { id: 'new-tasks', label: appT('newTasks'), keywords: ['tareas', 'tasks', 'worktree', 'git', 'paralelo'], run: () => active?.addPanel('tasks') },
       { id: 'new-memory', label: appT('newMemory'), keywords: ['memoria', 'memory', 'contexto', 'decisiones', 'resumen'], run: () => active?.addPanel('memory') },
+      { id: 'new-diff', label: appT('newDiff'), keywords: ['diff', 'git', 'cambios', 'changes', 'hunk', 'patch'], run: () => active?.addPanel('diff') },
+      { id: 'new-review', label: appT('newReview'), keywords: ['review', 'tech review', 'revisar', 'ia', 'ai', 'agente', 'cambios'], run: () => active?.addPanel('review') },
       {
         id: 'bind-project', label: appT('bindProject'),
         keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],
