@@ -204,13 +204,63 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         const details = document.createElement('details')
         details.className = 'review-file-detail'
         details.open = files.length <= 5
-        const sum = Object.assign(document.createElement('summary'), {
-          className: 'review-file-summary',
-          textContent: f.file,
+
+        const sum = document.createElement('summary')
+        sum.className = 'review-file-summary'
+        const fileName = Object.assign(document.createElement('span'), { textContent: f.file })
+        const commentBtn = Object.assign(document.createElement('button'), {
+          className: 'review-inline-comment-btn',
+          title: reviewT('sendComment'),
+          textContent: '💬',
         })
+        sum.append(fileName, commentBtn)
+
         const pre = Object.assign(document.createElement('pre'), { className: 'tasks-diff-code' })
         pre.innerHTML = renderPatchHtml(f.chunk)
-        details.append(sum, pre)
+
+        // Inline comment form (hidden by default)
+        const inlineForm = document.createElement('div')
+        inlineForm.className = 'review-inline-form hidden'
+        const inlineInput = document.createElement('textarea')
+        inlineInput.className = 'review-comment-input'
+        inlineInput.placeholder = reviewT('commentPlaceholder')
+        inlineInput.rows = 3
+        const inlineSend = Object.assign(document.createElement('button'), {
+          className: 'review-comment-btn',
+          textContent: reviewT('sendComment'),
+        })
+        const inlineStatus = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
+        inlineForm.append(inlineInput, inlineSend, inlineStatus)
+
+        commentBtn.addEventListener('click', e => {
+          e.preventDefault()
+          inlineForm.classList.toggle('hidden')
+          if (!inlineForm.classList.contains('hidden')) inlineInput.focus()
+        })
+
+        inlineSend.addEventListener('click', async () => {
+          const body = inlineInput.value.trim()
+          if (!body) return
+          inlineSend.disabled = true
+          try {
+            await invoke('gh_pr_comment', {
+              path: repoPath,
+              branch: selectedBranch,
+              body: `**\`${f.file}\`**\n\n${body}`,
+            })
+            inlineInput.value = ''
+            inlineStatus.textContent = reviewT('commentSent')
+            inlineStatus.className = 'review-comment-status review-comment-ok'
+            setTimeout(() => { inlineStatus.textContent = ''; inlineForm.classList.add('hidden') }, 2000)
+          } catch (err) {
+            inlineStatus.textContent = String(err)
+            inlineStatus.className = 'review-comment-status review-comment-err'
+          } finally {
+            inlineSend.disabled = false
+          }
+        })
+
+        details.append(sum, pre, inlineForm)
         return details
       }))
     } catch (e) {
