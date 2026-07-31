@@ -13,6 +13,8 @@ import { dockerPanelDefinition } from './panels/docker/definition'
 import { vaultPanelDefinition } from './panels/vault/definition'
 import { tasksPanelDefinition } from './panels/tasks/definition'
 import { memoryPanelDefinition } from './panels/memory/definition'
+import { diffPanelDefinition } from './panels/diff/definition'
+import { reviewPanelDefinition } from './panels/review/definition'
 import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
@@ -80,6 +82,8 @@ panels.register(dockerPanelDefinition)
 panels.register(vaultPanelDefinition)
 panels.register(tasksPanelDefinition)
 panels.register(memoryPanelDefinition(memoryRepo))
+panels.register(diffPanelDefinition)
+panels.register(reviewPanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))

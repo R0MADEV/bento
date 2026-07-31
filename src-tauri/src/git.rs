@@ -303,6 +303,13 @@ fn current_branch(path: &str) -> Result<String, String> {
     Ok(branch)
 }
 
+#[tauri::command]
+pub async fn git_current_branch(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || current_branch(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn backup_ref_for(path: &str) -> Result<String, String> {
     Ok(format!("refs/bento/backups/{}", current_branch(path)?))
 }
@@ -536,6 +543,27 @@ pub async fn git_remote_branches(repo: String) -> Result<Vec<String>, String> {
     .map_err(|e| e.to_string())?
 }
 
+// Lists branches from ALL remotes with full remote/branch format (e.g. "daimoxd/feat/foo").
+#[tauri::command]
+pub async fn git_all_remote_branches(repo: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&repo) {
+            return Err("not a git repository".into());
+        }
+        let raw = git_output(
+            &repo,
+            &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        )?;
+        Ok(raw
+            .lines()
+            .filter(|line| !line.ends_with("/HEAD") && is_safe_branch(line))
+            .map(str::to_string)
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn git_worktree_add(
     repo: String,
@@ -665,6 +693,27 @@ pub async fn git_diff(path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || collect_worktree_diff(&path))
         .await
         .map_err(|e| e.to_string())?
+}
+
+// Accumulated diff of all commits on the current branch vs <base> (three-dot range).
+#[tauri::command]
+pub async fn git_branch_diff(path: String, base: String) -> Result<String, String> {
+    if !is_safe_branch(&base) {
+        return Err(format!("unsafe base branch: {base}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
+        // Try local ref first, fall back to origin/ prefix for remote-only branches
+        let result = git_output(&path, &["diff", &format!("{base}...HEAD")]);
+        if result.is_ok() {
+            return result;
+        }
+        git_output(&path, &["diff", &format!("origin/{base}...HEAD")])
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // Validates that a commit message is non-empty (trust boundary: frontend input).

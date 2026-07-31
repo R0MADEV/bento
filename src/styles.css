@@ -1,16 +1,19 @@
 :root {
   /* Default values (Herdr); JS overrides them according to the theme */
-  --bg: #0d0e15;
-  --surface: #171822;
-  --surface-2: #20212c;
-  --border: #262838;
-  --fg: #c4cadd;
-  --fg-dim: #6b7396;
-  --accent: #7d9bf5;
-  --accent-fg: #0d0e15;
-  --selection: #222842;
-  --gold: #dbb168;
-  --radius: 6px;
+  --bg: #07070f;
+  --surface: #0e0e1c;
+  --surface-2: #14142a;
+  --border: #1e1e3a;
+  --fg: #e2e8f8;
+  --fg-dim: #7c82a8;
+  --accent: #a78bfa;
+  --accent-2: #22d3ee;
+  --accent-fg: #07070f;
+  --selection: #1e1e42;
+  --gold: #f9c86d;
+  --radius: 10px;
+  --glow-accent: color-mix(in srgb, var(--accent) 35%, transparent);
+  --glow-accent-sm: color-mix(in srgb, var(--accent) 18%, transparent);
   /* Monospace stack: terminal-native look across the whole UI */
   --font-ui: 'SF Mono', ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Menlo, Consolas, monospace;
 }
@@ -19,6 +22,13 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+/* Global focus glow — futuristic AI style */
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent) !important;
+  box-shadow: 0 0 0 2px var(--glow-accent-sm), 0 0 8px var(--glow-accent-sm);
 }
 
 /* SVG icons */
@@ -62,12 +72,9 @@ html, body, #app {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Flat dev-terminal background: dark base with very subtle glows in the corners */
+/* Base color only — the visible background lives in .session-instance */
 #app {
-  background:
-    radial-gradient(60% 50% at 100% 0%, color-mix(in srgb, var(--glow) 20%, transparent), transparent 60%),
-    radial-gradient(55% 50% at 0% 100%, color-mix(in srgb, var(--glow) 14%, transparent), transparent 55%),
-    var(--bg);
+  background: var(--bg);
 }
 
 /* Command palette (Cmd/Ctrl+K) */
@@ -92,11 +99,11 @@ html, body, #app {
   max-height: 60vh;
   display: flex;
   flex-direction: column;
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  background: color-mix(in srgb, var(--surface) 75%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-radius: 16px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(24px);
+  box-shadow: 0 0 0 1px var(--glow-accent-sm), 0 24px 64px rgba(0,0,0,0.7), 0 0 40px var(--glow-accent-sm);
+  backdrop-filter: blur(32px) saturate(180%);
   overflow: hidden;
 }
 
@@ -104,7 +111,7 @@ html, body, #app {
   padding: 14px 16px;
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--fg);
   font-size: 15px;
   outline: none;
@@ -120,14 +127,21 @@ html, body, #app {
   align-items: center;
   justify-content: space-between;
   padding: 9px 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--fg);
   cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.cmdk-item:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .cmdk-item.selected {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--glow-accent-sm);
+  text-shadow: 0 0 6px var(--glow-accent);
 }
 
 .cmdk-item kbd {
@@ -251,10 +265,12 @@ html, body, #app {
 }
 
 .session-tab.active {
-  color: var(--fg);
-  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
-  border-color: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   backdrop-filter: blur(10px);
+  box-shadow: 0 0 12px var(--glow-accent-sm), inset 0 0 12px var(--glow-accent-sm);
+  text-shadow: 0 0 8px var(--glow-accent);
 }
 
 .session-tab-close {
@@ -291,9 +307,14 @@ html, body, #app {
 .session-instance {
   position: absolute;
   inset: 0;
-  /* Flat theme background: the gaps between panels and dockview's empty
-     areas show the base color, with no gradients or glows. */
-  background: var(--bg);
+  background:
+    radial-gradient(60% 50% at 100% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 65%),
+    radial-gradient(50% 40% at 0% 100%, color-mix(in srgb, var(--accent-2) 10%, transparent), transparent 60%),
+    linear-gradient(color-mix(in srgb, var(--accent) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 5%, transparent) 1px, transparent 1px),
+    var(--bg);
+  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+  background-position: 0 0, 0 0, -1px -1px, -1px -1px;
 }
 
 /* Hidden session: invisible but rendered → the audio/video doesn't stop.
@@ -366,9 +387,18 @@ html, body, #app {
    (its selectors have 5-6 classes; with .workspace-view in front we win). */
 .workspace-view .dv-dockview,
 .workspace-view .dv-groupview,
-.workspace-view .dv-content-container,
 .workspace-view .dv-void-container {
   background: transparent;
+}
+
+/* Grid inside every panel — very faint so text stays readable */
+.workspace-view .dv-content-container {
+  background:
+    linear-gradient(color-mix(in srgb, var(--accent) 2%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 2%, transparent) 1px, transparent 1px),
+    var(--bg);
+  background-size: 40px 40px;
+  background-position: -1px -1px;
 }
 
 
@@ -376,17 +406,13 @@ html, body, #app {
 .workspace-view .dv-groupview {
   border-radius: 12px;
   overflow: hidden;
-  /* Subtle border on all panels so adjacent panels are visually distinct even
-     when they touch. Dockview layout is not affected (no margin/padding). */
-  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-/* Active group: no glowing halo or accent border. Just a slightly more
-   pronounced neutral border; the active panel is already distinguished by the accent line
-   above its tab. */
 .workspace-view .dv-groupview.dv-active-group {
-  border-color: var(--border);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: 0 0 0 1px var(--glow-accent-sm), 0 0 24px var(--glow-accent-sm);
 }
 
 /* "+" icon (add terminal) pinned to the right, away from the rounded
@@ -416,9 +442,10 @@ html, body, #app {
 
 .workspace-view .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab,
 .workspace-view .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
-  background-color: color-mix(in srgb, var(--surface) 40%, transparent);
-  color: var(--fg);
-  box-shadow: inset 0 2px 0 var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+  box-shadow: inset 0 2px 0 var(--accent), 0 0 8px var(--glow-accent-sm);
+  text-shadow: 0 0 6px var(--glow-accent);
 }
 
 .workspace-view .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-inactive-tab,
@@ -443,6 +470,24 @@ html, body, #app {
   width: 100%;
   height: 100%;
 }
+
+/* Panel roots transparent so dv-content-container grid shows through */
+.web-panel, .notes-panel, .http-panel, .tv-panel, .scripts-panel,
+.db-panel, .memory-panel, .jira-panel, .vault-panel, .docker-panel,
+.tasks-panel, .diff-panel, .review-panel {
+  background: transparent !important;
+}
+
+/* Terminal: grid on the wrapper, xterm canvas sits on top */
+.terminal-panel {
+  background:
+    linear-gradient(color-mix(in srgb, var(--accent) 2%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 2%, transparent) 1px, transparent 1px),
+    var(--bg) !important;
+  background-size: 40px 40px !important;
+  background-position: -1px -1px !important;
+}
+
 
 /* Terminal */
 .terminal-panel {
@@ -1615,20 +1660,20 @@ html, body, #app {
   to { opacity: 0; transform: translateX(-50%) translateY(-6px); }
 }
 
-/* Thin scrollbars matching the theme */
+/* Thin futuristic scrollbars */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 5px;
-  border: 2px solid var(--bg);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-dim);
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 6px var(--glow-accent);
 }
 
 ::-webkit-scrollbar-track {
@@ -3152,18 +3197,20 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--accent);
-  color: var(--accent-fg);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  color: var(--accent);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-  transition: transform 0.12s ease, filter 0.12s ease;
+  box-shadow: 0 0 20px var(--glow-accent), 0 6px 20px rgba(0,0,0,0.5);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
-.ai-fab:hover { transform: translateY(-2px); filter: brightness(1.08); }
-/* With the modal open the FAB is redundant (it's closed with the X or Esc). */
+.ai-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 32px var(--glow-accent), 0 8px 24px rgba(0,0,0,0.5);
+}
 .ai-chat.open .ai-fab { display: none; }
 .ai-chat.busy .ai-fab .icon { animation: spin 0.8s linear infinite; }
 
@@ -3171,18 +3218,17 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   display: flex;
   flex-direction: column;
   width: min(460px, calc(100vw - 32px));
-  /* Almost the full height of the window (leaves room for the FAB and margins). */
   height: calc(100vh - 96px);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--glow-accent-sm), 0 24px 64px rgba(0,0,0,0.7), 0 0 40px var(--glow-accent-sm);
+  backdrop-filter: blur(24px) saturate(160%);
   transition: width 0.16s ease;
 }
 .ai-modal.hidden { display: none; }
 
-/* Widened with the expand button. */
 .ai-modal.wide {
   width: min(820px, calc(100vw - 32px));
 }
@@ -3192,8 +3238,9 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   align-items: center;
   gap: 6px;
   padding: 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
   flex-shrink: 0;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 
 .ai-select,
@@ -3820,4 +3867,74 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .tasks-reset-mode-name { font-size: 12px; font-weight: 600; color: var(--fg); }
 .tasks-reset-mode-desc { font-size: 11px; color: var(--fg-dim); }
 .tasks-reset-danger { background: color-mix(in srgb, #f7768e 15%, transparent); border-color: #f7768e; }
+
+/* ── Diff panel ─────────────────────────────────────────────────────────── */
+.diff-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.diff-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.diff-panel .md-panel { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+.diff-panel .md-sidebar { width: 220px; min-width: 140px; border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; }
+.diff-panel .md-detail { flex: 1; overflow: auto; min-width: 0; }
+.diff-mode-btn { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--fg-dim); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.diff-mode-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.diff-mode-btn--active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.diff-panel .md-panel { flex: 1; overflow: hidden; }
+.diff-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; flex: 1; padding: 32px; text-align: center; }
+.diff-empty-title { font-size: 14px; font-weight: 600; color: var(--fg); margin: 0; }
+.diff-empty-hint { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.diff-empty-open-btn { margin-top: 8px; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); cursor: pointer; }
+.diff-empty-open-btn:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.diff-hint { padding: 16px; color: var(--fg-dim); font-size: 12px; }
+.diff-open-btn { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--fg-dim); background: transparent; border: 1px solid var(--border); cursor: pointer; }
+.diff-open-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.diff-open-btn .icon { width: 12px; height: 12px; }
+.diff-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 4px; color: var(--fg-dim); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.diff-icon-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.diff-icon-btn .icon { width: 13px; height: 13px; }
+.diff-patch { margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6; overflow: auto; height: 100%; box-sizing: border-box; }
+.diff-stats { display: inline-flex; gap: 4px; font-size: 10px; font-weight: 600; }
+.diff-add { color: #73daca; }
+.diff-del { color: #f7768e; }
+.diff-short { font-family: var(--mono); font-size: 10px; color: var(--fg-dim); }
 .tasks-reset-danger:hover { background: color-mix(in srgb, #f7768e 25%, transparent); }
+
+/* ── Tech Review panel ───────────────────────────────────────────────────── */
+.review-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.review-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.review-repo-label { font-size: 11px; font-weight: 600; color: var(--fg-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-summary { font-size: 11px; color: var(--fg-dim); margin-left: auto; }
+.review-mode-btn { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--fg-dim); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.review-mode-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.review-mode-btn--active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.review-branch-bar { display: flex; align-items: center; gap: 6px; }
+.review-base-label { font-size: 11px; color: var(--fg-dim); }
+.review-branch-wrap { position: relative; }
+.review-branch-input { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); color: var(--fg); width: 160px; }
+.review-branch-dropdown { position: absolute; top: calc(100% + 2px); left: 0; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; min-width: 200px; max-height: 240px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
+.review-branch-option { padding: 4px 10px; font-size: 11px; cursor: pointer; color: var(--fg); white-space: nowrap; }
+.review-branch-option:hover { background: var(--surface-hover, rgba(255,255,255,.06)); }
+.review-branch-option--active { color: var(--accent, #7aa2f7); }
+.review-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 4px; color: var(--fg-dim); background: transparent; border: 1px solid transparent; cursor: pointer; flex-shrink: 0; }
+.review-icon-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.review-icon-btn .icon { width: 13px; height: 13px; }
+.review-icon-btn--active { color: var(--accent) !important; background: color-mix(in srgb, var(--accent) 12%, transparent) !important; border-color: color-mix(in srgb, var(--accent) 25%, transparent) !important; }
+.review-loading { padding: 16px; color: var(--fg-dim); font-size: 12px; }
+.review-files { flex: 1; overflow-y: auto; min-height: 0; padding: 6px 0; }
+.review-no-changes { padding: 24px 16px; color: var(--fg-dim); font-size: 12px; }
+.review-error { padding: 16px; color: #f7768e; font-size: 12px; font-family: var(--mono); }
+.review-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; flex: 1; padding: 32px; text-align: center; }
+.review-empty-title { font-size: 14px; font-weight: 600; color: var(--fg); margin: 0; }
+.review-empty-hint { font-size: 12px; color: var(--fg-dim); margin: 0; }
+.review-empty-open-btn { margin-top: 8px; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); cursor: pointer; }
+.review-empty-open-btn:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.review-commit-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.review-commit-msg { flex: 1; padding: 5px 10px; border-radius: 5px; font-size: 12px; background: var(--surface); border: 1px solid var(--border); color: var(--fg); }
+.review-commit-msg:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 50%, transparent); box-shadow: 0 0 0 2px var(--glow-accent-sm); }
+.review-commit-btn { padding: 5px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); cursor: pointer; }
+.review-commit-btn:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.review-commit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.review-discard-btn { padding: 5px 12px; border-radius: 5px; font-size: 12px; font-weight: 600; color: #f7768e; background: color-mix(in srgb, #f7768e 10%, transparent); border: 1px solid color-mix(in srgb, #f7768e 30%, transparent); cursor: pointer; }
+.review-discard-btn:hover { background: color-mix(in srgb, #f7768e 18%, transparent); }
+.review-commit-status { font-size: 11px; flex-shrink: 0; }
+.review-commit-ok { color: #73daca; }
+.review-commit-err { color: #f7768e; }
+.review-patch { margin: 0; padding: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
