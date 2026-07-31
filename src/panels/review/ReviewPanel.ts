@@ -4,7 +4,6 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { icon } from '../../ui/icons'
 import { parseDiffFiles } from '../diff/diffStats'
 import { diffGit } from '../diff/diffGitClient'
-import { renderPatchHtml } from '../tasks/TaskCodeView'
 import { reviewT } from './i18n'
 
 const REPO_KEY = 'bento.review.repo'
@@ -200,23 +199,102 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   // Strips remote prefix: "origin/feat/foo" → "feat/foo"
   const ghBranch = (b: string): string => b.replace(/^[^/]+\//, '')
 
-  // Extracts the first changed line number from a diff chunk (new file side)
-  const firstChangedLine = (chunk: string): number => {
-    const match = chunk.match(/@@ -\d+(?:,\d+)? \+(\d+)/)
-    if (!match) return 1
-    const start = parseInt(match[1], 10)
-    const lines = chunk.split('\n')
-    const hunkStart = lines.findIndex(l => l.startsWith('@@'))
-    const offset = lines.slice(hunkStart + 1).findIndex(l => l.startsWith('+'))
-    return start + (offset >= 0 ? offset : 0)
-  }
-
   // ── Select branch → load diff + PR ───────────────────────────────────────
   const selectBranch = (branch: string): void => {
     selectedBranch = branch
     renderBranchList()
     loadDiff()
     loadPrInfo()
+  }
+
+  const makeLineForm = (filePath: string, line: number): HTMLElement => {
+    const form = document.createElement('div')
+    form.className = 'review-line-form'
+    const input = document.createElement('textarea')
+    input.className = 'review-comment-input'
+    input.placeholder = reviewT('commentPlaceholder')
+    input.rows = 3
+    const actions = document.createElement('div')
+    actions.className = 'review-line-form-actions'
+    const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: reviewT('sendComment') })
+    const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
+    const status = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
+    actions.append(cancelBtn, sendBtn, status)
+    form.append(input, actions)
+
+    cancelBtn.addEventListener('click', () => form.remove())
+    sendBtn.addEventListener('click', async () => {
+      const body = input.value.trim()
+      if (!body) { input.focus(); return }
+      if (currentPrNumber === null) { status.textContent = 'No PR for this branch'; return }
+      sendBtn.disabled = true
+      try {
+        const commitId = await invoke<string>('git_rev_parse', { path: repoPath, reference: selectedBranch })
+        const url = await invoke<string>('gh_pr_inline_comment', { path: repoPath, prNumber: currentPrNumber, commitId, file: filePath, line, body })
+        input.value = ''
+        showSentLink(status, url)
+        setTimeout(() => form.remove(), 4000)
+      } catch (err) {
+        status.textContent = String(err)
+        status.className = 'review-comment-status review-comment-err'
+      } finally {
+        sendBtn.disabled = false
+      }
+    })
+    return form
+  }
+
+  const buildFileDiff = (chunk: string, filePath: string): HTMLElement => {
+    const container = document.createElement('div')
+    let newLine = 0
+
+    for (const raw of chunk.split('\n')) {
+      const isAdd = raw.startsWith('+') && !raw.startsWith('+++')
+      const isDel = raw.startsWith('-') && !raw.startsWith('---')
+      const isHunk = raw.startsWith('@@')
+      const isMeta = raw.startsWith('diff ') || raw.startsWith('index ') || raw.startsWith('--- ') || raw.startsWith('+++ ')
+
+      if (isHunk) {
+        const m = raw.match(/@@ -\d+(?:,\d+)? \+(\d+)/)
+        if (m) newLine = parseInt(m[1], 10) - 1
+      }
+
+      let fileLine: number | null = null
+      if (isAdd) { newLine++; fileLine = newLine }
+      else if (!isDel && !isHunk && !isMeta) { newLine++; fileLine = newLine }
+
+      const cls = isAdd ? ' tasks-diff-line-add' : isDel ? ' tasks-diff-line-del' : isHunk ? ' tasks-diff-hunk' : ''
+      const esc = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+      const wrap = document.createElement('div')
+      wrap.className = 'review-diff-line-wrap'
+
+      const lineEl = document.createElement('div')
+      lineEl.className = `tasks-diff-code-line${cls}`
+
+      if (fileLine !== null) {
+        const addBtn = Object.assign(document.createElement('button'), {
+          className: 'review-line-comment-btn',
+          textContent: '+',
+          title: `Comment line ${fileLine}`,
+        })
+        const capturedLine = fileLine
+        addBtn.addEventListener('click', () => {
+          wrap.querySelectorAll('.review-line-form').forEach(el => el.remove())
+          const form = makeLineForm(filePath, capturedLine)
+          wrap.append(form)
+          form.querySelector('textarea')?.focus()
+        })
+        lineEl.append(addBtn)
+      }
+
+      const content = document.createElement('span')
+      content.innerHTML = `<span class="tasks-diff-line-no">${fileLine ?? ''}</span>${esc}`
+      lineEl.append(content)
+      wrap.append(lineEl)
+      container.append(wrap)
+    }
+    return container
   }
 
   const loadDiff = async (): Promise<void> => {
@@ -236,71 +314,11 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         const details = document.createElement('details')
         details.className = 'review-file-detail'
         details.open = files.length <= 5
-
-        const sum = document.createElement('summary')
-        sum.className = 'review-file-summary'
-        const fileName = Object.assign(document.createElement('span'), { textContent: f.file })
-        const commentBtn = Object.assign(document.createElement('button'), {
-          className: 'review-inline-comment-btn',
-          title: reviewT('sendComment'),
-          textContent: '💬',
+        const sum = Object.assign(document.createElement('summary'), {
+          className: 'review-file-summary',
+          textContent: f.file,
         })
-        sum.append(fileName, commentBtn)
-
-        const pre = Object.assign(document.createElement('pre'), { className: 'tasks-diff-code' })
-        pre.innerHTML = renderPatchHtml(f.chunk)
-
-        // Inline comment form (hidden by default)
-        const inlineForm = document.createElement('div')
-        inlineForm.className = 'review-inline-form hidden'
-        const inlineInput = document.createElement('textarea')
-        inlineInput.className = 'review-comment-input'
-        inlineInput.placeholder = reviewT('commentPlaceholder')
-        inlineInput.rows = 3
-        const inlineSend = Object.assign(document.createElement('button'), {
-          className: 'review-comment-btn',
-          textContent: reviewT('sendComment'),
-        })
-        const inlineStatus = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
-        inlineForm.append(inlineInput, inlineSend, inlineStatus)
-
-        commentBtn.addEventListener('click', e => {
-          e.preventDefault()
-          inlineForm.classList.toggle('hidden')
-          if (!inlineForm.classList.contains('hidden')) inlineInput.focus()
-        })
-
-        inlineSend.addEventListener('click', async () => {
-          const body = inlineInput.value.trim()
-          if (!body) return
-          inlineSend.disabled = true
-          try {
-            if (currentPrNumber !== null) {
-              const commitId = await invoke<string>('git_rev_parse', { path: repoPath, reference: selectedBranch })
-              const line = firstChangedLine(f.chunk)
-              const url = await invoke<string>('gh_pr_inline_comment', {
-                path: repoPath,
-                prNumber: currentPrNumber,
-                commitId,
-                file: f.file,
-                line,
-                body,
-              })
-              inlineInput.value = ''
-              showSentLink(inlineStatus, url)
-              setTimeout(() => { inlineStatus.replaceChildren(); inlineForm.classList.add('hidden') }, 4000)
-            } else {
-              throw new Error('No PR found for this branch')
-            }
-          } catch (err) {
-            inlineStatus.textContent = String(err)
-            inlineStatus.className = 'review-comment-status review-comment-err'
-          } finally {
-            inlineSend.disabled = false
-          }
-        })
-
-        details.append(sum, pre, inlineForm)
+        details.append(sum, buildFileDiff(f.chunk, f.file))
         return details
       }))
     } catch (e) {
