@@ -200,6 +200,17 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   // Strips remote prefix: "origin/feat/foo" → "feat/foo"
   const ghBranch = (b: string): string => b.replace(/^[^/]+\//, '')
 
+  // Extracts the first changed line number from a diff chunk (new file side)
+  const firstChangedLine = (chunk: string): number => {
+    const match = chunk.match(/@@ -\d+(?:,\d+)? \+(\d+)/)
+    if (!match) return 1
+    const start = parseInt(match[1], 10)
+    const lines = chunk.split('\n')
+    const hunkStart = lines.findIndex(l => l.startsWith('@@'))
+    const offset = lines.slice(hunkStart + 1).findIndex(l => l.startsWith('+'))
+    return start + (offset >= 0 ? offset : 0)
+  }
+
   // ── Select branch → load diff + PR ───────────────────────────────────────
   const selectBranch = (branch: string): void => {
     selectedBranch = branch
@@ -264,14 +275,23 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           if (!body) return
           inlineSend.disabled = true
           try {
-            const url = await invoke<string>('gh_pr_comment', {
-              path: repoPath,
-              branch: prIdentifier(),
-              body: `**\`${f.file}\`**\n\n${body}`,
-            })
-            inlineInput.value = ''
-            showSentLink(inlineStatus, url)
-            setTimeout(() => { inlineStatus.replaceChildren(); inlineForm.classList.add('hidden') }, 4000)
+            if (currentPrNumber !== null) {
+              const commitId = await invoke<string>('git_rev_parse', { path: repoPath, reference: selectedBranch })
+              const line = firstChangedLine(f.chunk)
+              const url = await invoke<string>('gh_pr_inline_comment', {
+                path: repoPath,
+                prNumber: currentPrNumber,
+                commitId,
+                file: f.file,
+                line,
+                body,
+              })
+              inlineInput.value = ''
+              showSentLink(inlineStatus, url)
+              setTimeout(() => { inlineStatus.replaceChildren(); inlineForm.classList.add('hidden') }, 4000)
+            } else {
+              throw new Error('No PR found for this branch')
+            }
           } catch (err) {
             inlineStatus.textContent = String(err)
             inlineStatus.className = 'review-comment-status review-comment-err'
