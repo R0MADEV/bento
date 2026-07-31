@@ -86,7 +86,11 @@
     "modeBranch": "Branch diff",
     "baseBranch": "Base:",
     "currentBranch": "on {branch}",
-    "noBranchChanges": "No changes vs {base}"
+    "noBranchChanges": "No changes vs {base}",
+    "selectBranch": "Select a branch on the left to review",
+    "commentPlaceholder": "Leave a review comment on the PR…",
+    "sendComment": "Send comment",
+    "commentSent": "Comment sent"
   },
   "diff": {
     "worktreeMode": "Worktree",
