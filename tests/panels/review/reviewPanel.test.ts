@@ -33,24 +33,22 @@ describe('ReviewPanel', () => {
     expect(element.querySelector('.review-refresh-btn')).not.toBeNull()
   })
 
-  it('renders commit bar hidden by default (branch mode)', () => {
+  it('renders sidebar and detail panes', () => {
     setup()
     const { element } = createReviewPanel()
-    expect(element.querySelector('.review-commit-bar')?.classList.contains('hidden')).toBe(true)
+    expect(element.querySelector('.review-sidebar')).not.toBeNull()
+    expect(element.querySelector('.review-detail')).not.toBeNull()
   })
 
-  it('branch mode button is active by default', () => {
+  it('comment bar hidden until PR is loaded', () => {
     setup()
     const { element } = createReviewPanel()
-    const [branchBtn] = element.querySelectorAll<HTMLButtonElement>('.review-mode-btn')
-    expect(branchBtn?.classList.contains('review-mode-btn--active')).toBe(true)
+    expect(element.querySelector('.review-comment-bar')?.classList.contains('hidden')).toBe(true)
   })
 
-  it('clicking worktree mode shows commit bar', () => {
+  it('renders branch search input in sidebar', () => {
     setup()
     const { element } = createReviewPanel()
-    const [, worktreeBtn] = element.querySelectorAll<HTMLButtonElement>('.review-mode-btn')
-    worktreeBtn?.click()
-    expect(element.querySelector('.review-commit-bar')?.classList.contains('hidden')).toBe(false)
+    expect(element.querySelector('.review-branch-search')).not.toBeNull()
   })
 })

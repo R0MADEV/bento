@@ -998,6 +998,53 @@ pub async fn git_pr_status(path: String) -> Result<Option<PrStatus>, String> {
     .map_err(|e| e.to_string())?
 }
 
+// Diff between any two git refs (e.g. "origin/main" vs "origin/feat/foo").
+#[tauri::command]
+pub async fn git_ref_diff(path: String, base: String, target: String) -> Result<String, String> {
+    if !is_safe_branch(&base) { return Err(format!("unsafe base: {base}")); }
+    if !is_safe_branch(&target) { return Err(format!("unsafe target: {target}")); }
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) { return Err("not a git repository".into()); }
+        git_output(&path, &["diff", &format!("{base}...{target}")])
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Returns basic PR info (number, title, url) for any branch via gh CLI.
+#[tauri::command]
+pub async fn gh_pr_view_branch(path: String, branch: String) -> Result<Option<serde_json::Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "view", &branch, "--json", "number,title,url"])
+            .output();
+        let Ok(out) = out else { return Ok(None); };
+        if !out.status.success() || out.stdout.is_empty() { return Ok(None); }
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).map(Some).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Posts a comment on the PR associated with a branch via gh CLI.
+#[tauri::command]
+pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "comment", &branch, "--body", &body])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn git_push(path: String, force_with_lease: Option<bool>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {

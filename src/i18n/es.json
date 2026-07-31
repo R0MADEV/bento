@@ -86,7 +86,11 @@
     "modeBranch": "Diff de rama",
     "baseBranch": "Base:",
     "currentBranch": "en {branch}",
-    "noBranchChanges": "Sin cambios vs {base}"
+    "noBranchChanges": "Sin cambios vs {base}",
+    "selectBranch": "Selecciona una rama a la izquierda para revisar",
+    "commentPlaceholder": "Deja un comentario de revisión en el PR…",
+    "sendComment": "Enviar comentario",
+    "commentSent": "Comentario enviado"
   },
   "diff": {
     "worktreeMode": "Worktree",
