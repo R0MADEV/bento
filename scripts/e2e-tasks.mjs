@@ -414,5 +414,14 @@ try { await run() } catch (error) {
   if (sessionId) await fetch(`${driverUrl}/session/${sessionId}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => {})
   driver?.kill('SIGTERM')
   await stopApp()
-  rmSync(root, { recursive: true, force: true })
+  // On Windows, file handles held by git subprocesses may still be open briefly
+  // after the app exits, causing EBUSY. Retry a few times with a short delay.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try { rmSync(root, { recursive: true, force: true }); break }
+    catch (e) {
+      const isRetryable = e.code === 'EBUSY' || e.code === 'EPERM'
+      if (!isRetryable || attempt === 4) { console.error('cleanup failed:', e.message); break }
+      await delay(500)
+    }
+  }
 }
