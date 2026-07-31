@@ -207,7 +207,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     loadPrInfo()
   }
 
-  const makeLineForm = (filePath: string, line: number): HTMLElement => {
+  const makeLineForm = (filePath: string, line: number, startLine?: number): HTMLElement => {
     const form = document.createElement('div')
     form.className = 'review-line-form'
     const input = document.createElement('textarea')
@@ -230,7 +230,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       sendBtn.disabled = true
       try {
         const commitId = await invoke<string>('git_rev_parse', { path: repoPath, reference: selectedBranch })
-        const url = await invoke<string>('gh_pr_inline_comment', { path: repoPath, prNumber: currentPrNumber, commitId, file: filePath, line, body })
+        const url = await invoke<string>('gh_pr_inline_comment', { path: repoPath, prNumber: currentPrNumber, commitId, file: filePath, line, startLine, body })
         input.value = ''
         showSentLink(status, url)
         setTimeout(() => form.remove(), 4000)
@@ -247,6 +247,50 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const buildFileDiff = (chunk: string, filePath: string): HTMLElement => {
     const container = document.createElement('div')
     let newLine = 0
+    let dragStart: number | null = null
+
+    const lineFromEl = (el: Element | null): number | null => {
+      const wrap = el?.closest<HTMLElement>('[data-line]')
+      const n = parseInt(wrap?.dataset.line ?? '', 10)
+      return isNaN(n) ? null : n
+    }
+
+    const clearHighlight = (): void =>
+      container.querySelectorAll('.review-line-wrap--selected').forEach(el => el.classList.remove('review-line-wrap--selected'))
+
+    const highlightRange = (a: number, b: number): void => {
+      const lo = Math.min(a, b), hi = Math.max(a, b)
+      container.querySelectorAll<HTMLElement>('[data-line]').forEach(wrap => {
+        const ln = parseInt(wrap.dataset.line ?? '', 10)
+        wrap.classList.toggle('review-line-wrap--selected', ln >= lo && ln <= hi)
+      })
+    }
+
+    const openRangeForm = (lo: number, hi: number): void => {
+      container.querySelectorAll('.review-line-form').forEach(el => el.remove())
+      clearHighlight()
+      const anchorWrap = container.querySelector<HTMLElement>(`[data-line="${hi}"]`)
+      if (!anchorWrap) return
+      const form = makeLineForm(filePath, hi, lo < hi ? lo : undefined)
+      anchorWrap.after(form)
+      form.querySelector('textarea')?.focus()
+    }
+
+    const onMouseMove = (e: MouseEvent): void => {
+      if (dragStart === null) return
+      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY))
+      if (ln !== null) highlightRange(dragStart, ln)
+    }
+
+    const onMouseUp = (e: MouseEvent): void => {
+      if (dragStart === null) return
+      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY)) ?? dragStart
+      const lo = Math.min(dragStart, ln), hi = Math.max(dragStart, ln)
+      dragStart = null
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      openRangeForm(lo, hi)
+    }
 
     for (const raw of chunk.split('\n')) {
       const isAdd = raw.startsWith('+') && !raw.startsWith('+++')
@@ -273,18 +317,23 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       lineEl.className = `tasks-diff-code-line${cls}`
 
       if (fileLine !== null) {
+        wrap.dataset.line = String(fileLine)
+        const capturedLine = fileLine
+
         const addBtn = Object.assign(document.createElement('button'), {
           className: 'review-line-comment-btn',
           textContent: '+',
           title: `Comment line ${fileLine}`,
         })
-        const capturedLine = fileLine
-        addBtn.addEventListener('click', () => {
-          wrap.querySelectorAll('.review-line-form').forEach(el => el.remove())
-          const form = makeLineForm(filePath, capturedLine)
-          wrap.append(form)
-          form.querySelector('textarea')?.focus()
+
+        addBtn.addEventListener('mousedown', e => {
+          e.preventDefault()
+          dragStart = capturedLine
+          highlightRange(capturedLine, capturedLine)
+          document.addEventListener('mousemove', onMouseMove)
+          document.addEventListener('mouseup', onMouseUp)
         })
+
         lineEl.append(addBtn)
       }
 
@@ -294,6 +343,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       wrap.append(lineEl)
       container.append(wrap)
     }
+
     return container
   }
 

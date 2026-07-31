@@ -4010,8 +4010,9 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-file-summary { padding: 6px 12px; font-size: 11px; font-weight: 600; cursor: pointer; color: var(--fg-dim); list-style: none; user-select: none; display: flex; align-items: center; gap: 8px; }
 .review-file-summary:hover { color: var(--fg); }
 .review-file-detail[open] .review-file-summary { color: var(--fg); }
-.review-diff-line-wrap { position: relative; }
+.review-diff-line-wrap { position: relative; user-select: none; }
 .review-diff-line-wrap:hover .review-line-comment-btn { opacity: 1; }
+.review-line-wrap--selected { background: color-mix(in srgb, var(--accent, #7aa2f7) 15%, transparent); }
 .review-line-comment-btn { opacity: 0; position: absolute; left: 0; top: 0; width: 18px; height: 100%; background: var(--accent, #7aa2f7); color: #fff; border: none; font-size: 12px; font-weight: 700; cursor: pointer; z-index: 5; padding: 0; line-height: 1; transition: opacity .1s; }
 .review-line-form { background: var(--surface); border: 1px solid var(--border); border-top: 2px solid var(--accent, #7aa2f7); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .review-line-form-actions { display: flex; align-items: center; gap: 6px; }

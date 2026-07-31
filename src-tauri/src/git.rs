@@ -1063,21 +1063,28 @@ pub async fn gh_pr_inline_comment(
     commit_id: String,
     file: String,
     line: u64,
+    start_line: Option<u64>,
     body: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments");
+        let mut args = vec![
+            "api".to_string(), endpoint,
+            "-f".to_string(), format!("body={body}"),
+            "-f".to_string(), format!("commit_id={commit_id}"),
+            "-f".to_string(), format!("path={file}"),
+            "-F".to_string(), format!("line={line}"),
+            "-f".to_string(), "side=RIGHT".to_string(),
+        ];
+        if let Some(sl) = start_line {
+            if sl < line {
+                args.extend(["-F".to_string(), format!("start_line={sl}"), "-f".to_string(), "start_side=RIGHT".to_string()]);
+            }
+        }
+        args.extend(["--jq".to_string(), ".html_url".to_string()]);
         let out = Command::new("gh")
             .current_dir(&path)
-            .args([
-                "api", &endpoint,
-                "-f", &format!("body={body}"),
-                "-f", &format!("commit_id={commit_id}"),
-                "-f", &format!("path={file}"),
-                "-F", &format!("line={line}"),
-                "-f", "side=RIGHT",
-                "--jq", ".html_url",
-            ])
+            .args(&args)
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
