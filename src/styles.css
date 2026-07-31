@@ -3925,9 +3925,12 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-detail { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 .review-diff-view { flex: 1; overflow-y: auto; padding: 6px 0; }
 .review-file-detail { border-bottom: 1px solid var(--border); }
-.review-file-summary { padding: 6px 12px; font-size: 11px; font-weight: 600; cursor: pointer; color: var(--fg-dim); list-style: none; user-select: none; }
+.review-file-summary { padding: 6px 12px; font-size: 11px; font-weight: 600; cursor: pointer; color: var(--fg-dim); list-style: none; user-select: none; display: flex; align-items: center; gap: 8px; }
 .review-file-summary:hover { color: var(--fg); }
 .review-file-detail[open] .review-file-summary { color: var(--fg); }
+.review-inline-comment-btn { font-size: 13px; background: none; border: none; cursor: pointer; padding: 0 2px; opacity: 0.5; line-height: 1; }
+.review-inline-comment-btn:hover { opacity: 1; }
+.review-inline-form { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
 /* Comment bar */
 .review-comment-bar { flex-shrink: 0; border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .review-pr-info { font-size: 11px; color: var(--accent); font-weight: 600; }
