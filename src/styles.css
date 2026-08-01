@@ -4056,7 +4056,15 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-pr-item-author { font-size: 10px; color: var(--fg-dim); margin-top: 1px; }
 /* ── Review: new features ─────────────────────────────────────────────────── */
 .review-comment-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.review-pr-body { font-size: 11px; color: var(--fg-dim); background: color-mix(in srgb, var(--accent) 5%, transparent); border-left: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); padding: 6px 10px; max-height: 80px; overflow-y: auto; white-space: pre-wrap; border-radius: 0 4px 4px 0; }
+.review-pr-body { font-size: 11px; color: var(--fg-dim); background: color-mix(in srgb, var(--accent) 5%, transparent); border-left: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); padding: 6px 10px; max-height: 120px; overflow-y: auto; border-radius: 0 4px 4px 0; line-height: 1.5; }
+.review-pr-body h1, .review-pr-body h2, .review-pr-body h3 { font-size: 11px; font-weight: 700; color: var(--fg); margin: 4px 0 2px; }
+.review-pr-body p { margin: 2px 0; }
+.review-pr-body code { background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 0 3px; border-radius: 2px; font-family: var(--mono); }
+.review-pr-body pre { background: color-mix(in srgb, var(--accent) 8%, transparent); padding: 4px 6px; border-radius: 3px; overflow-x: auto; margin: 4px 0; }
+.review-pr-body ul { margin: 2px 0; padding-left: 14px; }
+.review-pr-body a { color: var(--accent); text-decoration: none; }
+.review-pr-body a:hover { text-decoration: underline; }
+.review-pr-body strong { color: var(--fg); font-weight: 600; }
 .review-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-file-stats { display: flex; gap: 4px; font-size: 11px; font-family: var(--mono); margin-left: auto; flex-shrink: 0; }
 .review-stat-add { color: #73daca; }

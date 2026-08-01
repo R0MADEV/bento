@@ -5,6 +5,7 @@ import { icon } from '../../ui/icons'
 import { parseDiffFiles } from '../diff/diffStats'
 import { diffGit } from '../diff/diffGitClient'
 import { reviewT } from './i18n'
+import { renderMarkdown } from '../../core/notes/renderMarkdown'
 
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
@@ -123,6 +124,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let commentNavIdx = -1
   let focusedFileIdx = -1
   let treeView = false
+  let splitView = false
   let lastFiles: Array<ReturnType<typeof parseDiffFiles>[0] & { state: 'A'|'D'|'M' }> = []
   let lastStatusRollup: Array<{ name?: string; workflowName?: string; conclusion?: string|null; state?: string; context?: string; targetUrl?: string }> = []
 
@@ -1021,7 +1023,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         const dec = pr.reviewDecision ? decMap[pr.reviewDecision] : null
         if (dec) prMetaEl.append(Object.assign(document.createElement('span'), { className: `review-decision ${dec.cls}`, textContent: dec.text }))
 
-        if (pr.body?.trim()) { prBodyEl.textContent = pr.body; prBodyEl.classList.remove('hidden') }
+        if (pr.body?.trim()) { prBodyEl.innerHTML = renderMarkdown(pr.body); prBodyEl.classList.remove('hidden') }
         commentBar.classList.remove('hidden')
         await loadExistingComments()
         if (sidebarMode === 'prs') renderPrList()
