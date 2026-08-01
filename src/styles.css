@@ -4121,6 +4121,17 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 /* ── Review: tree view ────────────────────────────────────────────────────── */
 .review-tree-dir-name { font-size: 10px; font-weight: 700; color: var(--fg-dim); padding: 4px 12px 2px; letter-spacing: 0.05em; border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); margin-top: 4px; }
 .review-file-focused > summary { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* ── Review: split (side-by-side) diff ───────────────────────────────────── */
+.review-split-diff { width: 100%; }
+.review-split-hunk { padding: 2px 8px; font-size: 11px; font-family: var(--mono); background: color-mix(in srgb, var(--accent) 5%, transparent); color: var(--fg-dim); border-top: 1px solid var(--border); white-space: pre; }
+.review-split-row { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid color-mix(in srgb, var(--border) 25%, transparent); }
+.review-split-cell { position: relative; padding: 0 4px 0 20px; font-family: var(--mono); font-size: 11px; overflow: hidden; white-space: pre; min-width: 0; line-height: 1.5; }
+.review-split-cell--left { border-right: 1px solid var(--border); }
+.review-split-cell--del { background: color-mix(in srgb, #f7768e 10%, transparent); }
+.review-split-cell--add { background: color-mix(in srgb, #73daca 10%, transparent); }
+.review-split-cell--empty { background: color-mix(in srgb, var(--border) 20%, transparent); }
+.review-split-cell--right:hover .review-line-comment-btn { opacity: 1; }
+.review-split-cell.review-line-wrap--selected { background: color-mix(in srgb, var(--accent) 20%, transparent) !important; }
 /* ── Review: syntax highlighting ─────────────────────────────────────────── */
 .sh-keyword { color: #bb9af7; }
 .sh-string { color: #9ece6a; }

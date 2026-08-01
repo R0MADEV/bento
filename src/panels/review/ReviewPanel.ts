@@ -149,6 +149,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const expandAllBtn = mkIconBtn('', reviewT('expandAll'), 'chevron-down')
   const collapseAllBtn = mkIconBtn('', reviewT('collapseAll'), 'chevron-up')
   const treeViewBtn = mkIconBtn('', reviewT('treeView'), 'list')
+  const splitViewBtn = mkIconBtn('', 'Split view', 'diff')
 
   const commentNavWrap = document.createElement('div')
   commentNavWrap.className = 'review-comment-nav hidden'
@@ -158,7 +159,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
   const viewedCounterEl = Object.assign(document.createElement('span'), { className: 'review-viewed-counter hidden' })
 
-  toolbar.append(baseLabel, branchWrap, openBtn, refreshBtn, autoBtn, expandAllBtn, collapseAllBtn, treeViewBtn, commentNavWrap, viewedCounterEl)
+  toolbar.append(baseLabel, branchWrap, openBtn, refreshBtn, autoBtn, expandAllBtn, collapseAllBtn, treeViewBtn, splitViewBtn, commentNavWrap, viewedCounterEl)
 
   // ── Body ──────────────────────────────────────────────────────────────────
   const body = document.createElement('div')
@@ -671,6 +672,150 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     return container
   }
 
+  // ── Side-by-side diff renderer ────────────────────────────────────────────
+  const buildFileDiffSideBySide = (chunk: string, filePath: string): HTMLElement => {
+    const container = document.createElement('div')
+    container.className = 'review-split-diff'
+    container.dataset.filepath = filePath
+    const ext = filePath.split('.').pop() ?? ''
+
+    type DiffEntry =
+      | { kind: 'hunk'; text: string }
+      | { kind: 'meta' }
+      | { kind: 'context'; oldNo: number; newNo: number; text: string }
+      | { kind: 'del'; oldNo: number; text: string }
+      | { kind: 'add'; newNo: number; text: string }
+
+    const entries: DiffEntry[] = []
+    let oldLine = 0, newLine = 0
+
+    for (const raw of chunk.split('\n')) {
+      const isAdd = raw.startsWith('+') && !raw.startsWith('+++')
+      const isDel = raw.startsWith('-') && !raw.startsWith('---')
+      const isHunk = raw.startsWith('@@')
+      const isMeta = raw.startsWith('diff ') || raw.startsWith('index ') || raw.startsWith('--- ') || raw.startsWith('+++ ')
+      if (isHunk) {
+        const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)/)
+        if (m) { oldLine = parseInt(m[1]) - 1; newLine = parseInt(m[2]) - 1 }
+        entries.push({ kind: 'hunk', text: raw })
+      } else if (isMeta) {
+        entries.push({ kind: 'meta' })
+      } else if (isDel) {
+        entries.push({ kind: 'del', oldNo: ++oldLine, text: raw.slice(1) })
+      } else if (isAdd) {
+        entries.push({ kind: 'add', newNo: ++newLine, text: raw.slice(1) })
+      } else {
+        entries.push({ kind: 'context', oldNo: ++oldLine, newNo: ++newLine, text: raw })
+      }
+    }
+
+    // Drag-to-select (right side only)
+    let dragStart: number | null = null
+    const lineFromEl = (el: Element | null): number | null => {
+      const wrap = el?.closest<HTMLElement>('[data-line]')
+      const n = parseInt(wrap?.dataset.line ?? '', 10)
+      return isNaN(n) ? null : n
+    }
+    const clearHighlight = (): void =>
+      container.querySelectorAll('.review-line-wrap--selected').forEach(el => el.classList.remove('review-line-wrap--selected'))
+    const highlightRange = (a: number, b: number): void => {
+      const lo = Math.min(a, b), hi = Math.max(a, b)
+      container.querySelectorAll<HTMLElement>('[data-line]').forEach(wrap => {
+        const ln = parseInt(wrap.dataset.line ?? '', 10)
+        wrap.classList.toggle('review-line-wrap--selected', ln >= lo && ln <= hi)
+      })
+    }
+    const openRangeForm = (lo: number, hi: number): void => {
+      container.querySelectorAll('.review-line-form').forEach(el => el.remove())
+      clearHighlight()
+      const anchorWrap = container.querySelector<HTMLElement>(`[data-line="${hi}"]`)
+      if (!anchorWrap) return
+      const row = anchorWrap.closest('.review-split-row') ?? anchorWrap
+      const form = makeLineForm(filePath, hi, lo < hi ? lo : undefined)
+      row.after(form)
+      form.querySelector('textarea')?.focus()
+    }
+    const onMouseMove = (e: MouseEvent): void => {
+      if (dragStart === null) return
+      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY))
+      if (ln !== null) highlightRange(dragStart, ln)
+    }
+    const onMouseUp = (e: MouseEvent): void => {
+      if (dragStart === null) return
+      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY)) ?? dragStart
+      const lo = Math.min(dragStart, ln), hi = Math.max(dragStart, ln)
+      dragStart = null
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      openRangeForm(lo, hi)
+    }
+
+    const mkRightCell = (lineNo: number, text: string, extraCls: string): HTMLElement => {
+      const cell = document.createElement('div')
+      cell.className = `review-split-cell review-split-cell--right ${extraCls}`
+      cell.dataset.line = String(lineNo)
+      const addBtn = Object.assign(document.createElement('button'), {
+        className: 'review-line-comment-btn', textContent: '+', title: `Comment line ${lineNo}`,
+      })
+      const cap = lineNo
+      addBtn.addEventListener('mousedown', e => {
+        e.preventDefault(); dragStart = cap
+        highlightRange(cap, cap)
+        document.addEventListener('mousemove', onMouseMove)
+        document.addEventListener('mouseup', onMouseUp)
+      })
+      cell.innerHTML = `<span class="tasks-diff-line-no">${lineNo}</span>${highlightCode(text, ext)}`
+      cell.prepend(addBtn)
+      return cell
+    }
+
+    let i = 0
+    while (i < entries.length) {
+      const entry = entries[i]
+      if (entry.kind === 'meta') { i++; continue }
+      if (entry.kind === 'hunk') {
+        const hunkEl = Object.assign(document.createElement('div'), { className: 'review-split-hunk', textContent: entry.text })
+        container.append(hunkEl); i++; continue
+      }
+      if (entry.kind === 'context') {
+        const row = document.createElement('div')
+        row.className = 'review-split-row'
+        const left = document.createElement('div')
+        left.className = 'review-split-cell review-split-cell--left'
+        left.innerHTML = `<span class="tasks-diff-line-no">${entry.oldNo}</span>${highlightCode(entry.text, ext)}`
+        row.append(left, mkRightCell(entry.newNo, entry.text, ''))
+        container.append(row); i++; continue
+      }
+      // del/add block: collect and pair
+      const dels: Array<{ kind: 'del'; oldNo: number; text: string }> = []
+      const adds: Array<{ kind: 'add'; newNo: number; text: string }> = []
+      while (i < entries.length && entries[i].kind === 'del') {
+        dels.push(entries[i] as { kind: 'del'; oldNo: number; text: string }); i++
+      }
+      while (i < entries.length && entries[i].kind === 'add') {
+        adds.push(entries[i] as { kind: 'add'; newNo: number; text: string }); i++
+      }
+      for (let j = 0; j < Math.max(dels.length, adds.length); j++) {
+        const del = dels[j], add = adds[j]
+        const row = document.createElement('div')
+        row.className = 'review-split-row'
+        const left = document.createElement('div')
+        if (del) {
+          left.className = 'review-split-cell review-split-cell--left review-split-cell--del'
+          left.innerHTML = `<span class="tasks-diff-line-no">${del.oldNo}</span>${highlightCode(del.text, ext)}`
+        } else {
+          left.className = 'review-split-cell review-split-cell--left review-split-cell--empty'
+        }
+        const right = add
+          ? mkRightCell(add.newNo, add.text, 'review-split-cell--add')
+          : Object.assign(document.createElement('div'), { className: 'review-split-cell review-split-cell--right review-split-cell--empty' })
+        row.append(left, right)
+        container.append(row)
+      }
+    }
+    return container
+  }
+
   // ── Build a file <details> element ────────────────────────────────────────
   const makeFileDetails = (f: typeof lastFiles[0]): HTMLDetailsElement => {
     const viewedSet = getViewedFiles()
@@ -721,7 +866,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const sum = document.createElement('summary')
     sum.className = 'review-file-summary'
     sum.append(viewedCb, stateTag, nameEl, editorBtn, statsEl)
-    details.append(sum, buildFileDiff(f.chunk, f.file))
+    details.append(sum, splitView ? buildFileDiffSideBySide(f.chunk, f.file) : buildFileDiff(f.chunk, f.file))
     return details
   }
 
@@ -801,7 +946,9 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       if (!fileContainer) continue
       const lineWrap = fileContainer.querySelector<HTMLElement>(`[data-line="${c.line}"]`)
       if (!lineWrap) continue
-      lineWrap.after(buildCommentBubble(c))
+      // In split view, insert after the whole row, not just the cell
+      const insertAnchor = lineWrap.closest('.review-split-row') ?? lineWrap
+      insertAnchor.after(buildCommentBubble(c))
     }
     updateCommentNav()
   }
@@ -939,6 +1086,12 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     treeView = !treeView
     treeViewBtn.classList.toggle('review-icon-btn--active', treeView)
     treeViewBtn.title = treeView ? reviewT('listView') : reviewT('treeView')
+    if (lastFiles.length) renderFiles()
+  })
+  splitViewBtn.addEventListener('click', () => {
+    splitView = !splitView
+    splitViewBtn.classList.toggle('review-icon-btn--active', splitView)
+    splitViewBtn.title = splitView ? 'Unified view' : 'Split view'
     if (lastFiles.length) renderFiles()
   })
 
