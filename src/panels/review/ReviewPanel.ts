@@ -226,13 +226,13 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     emptyOpenBtn,
   )
 
-  root.append(toolbar, emptyState, body)
+  // Body is always visible — empty state shows inside diffView, never hides the panel
+  root.append(toolbar, body)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const setEmptyVisible = (on: boolean): void => {
-    emptyState.classList.toggle('hidden', !on)
-    body.classList.toggle('hidden', on)
-  }
+  const showNoRepo = (): void => { diffView.replaceChildren(emptyState) }
+  // kept for call sites that pass false (repo picked)
+  const setEmptyVisible = (on: boolean): void => { if (on) showNoRepo() }
 
   const showSentLink = (el: HTMLElement, url: string): void => {
     el.replaceChildren()
@@ -971,7 +971,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     selectedBranch = ''; existingComments = []; totalFiles = 0
     fileTypeFilter = 'all'; openPrs = []; lastFiles = []; lastStatusRollup = []
     localStorage.setItem(REPO_KEY, repoPath)
-    setEmptyVisible(false)
     diffView.replaceChildren(); filterBar.classList.add('hidden')
     diffSearchInput.classList.add('hidden'); prBodyEl.classList.add('hidden')
     commentBar.classList.add('hidden'); viewedCounterEl.classList.add('hidden')
@@ -986,11 +985,10 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
   // ── Init ──────────────────────────────────────────────────────────────────
   if (repoPath) {
-    setEmptyVisible(false)
     diffView.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-no-changes', textContent: reviewT('selectBranch') }))
     loadBranches()
   } else {
-    setEmptyVisible(true)
+    showNoRepo()
   }
 
   return {
