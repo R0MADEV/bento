@@ -1027,13 +1027,49 @@ pub async fn gh_pr_view_branch(path: String, branch: String) -> Result<Option<se
     .map_err(|e| e.to_string())?
 }
 
+// Fetches PR discussion: general comments + review submissions (with body).
+#[tauri::command]
+pub async fn gh_pr_list_discussion(path: String, pr_number: i64) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let comments = std::process::Command::new("gh")
+            .current_dir(&path)
+            .args(["api", "--paginate", &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number)])
+            .output()
+            .ok()
+            .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        let reviews = std::process::Command::new("gh")
+            .current_dir(&path)
+            .args(["api", &format!("repos/{{owner}}/{{repo}}/pulls/{}/reviews", pr_number)])
+            .output()
+            .ok()
+            .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        Ok(serde_json::json!({ "comments": comments, "reviews": reviews }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // Posts a comment on the PR and returns its URL.
 #[tauri::command]
 pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Resolve PR number from branch so we can use the REST API (gh pr comment
+        // does not support --json/--jq, but gh api returns html_url).
+        let num_out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "view", &branch, "--json", "number", "--jq", ".number"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !num_out.status.success() {
+            return Err(String::from_utf8_lossy(&num_out.stderr).trim().to_string());
+        }
+        let pr_number = String::from_utf8_lossy(&num_out.stdout).trim().to_string();
+        let endpoint = format!("repos/{{owner}}/{{repo}}/issues/{pr_number}/comments");
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["pr", "comment", &branch, "--body", &body, "--json", "url", "--jq", ".url"])
+            .args(["api", "--method", "POST", &endpoint, "-f", &format!("body={body}"), "--jq", ".html_url"])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {

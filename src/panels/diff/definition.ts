@@ -7,6 +7,6 @@ export const diffPanelDefinition: PanelDefinition = {
   title: appT('panelDiff'),
   create: ctx => lazyPanel(async () => {
     const { createDiffPanel } = await import('./DiffPanel')
-    return createDiffPanel(ctx.projectPath)
+    return createDiffPanel(ctx.projectPath, ctx.panelId)
   }),
 }

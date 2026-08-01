@@ -4,7 +4,11 @@ export interface MenuItem {
   testId?: string
 }
 
-export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
+export interface ContextMenuOptions {
+  align?: 'left' | 'right'
+}
+
+export function showContextMenu(x: number, y: number, items: MenuItem[], options: ContextMenuOptions = {}): void {
   // Close any previous menu that might still be open
   document.querySelectorAll('.context-menu').forEach(m => m.remove())
 
@@ -44,11 +48,19 @@ export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
   // Fit to the viewport: if it overflows off the bottom/right, reposition
   const rect = menu.getBoundingClientRect()
   const margin = 8
-  if (rect.bottom > window.innerHeight) {
-    menu.style.top = `${Math.max(margin, window.innerHeight - rect.height - margin)}px`
+  const width = rect.width
+  const height = rect.height
+  const left = rect.left
+  const top = rect.top
+  const anchorLeft = x
+  if (options.align === 'right') {
+    menu.style.left = `${Math.max(margin, anchorLeft - width)}px`
   }
-  if (rect.right > window.innerWidth) {
-    menu.style.left = `${Math.max(margin, window.innerWidth - rect.width - margin)}px`
+  if (top + height > window.innerHeight) {
+    menu.style.top = `${Math.max(margin, window.innerHeight - height - margin)}px`
+  }
+  if (left + width > window.innerWidth) {
+    menu.style.left = `${Math.max(margin, window.innerWidth - width - margin)}px`
   }
 
   setTimeout(() => {

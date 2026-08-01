@@ -14,6 +14,9 @@ import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from 
 import type { MemoryRepository } from '../ports/MemoryRepository'
 import { getActiveProjectPath } from './activeProject'
 import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
+import { getUiZoom, toLayoutPixels } from './zoom'
+
+const AI_POSITION_KEY = 'bento.ai.position.v2'
 
 // Messages as the API expects them (includes tool_calls and tool responses).
 interface ApiToolCall { id: string; function: { name: string; arguments: string } }
@@ -24,6 +27,16 @@ interface ApiMessage { role: string; content?: string | null; tool_calls?: ApiTo
 export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   const root = document.createElement('div')
   root.className = 'ai-chat'
+  let dragX = 0
+  let dragY = 0
+  let fabPosition = { x: 0, y: 0 }
+  try {
+    const saved = JSON.parse(localStorage.getItem(AI_POSITION_KEY) ?? '{}') as { x?: number; y?: number }
+    dragX = Number.isFinite(saved.x) ? saved.x! : 0
+    dragY = Number.isFinite(saved.y) ? saved.y! : 0
+  } catch { /* use the default position */ }
+  root.style.setProperty('--ai-drag-x', `${dragX}px`)
+  root.style.setProperty('--ai-drag-y', `${dragY}px`)
 
   const toggle = document.createElement('button')
   toggle.className = 'ai-fab'
@@ -71,6 +84,60 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   closeBtn.innerHTML = icon('x')
 
   header.append(providerSelect, modelSelect, modelList, expandBtn, settingsBtn, closeBtn)
+
+  const clampPosition = (): void => {
+    const zoom = getUiZoom()
+    const viewportWidth = window.innerWidth / zoom
+    const viewportHeight = window.innerHeight / zoom
+    const width = modal.classList.contains('hidden') ? (toggle.offsetWidth || 44) : (modal.offsetWidth || 460)
+    const height = modal.classList.contains('hidden') ? (toggle.offsetHeight || 44) : (modal.offsetHeight || 320)
+    const minX = -16
+    const maxX = Math.max(minX, viewportWidth - width - 16)
+    const minY = Math.min(16, height + 32 - viewportHeight)
+    const maxY = Math.max(minY, viewportHeight - height - 32)
+    dragX = Math.max(minX, Math.min(maxX, dragX))
+    dragY = Math.max(minY, Math.min(maxY, dragY))
+    root.style.setProperty('--ai-drag-x', `${dragX}px`)
+    root.style.setProperty('--ai-drag-y', `${dragY}px`)
+  }
+  window.addEventListener('resize', clampPosition)
+  window.addEventListener('bento:zoom-change', clampPosition)
+
+  const savePosition = (): void => {
+    localStorage.setItem(AI_POSITION_KEY, JSON.stringify({ x: dragX, y: dragY }))
+  }
+  const draggable = (handle: HTMLElement): void => {
+    handle.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return
+      if (handle === header && (e.target as Element).closest('button, input, select, textarea')) return
+      const startX = e.clientX
+      const startY = e.clientY
+      const initialX = dragX
+      const initialY = dragY
+      let moved = false
+      const onMove = (event: PointerEvent): void => {
+        const zoom = getUiZoom()
+        const dx = toLayoutPixels(event.clientX - startX, zoom)
+        const dy = toLayoutPixels(event.clientY - startY, zoom)
+        moved = moved || Math.abs(dx) > 3 || Math.abs(dy) > 3
+        if (!moved) return
+        dragX = initialX + dx
+        dragY = initialY + dy
+        clampPosition()
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        if (moved) savePosition()
+        root.dataset.dragged = moved ? 'true' : 'false'
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp, { once: true })
+    })
+  }
+  draggable(toggle)
+  draggable(header)
+  clampPosition()
 
   // ── Settings: base URL + API key ─────────────────────────────────────────
   const settings = document.createElement('div')
@@ -380,16 +447,33 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
   // ── Open / close ─────────────────────────────────────────────────────────
   const open = (): void => {
+    fabPosition = { x: dragX, y: dragY }
     modal.classList.remove('hidden')
     root.classList.add('open')
+    clampPosition()
     applyConfigToUi()
     loadKeyField()
     input.focus()
   }
-  const close = (): void => { modal.classList.add('hidden'); root.classList.remove('open') }
+  const close = (): void => {
+    modal.classList.add('hidden')
+    root.classList.remove('open')
+    dragX = fabPosition.x
+    dragY = fabPosition.y
+    root.style.setProperty('--ai-drag-x', `${dragX}px`)
+    root.style.setProperty('--ai-drag-y', `${dragY}px`)
+    savePosition()
+  }
   const toggleOpen = (): void => (modal.classList.contains('hidden') ? open() : close())
 
-  toggle.addEventListener('click', toggleOpen)
+  toggle.addEventListener('click', e => {
+    if (root.dataset.dragged === 'true') {
+      root.dataset.dragged = 'false'
+      e.preventDefault()
+      return
+    }
+    toggleOpen()
+  })
   closeBtn.addEventListener('click', close)
   window.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleOpen() }

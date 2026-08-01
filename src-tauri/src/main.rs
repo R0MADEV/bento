@@ -291,6 +291,7 @@ fn main() {
             git::gh_pr_comment,
             git::gh_pr_inline_comment,
             git::gh_pr_list_open,
+            git::gh_pr_list_discussion,
             git::gh_pr_list_comments,
             git::gh_pr_update_comment,
             git::gh_pr_delete_comment,

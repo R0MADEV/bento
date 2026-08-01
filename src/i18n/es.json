@@ -113,7 +113,13 @@
     "treeView": "Vista árbol",
     "listView": "Vista lista",
     "approveConfirm": "¿Aprobar PR #{number}? ({viewed}/{total} archivos revisados, {comments} comentarios)",
-    "requestChangesConfirm": "¿Pedir cambios en PR #{number}? ({viewed}/{total} archivos revisados, {comments} comentarios)"
+    "requestChangesConfirm": "¿Pedir cambios en PR #{number}? ({viewed}/{total} archivos revisados, {comments} comentarios)",
+    "resolveComment": "Resolver",
+    "unresolveComment": "Desmarcar",
+    "commentedFilter": "Con comentarios",
+    "copyDiff": "Copiar diff",
+    "fileComment": "Comentar archivo",
+    "nextUnviewed": "Siguiente sin ver (u)"
   },
   "diff": {
     "worktreeMode": "Worktree",

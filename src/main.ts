@@ -23,6 +23,7 @@ import { TauriWorkspaceStateRepository } from './adapters/TauriWorkspaceStateRep
 import { createSessionManager } from './app/createSessionManager'
 import { createAiChat } from './ui/aiChat'
 import { getThemeName, applyAppTheme } from './panels/terminal/themePreference'
+import { getUiZoom } from './ui/zoom'
 import { isMac } from './ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import tvM3U from './assets/tv.m3u?raw'
@@ -39,18 +40,19 @@ applyAppTheme(getThemeName())
 // Global UI zoom: Cmd/Ctrl + / - / 0
 const ZOOM_KEY = 'bento.zoom'
 const ZOOM_STEP = 0.1
-const clampZoom = (z: number): number => Math.max(0.5, Math.min(2, Math.round(z * 10) / 10))
+const clampZoom = (z: number): number => Math.max(0.5, Math.min(4, Math.round(z * 10) / 10))
 const applyZoom = (z: number): void => {
   const v = clampZoom(z)
-  document.documentElement.style.zoom = String(v)
+  document.documentElement.style.setProperty('--bento-zoom', String(v))
   localStorage.setItem(ZOOM_KEY, String(v))
+  window.dispatchEvent(new CustomEvent('bento:zoom-change'))
 }
 const savedZoom = parseFloat(localStorage.getItem(ZOOM_KEY) ?? '1')
 if (savedZoom !== 1) applyZoom(savedZoom)
 
 document.addEventListener('keydown', e => {
   if (!e.metaKey && !e.ctrlKey) return
-  const current = parseFloat(document.documentElement.style.zoom || '1')
+  const current = getUiZoom()
   if (e.key === '=' || e.key === '+') { e.preventDefault(); applyZoom(current + ZOOM_STEP) }
   else if (e.key === '-') { e.preventDefault(); applyZoom(current - ZOOM_STEP) }
   else if (e.key === '0') { e.preventDefault(); applyZoom(1) }

@@ -113,7 +113,13 @@
     "treeView": "Tree view",
     "listView": "List view",
     "approveConfirm": "Approve PR #{number}? ({viewed}/{total} files reviewed, {comments} comments)",
-    "requestChangesConfirm": "Request changes on PR #{number}? ({viewed}/{total} files reviewed, {comments} comments)"
+    "requestChangesConfirm": "Request changes on PR #{number}? ({viewed}/{total} files reviewed, {comments} comments)",
+    "resolveComment": "Resolve",
+    "unresolveComment": "Unresolve",
+    "commentedFilter": "With comments",
+    "copyDiff": "Copy diff",
+    "fileComment": "Comment on file",
+    "nextUnviewed": "Next unviewed (u)"
   },
   "diff": {
     "worktreeMode": "Worktree",

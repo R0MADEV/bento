@@ -11,11 +11,30 @@ type Mode = 'worktree' | 'log'
 
 const REPO_KEY = 'bento.diff.repo'
 
-export function createDiffPanel(sessionPath?: string): { element: HTMLElement } {
+export const diffRepoStorageKey = (sessionPath?: string, panelId?: string): string => {
+  if (!sessionPath) return REPO_KEY
+  const scope = panelId ? JSON.stringify({ path: sessionPath, panelId }) : sessionPath
+  return `${REPO_KEY}.${encodeURIComponent(scope)}`
+}
+
+export const diffRepoPathsFromKeys = (keys: string[]): string[] => keys
+  .filter(key => key.startsWith(`${REPO_KEY}.`))
+  .map(key => {
+    try {
+      const value = JSON.parse(decodeURIComponent(key.slice(`${REPO_KEY}.`.length))) as { path?: string }
+      return value.path ?? ''
+    } catch {
+      try { return decodeURIComponent(key.slice(`${REPO_KEY}.`.length)) } catch { return '' }
+    }
+  })
+  .filter((path, index, paths) => path !== '' && paths.indexOf(path) === index)
+
+export function createDiffPanel(sessionPath?: string, panelId?: string): { element: HTMLElement } {
   const root = document.createElement('div')
   root.className = 'diff-panel'
 
-  let repoPath: string = sessionPath ?? localStorage.getItem(REPO_KEY) ?? ''
+  const repoKey = diffRepoStorageKey(sessionPath, panelId)
+  let repoPath = ''
   let mode: Mode = 'worktree'
   let logEntries: CommitEntry[] = []
   let worktreeChunks = new Map<string, string>()
@@ -42,8 +61,10 @@ export function createDiffPanel(sessionPath?: string): { element: HTMLElement } 
     textContent: diffT('openRepo'),
     innerHTML: icon('folder') + `<span>${diffT('openRepo')}</span>`,
   })
+  const repoSelect = document.createElement('select')
+  repoSelect.className = 'diff-repo-select hidden'
 
-  toolbar.append(worktreeBtn, logBtn, refreshBtn, openBtn)
+  toolbar.append(worktreeBtn, logBtn, refreshBtn, repoSelect, openBtn)
 
   // ── Master-detail ─────────────────────────────────────────────────────────
   const md = createMasterDetail({
@@ -75,6 +96,8 @@ export function createDiffPanel(sessionPath?: string): { element: HTMLElement } 
   const showEmpty = (on: boolean): void => {
     emptyState.classList.toggle('hidden', !on)
     md.element.classList.toggle('hidden', on)
+    emptyState.style.display = on ? 'flex' : 'none'
+    md.element.style.display = on ? 'none' : 'flex'
   }
 
   // ── Item detail ───────────────────────────────────────────────────────────
@@ -174,14 +197,37 @@ export function createDiffPanel(sessionPath?: string): { element: HTMLElement } 
     const picked = await pickFolder({ directory: true, multiple: false }).catch(() => null)
     if (!picked || typeof picked !== 'string') return
     repoPath = picked
-    localStorage.setItem(REPO_KEY, repoPath)
+    localStorage.setItem(repoKey, repoPath)
+    refreshRepoOptions()
     refresh()
   }
+
+  const refreshRepoOptions = (): void => {
+    const paths = [
+      sessionPath ?? '',
+      localStorage.getItem(REPO_KEY) ?? '',
+      ...diffRepoPathsFromKeys(Object.keys(localStorage)),
+    ].filter((path, index, all) => path !== '' && all.indexOf(path) === index)
+    repoSelect.replaceChildren(...paths.map(path => Object.assign(document.createElement('option'), {
+      value: path,
+      textContent: path.split('/').filter(Boolean).pop() ?? path,
+      title: path,
+    })))
+    repoSelect.value = repoPath
+    repoSelect.classList.toggle('hidden', paths.length < 2)
+  }
+
+  repoSelect.addEventListener('change', () => {
+    repoPath = repoSelect.value
+    if (repoPath) localStorage.setItem(repoKey, repoPath)
+    refresh()
+  })
 
   openBtn.addEventListener('click', pickRepo)
   emptyOpenBtn.addEventListener('click', pickRepo)
 
   // ── Initial render ────────────────────────────────────────────────────────
+  refreshRepoOptions()
   refresh()
 
   return { element: root }

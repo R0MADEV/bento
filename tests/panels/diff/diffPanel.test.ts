@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
-import { createDiffPanel } from '../../../src/panels/diff/DiffPanel'
+import { createDiffPanel, diffRepoStorageKey, diffRepoPathsFromKeys } from '../../../src/panels/diff/DiffPanel'
 
 function setup() {
   vi.stubGlobal('localStorage', makeLocalStorage())
@@ -9,6 +9,27 @@ function setup() {
 }
 
 describe('DiffPanel', () => {
+  it('uses a separate storage key for each project session', () => {
+    expect(diffRepoStorageKey('/projects/one')).not.toBe(diffRepoStorageKey('/projects/two'))
+    expect(diffRepoStorageKey('/projects/one')).toContain(encodeURIComponent('/projects/one'))
+  })
+
+  it('uses a separate storage key for each diff panel in one project', () => {
+    expect(diffRepoStorageKey('/projects/one', 'diff-1')).not.toBe(diffRepoStorageKey('/projects/one', 'diff-2'))
+  })
+
+  it('starts a new project-scoped diff panel without a repository', () => {
+    setup()
+    localStorage.setItem(diffRepoStorageKey('/projects/one', 'diff-2'), '/projects/one')
+    const { element } = createDiffPanel('/projects/one', 'diff-2')
+    expect(element.querySelector('.diff-empty-state')?.classList.contains('hidden')).toBe(false)
+  })
+
+  it('recovers distinct recent project paths from storage keys', () => {
+    const keys = [diffRepoStorageKey('/projects/one'), diffRepoStorageKey('/projects/two'), 'other.key']
+    expect(diffRepoPathsFromKeys(keys)).toEqual(['/projects/one', '/projects/two'])
+  })
+
   it('returns an element with diff-panel class', () => {
     setup()
     const { element } = createDiffPanel()
@@ -44,12 +65,19 @@ describe('DiffPanel', () => {
     expect(openBtn?.textContent).toContain('Open repo')
   })
 
-  it('hides empty state when saved repo exists in localStorage', () => {
+  it('starts empty even when a legacy repo exists in localStorage', () => {
     setup()
     localStorage.setItem('bento.diff.repo', '/some/project')
     vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue('') }))
     const { element } = createDiffPanel()
-    const emptyState = element.querySelector('.diff-empty-state')
-    expect(emptyState?.classList.contains('hidden')).toBe(true)
+    expect(element.querySelector('.diff-empty-state')?.classList.contains('hidden')).toBe(false)
+  })
+
+  it('uses the saved repo when the session path is empty', () => {
+    setup()
+    localStorage.setItem('bento.diff.repo', '/some/project')
+    vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue('') }))
+    const { element } = createDiffPanel('')
+    expect(element.querySelector('.diff-empty-state')?.classList.contains('hidden')).toBe(true)
   })
 })

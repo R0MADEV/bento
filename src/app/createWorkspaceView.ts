@@ -139,10 +139,10 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       btn.title = appT('addPanel')
       const onClick = () => {
         const rect = btn.getBoundingClientRect()
-        showContextMenu(rect.left, rect.bottom, panels.list().map(d => ({
+        showContextMenu(rect.right, rect.bottom, panels.list().map(d => ({
           label: d.title,
           onClick: () => addInActiveGroup(d.type),
-        })))
+        })), { align: 'right' })
       }
       btn.addEventListener('click', onClick)
       return { element: btn, init: () => {}, dispose: () => btn.removeEventListener('click', onClick) }
