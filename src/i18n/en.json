@@ -104,7 +104,16 @@
     "copyPath": "Copy path",
     "openInEditor": "Open in editor",
     "prevComment": "Prev comment",
-    "nextComment": "Next comment"
+    "nextComment": "Next comment",
+    "editComment": "Edit",
+    "deleteComment": "Delete",
+    "replyComment": "Reply",
+    "deleteConfirm": "Delete this comment?",
+    "searchDiff": "Search files…",
+    "treeView": "Tree view",
+    "listView": "List view",
+    "approveConfirm": "Approve PR #{number}? ({viewed}/{total} files reviewed, {comments} comments)",
+    "requestChangesConfirm": "Request changes on PR #{number}? ({viewed}/{total} files reviewed, {comments} comments)"
   },
   "diff": {
     "worktreeMode": "Worktree",

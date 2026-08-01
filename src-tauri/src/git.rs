@@ -1102,13 +1102,72 @@ pub async fn gh_pr_list_open(path: String) -> Result<serde_json::Value, String> 
     tauri::async_runtime::spawn_blocking(move || {
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["pr", "list", "--json", "number,title,author,headRefName,url", "--limit", "30"])
+            .args(["pr", "list", "--json", "number,title,author,headRefName,baseRefName,url", "--limit", "30"])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
         serde_json::from_slice::<serde_json::Value>(&out.stdout).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Edits an existing PR review comment.
+#[tauri::command]
+pub async fn gh_pr_update_comment(path: String, comment_id: u64, body: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["api", "--method", "PATCH", &endpoint, "-f", &format!("body={body}")])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Deletes a PR review comment.
+#[tauri::command]
+pub async fn gh_pr_delete_comment(path: String, comment_id: u64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["api", "--method", "DELETE", &endpoint])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Replies to an existing PR review comment thread.
+#[tauri::command]
+pub async fn gh_pr_reply_comment(path: String, comment_id: u64, body: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}/replies");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["api", "--method", "POST", &endpoint,
+                   "-f", &format!("body={body}"),
+                   "--jq", ".html_url"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     })
     .await
     .map_err(|e| e.to_string())?

@@ -4097,3 +4097,33 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 /* ── Review: toolbar extras ───────────────────────────────────────────────── */
 .review-comment-nav { display: flex; gap: 2px; }
 .review-viewed-counter { font-size: 10px; color: var(--fg-dim); padding: 0 4px; white-space: nowrap; }
+/* ── Review: diff search ──────────────────────────────────────────────────── */
+.review-diff-search { padding: 4px 8px; font-size: 11px; background: var(--surface); border: none; border-bottom: 1px solid var(--border); color: var(--fg); flex-shrink: 0; width: 100%; box-sizing: border-box; }
+.review-diff-search:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+/* ── Review: comment bubble actions ──────────────────────────────────────── */
+.review-existing-comment-header { display: flex; align-items: center; gap: 4px; }
+.review-comment-author { font-weight: 600; color: var(--accent); font-size: 10px; flex: 1; }
+.review-comment-action-btn { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: transparent; border: 1px solid var(--border); color: var(--fg-dim); cursor: pointer; opacity: 0; transition: opacity .1s; }
+.review-existing-comment:hover .review-comment-action-btn { opacity: 1; }
+.review-comment-action-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
+.review-comment-delete-btn:hover { color: #f7768e; border-color: #f7768e; }
+.review-edit-wrap, .review-reply-wrap { padding: 4px 0; display: flex; flex-direction: column; gap: 4px; }
+/* ── Review: CI popover ───────────────────────────────────────────────────── */
+.review-ci-popover { position: absolute; z-index: 300; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.3); min-width: 220px; max-height: 260px; overflow-y: auto; padding: 4px 0; }
+.review-ci-check { display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 11px; }
+.review-ci-check:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.review-ci-check-icon { font-size: 12px; width: 16px; text-align: center; flex-shrink: 0; }
+.review-ci-check-icon.ci-ok { color: #73daca; }
+.review-ci-check-icon.ci-fail { color: #f7768e; }
+.review-ci-check-icon.ci-pending { color: #e0af68; }
+.review-ci-check-name { color: var(--fg); }
+/* ── Review: tree view ────────────────────────────────────────────────────── */
+.review-tree-dir-name { font-size: 10px; font-weight: 700; color: var(--fg-dim); padding: 4px 12px 2px; letter-spacing: 0.05em; border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); margin-top: 4px; }
+.review-file-focused > summary { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* ── Review: syntax highlighting ─────────────────────────────────────────── */
+.sh-keyword { color: #bb9af7; }
+.sh-string { color: #9ece6a; }
+.sh-comment { color: #565f89; font-style: italic; }
+.sh-number { color: #ff9e64; }
+.tasks-diff-line-add .sh-keyword { color: #c3a8f8; }
+.tasks-diff-line-del .sh-keyword { color: #c3a8f8; }

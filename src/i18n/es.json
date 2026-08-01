@@ -104,7 +104,16 @@
     "copyPath": "Copiar ruta",
     "openInEditor": "Abrir en editor",
     "prevComment": "Comentario anterior",
-    "nextComment": "Comentario siguiente"
+    "nextComment": "Comentario siguiente",
+    "editComment": "Editar",
+    "deleteComment": "Eliminar",
+    "replyComment": "Responder",
+    "deleteConfirm": "¿Eliminar este comentario?",
+    "searchDiff": "Buscar archivos…",
+    "treeView": "Vista árbol",
+    "listView": "Vista lista",
+    "approveConfirm": "¿Aprobar PR #{number}? ({viewed}/{total} archivos revisados, {comments} comentarios)",
+    "requestChangesConfirm": "¿Pedir cambios en PR #{number}? ({viewed}/{total} archivos revisados, {comments} comentarios)"
   },
   "diff": {
     "worktreeMode": "Worktree",
