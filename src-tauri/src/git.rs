@@ -1017,7 +1017,7 @@ pub async fn gh_pr_view_branch(path: String, branch: String) -> Result<Option<se
     tauri::async_runtime::spawn_blocking(move || {
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["pr", "view", &branch, "--json", "number,title,url"])
+            .args(["pr", "view", &branch, "--json", "number,title,url,body"])
             .output();
         let Ok(out) = out else { return Ok(None); };
         if !out.status.success() || out.stdout.is_empty() { return Ok(None); }
@@ -1085,6 +1085,53 @@ pub async fn gh_pr_inline_comment(
         let out = Command::new("gh")
             .current_dir(&path)
             .args(&args)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Returns all inline review comments for a PR as a JSON array.
+#[tauri::command]
+pub async fn gh_pr_list_comments(path: String, pr_number: u64) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["api", "--paginate", &endpoint])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Submits a pull request review (APPROVE / REQUEST_CHANGES / COMMENT).
+#[tauri::command]
+pub async fn gh_pr_submit_review(path: String, pr_number: u64, event: String, body: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let valid_events = ["APPROVE", "REQUEST_CHANGES", "COMMENT"];
+        if !valid_events.contains(&event.as_str()) {
+            return Err(format!("invalid review event: {event}"));
+        }
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/reviews");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api", "--method", "POST", &endpoint,
+                "-f", &format!("event={event}"),
+                "-f", &format!("body={body}"),
+                "--jq", ".html_url",
+            ])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {

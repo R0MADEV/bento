@@ -9,6 +9,14 @@ import { reviewT } from './i18n'
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
 
+interface GhComment {
+  path: string
+  line: number
+  body: string
+  user: { login: string }
+  html_url: string
+}
+
 export function createReviewPanel(sessionPath?: string): { element: HTMLElement; dispose?: () => void } {
   const root = document.createElement('div')
   root.className = 'review-panel'
@@ -20,6 +28,8 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let currentPrNumber: number | null = null
   let intervalId: ReturnType<typeof setInterval> | null = null
   let autoRefresh = false
+  let existingComments: GhComment[] = []
+  let loadingBranch = ''
 
   // ── Toolbar ───────────────────────────────────────────────────────────────
   const toolbar = document.createElement('div')
@@ -56,14 +66,23 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     title: reviewT('autoRefresh'),
     innerHTML: icon('eye'),
   })
+  const expandAllBtn = Object.assign(document.createElement('button'), {
+    className: 'review-icon-btn',
+    title: reviewT('expandAll'),
+    innerHTML: icon('chevron-down'),
+  })
+  const collapseAllBtn = Object.assign(document.createElement('button'), {
+    className: 'review-icon-btn',
+    title: reviewT('collapseAll'),
+    innerHTML: icon('chevron-up'),
+  })
 
-  toolbar.append(baseLabel, branchWrap, openBtn, refreshBtn, autoBtn)
+  toolbar.append(baseLabel, branchWrap, openBtn, refreshBtn, autoBtn, expandAllBtn, collapseAllBtn)
 
   // ── Body ──────────────────────────────────────────────────────────────────
   const body = document.createElement('div')
   body.className = 'review-body'
 
-  // Sidebar: list of branches
   const sidebar = document.createElement('div')
   sidebar.className = 'review-sidebar'
 
@@ -76,7 +95,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   branchList.className = 'review-branch-list'
   sidebar.append(branchSearch, branchList)
 
-  // Detail: diff + comment
   const detail = document.createElement('div')
   detail.className = 'review-detail'
 
@@ -87,16 +105,29 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   commentBar.className = 'review-comment-bar hidden'
 
   const prInfoEl = Object.assign(document.createElement('div'), { className: 'review-pr-info' })
+  const prBodyEl = Object.assign(document.createElement('div'), { className: 'review-pr-body hidden' })
   const commentInput = document.createElement('textarea')
   commentInput.className = 'review-comment-input'
   commentInput.placeholder = reviewT('commentPlaceholder')
   commentInput.rows = 3
+
+  const commentActionsRow = document.createElement('div')
+  commentActionsRow.className = 'review-comment-actions'
   const commentBtn = Object.assign(document.createElement('button'), {
     className: 'review-comment-btn',
     textContent: reviewT('sendComment'),
   })
+  const approveBtn = Object.assign(document.createElement('button'), {
+    className: 'review-approve-btn',
+    textContent: reviewT('approve'),
+  })
+  const requestChangesBtn = Object.assign(document.createElement('button'), {
+    className: 'review-request-changes-btn',
+    textContent: reviewT('requestChanges'),
+  })
   const commentStatus = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
-  commentBar.append(prInfoEl, commentInput, commentBtn, commentStatus)
+  commentActionsRow.append(commentBtn, approveBtn, requestChangesBtn, commentStatus)
+  commentBar.append(prInfoEl, prBodyEl, commentInput, commentActionsRow)
 
   detail.append(diffView, commentBar)
   body.append(sidebar, detail)
@@ -144,6 +175,18 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     setTimeout(() => { commentStatus.textContent = ''; commentStatus.className = 'review-comment-status' }, isError ? 5000 : 3000)
   }
 
+  // ── Viewed files (per repo + branch) ─────────────────────────────────────
+  const viewedKey = (): string => `bento.review.viewed.${repoPath}.${selectedBranch}`
+  const getViewedFiles = (): Set<string> => {
+    try { return new Set(JSON.parse(localStorage.getItem(viewedKey()) ?? '[]') as string[]) }
+    catch { return new Set() }
+  }
+  const setFileViewed = (file: string, viewed: boolean): void => {
+    const set = getViewedFiles()
+    viewed ? set.add(file) : set.delete(file)
+    localStorage.setItem(viewedKey(), JSON.stringify([...set]))
+  }
+
   // ── Branch sidebar ────────────────────────────────────────────────────────
   const renderBranchList = (): void => {
     const q = branchSearch.value.toLowerCase()
@@ -154,7 +197,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         textContent: b,
         title: b,
       })
-      item.addEventListener('click', () => selectBranch(b))
+      item.addEventListener('click', () => { selectBranch(b) })
       return item
     }))
   }
@@ -196,17 +239,9 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     }
   })
 
-  // Strips remote prefix: "origin/feat/foo" → "feat/foo"
   const ghBranch = (b: string): string => b.replace(/^[^/]+\//, '')
 
-  // ── Select branch → load diff + PR ───────────────────────────────────────
-  const selectBranch = (branch: string): void => {
-    selectedBranch = branch
-    renderBranchList()
-    loadDiff()
-    loadPrInfo()
-  }
-
+  // ── Inline comment form ───────────────────────────────────────────────────
   const makeLineForm = (filePath: string, line: number, startLine?: number): HTMLElement => {
     const form = document.createElement('div')
     form.className = 'review-line-form'
@@ -244,8 +279,10 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     return form
   }
 
+  // ── Diff renderer ─────────────────────────────────────────────────────────
   const buildFileDiff = (chunk: string, filePath: string): HTMLElement => {
     const container = document.createElement('div')
+    container.dataset.filepath = filePath
     let newLine = 0
     let dragStart: number | null = null
 
@@ -347,6 +384,35 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     return container
   }
 
+  // ── Inject existing PR comments into rendered diff ────────────────────────
+  const injectExistingComments = (): void => {
+    diffView.querySelectorAll('.review-existing-comment').forEach(el => el.remove())
+    const fileContainers = [...diffView.querySelectorAll<HTMLElement>('[data-filepath]')]
+    for (const c of existingComments) {
+      const fileContainer = fileContainers.find(el => el.dataset.filepath === c.path)
+      if (!fileContainer) continue
+      const lineWrap = fileContainer.querySelector<HTMLElement>(`[data-line="${c.line}"]`)
+      if (!lineWrap) continue
+      const bubble = document.createElement('div')
+      bubble.className = 'review-existing-comment'
+      bubble.append(
+        Object.assign(document.createElement('div'), { className: 'review-existing-comment-header', textContent: c.user.login }),
+        Object.assign(document.createElement('div'), { className: 'review-existing-comment-body', textContent: c.body }),
+      )
+      lineWrap.after(bubble)
+    }
+  }
+
+  // ── Load PR inline comments ───────────────────────────────────────────────
+  const loadExistingComments = async (): Promise<void> => {
+    if (currentPrNumber === null) { existingComments = []; return }
+    try {
+      const raw = await invoke<GhComment[]>('gh_pr_list_comments', { path: repoPath, prNumber: currentPrNumber })
+      existingComments = raw.filter(c => c.line != null)
+    } catch { existingComments = [] }
+  }
+
+  // ── Load diff ─────────────────────────────────────────────────────────────
   const loadDiff = async (): Promise<void> => {
     diffView.replaceChildren(
       Object.assign(document.createElement('div'), { className: 'review-loading', textContent: reviewT('loading') }),
@@ -360,14 +426,42 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         return
       }
       const files = parseDiffFiles(raw)
+      const viewedSet = getViewedFiles()
       diffView.replaceChildren(...files.map(f => {
         const details = document.createElement('details')
         details.className = 'review-file-detail'
         details.open = files.length <= 5
-        const sum = Object.assign(document.createElement('summary'), {
-          className: 'review-file-summary',
+        details.classList.toggle('review-file-viewed', viewedSet.has(f.file))
+
+        const viewedCb = document.createElement('input')
+        viewedCb.type = 'checkbox'
+        viewedCb.className = 'review-viewed-cb'
+        viewedCb.checked = viewedSet.has(f.file)
+        viewedCb.title = reviewT('viewed')
+        viewedCb.addEventListener('click', e => e.stopPropagation())
+        viewedCb.addEventListener('change', e => {
+          e.stopPropagation()
+          setFileViewed(f.file, viewedCb.checked)
+          details.classList.toggle('review-file-viewed', viewedCb.checked)
+          if (viewedCb.checked) details.open = false
+        })
+
+        const nameEl = Object.assign(document.createElement('span'), {
+          className: 'review-file-name',
           textContent: f.file,
         })
+
+        const statsEl = document.createElement('span')
+        statsEl.className = 'review-file-stats'
+        statsEl.append(
+          Object.assign(document.createElement('span'), { className: 'review-stat-add', textContent: `+${f.additions}` }),
+          Object.assign(document.createElement('span'), { className: 'review-stat-del', textContent: `-${f.deletions}` }),
+        )
+
+        const sum = document.createElement('summary')
+        sum.className = 'review-file-summary'
+        sum.append(viewedCb, nameEl, statsEl)
+
         details.append(sum, buildFileDiff(f.chunk, f.file))
         return details
       }))
@@ -378,12 +472,15 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     }
   }
 
+  // ── Load PR info ──────────────────────────────────────────────────────────
   const loadPrInfo = async (): Promise<void> => {
     currentPrNumber = null
+    existingComments = []
     prInfoEl.replaceChildren()
+    prBodyEl.classList.add('hidden')
     commentBar.classList.add('hidden')
     try {
-      const pr = await invoke<{ number: number; title: string; url: string } | null>('gh_pr_view_branch', {
+      const pr = await invoke<{ number: number; title: string; url: string; body: string } | null>('gh_pr_view_branch', {
         path: repoPath,
         branch: ghBranch(selectedBranch),
       })
@@ -396,16 +493,47 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         })
         link.addEventListener('click', e => { e.preventDefault(); openUrl(pr.url).catch(() => {}) })
         prInfoEl.append(link)
+        if (pr.body?.trim()) {
+          prBodyEl.textContent = pr.body
+          prBodyEl.classList.remove('hidden')
+        }
         commentBar.classList.remove('hidden')
+        await loadExistingComments()
       }
     } catch { /* no PR */ }
   }
 
-  // Identifier to pass to gh: PR number if known, else branch name
   const prIdentifier = (): string =>
     currentPrNumber !== null ? String(currentPrNumber) : ghBranch(selectedBranch)
 
-  // ── Send PR comment ───────────────────────────────────────────────────────
+  // ── Select branch ─────────────────────────────────────────────────────────
+  const selectBranch = async (branch: string): Promise<void> => {
+    selectedBranch = branch
+    loadingBranch = branch
+    renderBranchList()
+    await Promise.all([loadDiff(), loadPrInfo()])
+    if (loadingBranch === branch) injectExistingComments()
+  }
+
+  // ── Submit PR review ──────────────────────────────────────────────────────
+  const submitReview = async (event: 'APPROVE' | 'REQUEST_CHANGES'): Promise<void> => {
+    if (currentPrNumber === null) return
+    const body = commentInput.value.trim()
+    approveBtn.disabled = true
+    requestChangesBtn.disabled = true
+    try {
+      await invoke<string>('gh_pr_submit_review', { path: repoPath, prNumber: currentPrNumber, event, body })
+      commentInput.value = ''
+      showCommentStatus(reviewT('reviewSubmitted'))
+    } catch (e) {
+      showCommentStatus(String(e), true)
+    } finally {
+      approveBtn.disabled = false
+      requestChangesBtn.disabled = false
+    }
+  }
+
+  // ── Event handlers ────────────────────────────────────────────────────────
   commentBtn.addEventListener('click', async () => {
     const body = commentInput.value.trim()
     if (!body) { commentInput.focus(); return }
@@ -420,6 +548,16 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       commentBtn.disabled = false
     }
   })
+
+  approveBtn.addEventListener('click', () => { submitReview('APPROVE') })
+  requestChangesBtn.addEventListener('click', () => { submitReview('REQUEST_CHANGES') })
+
+  expandAllBtn.addEventListener('click', () =>
+    diffView.querySelectorAll<HTMLDetailsElement>('.review-file-detail').forEach(d => { d.open = true })
+  )
+  collapseAllBtn.addEventListener('click', () =>
+    diffView.querySelectorAll<HTMLDetailsElement>('.review-file-detail').forEach(d => { d.open = false })
+  )
 
   // ── Load branches ─────────────────────────────────────────────────────────
   const loadBranches = async (): Promise<void> => {
@@ -454,9 +592,11 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     baseBranch = ''
     branchInput.value = ''
     selectedBranch = ''
+    existingComments = []
     localStorage.setItem(REPO_KEY, repoPath)
     setEmptyVisible(false)
     diffView.replaceChildren()
+    prBodyEl.classList.add('hidden')
     commentBar.classList.add('hidden')
     await loadBranches()
   }

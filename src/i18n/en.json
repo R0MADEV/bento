@@ -90,7 +90,13 @@
     "selectBranch": "Select a branch on the left to review",
     "commentPlaceholder": "Leave a review comment on the PR…",
     "sendComment": "Send comment",
-    "commentSent": "Comment sent"
+    "commentSent": "Comment sent",
+    "approve": "Approve",
+    "requestChanges": "Request changes",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "viewed": "Viewed",
+    "reviewSubmitted": "Review submitted"
   },
   "diff": {
     "worktreeMode": "Worktree",

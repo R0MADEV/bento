@@ -290,6 +290,8 @@ fn main() {
             git::gh_pr_view_branch,
             git::gh_pr_comment,
             git::gh_pr_inline_comment,
+            git::gh_pr_list_comments,
+            git::gh_pr_submit_review,
             git::git_worktree_add,
             git::git_worktree_remove,
             git::git_sync,

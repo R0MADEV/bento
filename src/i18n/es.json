@@ -90,7 +90,13 @@
     "selectBranch": "Selecciona una rama a la izquierda para revisar",
     "commentPlaceholder": "Deja un comentario de revisión en el PR…",
     "sendComment": "Enviar comentario",
-    "commentSent": "Comentario enviado"
+    "commentSent": "Comentario enviado",
+    "approve": "Aprobar",
+    "requestChanges": "Pedir cambios",
+    "expandAll": "Expandir todo",
+    "collapseAll": "Colapsar todo",
+    "viewed": "Revisado",
+    "reviewSubmitted": "Review enviado"
   },
   "diff": {
     "worktreeMode": "Worktree",
