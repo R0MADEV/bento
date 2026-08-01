@@ -96,7 +96,15 @@
     "expandAll": "Expand all",
     "collapseAll": "Collapse all",
     "viewed": "Viewed",
-    "reviewSubmitted": "Review submitted"
+    "reviewSubmitted": "Review submitted",
+    "branches": "Branches",
+    "pullRequests": "PRs",
+    "noPrs": "No open PRs",
+    "reviewedCount": "{done}/{total} reviewed",
+    "copyPath": "Copy path",
+    "openInEditor": "Open in editor",
+    "prevComment": "Prev comment",
+    "nextComment": "Next comment"
   },
   "diff": {
     "worktreeMode": "Worktree",

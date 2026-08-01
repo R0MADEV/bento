@@ -1017,7 +1017,7 @@ pub async fn gh_pr_view_branch(path: String, branch: String) -> Result<Option<se
     tauri::async_runtime::spawn_blocking(move || {
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["pr", "view", &branch, "--json", "number,title,url,body"])
+            .args(["pr", "view", &branch, "--json", "number,title,url,body,statusCheckRollup,reviewDecision"])
             .output();
         let Ok(out) = out else { return Ok(None); };
         if !out.status.success() || out.stdout.is_empty() { return Ok(None); }
@@ -1091,6 +1091,24 @@ pub async fn gh_pr_inline_comment(
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Returns open pull requests for the repo (up to 30).
+#[tauri::command]
+pub async fn gh_pr_list_open(path: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "list", "--json", "number,title,author,headRefName,url", "--limit", "30"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
