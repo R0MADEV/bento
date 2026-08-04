@@ -10,6 +10,8 @@ export const diffGit = {
     invoke<string>('git_default_branch', { repo }).catch(() => 'main'),
   remoteBranches: (repo: string): Promise<string[]> =>
     invoke<string[]>('git_all_remote_branches', { repo }).catch(() => []),
+  reviewBranches: (repo: string): Promise<string[]> =>
+    invoke<string[]>('git_review_branches', { repo }).catch(() => []),
   status: (path: string): Promise<GitStatus> =>
     invoke<GitStatus>('git_status', { path }),
   log: (path: string, limit = 100): Promise<CommitEntry[]> =>

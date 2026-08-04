@@ -564,6 +564,45 @@ pub async fn git_all_remote_branches(repo: String) -> Result<Vec<String>, String
     .map_err(|e| e.to_string())?
 }
 
+fn parse_review_branches(local: &str, remote: &str) -> Vec<String> {
+    let mut branches = Vec::new();
+    for branch in local.lines().chain(remote.lines()) {
+        let branch = branch.trim();
+        if branch.is_empty()
+            || branch == "HEAD"
+            || branch.ends_with("/HEAD")
+            || !is_safe_branch(branch)
+            || branches.iter().any(|existing| existing == branch)
+        {
+            continue;
+        }
+        branches.push(branch.to_string());
+    }
+    branches
+}
+
+/// Branches available for review: local task/worktree branches first, followed
+/// by fully-qualified remote branches such as `origin/main`.
+#[tauri::command]
+pub async fn git_review_branches(repo: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&repo) {
+            return Err("not a git repository".into());
+        }
+        let local = git_output(
+            &repo,
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        )?;
+        let remote = git_output(
+            &repo,
+            &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        )?;
+        Ok(parse_review_branches(&local, &remote))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 pub async fn git_worktree_add(
     repo: String,
@@ -2377,6 +2416,20 @@ mod tests {
         fs::write(path.join("file.txt"), content).unwrap();
         run(path, &["add", "file.txt"]);
         run(path, &["commit", "-qm", message]);
+    }
+
+    #[test]
+    fn review_branches_include_local_tasks_and_qualified_remotes() {
+        let branches = parse_review_branches(
+            "main\nfeat/NIXON-501\n",
+            "origin/HEAD\norigin/main\nupstream/release\n",
+        );
+        assert_eq!(branches, vec![
+            "main",
+            "feat/NIXON-501",
+            "origin/main",
+            "upstream/release",
+        ]);
     }
 
     #[test]

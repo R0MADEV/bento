@@ -328,6 +328,7 @@ fn main() {
             git::git_default_branch,
             git::git_remote_branches,
             git::git_all_remote_branches,
+            git::git_review_branches,
             git::git_current_branch,
             git::git_ref_diff,
             git::git_rev_parse,

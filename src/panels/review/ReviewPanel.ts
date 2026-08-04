@@ -1427,7 +1427,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   // ── Load branches ─────────────────────────────────────────────────────────
   const loadBranches = async (): Promise<void> => {
     if (!repoPath) return
-    const [defaultBranch, branches] = await Promise.all([diffGit.defaultBranch(repoPath), diffGit.remoteBranches(repoPath)])
+    const [defaultBranch, branches] = await Promise.all([diffGit.defaultBranch(repoPath), diffGit.reviewBranches(repoPath)])
     allBranches = branches
     if (!baseBranch) {
       const originDefault = `origin/${defaultBranch}`
