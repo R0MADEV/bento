@@ -34,7 +34,8 @@ export function createDiffPanel(sessionPath?: string, panelId?: string): { eleme
   root.className = 'diff-panel'
 
   const repoKey = diffRepoStorageKey(sessionPath, panelId)
-  let repoPath = ''
+  // '' = legacy mode → restore last repo from bento.diff.repo; any other value → start empty
+  let repoPath = sessionPath === '' ? (localStorage.getItem(repoKey) ?? '') : ''
   let mode: Mode = 'worktree'
   let logEntries: CommitEntry[] = []
   let worktreeChunks = new Map<string, string>()

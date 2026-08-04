@@ -7,6 +7,8 @@ import { diffGit } from '../diff/diffGitClient'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { getUiZoom, toLayoutPixels } from '../../ui/zoom'
+import { startAgent } from '../../core/ai/agentClient'
+import { buildReviewPrompt, createContextProvider, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
 
 const REPO_KEY = 'bento.review.repo'
@@ -154,6 +156,23 @@ const wordDiff = (oldText: string, newText: string): { oldHtml: string; newHtml:
   return { oldHtml, newHtml }
 }
 
+function extractFirstJsonObject(text: string): string | null {
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (escape) { escape = false; continue }
+    if (inString) { if (ch === '\\') escape = true; else if (ch === '"') inString = false; continue }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') depth++
+    else if (ch === '}') { depth--; if (depth === 0) return text.slice(start, i + 1) }
+  }
+  return null
+}
+
 export function createReviewPanel(sessionPath?: string): { element: HTMLElement; dispose?: () => void } {
   const root = document.createElement('div')
   root.className = 'review-panel'
@@ -219,7 +238,18 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
   const viewedCounterEl = Object.assign(document.createElement('span'), { className: 'review-viewed-counter hidden' })
 
-  toolbar.append(baseLabel, branchWrap, openBtn, refreshBtn, autoBtn, expandAllBtn, collapseAllBtn, treeViewBtn, splitViewBtn, copyDiffBtn, aiReviewBtn, commentNavWrap, viewedCounterEl)
+  const REVIEW_AGENT_KEY = 'bento.review.agent'
+  const reviewAgentSelect = document.createElement('select')
+  reviewAgentSelect.className = 'review-agent-select'
+  ;(['claude', 'opencode', 'codex'] as const).forEach(val => {
+    reviewAgentSelect.appendChild(Object.assign(document.createElement('option'), {
+      value: val, textContent: val === 'claude' ? 'Claude' : val === 'opencode' ? 'OpenCode' : 'Codex',
+    }))
+  })
+  reviewAgentSelect.value = localStorage.getItem(REVIEW_AGENT_KEY) ?? 'claude'
+  reviewAgentSelect.addEventListener('change', () => localStorage.setItem(REVIEW_AGENT_KEY, reviewAgentSelect.value))
+
+  toolbar.append(baseLabel, branchWrap, openBtn, refreshBtn, autoBtn, expandAllBtn, collapseAllBtn, treeViewBtn, splitViewBtn, copyDiffBtn, reviewAgentSelect, aiReviewBtn, commentNavWrap, viewedCounterEl)
 
   // ── Body ──────────────────────────────────────────────────────────────────
   const body = document.createElement('div')
@@ -320,7 +350,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   }
   const setFileViewed = (file: string, viewed: boolean): void => {
     const set = getViewedFiles()
-    viewed ? set.add(file) : set.delete(file)
+    if (viewed) set.add(file); else set.delete(file)
     localStorage.setItem(viewedKey(), JSON.stringify([...set]))
     updateViewedCounter()
   }
@@ -339,7 +369,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   }
   const setCommentResolved = (id: number, resolved: boolean): void => {
     const set = getResolvedComments()
-    resolved ? set.add(id) : set.delete(id)
+    if (resolved) set.add(id); else set.delete(id)
     localStorage.setItem(resolvedKey(), JSON.stringify([...set]))
     resolvedComments = set
   }
@@ -650,7 +680,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const saved = localStorage.getItem(draftKey)
     if (saved) input.value = saved
     input.addEventListener('input', () => {
-      input.value ? localStorage.setItem(draftKey, input.value) : localStorage.removeItem(draftKey)
+      if (input.value) localStorage.setItem(draftKey, input.value); else localStorage.removeItem(draftKey)
     })
     const actions = document.createElement('div')
     actions.className = 'review-line-form-actions'
@@ -1435,8 +1465,16 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   refreshBtn.addEventListener('click', () => { loadBranches(); if (selectedBranch) loadDiff() })
   autoBtn.addEventListener('click', () => setAutoRefresh(!autoRefresh))
 
-  aiReviewBtn.addEventListener('click', () => {
-    if (!lastFiles.length) return
+  aiReviewBtn.addEventListener('click', async () => {
+    const showReviewError = (message: string): void => {
+      console.error('[AI Review]', message)
+      const error = Object.assign(document.createElement('div'), { className: 'review-error', textContent: message })
+      diffView.prepend(error)
+      error.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }
+    if (!repoPath) { showReviewError('Open a repository first'); return }
+    if (!selectedBranch) { showReviewError('Select a branch first'); return }
+    if (!lastFiles.length) { showReviewError('There are no changes to review'); return }
     const MAX_DIFF_CHARS = 18_000
     const rawDiff = lastFiles.map(f => f.chunk).join('\n')
     const diff = rawDiff.length > MAX_DIFF_CHARS
@@ -1444,21 +1482,119 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       : rawDiff
     const prLine = currentPrNumber ? `PR #${currentPrNumber}: ${currentPrTitle}` : `Branch: ${selectedBranch}`
     const descSection = currentPrBody.trim() ? `\nDescription:\n${currentPrBody.trim()}\n` : ''
-    const prompt = `You are a senior software engineer. Review this pull request and give concise, actionable feedback.
+    const reviewDiff = `${prLine}\nBase: ${baseBranch} <- ${selectedBranch}\n${descSection}\n${diff}`
+    const reviewFiles = lastFiles.map(file => ({ path: file.file, content: file.chunk }))
+    let prompt: string
+    aiReviewBtn.disabled = true
+    aiReviewBtn.title = 'Reviewing...'
+    let output = ''
 
-${prLine}
-Base: ${baseBranch} ← ${selectedBranch}
-${descSection}
-Focus on:
-- Correctness and potential bugs
-- Breaking changes (changed signatures, renamed exports, removed fields)
-- Code that could be simpler
-- Missing validation or error handling at trust boundaries
-- Security issues
+    // Progress box visible desde el principio
+    const progressBox = document.createElement('div')
+    progressBox.className = 'review-ai-progress'
+    const progressHeader = document.createElement('div')
+    progressHeader.className = 'review-ai-progress-header'
+    const progressStatus = Object.assign(document.createElement('span'), { className: 'review-ai-progress-status', textContent: 'Preparing review…' })
+    const progressMeta = Object.assign(document.createElement('span'), { className: 'review-ai-progress-meta' })
+    progressHeader.append(progressStatus, progressMeta)
+    const progressStream = Object.assign(document.createElement('pre'), { className: 'review-ai-progress-stream' })
+    progressBox.append(progressHeader, progressStream)
+    diffView.prepend(progressBox)
+    progressBox.scrollIntoView({ block: 'start', behavior: 'smooth' })
 
-Diff:
-${diff}`
-    askAi(prompt, true)
+    const startedAt = Date.now()
+    const timer = setInterval(() => {
+      const secs = Math.floor((Date.now() - startedAt) / 1000)
+      const chars = output.length
+      progressMeta.textContent = chars ? `${chars} chars · ${secs}s` : `${secs}s`
+    }, 500)
+
+    const showResult = (result: ReviewResponse): void => {
+      progressBox.remove()
+      const verdictIcon = result.verdict === 'pass' ? '✅' : result.verdict === 'fail' ? '❌' : '⚠️'
+      const lines = [
+        `## Revisión: ${selectedBranch || 'branch'}`,
+        `${verdictIcon} **${result.verdict}** — ${result.summary}`,
+      ]
+      if (result.findings.length) {
+        lines.push('')
+        result.findings.forEach(f => {
+          lines.push(`**${f.severity.toUpperCase()}** \`${f.file}${f.line ? `:${f.line}` : ''}\` — ${f.title}`)
+          lines.push(f.explanation)
+          lines.push(`→ ${f.recommendation}`)
+          lines.push('')
+        })
+      }
+      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, repoPath, reviewAgentSelect.value)
+    }
+    let worktree = ''
+    let handle: ReturnType<typeof startAgent> | undefined
+    try {
+      const snapshotBefore = await invoke<string>('review_snapshot', { repoPath })
+      progressStatus.textContent = 'Creating isolated worktree…'
+      worktree = await invoke<string>('review_worktree_create', {
+        repoPath,
+        reviewId: crypto.randomUUID(),
+        reference: 'HEAD',
+        includeWorkingTree: true,
+      })
+      progressStatus.textContent = 'Gathering context…'
+      const contextProvider = createContextProvider({
+        lexis: async () => {
+          const content = await invoke<string>('review_lexis_context', {
+            path: worktree,
+            question: `Find relevant callers, definitions and tests for: ${lastFiles.map(file => file.file).join(', ')}`,
+          })
+          if (!content) throw new Error('Lexis returned no context')
+          return [{ path: '<lexis>', content, reason: 'reference' as const }]
+        },
+        direct: async () => reviewFiles.map(file => ({ ...file, reason: 'changed' as const })),
+      })
+      const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewDiff, changedFiles: lastFiles.map(file => file.file) })
+      prompt = buildReviewPrompt({
+        diff: reviewDiff,
+        files: reviewFiles,
+        contextSources: context.sources,
+        lexisContext: context.snippets.filter(snippet => snippet.reason !== 'changed').map(snippet => `${snippet.path}\n${snippet.content}`).join('\n\n'),
+      })
+      const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath })
+      if (snapshotBeforeAgent !== snapshotBefore) throw new Error('Repository changed while preparing the review')
+      const reviewAgent = reviewAgentSelect.value as 'claude' | 'opencode' | 'codex'
+      const agentLabel = reviewAgent === 'claude' ? 'Claude' : reviewAgent === 'opencode' ? 'OpenCode' : 'Codex'
+      progressStatus.textContent = `${agentLabel} is reviewing…`
+      handle = startAgent(
+        { agent: reviewAgent, message: prompt, history: [], projectPath: worktree, review: true },
+        chunk => {
+          output += chunk
+          progressStream.textContent = output.length > 1200 ? '…' + output.slice(-1200) : output
+        },
+        _sid => {
+          void (async () => {
+            try {
+              const json = extractFirstJsonObject(output)
+              if (!json) throw new Error('No JSON object found in response')
+              const result = validateReviewResponse(JSON.parse(json))
+              await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath, relative: finding.file })))
+              showResult(result)
+            } catch (error) { progressBox.remove(); showReviewError(`Invalid AI review: ${String(error)}`) }
+          })()
+        },
+        message => { progressBox.remove(); showReviewError(message) },
+        tool => { progressStatus.textContent = `${agentLabel}: ${tool}` },
+      )
+      await handle.ready
+      await handle.completed
+      const snapshotAfter = await invoke<string>('review_snapshot', { repoPath })
+      if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
+    } catch (error) { progressBox.remove(); showReviewError(String(error)) }
+    finally {
+      clearInterval(timer)
+      progressBox.remove()  // no-op si ya fue quitado por showResult/onError
+      handle?.unlisten()
+      if (worktree) await invoke('review_worktree_remove', { repoPath, worktree }).catch(error => showReviewError(String(error)))
+      aiReviewBtn.disabled = false
+      aiReviewBtn.title = 'AI Review'
+    }
   })
 
   // ── Init ──────────────────────────────────────────────────────────────────

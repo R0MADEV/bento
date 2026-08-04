@@ -705,12 +705,13 @@ pub async fn git_branch_diff(path: String, base: String) -> Result<String, Strin
         if !is_git_repo(&path) {
             return Err("not a git repository".into());
         }
-        // Try local ref first, fall back to origin/ prefix for remote-only branches
-        let result = git_output(&path, &["diff", &format!("{base}...HEAD")]);
-        if result.is_ok() {
-            return result;
+        // Try local ref first, fall back to origin/ prefix for remote-only branches.
+        // The original error is preserved so transient failures are not silently swallowed.
+        match git_output(&path, &["diff", &format!("{base}...HEAD")]) {
+            Ok(out) => Ok(out),
+            Err(first_err) => git_output(&path, &["diff", &format!("origin/{base}...HEAD")])
+                .map_err(|_| first_err),
         }
-        git_output(&path, &["diff", &format!("origin/{base}...HEAD")])
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1001,10 +1002,16 @@ pub async fn git_pr_status(path: String) -> Result<Option<PrStatus>, String> {
 // Diff between any two git refs (e.g. "origin/main" vs "origin/feat/foo").
 #[tauri::command]
 pub async fn git_ref_diff(path: String, base: String, target: String) -> Result<String, String> {
-    if !is_safe_branch(&base) { return Err(format!("unsafe base: {base}")); }
-    if !is_safe_branch(&target) { return Err(format!("unsafe target: {target}")); }
+    if !is_safe_branch(&base) {
+        return Err(format!("unsafe base: {base}"));
+    }
+    if !is_safe_branch(&target) {
+        return Err(format!("unsafe target: {target}"));
+    }
     tauri::async_runtime::spawn_blocking(move || {
-        if !is_git_repo(&path) { return Err("not a git repository".into()); }
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
         git_output(&path, &["diff", &format!("{base}...{target}")])
     })
     .await
@@ -1013,15 +1020,33 @@ pub async fn git_ref_diff(path: String, base: String, target: String) -> Result<
 
 // Returns basic PR info (number, title, url) for any branch via gh CLI.
 #[tauri::command]
-pub async fn gh_pr_view_branch(path: String, branch: String) -> Result<Option<serde_json::Value>, String> {
+pub async fn gh_pr_view_branch(
+    path: String,
+    branch: String,
+) -> Result<Option<serde_json::Value>, String> {
+    if !is_safe_branch(&branch) {
+        return Err(format!("unsafe branch: {branch}"));
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["pr", "view", &branch, "--json", "number,title,url,body,statusCheckRollup,reviewDecision"])
+            .args([
+                "pr",
+                "view",
+                &branch,
+                "--json",
+                "number,title,url,body,statusCheckRollup,reviewDecision",
+            ])
             .output();
-        let Ok(out) = out else { return Ok(None); };
-        if !out.status.success() || out.stdout.is_empty() { return Ok(None); }
-        serde_json::from_slice::<serde_json::Value>(&out.stdout).map(Some).map_err(|e| e.to_string())
+        let Ok(out) = out else {
+            return Ok(None);
+        };
+        if !out.status.success() || out.stdout.is_empty() {
+            return Ok(None);
+        }
+        serde_json::from_slice::<serde_json::Value>(&out.stdout)
+            .map(Some)
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1029,18 +1054,28 @@ pub async fn gh_pr_view_branch(path: String, branch: String) -> Result<Option<se
 
 // Fetches PR discussion: general comments + review submissions (with body).
 #[tauri::command]
-pub async fn gh_pr_list_discussion(path: String, pr_number: i64) -> Result<serde_json::Value, String> {
+pub async fn gh_pr_list_discussion(
+    path: String,
+    pr_number: i64,
+) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let comments = std::process::Command::new("gh")
             .current_dir(&path)
-            .args(["api", "--paginate", &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number)])
+            .args([
+                "api",
+                "--paginate",
+                &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number),
+            ])
             .output()
             .ok()
             .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
             .unwrap_or(serde_json::Value::Array(vec![]));
         let reviews = std::process::Command::new("gh")
             .current_dir(&path)
-            .args(["api", &format!("repos/{{owner}}/{{repo}}/pulls/{}/reviews", pr_number)])
+            .args([
+                "api",
+                &format!("repos/{{owner}}/{{repo}}/pulls/{}/reviews", pr_number),
+            ])
             .output()
             .ok()
             .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
@@ -1054,6 +1089,12 @@ pub async fn gh_pr_list_discussion(path: String, pr_number: i64) -> Result<serde
 // Posts a comment on the PR and returns its URL.
 #[tauri::command]
 pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result<String, String> {
+    if !is_safe_branch(&branch) {
+        return Err(format!("unsafe branch: {branch}"));
+    }
+    if body.len() > 65_536 {
+        return Err("comment body exceeds maximum length".into());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         // Resolve PR number from branch so we can use the REST API (gh pr comment
         // does not support --json/--jq, but gh api returns html_url).
@@ -1069,7 +1110,16 @@ pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result
         let endpoint = format!("repos/{{owner}}/{{repo}}/issues/{pr_number}/comments");
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["api", "--method", "POST", &endpoint, "-f", &format!("body={body}"), "--jq", ".html_url"])
+            .args([
+                "api",
+                "--method",
+                "POST",
+                &endpoint,
+                "-f",
+                &format!("body={body}"),
+                "--jq",
+                ".html_url",
+            ])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
@@ -1084,7 +1134,13 @@ pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result
 // Resolves a git ref to its full SHA.
 #[tauri::command]
 pub async fn git_rev_parse(path: String, reference: String) -> Result<String, String> {
+    if reference.starts_with('-') {
+        return Err(format!("invalid git reference: {reference}"));
+    }
     tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
         git_output(&path, &["rev-parse", &reference]).map(|s| s.trim().to_string())
     })
     .await
@@ -1102,19 +1158,45 @@ pub async fn gh_pr_inline_comment(
     start_line: Option<u64>,
     body: String,
 ) -> Result<String, String> {
+    if line == 0 {
+        return Err("line must be >= 1".into());
+    }
+    if body.len() > 65_536 {
+        return Err("comment body exceeds maximum length".into());
+    }
+    let is_valid_sha = !commit_id.is_empty()
+        && commit_id.len() <= 40
+        && commit_id.chars().all(|c| c.is_ascii_hexdigit());
+    if !is_valid_sha {
+        return Err(format!("invalid commit SHA: {commit_id}"));
+    }
     tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
         let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments");
         let mut args = vec![
-            "api".to_string(), endpoint,
-            "-f".to_string(), format!("body={body}"),
-            "-f".to_string(), format!("commit_id={commit_id}"),
-            "-f".to_string(), format!("path={file}"),
-            "-F".to_string(), format!("line={line}"),
-            "-f".to_string(), "side=RIGHT".to_string(),
+            "api".to_string(),
+            endpoint,
+            "-f".to_string(),
+            format!("body={body}"),
+            "-f".to_string(),
+            format!("commit_id={commit_id}"),
+            "-f".to_string(),
+            format!("path={file}"),
+            "-F".to_string(),
+            format!("line={line}"),
+            "-f".to_string(),
+            "side=RIGHT".to_string(),
         ];
         if let Some(sl) = start_line {
             if sl < line {
-                args.extend(["-F".to_string(), format!("start_line={sl}"), "-f".to_string(), "start_side=RIGHT".to_string()]);
+                args.extend([
+                    "-F".to_string(),
+                    format!("start_line={sl}"),
+                    "-f".to_string(),
+                    "start_side=RIGHT".to_string(),
+                ]);
             }
         }
         args.extend(["--jq".to_string(), ".html_url".to_string()]);
@@ -1138,7 +1220,14 @@ pub async fn gh_pr_list_open(path: String) -> Result<serde_json::Value, String> 
     tauri::async_runtime::spawn_blocking(move || {
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["pr", "list", "--json", "number,title,author,headRefName,baseRefName,url", "--limit", "30"])
+            .args([
+                "pr",
+                "list",
+                "--json",
+                "number,title,author,headRefName,baseRefName,url",
+                "--limit",
+                "30",
+            ])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
@@ -1152,12 +1241,23 @@ pub async fn gh_pr_list_open(path: String) -> Result<serde_json::Value, String> 
 
 // Edits an existing PR review comment.
 #[tauri::command]
-pub async fn gh_pr_update_comment(path: String, comment_id: u64, body: String) -> Result<(), String> {
+pub async fn gh_pr_update_comment(
+    path: String,
+    comment_id: u64,
+    body: String,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}");
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["api", "--method", "PATCH", &endpoint, "-f", &format!("body={body}")])
+            .args([
+                "api",
+                "--method",
+                "PATCH",
+                &endpoint,
+                "-f",
+                &format!("body={body}"),
+            ])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
@@ -1190,14 +1290,25 @@ pub async fn gh_pr_delete_comment(path: String, comment_id: u64) -> Result<(), S
 
 // Replies to an existing PR review comment thread.
 #[tauri::command]
-pub async fn gh_pr_reply_comment(path: String, comment_id: u64, body: String) -> Result<String, String> {
+pub async fn gh_pr_reply_comment(
+    path: String,
+    comment_id: u64,
+    body: String,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}/replies");
         let out = Command::new("gh")
             .current_dir(&path)
-            .args(["api", "--method", "POST", &endpoint,
-                   "-f", &format!("body={body}"),
-                   "--jq", ".html_url"])
+            .args([
+                "api",
+                "--method",
+                "POST",
+                &endpoint,
+                "-f",
+                &format!("body={body}"),
+                "--jq",
+                ".html_url",
+            ])
             .output()
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
@@ -1211,7 +1322,10 @@ pub async fn gh_pr_reply_comment(path: String, comment_id: u64, body: String) ->
 
 // Returns all inline review comments for a PR as a JSON array.
 #[tauri::command]
-pub async fn gh_pr_list_comments(path: String, pr_number: u64) -> Result<serde_json::Value, String> {
+pub async fn gh_pr_list_comments(
+    path: String,
+    pr_number: u64,
+) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments");
         let out = Command::new("gh")
@@ -1230,7 +1344,12 @@ pub async fn gh_pr_list_comments(path: String, pr_number: u64) -> Result<serde_j
 
 // Submits a pull request review (APPROVE / REQUEST_CHANGES / COMMENT).
 #[tauri::command]
-pub async fn gh_pr_submit_review(path: String, pr_number: u64, event: String, body: String) -> Result<String, String> {
+pub async fn gh_pr_submit_review(
+    path: String,
+    pr_number: u64,
+    event: String,
+    body: String,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let valid_events = ["APPROVE", "REQUEST_CHANGES", "COMMENT"];
         if !valid_events.contains(&event.as_str()) {
@@ -1240,10 +1359,16 @@ pub async fn gh_pr_submit_review(path: String, pr_number: u64, event: String, bo
         let out = Command::new("gh")
             .current_dir(&path)
             .args([
-                "api", "--method", "POST", &endpoint,
-                "-f", &format!("event={event}"),
-                "-f", &format!("body={body}"),
-                "--jq", ".html_url",
+                "api",
+                "--method",
+                "POST",
+                &endpoint,
+                "-f",
+                &format!("event={event}"),
+                "-f",
+                &format!("body={body}"),
+                "--jq",
+                ".html_url",
             ])
             .output()
             .map_err(|e| e.to_string())?;
