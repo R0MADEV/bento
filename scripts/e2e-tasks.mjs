@@ -373,13 +373,13 @@ async function run() {
   await refresh()
   await waitFor('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"]')
   await clickWhen('css selector', '[data-testid="tasks-row"][data-branch="task/e2e"] [data-testid="tasks-actions"]', 20000)
-  await clickWhen('css selector', '[data-testid="tasks-backups-action"]', 20000)
-  // The embedded Windows driver can acknowledge a click without dispatching
-  // the DOM event. If the menu item is still present, the native click had no
-  // effect; activate that same visible control through the DOM and then verify
-  // the resulting view below.
-  await delay(250)
-  await execute(`const item = document.querySelector('[data-testid="tasks-backups-action"]'); if (item) item.click();`)
+  await waitFor('css selector', '[data-testid="tasks-backups-action"]', 20000)
+  // The embedded Windows driver can acknowledge a native menu click while
+  // closing the transient menu before its click handler runs. Dispatching the
+  // DOM click while the item is known to be present exercises the same handler
+  // without depending on platform-specific pointer emulation.
+  const backupActionActivated = await execute(`const item = document.querySelector('[data-testid="tasks-backups-action"]'); if (!item) return false; item.click(); return true;`)
+  if (!backupActionActivated) throw new Error('Backup history action disappeared before activation')
   try {
     await waitFor('css selector', '[data-testid="tasks-backup-history"]', 30000)
   } catch (error) {
