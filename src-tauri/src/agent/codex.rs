@@ -36,6 +36,14 @@ impl AgentAdapter for CodexAdapter {
                         }
                     }
                 }
+                if item_type == "command_execution" {
+                    if let Some(command) = item.get("command").and_then(Value::as_str) {
+                        let summary: String = command.chars().take(500).collect();
+                        if !summary.is_empty() {
+                            return ParsedLine::ToolUse(format!("Command: {summary}"));
+                        }
+                    }
+                }
                 // item_type == "error" are hook/config warnings, not LLM errors — ignore
             }
         }

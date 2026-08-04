@@ -6,12 +6,14 @@ const mocks = vi.hoisted(() => {
   let emitChunk: ((text: string) => void) | undefined
   let finish: (() => void) | undefined
   let fail: ((message: string) => void) | undefined
+  let emitTool: ((tool: string) => void) | undefined
   let loadedHistory = '[]'
-  const startAgent = vi.fn((_params, onChunk: (text: string) => void, onDone: (sessionId: string | null) => void, onError: (message: string) => void) => {
+  const startAgent = vi.fn((_params, onChunk: (text: string) => void, onDone: (sessionId: string | null) => void, onError: (message: string) => void, onTool?: (tool: string) => void) => {
     let resolveCompleted!: () => void
     emitChunk = onChunk
     finish = () => { onDone('session-1'); resolveCompleted() }
     fail = message => { onError(message); resolveCompleted() }
+    emitTool = tool => onTool?.(tool)
     return {
       requestId: 'request-1',
       ready: Promise.resolve(),
@@ -58,6 +60,7 @@ const mocks = vi.hoisted(() => {
     emitChunk: (text: string) => emitChunk?.(text),
     finish: () => finish?.(),
     fail: (message: string) => fail?.(message),
+    emitTool: (tool: string) => emitTool?.(tool),
   }
 })
 
@@ -67,7 +70,10 @@ vi.mock('../../src/ui/aiKeys', () => ({
   setAiKey: vi.fn(async () => true),
   vaultStatus: vi.fn(async () => 'unlocked'),
 }))
-vi.mock('../../src/core/ai/agentClient', () => ({ startAgent: mocks.startAgent }))
+vi.mock('../../src/core/ai/agentClient', () => ({
+  startAgent: mocks.startAgent,
+  redact: (value: string) => value,
+}))
 
 import { createAiChat } from '../../src/ui/aiChat'
 import { AI_ASK_EVENT } from '../../src/ui/askAi'
@@ -94,10 +100,12 @@ describe('AI chat agent follow-ups', () => {
       conversationTitle: 'review-project · feat/review',
       conversationBranch: 'feat/review',
       conversationCommit: '1111111111111111111111111111111111111111',
+      conversationSessionId: 'initial-review-session',
+      conversationEvidence: ['Read: src/review.ts'],
       inject: { role: 'assistant', content: 'Initial review' },
     } }))
 
-    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Initial review'))
+    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Initial review'), { timeout: 3_000 })
     const input = root.querySelector<HTMLTextAreaElement>('.ai-input')!
     input.value = 'Explain the first finding'
     root.querySelector<HTMLButtonElement>('.ai-send')!.click()
@@ -106,6 +114,7 @@ describe('AI chat agent follow-ups', () => {
     expect(root.classList.contains('busy')).toBe(true)
     expect(root.querySelector('.ai-msg-pending')?.textContent).toContain('working')
     expect(root.querySelector<HTMLButtonElement>('.ai-send')?.disabled).toBe(true)
+    mocks.emitTool('Grep: createReview')
     mocks.emitChunk('Follow-up response')
     expect(root.querySelector('.ai-thread')?.textContent).toContain('Follow-up response')
     expect(root.querySelector('.ai-msg-pending')).toBeNull()
@@ -119,16 +128,30 @@ describe('AI chat agent follow-ups', () => {
         title: 'review-project · feat/review',
         branch: 'feat/review',
         commit: '1111111111111111111111111111111111111111',
+        sessionId: 'initial-review-session',
+        sessionAgent: 'claude',
+        sessionCommit: '1111111111111111111111111111111111111111',
+        evidence: ['Read: src/review.ts', 'Grep: createReview'],
       })
     })
 
     mocks.finish()
     await vi.waitFor(() => expect(root.classList.contains('busy')).toBe(false))
+    await vi.waitFor(() => {
+      const saves = mocks.invoke.mock.calls.filter(([command]) => command === 'chat_history_save')
+      const latest = JSON.parse(saves.at(-1)?.[1]?.content as string)
+      expect(latest.contexts['tech-review:/tmp/review-project:feat/review']).toMatchObject({
+        sessionId: 'session-1',
+        sessionAgent: 'claude',
+        sessionCommit: '1111111111111111111111111111111111111111',
+      })
+    })
     expect(root.querySelector<HTMLButtonElement>('.ai-send')?.disabled).toBe(false)
     expect(mocks.startAgent.mock.calls[0][0]).toMatchObject({
       projectPath: '/managed/feat/review',
       review: true,
       cleanupProjectPath: true,
+      sessionId: 'initial-review-session',
     })
     expect(mocks.invoke).toHaveBeenCalledWith('review_branch_context_release', {
       repoPath: '/tmp/review-project',
@@ -151,6 +174,10 @@ describe('AI chat agent follow-ups', () => {
           title: 'repo · feat/review',
           branch: 'feat/review',
           commit: '1111111111111111111111111111111111111111',
+          sessionId: 'persisted-codex-session',
+          sessionAgent: 'codex',
+          sessionCommit: '1111111111111111111111111111111111111111',
+          evidence: ['Read: src/main.rs'],
         },
       },
     }))
@@ -164,7 +191,13 @@ describe('AI chat agent follow-ups', () => {
     root.querySelector<HTMLButtonElement>('.ai-send')!.click()
 
     await vi.waitFor(() => expect(mocks.startAgent).toHaveBeenCalledOnce())
-    expect(mocks.startAgent.mock.calls[0][0]).toMatchObject({ agent: 'codex', projectPath: '/managed/feat/review', review: true })
+    expect(mocks.startAgent.mock.calls[0][0]).toMatchObject({
+      agent: 'codex',
+      projectPath: '/managed/feat/review',
+      review: true,
+      sessionId: 'persisted-codex-session',
+      message: 'Continue this review',
+    })
     mocks.finish()
     await vi.waitFor(() => expect(root.classList.contains('busy')).toBe(false))
     root.remove()
@@ -199,6 +232,59 @@ describe('AI chat agent follow-ups', () => {
       repoPath: '/tmp/review-project',
       reference: 'origin/feat/failure',
     })
+    root.remove()
+  })
+
+  it('queues a new Tech Review until the active response is saved to its original branch', async () => {
+    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
+    const root = createAiChat(memoryRepo)
+    document.body.appendChild(root)
+    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
+      text: '',
+      projectPath: '/work/repo',
+      agentType: 'claude',
+      conversationKey: 'tech-review:/work/repo:feat/one',
+      conversationTitle: 'repo · feat/one',
+      conversationBranch: 'feat/one',
+      conversationCommit: '1111111111111111111111111111111111111111',
+      inject: { role: 'assistant', content: 'Review for branch one' },
+    } }))
+    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Review for branch one'))
+
+    const input = root.querySelector<HTMLTextAreaElement>('.ai-input')!
+    input.value = 'Analyze branch one further'
+    root.querySelector<HTMLButtonElement>('.ai-send')!.click()
+    await vi.waitFor(() => expect(mocks.startAgent).toHaveBeenCalledOnce())
+
+    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
+      text: '',
+      projectPath: '/work/repo',
+      agentType: 'codex',
+      conversationKey: 'tech-review:/work/repo:feat/two',
+      conversationTitle: 'repo · feat/two',
+      conversationBranch: 'feat/two',
+      conversationCommit: '2222222222222222222222222222222222222222',
+      inject: { role: 'assistant', content: 'Review for branch two' },
+    } }))
+    await Promise.resolve()
+    expect(root.querySelector('.ai-thread')?.textContent).toContain('Review for branch one')
+    expect(root.querySelector('.ai-thread')?.textContent).not.toContain('Review for branch two')
+
+    mocks.emitChunk('Completed analysis for branch one')
+    mocks.finish()
+    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Review for branch two'))
+
+    const history = root.querySelector<HTMLSelectElement>('[data-testid="ai-history-select"]')!
+    history.value = 'tech-review:/work/repo:feat/one'
+    history.dispatchEvent(new Event('change'))
+    expect(root.querySelector('.ai-thread')?.textContent).toContain('Completed analysis for branch one')
+    expect(root.querySelector('.ai-thread')?.textContent).not.toContain('Review for branch two')
+    input.value = 'Resume branch one'
+    root.querySelector<HTMLButtonElement>('.ai-send')!.click()
+    await vi.waitFor(() => expect(mocks.startAgent).toHaveBeenCalledTimes(2))
+    expect(mocks.startAgent.mock.calls[1][0]).toMatchObject({ sessionId: 'session-1' })
+    mocks.finish()
+    await vi.waitFor(() => expect(root.classList.contains('busy')).toBe(false))
     root.remove()
   })
 
@@ -268,6 +354,10 @@ describe('AI chat agent follow-ups', () => {
           title: 'repo · origin/feat/review',
           branch: 'origin/feat/review',
           commit: '1111111111111111111111111111111111111111',
+          sessionId: 'old-session',
+          sessionAgent: 'codex',
+          sessionCommit: '1111111111111111111111111111111111111111',
+          evidence: ['Read: old.ts'],
         },
       },
     }))
@@ -290,6 +380,14 @@ describe('AI chat agent follow-ups', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('review_branch_context_release', {
       repoPath: '/work/repo',
       reference: 'origin/feat/review',
+    })
+    await vi.waitFor(() => {
+      const saves = mocks.invoke.mock.calls.filter(([command]) => command === 'chat_history_save')
+      const latest = JSON.parse(saves.at(-1)?.[1]?.content as string)
+      const context = latest.contexts['tech-review:/work/repo:origin/feat/review']
+      expect(context.commit).toBe('2222222222222222222222222222222222222222')
+      expect(context.sessionId).toBeUndefined()
+      expect(context.evidence).toEqual([])
     })
     root.remove()
   })

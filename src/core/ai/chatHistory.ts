@@ -18,6 +18,10 @@ export interface ChatConversationContext {
   title?: string
   branch?: string
   commit?: string
+  sessionId?: string
+  sessionAgent?: 'claude' | 'opencode' | 'codex' | 'custom'
+  sessionCommit?: string
+  evidence?: string[]
 }
 
 const validMessage = (value: unknown): value is ChatMessage => {
@@ -67,6 +71,10 @@ export function parseChatHistory(raw: string): ChatHistoryState {
         && (value.title === undefined || (typeof value.title === 'string' && value.title.length <= 500))
         && (value.branch === undefined || (typeof value.branch === 'string' && value.branch.length <= 2_000))
         && (value.commit === undefined || (typeof value.commit === 'string' && /^[0-9a-f]{40,64}$/i.test(value.commit)))
+        && (value.sessionId === undefined || (typeof value.sessionId === 'string' && /^[A-Za-z0-9._:-]{1,500}$/.test(value.sessionId)))
+        && (value.sessionAgent === undefined || ['claude', 'opencode', 'codex', 'custom'].includes(String(value.sessionAgent)))
+        && (value.sessionCommit === undefined || (typeof value.sessionCommit === 'string' && /^[0-9a-f]{40,64}$/i.test(value.sessionCommit)))
+        && (value.evidence === undefined || (Array.isArray(value.evidence) && value.evidence.length <= 100 && value.evidence.every(item => typeof item === 'string' && item.length <= 1_000)))
     }))
     return { version: 2, activeConversation: active, conversations, contexts }
   } catch {

@@ -43,30 +43,52 @@ fn opencode_text_event_emits_chunk() {
 #[test]
 fn opencode_step_finish_stop_emits_session_id() {
     let line = r#"{"type":"step_finish","timestamp":2,"sessionID":"ses_abc","part":{"id":"p2","reason":"stop","type":"step-finish"}}"#;
-    assert!(matches!(OpenCodeAdapter.parse_line(line), ParsedLine::SessionId(id) if id == "ses_abc"));
+    assert!(
+        matches!(OpenCodeAdapter.parse_line(line), ParsedLine::SessionId(id) if id == "ses_abc")
+    );
 }
 
 #[test]
 fn opencode_step_finish_non_stop_is_ignored() {
     let line = r#"{"type":"step_finish","sessionID":"ses_abc","part":{"reason":"tool_use","type":"step-finish"}}"#;
-    assert!(matches!(OpenCodeAdapter.parse_line(line), ParsedLine::Ignore));
+    assert!(matches!(
+        OpenCodeAdapter.parse_line(line),
+        ParsedLine::Ignore
+    ));
 }
 
 #[test]
 fn opencode_step_start_is_ignored() {
     let line = r#"{"type":"step_start","sessionID":"ses_abc","part":{"type":"step-start"}}"#;
-    assert!(matches!(OpenCodeAdapter.parse_line(line), ParsedLine::Ignore));
+    assert!(matches!(
+        OpenCodeAdapter.parse_line(line),
+        ParsedLine::Ignore
+    ));
 }
 
 #[test]
 fn opencode_non_json_line_is_ignored() {
-    assert!(matches!(OpenCodeAdapter.parse_line("plain text"), ParsedLine::Ignore));
+    assert!(matches!(
+        OpenCodeAdapter.parse_line("plain text"),
+        ParsedLine::Ignore
+    ));
 }
 
 #[test]
 fn opencode_empty_text_part_is_ignored() {
     let line = r#"{"type":"text","sessionID":"ses_abc","part":{"text":""}}"#;
-    assert!(matches!(OpenCodeAdapter.parse_line(line), ParsedLine::Ignore));
+    assert!(matches!(
+        OpenCodeAdapter.parse_line(line),
+        ParsedLine::Ignore
+    ));
+}
+
+#[test]
+fn opencode_tool_event_emits_review_evidence() {
+    let line = r#"{"type":"tool_use","sessionID":"ses_abc","part":{"type":"tool","tool":"read","state":{"input":{"filePath":"src/main.ts"}}}}"#;
+    assert!(
+        matches!(OpenCodeAdapter.parse_line(line), ParsedLine::ToolUse(t) if t == "read: src/main.ts")
+    );
 }
 
 // ── Codex adapter (codex exec --json, v0.146+) ──────────────────────────────
@@ -74,13 +96,23 @@ fn opencode_empty_text_part_is_ignored() {
 #[test]
 fn codex_thread_started_emits_session_id() {
     let line = r#"{"type":"thread.started","thread_id":"019fc494-e9b5-71e1-87d5-7f79bf7c5ccc"}"#;
-    assert!(matches!(CodexAdapter.parse_line(line), ParsedLine::SessionId(id) if id == "019fc494-e9b5-71e1-87d5-7f79bf7c5ccc"));
+    assert!(
+        matches!(CodexAdapter.parse_line(line), ParsedLine::SessionId(id) if id == "019fc494-e9b5-71e1-87d5-7f79bf7c5ccc")
+    );
 }
 
 #[test]
 fn codex_agent_message_emits_chunk() {
     let line = r#"{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Hello!"}}"#;
     assert!(matches!(CodexAdapter.parse_line(line), ParsedLine::Chunk(t) if t == "Hello!"));
+}
+
+#[test]
+fn codex_command_execution_emits_review_evidence() {
+    let line = r#"{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"rg createReview src"}}"#;
+    assert!(
+        matches!(CodexAdapter.parse_line(line), ParsedLine::ToolUse(t) if t == "Command: rg createReview src")
+    );
 }
 
 #[test]
@@ -97,7 +129,10 @@ fn codex_hook_error_item_is_ignored() {
 
 #[test]
 fn codex_turn_started_is_ignored() {
-    assert!(matches!(CodexAdapter.parse_line(r#"{"type":"turn.started"}"#), ParsedLine::Ignore));
+    assert!(matches!(
+        CodexAdapter.parse_line(r#"{"type":"turn.started"}"#),
+        ParsedLine::Ignore
+    ));
 }
 
 #[test]
@@ -110,7 +145,9 @@ fn codex_empty_agent_message_is_ignored() {
 
 #[test]
 fn custom_non_empty_line_becomes_chunk() {
-    assert!(matches!(CustomAdapter.parse_line("any output"), ParsedLine::Chunk(t) if t == "any output"));
+    assert!(
+        matches!(CustomAdapter.parse_line("any output"), ParsedLine::Chunk(t) if t == "any output")
+    );
 }
 
 #[test]

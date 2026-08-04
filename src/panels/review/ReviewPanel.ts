@@ -7,7 +7,7 @@ import { diffGit } from '../diff/diffGitClient'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { getUiZoom, toLayoutPixels } from '../../ui/zoom'
-import { startAgent } from '../../core/ai/agentClient'
+import { redact, startAgent } from '../../core/ai/agentClient'
 import { buildReviewPrompt, createContextProvider, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey } from '../../core/ai/chatHistory'
@@ -1509,6 +1509,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     aiReviewBtn.disabled = true
     aiReviewBtn.title = 'Reviewing...'
     let output = ''
+    const reviewEvidence: string[] = []
 
     // Progress box visible desde el principio
     const progressBox = document.createElement('div')
@@ -1530,7 +1531,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       progressMeta.textContent = chars ? `${chars} chars · ${secs}s` : `${secs}s`
     }, 500)
 
-    const showResult = (result: ReviewResponse, reviewCommit: string): void => {
+    const showResult = (result: ReviewResponse, reviewCommit: string, sessionId: string | null): void => {
       progressBox.remove()
       const verdictIcon = result.verdict === 'pass' ? '✅' : result.verdict === 'fail' ? '❌' : '⚠️'
       const lines = [
@@ -1547,7 +1548,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           lines.push('')
         })
       }
-      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, reviewRepoPath, reviewAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit)
+      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, reviewRepoPath, reviewAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, sessionId ?? undefined, reviewEvidence)
     }
     let worktree = ''
     let managedWorktree = false
@@ -1593,20 +1594,24 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           output += chunk
           progressStream.textContent = output.length > 1200 ? '…' + output.slice(-1200) : output
         },
-        _sid => {
+        sessionId => {
           void (async () => {
             try {
               const json = extractFirstJsonObject(output)
               if (!json) throw new Error('No JSON object found in response')
               const result = validateReviewResponse(JSON.parse(json))
               await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: worktree, relative: finding.file })))
-              showResult(result, branchContext.commit)
+              showResult(result, branchContext.commit, sessionId)
             } catch (error) { progressBox.remove(); showReviewError(`Invalid AI review: ${String(error)}`) }
             finally { finishResult() }
           })()
         },
         message => { progressBox.remove(); showReviewError(message); finishResult() },
-        tool => { progressStatus.textContent = `${agentLabel}: ${tool}` },
+        tool => {
+          const safeTool = redact(tool).slice(0, 1_000)
+          if (!reviewEvidence.includes(safeTool)) reviewEvidence.push(safeTool)
+          progressStatus.textContent = `${agentLabel}: ${safeTool}`
+        },
       )
       await handle.ready
       await handle.completed

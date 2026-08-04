@@ -24,6 +24,10 @@ describe('chat history', () => {
           title: 'repo · feat/a',
           branch: 'feat/a',
           commit: '1111111111111111111111111111111111111111',
+          sessionId: 'session-review-1',
+          sessionAgent: 'claude',
+          sessionCommit: '1111111111111111111111111111111111111111',
+          evidence: ['Read: src/main.ts'],
         },
       },
     })
@@ -36,6 +40,10 @@ describe('chat history', () => {
       title: 'repo · feat/a',
       branch: 'feat/a',
       commit: '1111111111111111111111111111111111111111',
+      sessionId: 'session-review-1',
+      sessionAgent: 'claude',
+      sessionCommit: '1111111111111111111111111111111111111111',
+      evidence: ['Read: src/main.ts'],
     })
   })
 

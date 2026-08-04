@@ -15,7 +15,7 @@ import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from 
 import type { MemoryRepository } from '../ports/MemoryRepository'
 import { getActiveProjectPath, setActiveProjectPath } from './activeProject'
 import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
-import { startAgent } from '../core/ai/agentClient'
+import { redact, startAgent } from '../core/ai/agentClient'
 import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory, serializeChatHistory } from '../core/ai/chatHistory'
 import { getUiZoom, toLayoutPixels } from './zoom'
 
@@ -239,6 +239,21 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   let historyState = emptyChatHistory()
   let activeConversationKey = GLOBAL_CHAT_CONVERSATION
   let historySaveQueue = Promise.resolve()
+  let idlePromise = Promise.resolve()
+  let resolveIdle: (() => void) | undefined
+
+  const beginOperation = (): void => {
+    streaming = true
+    idlePromise = new Promise<void>(resolve => { resolveIdle = resolve })
+  }
+  const endOperation = (): void => {
+    streaming = false
+    resolveIdle?.()
+    resolveIdle = undefined
+  }
+  const waitForIdle = async (): Promise<void> => {
+    if (streaming) await idlePromise
+  }
 
   const conversationLabel = (key: string): string => {
     if (key === GLOBAL_CHAT_CONVERSATION) return i18nT('common.generalChat')
@@ -316,7 +331,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       if (streaming) return
       const context = historyState.contexts[activeConversationKey]
       if (!context?.branch) return
-      streaming = true
+      beginOperation()
       root.classList.add('busy')
       historySelect.disabled = true
       historyRefreshBtn.disabled = true
@@ -349,6 +364,10 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
         })
         managedBranchContext ||= updated.managed
         context.commit = updated.commit
+        delete context.sessionId
+        delete context.sessionAgent
+        delete context.sessionCommit
+        context.evidence = []
         historyRefreshBtn.classList.remove('ai-branch-stale')
         historyRefreshBtn.title = i18nT('common.updateReviewedBranch')
         agentSessionId = null
@@ -372,11 +391,11 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
             reference: context.branch,
           }).catch(() => {})
         }
-        streaming = false
         root.classList.remove('busy')
         historySelect.disabled = false
         historyRefreshBtn.disabled = false
         clearBtn.disabled = false
+        endOperation()
       }
     })()
   })
@@ -551,7 +570,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     ]
     const apiMessages: ChatMessage[] = [...systemMessages, ...history]
 
-    streaming = true
+    beginOperation()
     root.classList.add('busy')
     historySelect.disabled = true
     historyRefreshBtn.disabled = true
@@ -563,12 +582,12 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       assistant.content = `⚠️ ${e instanceof Error ? e.message : 'Fallo de red'}`
       renderThread()
     } finally {
-      streaming = false
       root.classList.remove('busy')
       historySelect.disabled = false
       historyRefreshBtn.disabled = false
       clearBtn.disabled = false
       persistHistory()
+      endOperation()
     }
   }
 
@@ -589,7 +608,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     messages.push(assistant)
     renderThread()
     persistHistory()
-    streaming = true
+    beginOperation()
     root.classList.add('busy')
     sendBtn.disabled = true
     historySelect.disabled = true
@@ -615,7 +634,6 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       } catch (error) {
         assistant.content = `⚠️ ${error instanceof Error ? error.message : String(error)}`
         pendingAssistant = null
-        streaming = false
         root.classList.remove('busy')
         sendBtn.disabled = false
         historySelect.disabled = false
@@ -623,17 +641,28 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
         clearBtn.disabled = false
         renderThread()
         persistHistory()
+        endOperation()
         return
       }
     }
     const sessionContext = `${agent}\0${projectPath}\0${conversationContext?.commit ?? ''}`
+    const persistedSessionId = conversationContext?.branch
+      && conversationContext.sessionAgent === agent
+      && conversationContext.sessionCommit === conversationContext.commit
+      ? conversationContext.sessionId ?? null
+      : null
+    const agentMessage = !persistedSessionId && conversationContext?.evidence?.length
+      ? `${expandInput(text)}\n\nPersisted review evidence:\n${conversationContext.evidence.slice(-20).map(item => `- ${item}`).join('\n')}`
+      : expandInput(text)
     let awaitingFirstChunk = true
     const handle = startAgent({
       agent,
-      message: expandInput(text),
+      message: agentMessage,
       history: messages.slice(0, -1),
       projectPath,
-      sessionId: agentSessionContext === sessionContext ? agentSessionId : null,
+      sessionId: conversationContext?.branch
+        ? persistedSessionId
+        : agentSessionContext === sessionContext ? agentSessionId : null,
       customExecutable: agentExecutableInput.value.trim() || undefined,
       customArgs: agentArgsInput.value.trim() ? agentArgsInput.value.trim().split(/\s+/) : undefined,
       review: Boolean(conversationContext?.branch),
@@ -644,8 +673,14 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       renderThread()
       persistHistory()
     }, sessionId => {
-      agentSessionId = sessionId
-      agentSessionContext = sessionContext
+      if (conversationContext?.branch) {
+        conversationContext.sessionId = sessionId ?? undefined
+        conversationContext.sessionAgent = sessionId ? agent : undefined
+        conversationContext.sessionCommit = sessionId ? conversationContext.commit : undefined
+      } else {
+        agentSessionId = sessionId
+        agentSessionContext = sessionContext
+      }
       if (awaitingFirstChunk) assistant.content = i18nT('common.emptyModelResponse')
       pendingAssistant = null
       renderThread()
@@ -654,13 +689,17 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       pendingAssistant = null
       renderThread()
     }, tool => {
-      if (awaitingFirstChunk) { assistant.content = `${agentLabel}: ${tool}`; renderThread() }
+      const safeTool = redact(tool).slice(0, 1_000)
+      if (conversationContext?.branch && !conversationContext.evidence?.includes(safeTool)) {
+        conversationContext.evidence = [...(conversationContext.evidence ?? []), safeTool].slice(-100)
+        persistHistory()
+      }
+      if (awaitingFirstChunk) { assistant.content = `${agentLabel}: ${safeTool}`; renderThread() }
     })
     try { await handle.ready; await handle.completed }
     catch (error) { assistant.content = `⚠️ ${error instanceof Error ? error.message : String(error)}`; renderThread() }
     finally {
       pendingAssistant = null
-      streaming = false
       root.classList.remove('busy')
       sendBtn.disabled = false
       historySelect.disabled = false
@@ -675,6 +714,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       }
       renderThread()
       persistHistory()
+      endOperation()
     }
   }
 
@@ -827,10 +867,12 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   })
 
   // Context from other panels: opens the chat with the text preloaded (or sends it).
+  let askEventQueue = Promise.resolve()
   window.addEventListener(AI_ASK_EVENT, e => {
-    void (async () => {
+    const detail = (e as CustomEvent<AiAskDetail>).detail
+    askEventQueue = askEventQueue.then(async () => {
       await historyReady
-      const detail = (e as CustomEvent<AiAskDetail>).detail
+      await waitForIdle()
       runner = detail.runner // enables/clears the Run button depending on the origin
       tools = detail.tools   // enables/clears function-calling depending on the origin
       if (detail.conversationKey) switchConversation(detail.conversationKey)
@@ -847,6 +889,10 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
           title: detail.conversationTitle,
           branch: detail.conversationBranch,
           commit: detail.conversationCommit,
+          sessionId: detail.conversationSessionId,
+          sessionAgent: detail.conversationSessionId ? agentType : undefined,
+          sessionCommit: detail.conversationSessionId ? detail.conversationCommit : undefined,
+          evidence: (detail.conversationEvidence ?? []).map(item => redact(item).slice(0, 1_000)).slice(-100),
         }
         refreshHistorySelect()
         applyConfigToUi()
@@ -862,8 +908,10 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       input.value = detail.text
       input.dispatchEvent(new Event('input')) // recalculates the textarea height
       input.focus()
-      if (detail.autoSend) void send()
-    })()
+      if (detail.autoSend) await send()
+    }).catch((error) => {
+      console.error('[AI Chat] Failed to process an incoming review request', error)
+    })
   })
 
   return root

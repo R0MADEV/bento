@@ -126,9 +126,18 @@ pub async fn start_agent(
             let mut command = Command::new("codex");
             command
                 .args(["exec", "--sandbox", "read-only", "--cd"])
-                .arg(&root)
-                .args(["--json", "--skip-git-repo-check"])
-                .arg(&prompt);
+                .arg(&root);
+            if let Some(session_id) = args.session_id.as_deref() {
+                command
+                    .arg("resume")
+                    .args(["--json", "--skip-git-repo-check"])
+                    .arg(session_id)
+                    .arg(&prompt);
+            } else {
+                command
+                    .args(["--json", "--skip-git-repo-check"])
+                    .arg(&prompt);
+            }
             command
         }
         "custom" => {

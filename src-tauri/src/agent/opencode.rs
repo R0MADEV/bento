@@ -41,6 +41,33 @@ impl AgentAdapter for OpenCodeAdapter {
             }
         }
 
+        let part = value.get("part");
+        let part_type = part
+            .and_then(|part| part.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if event_type == "tool_use" || part_type == "tool" {
+            let name = part
+                .and_then(|part| part.get("tool").or_else(|| part.get("name")))
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
+            let input = part
+                .and_then(|part| part.get("state"))
+                .and_then(|state| state.get("input"));
+            let detail = input
+                .and_then(|input| {
+                    ["filePath", "file_path", "path", "pattern", "command"]
+                        .iter()
+                        .find_map(|key| input.get(*key).and_then(Value::as_str))
+                })
+                .unwrap_or("");
+            return ParsedLine::ToolUse(if detail.is_empty() {
+                name.to_string()
+            } else {
+                format!("{name}: {}", detail.chars().take(500).collect::<String>())
+            });
+        }
+
         ParsedLine::Ignore
     }
 }
