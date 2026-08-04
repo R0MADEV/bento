@@ -1427,16 +1427,25 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   // ── Load branches ─────────────────────────────────────────────────────────
   const loadBranches = async (): Promise<void> => {
     if (!repoPath) return
-    const [defaultBranch, branches] = await Promise.all([diffGit.defaultBranch(repoPath), diffGit.reviewBranches(repoPath)])
-    allBranches = branches
+    const [defaultBranch, branches, currentBranch] = await Promise.all([
+      diffGit.defaultBranch(repoPath),
+      diffGit.reviewBranches(repoPath),
+      diffGit.currentBranch(repoPath),
+    ])
+    allBranches = currentBranch
+      ? [currentBranch, ...branches.filter(branch => branch !== currentBranch)]
+      : branches
     if (!baseBranch) {
       const originDefault = `origin/${defaultBranch}`
-      baseBranch = branches.includes(originDefault) ? originDefault : (branches[0] ?? defaultBranch)
+      baseBranch = allBranches.includes(originDefault) ? originDefault : defaultBranch
       branchInput.value = baseBranch
       localStorage.setItem(BASE_KEY, baseBranch)
     }
     renderBranchList()
     loadPrList()
+    if (!selectedBranch && currentBranch && currentBranch !== defaultBranch) {
+      void selectBranch(currentBranch)
+    }
   }
 
   const setAutoRefresh = (on: boolean): void => {
