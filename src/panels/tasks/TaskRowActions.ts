@@ -29,6 +29,7 @@ export function taskRowActions(options: {
   showBackups: (wt: Worktree) => void
   showOperations: (wt: Worktree) => void
   isolateDocker: (wt: Worktree) => void
+  prepareDevcontainer: (wt: Worktree) => void
   runSync: (mode: 'fetch' | 'merge' | 'rebase') => void
   copyBranch: () => void
   openJira: () => void
@@ -58,6 +59,7 @@ export function taskRowActions(options: {
   if (isMain) return items
   items.push(
     { label: taskT('docker'), onClick: () => { select(row); options.isolateDocker(wt) } },
+    { label: taskT('devcontainer'), onClick: () => { select(row); options.prepareDevcontainer(wt) } },
     { label: taskT('fetch'), onClick: () => options.runSync('fetch') },
     { label: taskT('mergeOrigin', { branch: baseBranch }), onClick: () => options.runSync('merge') },
     { label: taskT('rebaseOrigin', { branch: baseBranch }), onClick: () => options.runSync('rebase') },

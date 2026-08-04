@@ -16,7 +16,18 @@ export class TaskPanelStore {
   setRepository(path: string): void {
     localStorage.setItem(this.key('repo'), path)
     localStorage.removeItem(this.key('base'))
+    localStorage.removeItem(this.key('projectKey'))
+    localStorage.removeItem(this.key('devcontainerDir'))
   }
+
+  projectKey(): string | null { return localStorage.getItem(this.key('projectKey')) }
+  setProjectKey(projectKey: string): void {
+    if (projectKey.trim()) localStorage.setItem(this.key('projectKey'), projectKey.trim())
+    else localStorage.removeItem(this.key('projectKey'))
+  }
+
+  devcontainerDir(): string | null { return localStorage.getItem(this.key('devcontainerDir')) }
+  setDevcontainerDir(path: string): void { localStorage.setItem(this.key('devcontainerDir'), path) }
 
   base(): string { return localStorage.getItem(this.key('base')) ?? 'main' }
   savedBase(): string | null { return localStorage.getItem(this.key('base')) }

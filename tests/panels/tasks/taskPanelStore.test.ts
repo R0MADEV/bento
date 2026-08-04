@@ -34,4 +34,17 @@ describe('TaskPanelStore', () => {
     store.clearOperations('/repo', 'feat/a')
     expect(store.operations().map(entry => entry.branch)).toEqual(['feat/b'])
   })
+
+  it('persists recipe identity per panel and resets it when repository changes', () => {
+    const store = new TaskPanelStore('one')
+    store.setRepository('/repo-a')
+    store.setProjectKey('company--repo-a')
+    store.setDevcontainerDir('apps/api/.devcontainer')
+    expect(store.projectKey()).toBe('company--repo-a')
+    expect(store.devcontainerDir()).toBe('apps/api/.devcontainer')
+
+    store.setRepository('/repo-b')
+    expect(store.projectKey()).toBeNull()
+    expect(store.devcontainerDir()).toBeNull()
+  })
 })
