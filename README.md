@@ -17,6 +17,7 @@ Inspirado en VSCode, pero **genérico**: no asume que trabajas con código. Func
 | **Web** | Navegador embebido (webview nativo): bookmarks por proyecto, historial, user-agent por sitio |
 | **Notas** | Editor markdown en archivos `.md` (`~/.config/bento/notes/`): frontmatter (categoría, tags), vista previa, undo propio |
 | **HTTP** | Cliente tipo Postman: métodos, cabeceras, body, plantillas, e **importa OpenAPI/Swagger** como colecciones navegables |
+| **Tareas** | Worktrees por tarea, flujo Git y devcontainers aislados con [recetas locales por proyecto](docs/devcontainer-recipes.md) |
 
 **Sesiones = proyectos**: una sesión se ata a la carpeta de la terminal activa, y las
 terminales nuevas arrancan ahí.

@@ -4,6 +4,8 @@
 )]
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
+mod agent;
+mod chat_history;
 mod command_error;
 mod db;
 mod docker;
@@ -15,14 +17,20 @@ mod memory_import;
 mod memory_sources;
 mod notes;
 mod pty;
+mod review;
 mod scripts;
+mod settings;
 mod traffic_lights;
 mod vault;
 mod web_panel;
 mod window_prefs;
 mod workspace_io;
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tauri::Manager;
 
 // HTTP download from the Rust backend: avoids the WebView's limits with large
 // files (the iptv-org API weighs tens of MB).
@@ -174,9 +182,29 @@ fn main() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             install_menu(app)?;
+            if let Some(window) = app.get_webview_window("main") {
+                let manager = app.state::<agent::AgentManager>().inner().clone();
+                let closing = Arc::new(AtomicBool::new(false));
+                let close_window = window.clone();
+                window.clone().on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        if closing.swap(true, Ordering::SeqCst) {
+                            return;
+                        }
+                        api.prevent_close();
+                        let manager = manager.clone();
+                        let window = close_window.clone();
+                        tauri::async_runtime::spawn(async move {
+                            agent::cancel_all(&manager).await;
+                            let _ = window.close();
+                        });
+                    }
+                });
+            }
             Ok(())
         })
         .manage(Arc::new(pty::PtyManager::default()))
+        .manage(agent::AgentManager::default())
         .manage(web_panel::WebPanelState::default())
         .manage(docker::LogStreams::default())
         .manage(vault::VaultState(std::sync::Mutex::new(None)))
@@ -184,10 +212,20 @@ fn main() {
             http_get,
             http_request,
             app_identifier,
-            http_fetch_base64,
+            agent::start_agent,
+            agent::cancel_agent,
+            review::review_branch_context_prepare,
+            review::review_branch_context_check,
+            review::review_branch_context_update,
+            review::review_branch_context_release,
+            review::review_lexis_context,
+            review::review_snapshot,
+            review::review_validate_finding_path,
             workspace_io::workspace_load,
             workspace_io::workspace_save,
             workspace_io::workspace_reset,
+            settings::settings_get,
+            settings::settings_set,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
@@ -199,6 +237,8 @@ fn main() {
             web_panel::web_panel_set_visible,
             web_panel::web_panel_close,
             web_panel::web_panel_close_all,
+            chat_history::chat_history_load,
+            chat_history::chat_history_save,
             notes::notes_list,
             notes::notes_write,
             notes::notes_delete,
@@ -276,6 +316,12 @@ fn main() {
             docker::docker_logs_stop,
             docker::docker_exec_argv,
             docker::docker_compose_isolate,
+            docker::devcontainer_recipe_preview,
+            docker::devcontainer_recipe_create,
+            docker::devcontainer_recipe_git,
+            docker::devcontainer_recipe_status,
+            docker::devcontainer_isolate,
+            docker::devcontainer_urls,
             docker::docker_compose_up,
             docker::docker_compose_down,
             git::git_worktree_list,
@@ -283,10 +329,27 @@ fn main() {
             git::git_rewrite_preflight,
             git::git_default_branch,
             git::git_remote_branches,
+            git::git_all_remote_branches,
+            git::git_review_branches,
+            git::git_current_branch,
+            git::git_ref_diff,
+            git::git_rev_parse,
+            git::gh_pr_view_branch,
+            git::gh_pr_comment,
+            git::gh_pr_inline_comment,
+            git::gh_pr_list_open,
+            git::gh_pr_list_discussion,
+            git::gh_pr_list_comments,
+            git::gh_pr_update_comment,
+            git::gh_pr_delete_comment,
+            git::gh_pr_reply_comment,
+            git::gh_pr_submit_review,
             git::git_worktree_add,
             git::git_worktree_remove,
             git::git_sync,
             git::git_diff,
+            git::git_branch_diff,
+            git::git_review_worktree_diff,
             git::git_commit,
             git::git_fixup,
             git::git_push,

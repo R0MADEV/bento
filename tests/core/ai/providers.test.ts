@@ -9,8 +9,9 @@ describe('AI providers', () => {
     expect(ids).toContain('custom')
   })
 
-  it('every non-custom preset has a base URL and at least one model', () => {
-    AI_PROVIDERS.filter(p => p.id !== 'custom').forEach(p => {
+  it('every HTTP preset has a base URL and at least one model', () => {
+    const localIds = new Set(['custom', 'agent'])
+    AI_PROVIDERS.filter(p => !localIds.has(p.id)).forEach(p => {
       expect(p.baseUrl).toMatch(/^https:\/\//)
       expect(p.models.length).toBeGreaterThan(0)
     })

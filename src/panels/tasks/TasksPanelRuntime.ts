@@ -22,7 +22,7 @@ import { buildRebasePlanPreview } from './RebasePlanView'
 import { buildCommitFileList, fileStateMap, renderPatchHtml } from './TaskCodeView'
 import { commitFilesRaw, recommendationMap, taskGit } from './taskGitClient'
 import { TaskPanelStore } from './TaskPanelStore'
-import { createTaskDockerView, type IsolateResult } from './TaskDockerView'
+import { createTaskDockerView, type IsolateResult, type RecipeApplyResult } from './TaskDockerView'
 import { buildResetView } from './ResetView'
 import { buildGraphView } from './GraphView'
 import { buildCommitLogView } from './CommitLogView'
@@ -31,9 +31,14 @@ import { buildSyncErrorView, buildWorktreeTerminalView } from './TaskAuxiliaryVi
 import { loadTaskData } from './TaskDataLoader'
 import { buildIncomingChangesView } from './IncomingChangesView'
 import { taskRowActions } from './TaskRowActions'
+import { TauriAppSettingsRepository } from '../../adapters/TauriAppSettingsRepository'
+import type { AppSettings } from '../../ports/AppSettingsRepository'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
+  const settingsRepository = new TauriAppSettingsRepository()
+  let appSettings: AppSettings = {}
+  const settingsReady = settingsRepository.load().then(settings => { appSettings = settings }).catch(() => {})
   let worktrees: Worktree[] = []
   let repoPath = panelStore.repository()
   let detailCleanup: () => void = () => {}
@@ -116,7 +121,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   })))
   localeSelect.addEventListener('change', () => { setTaskLocale(localeSelect.value as TaskLocale); location.reload() })
   const refreshBtn = iconBtn('refresh', taskT('reload'), () => load())
-  header.append(titleEl, repoBtn, baseSelect, localeSelect, fetchAgeEl, refreshBtn)
+  const settingsBtn = iconBtn('settings', taskT('taskSettings'), () => { void showTaskSettings() })
+  settingsBtn.dataset.testid = 'tasks-settings'
+  header.append(titleEl, repoBtn, baseSelect, localeSelect, settingsBtn, fetchAgeEl, refreshBtn)
 
   // ---- layout ----
   const body = document.createElement('div')
@@ -161,6 +168,143 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     resetDetail: () => { stopDiffRefresh(); detailCleanup(); detailCleanup = () => {} },
     setCleanup: cleanup => { detailCleanup = cleanup },
   })
+
+  const defaultProjectKey = (): string => repoPath.replace(/\/$/, '').split('/').pop() ?? ''
+  const projectKey = (): string => panelStore.projectKey() || defaultProjectKey()
+
+  const prepareTaskDevcontainer = async (worktree: Worktree): Promise<boolean> => {
+    await settingsReady
+    appSettings = await settingsRepository.load().catch(() => appSettings)
+    return dockerView.prepareDevcontainer(
+      worktree,
+      appSettings.devcontainerRecipesDir,
+      projectKey(),
+      panelStore.devcontainerDir() ?? undefined,
+      path => panelStore.setDevcontainerDir(path),
+    )
+  }
+
+  async function showTaskSettings(): Promise<void> {
+    stopDiffRefresh()
+    detailCleanup(); detailCleanup = () => {}
+    showDetail(note(taskT('loading'), 'db-detail-loading'))
+    await settingsReady
+
+    const wrap = document.createElement('div')
+    wrap.className = 'tasks-settings-view'
+    const title = Object.assign(document.createElement('h3'), { textContent: taskT('taskSettings') })
+    const description = note(taskT('recipesDirHint'), 'db-detail-hint')
+    const recipeProject = projectKey() || taskT('recipesExampleProject')
+    const projectGuide = note(taskT('addProjectRecipeHint', { project: recipeProject }), 'db-detail-hint')
+    const recipeExample = Object.assign(document.createElement('pre'), {
+      className: 'tasks-settings-example',
+      textContent: `${appSettings.devcontainerRecipesDir || '/ruta/a/bento-recipes'}/${recipeProject}/\n`+
+        '├── .env\n' +
+        '└── .devcontainer/\n' +
+        '    ├── docker-compose.override.yml\n' +
+        '    └── bento-postcreate.sh',
+    })
+    const label = Object.assign(document.createElement('label'), {
+      className: 'tasks-settings-label',
+      textContent: taskT('recipesDir'),
+    })
+    const row = document.createElement('div')
+    row.className = 'tasks-settings-row'
+    const input = Object.assign(document.createElement('input'), {
+      className: 'tasks-settings-input',
+      type: 'text',
+      readOnly: true,
+      placeholder: taskT('recipesDirEmpty'),
+      value: appSettings.devcontainerRecipesDir ?? '',
+    })
+    const status = note('', 'tasks-note')
+
+    const keyLabel = Object.assign(document.createElement('label'), {
+      className: 'tasks-settings-label',
+      textContent: taskT('projectKey'),
+    })
+    const keyInput = Object.assign(document.createElement('input'), {
+      className: 'tasks-settings-input',
+      type: 'text',
+      value: projectKey(),
+      placeholder: defaultProjectKey(),
+    })
+    keyInput.addEventListener('change', () => {
+      panelStore.setProjectKey(keyInput.value === defaultProjectKey() ? '' : keyInput.value)
+      void showTaskSettings()
+    })
+    keyLabel.appendChild(keyInput)
+
+    const persist = async (directory: string | undefined): Promise<void> => {
+      appSettings = { ...appSettings, devcontainerRecipesDir: directory || undefined }
+      input.value = directory ?? ''
+      status.textContent = taskT('savingSettings')
+      try {
+        await settingsRepository.save(appSettings)
+        status.textContent = taskT('settingsSaved')
+      } catch (error) {
+        status.className = 'db-detail-error'
+        status.textContent = String(error)
+      }
+    }
+    const choose = iconBtn('folder', taskT('chooseRecipesDir'), () => {
+      void pickFolder({
+        directory: true,
+        defaultPath: appSettings.devcontainerRecipesDir,
+      }).then(picked => {
+        if (typeof picked === 'string') void persist(picked)
+      }).catch(() => {})
+    })
+    const clear = iconBtn('x', taskT('clearRecipesDir'), () => { void persist(undefined) })
+    input.addEventListener('click', () => choose.click())
+    row.append(input, choose, clear)
+    label.append(row)
+
+    const recipeActions = document.createElement('div')
+    recipeActions.className = 'tasks-compose-controls'
+    const recipePath = (): string | null => appSettings.devcontainerRecipesDir
+      ? `${appSettings.devcontainerRecipesDir.replace(/\/$/, '')}/${projectKey()}`
+      : null
+    const createRecipe = iconBtn('plus', taskT('createRecipe'), () => {
+      if (!appSettings.devcontainerRecipesDir) { status.textContent = taskT('selectRecipesDirFirst'); return }
+      void invoke<string>('devcontainer_recipe_create', {
+        recipesDir: appSettings.devcontainerRecipesDir,
+        projectKey: projectKey(),
+      }).then(path => {
+        status.className = 'tasks-note'
+        status.textContent = taskT('recipeCreated', { path })
+      }).catch(error => { status.className = 'db-detail-error'; status.textContent = String(error) })
+    })
+    const openRecipe = iconBtn('folder', taskT('openRecipeFolder'), () => {
+      const path = recipePath()
+      if (path) invoke('open_in_editor', { path }).catch(error => { status.textContent = String(error) })
+    })
+    const gitAction = (action: 'init' | 'status' | 'pull' | 'push' | 'commit'): void => {
+      if (!appSettings.devcontainerRecipesDir) { status.textContent = taskT('selectRecipesDirFirst'); return }
+      const message = action === 'commit' ? window.prompt(taskT('recipeCommitMessage')) : null
+      if (action === 'commit' && !message) return
+      status.className = 'tasks-note'
+      status.textContent = taskT('recipeGitRunning', { action })
+      void invoke<string>('devcontainer_recipe_git', {
+        recipesDir: appSettings.devcontainerRecipesDir,
+        action,
+        message,
+      }).then(output => {
+        status.textContent = output || taskT('recipeGitDone', { action })
+      }).catch(error => { status.className = 'db-detail-error'; status.textContent = String(error) })
+    }
+    recipeActions.append(
+      createRecipe,
+      openRecipe,
+      iconBtn('git-branch', taskT('initRecipesGit'), () => gitAction('init')),
+      iconBtn('list', taskT('recipeGitStatus'), () => gitAction('status')),
+      iconBtn('download', taskT('recipeGitPull'), () => gitAction('pull')),
+      iconBtn('arrow-right', taskT('recipeGitPush'), () => gitAction('push')),
+      iconBtn('check', taskT('recipeGitCommit'), () => gitAction('commit')),
+    )
+    wrap.append(title, description, projectGuide, recipeExample, keyLabel, label, recipeActions, status)
+    showDetail(wrap)
+  }
 
   showDetail(note(taskT('selectTask'), 'db-detail-hint'))
 
@@ -249,6 +393,23 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       className: `tasks-badge${changes > 0 ? ' tasks-badge--dirty' : ''}`,
       textContent: changes > 0 ? taskT('changes', { count: changes }) : taskT('clean'),
     })
+    const recipeEl = document.createElement('span')
+    if (!isMain) {
+      void invoke<RecipeApplyResult | null>('devcontainer_recipe_status', {
+        worktreePath: wt.path,
+        devcontainerDir: panelStore.devcontainerDir(),
+      }).then(recipe => {
+        if (!recipe || !row.isConnected) return
+        recipeEl.className = `tasks-recipe-badge${recipe.errors.length ? ' tasks-recipe-badge--error' : ''}`
+        recipeEl.textContent = taskT('recipeBadge')
+        recipeEl.title = taskT('recipeBadgeTitle', {
+          project: recipe.projectKey,
+          applied: recipe.applied.length,
+          errors: recipe.errors.length,
+          date: new Date(recipe.appliedAt * 1000).toLocaleString(),
+        })
+      }).catch(() => {})
+    }
 
     const flashBadge = (text: string, cls: string, ms: number): void => {
       const prev = badge.textContent ?? ''
@@ -507,7 +668,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       selectRow, showRebasePaused, showChanges, showHistory: showCommitLog, showGraph: showCommitGraph,
       showInteractiveRebase, showTerminal: showWorktreeTerminal, showPrDetails, showReset: showResetView,
       showBackups: showBackupHistory, showOperations: showOperationHistory,
-      isolateDocker: wt => { void dockerView.isolate(wt) }, runSync, copyBranch, openJira: openInJira,
+      isolateDocker: wt => { void dockerView.isolate(wt) },
+      prepareDevcontainer: wt => { if (repoPath) void prepareTaskDevcontainer(wt).then(ok => { if (!ok) showDetail(note(taskT('noDevcontainer'), 'db-detail-hint')) }) },
+      runSync, copyBranch, openJira: openInJira,
       changeJiraStatus, push: pushBranch, createPr: createPR, restoreBackup, rename: renameTask,
       deleteTask: () => deleteWorktree(wt), setBase: branch => { baseBranch = branch; panelStore.setBase(branch) }, reload: load,
     })
@@ -521,11 +684,13 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     actions.className = 'tasks-actions'
     actions.appendChild(menuBtn)
 
-    row.addEventListener('click', () => {
+    row.addEventListener('click', async () => {
       selectRow(row)
       panelStore.setSelected(wt.path)
-      if (rebase?.active) showRebasePaused(wt, rebase)
-      else showChanges(wt)
+      if (rebase?.active) { showRebasePaused(wt, rebase); return }
+      // Devcontainer tasks show their URLs (cheap read); anything else shows the diff.
+      if (!isMain && await dockerView.showDevcontainerUrls(wt, panelStore.devcontainerDir() ?? undefined)) return
+      showChanges(wt)
     })
     row.addEventListener('keydown', e => {
       if (e.key !== 'Enter' && e.key !== ' ') return
@@ -536,7 +701,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       selectRow(row)
       showContextMenu(e.clientX, e.clientY, menuItems())
     })
-    row.append(runDot, left, abEl, prEl, rebaseEl, upstreamEl, backupEl, badge, actions)
+    row.append(runDot, left, abEl, prEl, rebaseEl, upstreamEl, backupEl, recipeEl, badge, actions)
     return row
   }
 
@@ -1470,10 +1635,14 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       await invoke('git_worktree_add', { repo: repoPath, path, branch, base })
       await load()
       const wt = worktrees.find(w => w.path === path)
-      const result = await invoke<IsolateResult>('docker_compose_isolate', { worktreePath: path }).catch((e: unknown) => {
-        const msg = String(e); if (msg !== 'no-compose') showDetail(note(msg, 'db-detail-error')); return null
-      })
-      if (result && wt) dockerView.show(result, wt)
+      try {
+        const result = await invoke<IsolateResult>('docker_compose_isolate', { worktreePath: path })
+        if (wt) dockerView.show(result, wt)
+      } catch (e) {
+        // No root docker-compose.yml → maybe a devcontainer project (compose under .devcontainer/).
+        if (String(e) !== 'no-compose') { showDetail(note(String(e), 'db-detail-error')); return }
+        if (wt && repoPath) await prepareTaskDevcontainer(wt)
+      }
     } catch (e) { listWrap.replaceChildren(note(String(e), 'db-detail-error')) }
   }
 

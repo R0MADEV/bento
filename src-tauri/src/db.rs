@@ -1111,7 +1111,15 @@ pub fn db_docker_redis_set(
     value: String,
     password: String,
 ) -> Result<(), String> {
-    redis_cli(&container, &host, port, &db, &password, &["SET", &key, &value]).map(|_| ())
+    redis_cli(
+        &container,
+        &host,
+        port,
+        &db,
+        &password,
+        &["SET", &key, &value],
+    )
+    .map(|_| ())
 }
 
 #[tauri::command]

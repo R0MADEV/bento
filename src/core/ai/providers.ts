@@ -39,6 +39,12 @@ export const AI_PROVIDERS: AiProvider[] = [
     baseUrl: '',
     models: [],
   },
+  {
+    id: 'agent',
+    label: 'Agent',
+    baseUrl: '',
+    models: [],
+  },
 ]
 
 export function providerById(id: string): AiProvider | undefined {

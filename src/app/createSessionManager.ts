@@ -17,6 +17,7 @@ import { getDecorations, setDecorations } from '../ui/decorationsPreference'
 import { setActiveProjectPath } from '../ui/activeProject'
 import { appT, getAppLocale, setAppLocale } from '../core/i18n'
 import { parseSavedState } from '../core/session/savedState'
+import { getUiZoom, toLayoutPixels } from '../ui/zoom'
 
 export function createSessionManager(panels: PanelRegistry, stateRepo: WorkspaceStateRepository): HTMLElement {
   const root = document.createElement('div')
@@ -153,15 +154,22 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
     const a = anchor.getBoundingClientRect()
     const p = popover.getBoundingClientRect()
+    const zoom = getUiZoom()
+    const anchorLeft = toLayoutPixels(a.left, zoom)
+    const anchorRight = toLayoutPixels(a.right, zoom)
+    const anchorTop = toLayoutPixels(a.top, zoom)
+    const anchorBottom = toLayoutPixels(a.bottom, zoom)
+    const popoverWidth = toLayoutPixels(p.width, zoom)
+    const popoverHeight = toLayoutPixels(p.height, zoom)
     const pos = getBarPosition()
     const gap = 8
-    let left = a.left
-    let top = a.bottom + gap
-    if (pos === 'left')   { left = a.right + gap;          top = a.top }
-    if (pos === 'right')  { left = a.left - p.width - gap; top = a.top }
-    if (pos === 'bottom') { top = a.top - p.height - gap }
-    const clampX = (v: number) => Math.max(8, Math.min(v, window.innerWidth  - p.width  - 8))
-    const clampY = (v: number) => Math.max(8, Math.min(v, window.innerHeight - p.height - 8))
+    let left = anchorLeft
+    let top = anchorBottom + gap
+    if (pos === 'left')   { left = anchorRight + gap;               top = anchorTop }
+    if (pos === 'right')  { left = anchorLeft - popoverWidth - gap; top = anchorTop }
+    if (pos === 'bottom') { top = anchorTop - popoverHeight - gap }
+    const clampX = (v: number) => Math.max(8, Math.min(v, window.innerWidth  - popoverWidth  - 8))
+    const clampY = (v: number) => Math.max(8, Math.min(v, window.innerHeight - popoverHeight - 8))
     popover.style.left = `${clampX(left)}px`
     popover.style.top  = `${clampY(top)}px`
   }
@@ -308,6 +316,8 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-docker', label: appT('newDocker'), keywords: ['docker', 'contenedores', 'containers', 'logs'], run: () => active?.addPanel('docker') },
       { id: 'new-tasks', label: appT('newTasks'), keywords: ['tareas', 'tasks', 'worktree', 'git', 'paralelo'], run: () => active?.addPanel('tasks') },
       { id: 'new-memory', label: appT('newMemory'), keywords: ['memoria', 'memory', 'contexto', 'decisiones', 'resumen'], run: () => active?.addPanel('memory') },
+      { id: 'new-diff', label: appT('newDiff'), keywords: ['diff', 'git', 'cambios', 'changes', 'hunk', 'patch'], run: () => active?.addPanel('diff') },
+      { id: 'new-review', label: appT('newReview'), keywords: ['review', 'tech review', 'revisar', 'ia', 'ai', 'agente', 'cambios'], run: () => active?.addPanel('review') },
       {
         id: 'bind-project', label: appT('bindProject'),
         keywords: ['proyecto', 'project', 'carpeta', 'cwd', 'directorio'],

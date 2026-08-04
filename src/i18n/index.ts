@@ -2,7 +2,7 @@ import esCatalog from './es.json'
 import enCatalog from './en.json'
 
 export type AppLocale = 'es' | 'en'
-export type CatalogNamespace = 'app' | 'tasks'
+export type CatalogNamespace = 'app' | 'tasks' | 'diff' | 'review'
 export type TranslationValues = Record<string, string | number>
 export type AppMessageKey = keyof typeof esCatalog.app
 type PanelCatalog = typeof esCatalog.panels

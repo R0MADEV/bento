@@ -51,6 +51,8 @@ const ICONS: Record<string, string> = {
   edit: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>',
   'git-merge': '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
   kanban: '<path d="M6 3v12"/><path d="M18 9v12"/><rect width="4" height="6" x="4" y="7" rx="1"/><rect width="4" height="6" x="16" y="3" rx="1"/>',
+  review: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m8 15 2 2 5-5"/>',
+  diff: '<path d="M5 3v18"/><path d="M19 3v18"/><path d="M9 8h6"/><path d="M12 5v6"/><path d="M9 16h6"/>',
 }
 
 export function icon(name: string): string {

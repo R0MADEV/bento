@@ -20,6 +20,10 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
     if (titleCb) instance.onTitleChange?.(titleCb)
     if (readyApi) instance.onReady?.(readyApi)
     instance.fit?.()
+  }).catch(error => {
+    if (disposed) return
+    element.classList.add('panel-load-error')
+    element.textContent = `No se pudo cargar el panel: ${String(error)}`
   })
 
   return {

@@ -303,6 +303,13 @@ fn current_branch(path: &str) -> Result<String, String> {
     Ok(branch)
 }
 
+#[tauri::command]
+pub async fn git_current_branch(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || current_branch(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn backup_ref_for(path: &str) -> Result<String, String> {
     Ok(format!("refs/bento/backups/{}", current_branch(path)?))
 }
@@ -374,8 +381,7 @@ fn apply_selected_patch(path: &str, patch: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn collect_worktree_diff(path: &str) -> Result<String, String> {
-    let mut combined = git_output(path, &["diff", "--no-ext-diff", "HEAD"])?;
+fn append_untracked_diffs(path: &str, combined: &mut String) -> Result<(), String> {
     let untracked = git_output(path, &["ls-files", "--others", "--exclude-standard"])?;
     let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
     let null_file = if cfg!(windows) { "NUL" } else { "/dev/null" };
@@ -398,6 +404,21 @@ fn collect_worktree_diff(path: &str) -> Result<String, String> {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
     }
+    Ok(())
+}
+
+fn collect_worktree_diff(path: &str) -> Result<String, String> {
+    let mut combined = git_output(path, &["diff", "--no-ext-diff", "HEAD"])?;
+    append_untracked_diffs(path, &mut combined)?;
+    Ok(combined)
+}
+
+fn collect_review_worktree_diff(path: &str, base: &str) -> Result<String, String> {
+    if !is_safe_branch(base) {
+        return Err(format!("unsafe base: {base}"));
+    }
+    let mut combined = git_output(path, &["diff", "--no-ext-diff", base, "--"])?;
+    append_untracked_diffs(path, &mut combined)?;
     Ok(combined)
 }
 
@@ -536,6 +557,66 @@ pub async fn git_remote_branches(repo: String) -> Result<Vec<String>, String> {
     .map_err(|e| e.to_string())?
 }
 
+// Lists branches from ALL remotes with full remote/branch format (e.g. "daimoxd/feat/foo").
+#[tauri::command]
+pub async fn git_all_remote_branches(repo: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&repo) {
+            return Err("not a git repository".into());
+        }
+        let raw = git_output(
+            &repo,
+            &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        )?;
+        Ok(raw
+            .lines()
+            .filter(|line| !line.ends_with("/HEAD") && is_safe_branch(line))
+            .map(str::to_string)
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn parse_review_branches(local: &str, remote: &str) -> Vec<String> {
+    let mut branches = Vec::new();
+    for branch in local.lines().chain(remote.lines()) {
+        let branch = branch.trim();
+        if branch.is_empty()
+            || branch == "HEAD"
+            || branch.ends_with("/HEAD")
+            || !is_safe_branch(branch)
+            || branches.iter().any(|existing| existing == branch)
+        {
+            continue;
+        }
+        branches.push(branch.to_string());
+    }
+    branches
+}
+
+/// Branches available for review: local task/worktree branches first, followed
+/// by fully-qualified remote branches such as `origin/main`.
+#[tauri::command]
+pub async fn git_review_branches(repo: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&repo) {
+            return Err("not a git repository".into());
+        }
+        let local = git_output(
+            &repo,
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        )?;
+        let remote = git_output(
+            &repo,
+            &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        )?;
+        Ok(parse_review_branches(&local, &remote))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 pub async fn git_worktree_add(
     repo: String,
@@ -665,6 +746,42 @@ pub async fn git_diff(path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || collect_worktree_diff(&path))
         .await
         .map_err(|e| e.to_string())?
+}
+
+// Accumulated diff of all commits on the current branch vs <base> (three-dot range).
+#[tauri::command]
+pub async fn git_branch_diff(path: String, base: String) -> Result<String, String> {
+    if !is_safe_branch(&base) {
+        return Err(format!("unsafe base branch: {base}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
+        // Try local ref first, fall back to origin/ prefix for remote-only branches.
+        // The original error is preserved so transient failures are not silently swallowed.
+        match git_output(&path, &["diff", &format!("{base}...HEAD")]) {
+            Ok(out) => Ok(out),
+            Err(first_err) => git_output(&path, &["diff", &format!("origin/{base}...HEAD")])
+                .map_err(|_| first_err),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Diff from `base` to the current worktree, including committed, staged,
+/// unstaged and untracked changes.
+#[tauri::command]
+pub async fn git_review_worktree_diff(path: String, base: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
+        collect_review_worktree_diff(&path, &base)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // Validates that a commit message is non-empty (trust boundary: frontend input).
@@ -944,6 +1061,388 @@ pub async fn git_pr_status(path: String) -> Result<Option<PrStatus>, String> {
         let Ok(out) = out else { return Ok(None); };
         if !out.status.success() || out.stdout.is_empty() { return Ok(None); }
         serde_json::from_slice::<PrStatus>(&out.stdout).map(Some).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Diff between any two git refs (e.g. "origin/main" vs "origin/feat/foo").
+#[tauri::command]
+pub async fn git_ref_diff(path: String, base: String, target: String) -> Result<String, String> {
+    if !is_safe_branch(&base) {
+        return Err(format!("unsafe base: {base}"));
+    }
+    if !is_safe_branch(&target) {
+        return Err(format!("unsafe target: {target}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
+        git_output(&path, &["diff", &format!("{base}...{target}")])
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Returns basic PR info (number, title, url) for any branch via gh CLI.
+#[tauri::command]
+pub async fn gh_pr_view_branch(
+    path: String,
+    branch: String,
+) -> Result<Option<serde_json::Value>, String> {
+    if !is_safe_branch(&branch) {
+        return Err(format!("unsafe branch: {branch}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "pr",
+                "view",
+                &branch,
+                "--json",
+                "number,title,url,body,statusCheckRollup,reviewDecision",
+            ])
+            .output();
+        let Ok(out) = out else {
+            return Ok(None);
+        };
+        if !out.status.success() || out.stdout.is_empty() {
+            return Ok(None);
+        }
+        serde_json::from_slice::<serde_json::Value>(&out.stdout)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Fetches PR discussion: general comments + review submissions (with body).
+#[tauri::command]
+pub async fn gh_pr_list_discussion(
+    path: String,
+    pr_number: i64,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let comments = std::process::Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api",
+                "--paginate",
+                &format!("repos/{{owner}}/{{repo}}/issues/{}/comments", pr_number),
+            ])
+            .output()
+            .ok()
+            .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        let reviews = std::process::Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api",
+                &format!("repos/{{owner}}/{{repo}}/pulls/{}/reviews", pr_number),
+            ])
+            .output()
+            .ok()
+            .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+            .unwrap_or(serde_json::Value::Array(vec![]));
+        Ok(serde_json::json!({ "comments": comments, "reviews": reviews }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Posts a comment on the PR and returns its URL.
+#[tauri::command]
+pub async fn gh_pr_comment(path: String, branch: String, body: String) -> Result<String, String> {
+    if !is_safe_branch(&branch) {
+        return Err(format!("unsafe branch: {branch}"));
+    }
+    if body.len() > 65_536 {
+        return Err("comment body exceeds maximum length".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        // Resolve PR number from branch so we can use the REST API (gh pr comment
+        // does not support --json/--jq, but gh api returns html_url).
+        let num_out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "view", &branch, "--json", "number", "--jq", ".number"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !num_out.status.success() {
+            return Err(String::from_utf8_lossy(&num_out.stderr).trim().to_string());
+        }
+        let pr_number = String::from_utf8_lossy(&num_out.stdout).trim().to_string();
+        let endpoint = format!("repos/{{owner}}/{{repo}}/issues/{pr_number}/comments");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api",
+                "--method",
+                "POST",
+                &endpoint,
+                "-f",
+                &format!("body={body}"),
+                "--jq",
+                ".html_url",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Resolves a git ref to its full SHA.
+#[tauri::command]
+pub async fn git_rev_parse(path: String, reference: String) -> Result<String, String> {
+    if reference.starts_with('-') {
+        return Err(format!("invalid git reference: {reference}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
+        git_output(&path, &["rev-parse", &reference]).map(|s| s.trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Posts an inline review comment on a specific file+line via gh api.
+#[tauri::command]
+pub async fn gh_pr_inline_comment(
+    path: String,
+    pr_number: u64,
+    commit_id: String,
+    file: String,
+    line: u64,
+    start_line: Option<u64>,
+    body: String,
+) -> Result<String, String> {
+    if line == 0 {
+        return Err("line must be >= 1".into());
+    }
+    if body.len() > 65_536 {
+        return Err("comment body exceeds maximum length".into());
+    }
+    let is_valid_sha = !commit_id.is_empty()
+        && commit_id.len() <= 40
+        && commit_id.chars().all(|c| c.is_ascii_hexdigit());
+    if !is_valid_sha {
+        return Err(format!("invalid commit SHA: {commit_id}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments");
+        let mut args = vec![
+            "api".to_string(),
+            endpoint,
+            "-f".to_string(),
+            format!("body={body}"),
+            "-f".to_string(),
+            format!("commit_id={commit_id}"),
+            "-f".to_string(),
+            format!("path={file}"),
+            "-F".to_string(),
+            format!("line={line}"),
+            "-f".to_string(),
+            "side=RIGHT".to_string(),
+        ];
+        if let Some(sl) = start_line {
+            if sl < line {
+                args.extend([
+                    "-F".to_string(),
+                    format!("start_line={sl}"),
+                    "-f".to_string(),
+                    "start_side=RIGHT".to_string(),
+                ]);
+            }
+        }
+        args.extend(["--jq".to_string(), ".html_url".to_string()]);
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(&args)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Returns open pull requests for the repo (up to 30).
+#[tauri::command]
+pub async fn gh_pr_list_open(path: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "pr",
+                "list",
+                "--json",
+                "number,title,author,headRefName,baseRefName,url",
+                "--limit",
+                "30",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Edits an existing PR review comment.
+#[tauri::command]
+pub async fn gh_pr_update_comment(
+    path: String,
+    comment_id: u64,
+    body: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api",
+                "--method",
+                "PATCH",
+                &endpoint,
+                "-f",
+                &format!("body={body}"),
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Deletes a PR review comment.
+#[tauri::command]
+pub async fn gh_pr_delete_comment(path: String, comment_id: u64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["api", "--method", "DELETE", &endpoint])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Replies to an existing PR review comment thread.
+#[tauri::command]
+pub async fn gh_pr_reply_comment(
+    path: String,
+    comment_id: u64,
+    body: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}/replies");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api",
+                "--method",
+                "POST",
+                &endpoint,
+                "-f",
+                &format!("body={body}"),
+                "--jq",
+                ".html_url",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Returns all inline review comments for a PR as a JSON array.
+#[tauri::command]
+pub async fn gh_pr_list_comments(
+    path: String,
+    pr_number: u64,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["api", "--paginate", &endpoint])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Submits a pull request review (APPROVE / REQUEST_CHANGES / COMMENT).
+#[tauri::command]
+pub async fn gh_pr_submit_review(
+    path: String,
+    pr_number: u64,
+    event: String,
+    body: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let valid_events = ["APPROVE", "REQUEST_CHANGES", "COMMENT"];
+        if !valid_events.contains(&event.as_str()) {
+            return Err(format!("invalid review event: {event}"));
+        }
+        let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr_number}/reviews");
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args([
+                "api",
+                "--method",
+                "POST",
+                &endpoint,
+                "-f",
+                &format!("event={event}"),
+                "-f",
+                &format!("body={body}"),
+                "--jq",
+                ".html_url",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1945,6 +2444,37 @@ mod tests {
         fs::write(path.join("file.txt"), content).unwrap();
         run(path, &["add", "file.txt"]);
         run(path, &["commit", "-qm", message]);
+    }
+
+    #[test]
+    fn review_branches_include_local_tasks_and_qualified_remotes() {
+        let branches = parse_review_branches(
+            "main\nfeat/NIXON-501\n",
+            "origin/HEAD\norigin/main\nupstream/release\n",
+        );
+        assert_eq!(branches, vec![
+            "main",
+            "feat/NIXON-501",
+            "origin/main",
+            "upstream/release",
+        ]);
+    }
+
+    #[test]
+    fn review_worktree_diff_includes_committed_uncommitted_and_untracked_changes() {
+        let repo = repo("review-worktree-diff");
+        commit_file(&repo.0, "base\n", "base");
+        let base = run(&repo.0, &["branch", "--show-current"]).trim().to_string();
+        run(&repo.0, &["checkout", "-qb", "feat/task"]);
+        commit_file(&repo.0, "committed\n", "task commit");
+        fs::write(repo.0.join("file.txt"), "working\n").unwrap();
+        fs::write(repo.0.join("new.txt"), "untracked\n").unwrap();
+
+        let diff = collect_review_worktree_diff(repo.0.to_str().unwrap(), &base).unwrap();
+        assert!(diff.contains("diff --git a/file.txt b/file.txt"), "{diff}");
+        assert!(diff.contains("+working"), "{diff}");
+        assert!(diff.contains("diff --git a/new.txt b/new.txt"), "{diff}");
+        assert!(diff.contains("+untracked"), "{diff}");
     }
 
     #[test]
