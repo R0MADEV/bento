@@ -381,8 +381,7 @@ fn apply_selected_patch(path: &str, patch: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn collect_worktree_diff(path: &str) -> Result<String, String> {
-    let mut combined = git_output(path, &["diff", "--no-ext-diff", "HEAD"])?;
+fn append_untracked_diffs(path: &str, combined: &mut String) -> Result<(), String> {
     let untracked = git_output(path, &["ls-files", "--others", "--exclude-standard"])?;
     let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
     let null_file = if cfg!(windows) { "NUL" } else { "/dev/null" };
@@ -405,6 +404,21 @@ fn collect_worktree_diff(path: &str) -> Result<String, String> {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
     }
+    Ok(())
+}
+
+fn collect_worktree_diff(path: &str) -> Result<String, String> {
+    let mut combined = git_output(path, &["diff", "--no-ext-diff", "HEAD"])?;
+    append_untracked_diffs(path, &mut combined)?;
+    Ok(combined)
+}
+
+fn collect_review_worktree_diff(path: &str, base: &str) -> Result<String, String> {
+    if !is_safe_branch(base) {
+        return Err(format!("unsafe base: {base}"));
+    }
+    let mut combined = git_output(path, &["diff", "--no-ext-diff", base, "--"])?;
+    append_untracked_diffs(path, &mut combined)?;
     Ok(combined)
 }
 
@@ -754,6 +768,20 @@ pub async fn git_branch_diff(path: String, base: String) -> Result<String, Strin
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Diff from `base` to the current worktree, including committed, staged,
+/// unstaged and untracked changes.
+#[tauri::command]
+pub async fn git_review_worktree_diff(path: String, base: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_git_repo(&path) {
+            return Err("not a git repository".into());
+        }
+        collect_review_worktree_diff(&path, &base)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // Validates that a commit message is non-empty (trust boundary: frontend input).
@@ -2430,6 +2458,23 @@ mod tests {
             "origin/main",
             "upstream/release",
         ]);
+    }
+
+    #[test]
+    fn review_worktree_diff_includes_committed_uncommitted_and_untracked_changes() {
+        let repo = repo("review-worktree-diff");
+        commit_file(&repo.0, "base\n", "base");
+        let base = run(&repo.0, &["branch", "--show-current"]).trim().to_string();
+        run(&repo.0, &["checkout", "-qb", "feat/task"]);
+        commit_file(&repo.0, "committed\n", "task commit");
+        fs::write(repo.0.join("file.txt"), "working\n").unwrap();
+        fs::write(repo.0.join("new.txt"), "untracked\n").unwrap();
+
+        let diff = collect_review_worktree_diff(repo.0.to_str().unwrap(), &base).unwrap();
+        assert!(diff.contains("diff --git a/file.txt b/file.txt"), "{diff}");
+        assert!(diff.contains("+working"), "{diff}");
+        assert!(diff.contains("diff --git a/new.txt b/new.txt"), "{diff}");
+        assert!(diff.contains("+untracked"), "{diff}");
     }
 
     #[test]

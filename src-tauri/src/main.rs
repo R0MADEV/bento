@@ -347,6 +347,7 @@ fn main() {
             git::git_sync,
             git::git_diff,
             git::git_branch_diff,
+            git::git_review_worktree_diff,
             git::git_commit,
             git::git_fixup,
             git::git_push,

@@ -181,6 +181,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let repoPath: string = (sessionPath || localStorage.getItem(REPO_KEY)) ?? ''
   let baseBranch = localStorage.getItem(BASE_KEY) ?? ''
   let selectedBranch = ''
+  let activeLocalBranch = ''
   let allBranches: string[] = []
   let currentPrNumber: number | null = null
   let intervalId: ReturnType<typeof setInterval> | null = null
@@ -1243,7 +1244,9 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     fileTypeFilter = 'all'
     diffView.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-loading', textContent: reviewT('loading') }))
     try {
-      const raw = await invoke<string>('git_ref_diff', { path: repoPath, base: baseBranch, target: selectedBranch })
+      const raw = selectedBranch === activeLocalBranch
+        ? await diffGit.reviewWorktreeDiff(repoPath, baseBranch)
+        : await invoke<string>('git_ref_diff', { path: repoPath, base: baseBranch, target: selectedBranch })
       if (!raw.trim()) {
         totalFiles = 0; lastFiles = []; updateViewedCounter()
         diffView.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-no-changes', textContent: reviewT('noBranchChanges', { base: baseBranch }) }))
@@ -1435,6 +1438,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     allBranches = currentBranch
       ? [currentBranch, ...branches.filter(branch => branch !== currentBranch)]
       : branches
+    activeLocalBranch = currentBranch
     if (!baseBranch) {
       const originDefault = `origin/${defaultBranch}`
       baseBranch = allBranches.includes(originDefault) ? originDefault : defaultBranch
@@ -1459,7 +1463,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const picked = await pickFolder({ directory: true, multiple: false }).catch(() => null)
     if (!picked || typeof picked !== 'string') return
     repoPath = picked; baseBranch = ''; branchInput.value = ''
-    selectedBranch = ''; existingComments = []; totalFiles = 0
+    selectedBranch = ''; activeLocalBranch = ''; existingComments = []; totalFiles = 0
     fileTypeFilter = 'all'; openPrs = []; lastFiles = []; lastStatusRollup = []
     localStorage.setItem(REPO_KEY, repoPath)
     diffView.replaceChildren(); filterBar.classList.add('hidden')
