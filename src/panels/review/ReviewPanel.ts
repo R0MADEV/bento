@@ -10,6 +10,7 @@ import { getUiZoom, toLayoutPixels } from '../../ui/zoom'
 import { startAgent } from '../../core/ai/agentClient'
 import { buildReviewPrompt, createContextProvider, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
+import { techReviewConversationKey } from '../../core/ai/chatHistory'
 
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
@@ -1488,15 +1489,21 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     if (!repoPath) { showReviewError('Open a repository first'); return }
     if (!selectedBranch) { showReviewError('Select a branch first'); return }
     if (!lastFiles.length) { showReviewError('There are no changes to review'); return }
+    const reviewRepoPath = repoPath
+    const reviewBranch = selectedBranch
+    const reviewBaseBranch = baseBranch
+    const reviewAgent = reviewAgentSelect.value as 'claude' | 'opencode' | 'codex'
+    const reviewConversationKey = techReviewConversationKey(reviewRepoPath, reviewBranch)
     const MAX_DIFF_CHARS = 18_000
     const rawDiff = lastFiles.map(f => f.chunk).join('\n')
     const diff = rawDiff.length > MAX_DIFF_CHARS
       ? rawDiff.slice(0, MAX_DIFF_CHARS) + `\n\n[diff truncated — ${lastFiles.length} files total]`
       : rawDiff
-    const prLine = currentPrNumber ? `PR #${currentPrNumber}: ${currentPrTitle}` : `Branch: ${selectedBranch}`
+    const prLine = currentPrNumber ? `PR #${currentPrNumber}: ${currentPrTitle}` : `Branch: ${reviewBranch}`
     const descSection = currentPrBody.trim() ? `\nDescription:\n${currentPrBody.trim()}\n` : ''
-    const reviewDiff = `${prLine}\nBase: ${baseBranch} <- ${selectedBranch}\n${descSection}\n${diff}`
+    const reviewDiff = `${prLine}\nBase: ${reviewBaseBranch} <- ${reviewBranch}\n${descSection}\n${diff}`
     const reviewFiles = lastFiles.map(file => ({ path: file.file, content: file.chunk }))
+    const reviewChangedFiles = reviewFiles.map(file => file.path)
     let prompt: string
     aiReviewBtn.disabled = true
     aiReviewBtn.title = 'Reviewing...'
@@ -1526,7 +1533,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       progressBox.remove()
       const verdictIcon = result.verdict === 'pass' ? '✅' : result.verdict === 'fail' ? '❌' : '⚠️'
       const lines = [
-        `## Revisión: ${selectedBranch || 'branch'}`,
+        `## Revisión: ${reviewBranch}`,
         `${verdictIcon} **${result.verdict}** — ${result.summary}`,
       ]
       if (result.findings.length) {
@@ -1538,15 +1545,15 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           lines.push('')
         })
       }
-      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, repoPath, reviewAgentSelect.value)
+      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, reviewRepoPath, reviewAgent, reviewConversationKey)
     }
     let worktree = ''
     let handle: ReturnType<typeof startAgent> | undefined
     try {
-      const snapshotBefore = await invoke<string>('review_snapshot', { repoPath })
+      const snapshotBefore = await invoke<string>('review_snapshot', { repoPath: reviewRepoPath })
       progressStatus.textContent = 'Creating isolated worktree…'
       worktree = await invoke<string>('review_worktree_create', {
-        repoPath,
+        repoPath: reviewRepoPath,
         reviewId: crypto.randomUUID(),
         reference: 'HEAD',
         includeWorkingTree: true,
@@ -1556,23 +1563,22 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         lexis: async () => {
           const content = await invoke<string>('review_lexis_context', {
             path: worktree,
-            question: `Find relevant callers, definitions and tests for: ${lastFiles.map(file => file.file).join(', ')}`,
+            question: `Find relevant callers, definitions and tests for: ${reviewChangedFiles.join(', ')}`,
           })
           if (!content) throw new Error('Lexis returned no context')
           return [{ path: '<lexis>', content, reason: 'reference' as const }]
         },
         direct: async () => reviewFiles.map(file => ({ ...file, reason: 'changed' as const })),
       })
-      const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewDiff, changedFiles: lastFiles.map(file => file.file) })
+      const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewDiff, changedFiles: reviewChangedFiles })
       prompt = buildReviewPrompt({
         diff: reviewDiff,
         files: reviewFiles,
         contextSources: context.sources,
         lexisContext: context.snippets.filter(snippet => snippet.reason !== 'changed').map(snippet => `${snippet.path}\n${snippet.content}`).join('\n\n'),
       })
-      const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath })
+      const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath: reviewRepoPath })
       if (snapshotBeforeAgent !== snapshotBefore) throw new Error('Repository changed while preparing the review')
-      const reviewAgent = reviewAgentSelect.value as 'claude' | 'opencode' | 'codex'
       const agentLabel = reviewAgent === 'claude' ? 'Claude' : reviewAgent === 'opencode' ? 'OpenCode' : 'Codex'
       progressStatus.textContent = `${agentLabel} is reviewing…`
       handle = startAgent(
@@ -1587,7 +1593,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
               const json = extractFirstJsonObject(output)
               if (!json) throw new Error('No JSON object found in response')
               const result = validateReviewResponse(JSON.parse(json))
-              await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath, relative: finding.file })))
+              await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: reviewRepoPath, relative: finding.file })))
               showResult(result)
             } catch (error) { progressBox.remove(); showReviewError(`Invalid AI review: ${String(error)}`) }
           })()
@@ -1597,14 +1603,14 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       )
       await handle.ready
       await handle.completed
-      const snapshotAfter = await invoke<string>('review_snapshot', { repoPath })
+      const snapshotAfter = await invoke<string>('review_snapshot', { repoPath: reviewRepoPath })
       if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
     } catch (error) { progressBox.remove(); showReviewError(String(error)) }
     finally {
       clearInterval(timer)
       progressBox.remove()  // no-op si ya fue quitado por showResult/onError
       handle?.unlisten()
-      if (worktree) await invoke('review_worktree_remove', { repoPath, worktree }).catch(error => showReviewError(String(error)))
+      if (worktree) await invoke('review_worktree_remove', { repoPath: reviewRepoPath, worktree }).catch(error => showReviewError(String(error)))
       aiReviewBtn.disabled = false
       aiReviewBtn.title = 'AI Review'
     }

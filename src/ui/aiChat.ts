@@ -16,15 +16,11 @@ import type { MemoryRepository } from '../ports/MemoryRepository'
 import { getActiveProjectPath, setActiveProjectPath } from './activeProject'
 import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
 import { startAgent } from '../core/ai/agentClient'
+import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory, serializeChatHistory } from '../core/ai/chatHistory'
 import { getUiZoom, toLayoutPixels } from './zoom'
 
 const AI_POSITION_KEY = 'bento.ai.position.v2'
 const MAX_HISTORY = 200
-
-const saveHistory = (messages: ChatMessage[]): void => {
-  const capped = messages.length > MAX_HISTORY ? messages.slice(-MAX_HISTORY) : messages
-  invoke('chat_history_save', { content: JSON.stringify(capped) }).catch(() => {})
-}
 
 // Messages as the API expects them (includes tool_calls and tool responses).
 interface ApiToolCall { id: string; function: { name: string; arguments: string } }
@@ -223,14 +219,52 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   let cfg: AiConfig = loadConfig()
   saveConfig(cfg) // rewrites the config without secrets (clears plaintext keys from the old schema)
   const messages: ChatMessage[] = []
-  invoke<string>('chat_history_load').then(raw => {
-    try {
-      const saved = JSON.parse(raw) as ChatMessage[]
-      if (saved.length) { messages.push(...saved); renderThread() }
-    } catch { /* archivo corrupto, empezamos limpio */ }
-  }).catch(() => {})
   let streaming = false
   let agentSessionId: string | null = null
+  let agentSessionContext = ''
+  let pendingAssistant: ChatMessage | null = null
+  let historyState = emptyChatHistory()
+  let activeConversationKey = GLOBAL_CHAT_CONVERSATION
+  let historySaveQueue = Promise.resolve()
+
+  const persistHistory = (): void => {
+    historyState.activeConversation = activeConversationKey
+    historyState.conversations[activeConversationKey] = messages
+      .filter(message => message !== pendingAssistant)
+      .slice(-MAX_HISTORY)
+    const content = serializeChatHistory(historyState)
+    historySaveQueue = historySaveQueue
+      .then(() => invoke('chat_history_save', { content }))
+      .then(() => undefined)
+      .catch(() => {})
+  }
+  const switchConversation = (key: string): void => {
+    if (!key || key === activeConversationKey) return
+    persistHistory()
+    activeConversationKey = key
+    historyState.activeConversation = key
+    messages.splice(0, messages.length, ...(historyState.conversations[key] ?? []))
+    historyState.conversations[key] ??= []
+    agentSessionId = null
+    agentSessionContext = ''
+    renderThread()
+    persistHistory()
+  }
+  const historyReady = invoke<string>('chat_history_load')
+    .then(raw => {
+      historyState = parseChatHistory(raw)
+      activeConversationKey = historyState.activeConversation
+      messages.splice(0, messages.length, ...(historyState.conversations[activeConversationKey] ?? []))
+      const savedContext = historyState.contexts[activeConversationKey]
+      if (savedContext) {
+        setActiveProjectPath(savedContext.projectPath)
+        cfg = { ...cfg, providerId: 'agent' }
+        agentSelect.value = savedContext.agentType
+        applyConfigToUi()
+      }
+      renderThread()
+    })
+    .catch(() => { historyState = emptyChatHistory() })
 
   const applyConfigToUi = (): void => {
     providerSelect.value = cfg.providerId
@@ -349,6 +383,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     messages.forEach(m => {
       const row = document.createElement('div')
       row.className = `ai-msg ai-msg-${m.role}`
+      row.classList.toggle('ai-msg-pending', m === pendingAssistant)
       // The assistant is rendered as Markdown (renderMarkdown escapes the HTML first,
       // so it's safe). The user's message goes as plain text.
       if (m.role === 'assistant') row.innerHTML = renderMarkdown(m.content)
@@ -361,6 +396,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
   // ── Streaming send ───────────────────────────────────────────────────────
   async function send(): Promise<void> {
+    await historyReady
     const text = input.value.trim()
     if (!text || streaming) return
     if (cfg.providerId === 'agent') {
@@ -411,7 +447,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     } finally {
       streaming = false
       root.classList.remove('busy')
-      saveHistory(messages)
+      persistHistory()
     }
   }
 
@@ -424,25 +460,55 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     input.value = ''
     input.style.height = 'auto'
     messages.push({ role: 'user', content: expandInput(text) })
-    const assistant: ChatMessage = { role: 'assistant', content: '' }
+    const agent = agentSelect.value as 'claude' | 'opencode' | 'codex' | 'custom'
+    const agentLabel = agent === 'claude' ? 'Claude' : agent === 'opencode' ? 'OpenCode' : agent === 'codex' ? 'Codex' : 'Agent'
+    const assistant: ChatMessage = { role: 'assistant', content: i18nT('common.agentWorking', { agent: agentLabel }) }
+    pendingAssistant = assistant
     messages.push(assistant)
     renderThread()
+    persistHistory()
     streaming = true
     root.classList.add('busy')
+    sendBtn.disabled = true
+    const sessionContext = `${agent}\0${projectPath}`
+    let awaitingFirstChunk = true
     const handle = startAgent({
-      agent: agentSelect.value as 'claude' | 'opencode' | 'codex' | 'custom',
+      agent,
       message: expandInput(text),
       history: messages.slice(0, -1),
       projectPath,
-      sessionId: agentSessionId,
+      sessionId: agentSessionContext === sessionContext ? agentSessionId : null,
       customExecutable: agentExecutableInput.value.trim() || undefined,
       customArgs: agentArgsInput.value.trim() ? agentArgsInput.value.trim().split(/\s+/) : undefined,
-    }, chunk => { assistant.content += chunk; renderThread() },
-    sessionId => { agentSessionId = sessionId; renderThread() },
-    error => { assistant.content = `⚠️ ${error}`; renderThread() })
-    try { await handle.ready }
+    }, chunk => {
+      if (awaitingFirstChunk) { assistant.content = ''; awaitingFirstChunk = false; pendingAssistant = null }
+      assistant.content += chunk
+      renderThread()
+      persistHistory()
+    }, sessionId => {
+      agentSessionId = sessionId
+      agentSessionContext = sessionContext
+      if (awaitingFirstChunk) assistant.content = i18nT('common.emptyModelResponse')
+      pendingAssistant = null
+      renderThread()
+    }, error => {
+      assistant.content = `⚠️ ${error}`
+      pendingAssistant = null
+      renderThread()
+    }, tool => {
+      if (awaitingFirstChunk) { assistant.content = `${agentLabel}: ${tool}`; renderThread() }
+    })
+    try { await handle.ready; await handle.completed }
     catch (error) { assistant.content = `⚠️ ${error instanceof Error ? error.message : String(error)}`; renderThread() }
-    finally { streaming = false; root.classList.remove('busy'); handle.unlisten(); saveHistory(messages) }
+    finally {
+      pendingAssistant = null
+      streaming = false
+      root.classList.remove('busy')
+      sendBtn.disabled = false
+      handle.unlisten()
+      renderThread()
+      persistHistory()
+    }
   }
 
   const chatUrl = (): string => `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`
@@ -555,7 +621,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   })
   clearBtn.addEventListener('click', () => {
     messages.length = 0
-    invoke('chat_history_save', { content: '[]' }).catch(() => {})
+    persistHistory()
     renderThread()
   })
   closeBtn.addEventListener('click', close)
@@ -566,26 +632,35 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
   // Context from other panels: opens the chat with the text preloaded (or sends it).
   window.addEventListener(AI_ASK_EVENT, e => {
-    const detail = (e as CustomEvent<AiAskDetail>).detail
-    runner = detail.runner // enables/clears the Run button depending on the origin
-    tools = detail.tools   // enables/clears function-calling depending on the origin
-    if (detail.projectPath) {
-      setActiveProjectPath(detail.projectPath)
-      cfg = { ...cfg, providerId: 'agent' }
-      agentSelect.value = detail.agentType ?? 'claude'
-      applyConfigToUi()
-      persist()
-    }
-    if (detail.inject) {
-      messages.push({ role: detail.inject.role, content: detail.inject.content })
-      renderThread()
-      saveHistory(messages)
-    }
-    open()
-    input.value = detail.text
-    input.dispatchEvent(new Event('input')) // recalculates the textarea height
-    input.focus()
-    if (detail.autoSend) send()
+    void (async () => {
+      await historyReady
+      const detail = (e as CustomEvent<AiAskDetail>).detail
+      runner = detail.runner // enables/clears the Run button depending on the origin
+      tools = detail.tools   // enables/clears function-calling depending on the origin
+      if (detail.conversationKey) switchConversation(detail.conversationKey)
+      if (detail.projectPath) {
+        setActiveProjectPath(detail.projectPath)
+        cfg = { ...cfg, providerId: 'agent' }
+        const agentType = ['claude', 'opencode', 'codex', 'custom'].includes(detail.agentType ?? '')
+          ? detail.agentType as 'claude' | 'opencode' | 'codex' | 'custom'
+          : 'claude'
+        agentSelect.value = agentType
+        historyState.contexts[activeConversationKey] = { projectPath: detail.projectPath, agentType }
+        applyConfigToUi()
+        persist()
+        persistHistory()
+      }
+      if (detail.inject) {
+        messages.push({ role: detail.inject.role, content: detail.inject.content })
+        renderThread()
+        persistHistory()
+      }
+      open()
+      input.value = detail.text
+      input.dispatchEvent(new Event('input')) // recalculates the textarea height
+      input.focus()
+      if (detail.autoSend) void send()
+    })()
   })
 
   return root

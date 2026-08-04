@@ -505,6 +505,7 @@
     "response": "Respuesta",
     "send": "Enviar",
     "sending": "Enviando…",
+    "agentWorking": "{agent} está trabajando…",
     "parameters": "Parámetros",
     "collection": "Colección",
     "issues": "Incidencias",

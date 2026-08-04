@@ -505,6 +505,7 @@
     "response": "Response",
     "send": "Send",
     "sending": "Sending…",
+    "agentWorking": "{agent} is working…",
     "parameters": "Parameters",
     "collection": "Collection",
     "issues": "Issues",

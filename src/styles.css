@@ -3454,6 +3454,8 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   color: var(--fg);
   border-bottom-left-radius: 4px;
 }
+.ai-msg-pending { color: var(--fg-dim); font-style: italic; }
+.ai-msg-pending::after { content: ''; display: inline-block; width: 5px; height: 5px; margin-left: 7px; border-radius: 50%; background: var(--accent); animation: review-pulse 1.2s ease-in-out infinite; vertical-align: middle; }
 
 /* Markdown inside the assistant's responses */
 .ai-msg-assistant p { margin: 0 0 6px; }
@@ -3529,6 +3531,7 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   transition: filter 0.12s;
 }
 .ai-send:hover { filter: brightness(1.08); }
+.ai-send:disabled { opacity: 0.45; cursor: wait; filter: none; }
 
 /* Vault status notice inside the chat settings. */
 .ai-vault-notice {
