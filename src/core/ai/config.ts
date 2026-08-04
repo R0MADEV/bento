@@ -2,6 +2,14 @@
 // localStorage. API keys are NOT stored here: they go to the encrypted Vault
 // (see src/ui/aiKeys.ts).
 
+export type AgentType = 'claude' | 'opencode' | 'codex' | 'custom'
+
+export interface AgentConfig {
+  type: AgentType
+  executable?: string
+  args?: string[]
+}
+
 export type ChatRole = 'system' | 'user' | 'assistant'
 
 export interface ChatMessage {
@@ -16,6 +24,8 @@ export interface AiConfig {
   baseUrl: string
   model: string
   systemPrompt: string
+  agentExecutable?: string
+  agentArgs?: string
 }
 
 export const DEFAULT_AI_CONFIG: AiConfig = {
@@ -37,6 +47,8 @@ export function parseConfig(raw: string | null): AiConfig {
       baseUrl: obj.baseUrl ?? DEFAULT_AI_CONFIG.baseUrl,
       model: obj.model ?? DEFAULT_AI_CONFIG.model,
       systemPrompt: obj.systemPrompt ?? DEFAULT_AI_CONFIG.systemPrompt,
+      agentExecutable: obj.agentExecutable,
+      agentArgs: obj.agentArgs,
     }
   } catch {
     return { ...DEFAULT_AI_CONFIG }

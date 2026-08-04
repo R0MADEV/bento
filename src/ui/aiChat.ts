@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { icon } from './icons'
 import { AI_PROVIDERS, providerById } from '../core/ai/providers'
 import {
@@ -14,9 +15,16 @@ import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from 
 import type { MemoryRepository } from '../ports/MemoryRepository'
 import { getActiveProjectPath } from './activeProject'
 import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
+import { startAgent } from '../core/ai/agentClient'
 import { getUiZoom, toLayoutPixels } from './zoom'
 
 const AI_POSITION_KEY = 'bento.ai.position.v2'
+const MAX_HISTORY = 200
+
+const saveHistory = (messages: ChatMessage[]): void => {
+  const capped = messages.length > MAX_HISTORY ? messages.slice(-MAX_HISTORY) : messages
+  invoke('chat_history_save', { content: JSON.stringify(capped) }).catch(() => {})
+}
 
 // Messages as the API expects them (includes tool_calls and tool responses).
 interface ApiToolCall { id: string; function: { name: string; arguments: string } }
@@ -60,6 +68,11 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     opt.textContent = p.label
     providerSelect.appendChild(opt)
   })
+  const agentSelect = document.createElement('select')
+  agentSelect.className = 'ai-select ai-agent-select hidden'
+  ;[['claude', 'Claude Code'], ['opencode', 'OpenCode'], ['codex', 'Codex'], ['custom', 'Custom CLI']].forEach(([value, label]) => {
+    agentSelect.appendChild(Object.assign(document.createElement('option'), { value, textContent: label }))
+  })
 
   const modelSelect = document.createElement('input')
   modelSelect.className = 'ai-model'
@@ -78,12 +91,17 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   settingsBtn.title = i18nT('common.settings2')
   settingsBtn.innerHTML = icon('settings')
 
+  const clearBtn = document.createElement('button')
+  clearBtn.className = 'ai-icon-btn'
+  clearBtn.title = 'Borrar historial'
+  clearBtn.innerHTML = icon('trash')
+
   const closeBtn = document.createElement('button')
   closeBtn.className = 'ai-icon-btn'
   closeBtn.title = i18nT('common.close')
   closeBtn.innerHTML = icon('x')
 
-  header.append(providerSelect, modelSelect, modelList, expandBtn, settingsBtn, closeBtn)
+  header.append(providerSelect, agentSelect, modelSelect, modelList, expandBtn, settingsBtn, clearBtn, closeBtn)
 
   const clampPosition = (): void => {
     const zoom = getUiZoom()
@@ -154,12 +172,20 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   systemInput.className = 'ai-field ai-system'
   systemInput.rows = 2
   systemInput.placeholder = i18nT('common.aiSystemPlaceholder')
+  const agentExecutableInput = document.createElement('input')
+  agentExecutableInput.className = 'ai-field ai-agent-config hidden'
+  agentExecutableInput.placeholder = 'Custom executable'
+  const agentArgsInput = document.createElement('input')
+  agentArgsInput.className = 'ai-field ai-agent-config hidden'
+  agentArgsInput.placeholder = 'Arguments (space-separated)'
   const vaultNotice = document.createElement('div')
   vaultNotice.className = 'ai-vault-notice hidden'
   settings.append(
     labeled('Prompt de sistema', systemInput),
     labeled('Base URL', baseUrlInput),
     labeled('API key', keyInput),
+    labeled('Agent executable', agentExecutableInput),
+    labeled('Agent arguments', agentArgsInput),
     vaultNotice,
   )
 
@@ -197,17 +223,29 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   let cfg: AiConfig = loadConfig()
   saveConfig(cfg) // rewrites the config without secrets (clears plaintext keys from the old schema)
   const messages: ChatMessage[] = []
+  invoke<string>('chat_history_load').then(raw => {
+    try {
+      const saved = JSON.parse(raw) as ChatMessage[]
+      if (saved.length) { messages.push(...saved); renderThread() }
+    } catch { /* archivo corrupto, empezamos limpio */ }
+  }).catch(() => {})
   let streaming = false
+  let agentSessionId: string | null = null
 
   const applyConfigToUi = (): void => {
     providerSelect.value = cfg.providerId
     modelSelect.value = cfg.model
     baseUrlInput.value = cfg.baseUrl
     systemInput.value = cfg.systemPrompt
+    agentExecutableInput.value = cfg.agentExecutable ?? ''
+    agentArgsInput.value = cfg.agentArgs ?? ''
     keyInput.placeholder = i18nT('common.aiKeyPlaceholder', {
       provider: providerById(cfg.providerId)?.label ?? i18nT('common.provider'),
     })
     refreshModelSuggestions()
+    agentSelect.classList.toggle('hidden', cfg.providerId !== 'agent')
+    const showCustomAgent = cfg.providerId === 'agent' && agentSelect.value === 'custom'
+    document.querySelectorAll('.ai-agent-config').forEach(el => el.classList.toggle('hidden', !showCustomAgent))
   }
 
   // Shows the Vault status and adjusts the key field accordingly.
@@ -255,6 +293,11 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     loadKeyField()
     persist()
   })
+  agentSelect.addEventListener('change', () => {
+    document.querySelectorAll('.ai-agent-config').forEach(el => el.classList.toggle('hidden', agentSelect.value !== 'custom'))
+  })
+  agentExecutableInput.addEventListener('change', () => { cfg = { ...cfg, agentExecutable: agentExecutableInput.value.trim() }; persist() })
+  agentArgsInput.addEventListener('change', () => { cfg = { ...cfg, agentArgs: agentArgsInput.value }; persist() })
   modelSelect.addEventListener('change', () => { cfg = { ...cfg, model: modelSelect.value.trim() }; persist() })
   baseUrlInput.addEventListener('change', () => { cfg = { ...cfg, baseUrl: baseUrlInput.value.trim() }; persist() })
   systemInput.addEventListener('change', () => { cfg = { ...cfg, systemPrompt: systemInput.value.trim() }; persist() })
@@ -320,6 +363,10 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   async function send(): Promise<void> {
     const text = input.value.trim()
     if (!text || streaming) return
+    if (cfg.providerId === 'agent') {
+      await sendToAgent(text)
+      return
+    }
     const status = await vaultStatus()
     if (status !== 'unlocked') {
       settings.classList.remove('hidden')
@@ -364,7 +411,38 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     } finally {
       streaming = false
       root.classList.remove('busy')
+      saveHistory(messages)
     }
+  }
+
+  async function sendToAgent(text: string): Promise<void> {
+    const projectPath = getActiveProjectPath()
+    if (!projectPath) {
+      settings.classList.remove('hidden')
+      return
+    }
+    input.value = ''
+    input.style.height = 'auto'
+    messages.push({ role: 'user', content: expandInput(text) })
+    const assistant: ChatMessage = { role: 'assistant', content: '' }
+    messages.push(assistant)
+    renderThread()
+    streaming = true
+    root.classList.add('busy')
+    const handle = startAgent({
+      agent: agentSelect.value as 'claude' | 'opencode' | 'codex' | 'custom',
+      message: expandInput(text),
+      history: messages.slice(0, -1),
+      projectPath,
+      sessionId: agentSessionId,
+      customExecutable: agentExecutableInput.value.trim() || undefined,
+      customArgs: agentArgsInput.value.trim() ? agentArgsInput.value.trim().split(/\s+/) : undefined,
+    }, chunk => { assistant.content += chunk; renderThread() },
+    sessionId => { agentSessionId = sessionId; renderThread() },
+    error => { assistant.content = `⚠️ ${error}`; renderThread() })
+    try { await handle.ready }
+    catch (error) { assistant.content = `⚠️ ${error instanceof Error ? error.message : String(error)}`; renderThread() }
+    finally { streaming = false; root.classList.remove('busy'); handle.unlisten(); saveHistory(messages) }
   }
 
   const chatUrl = (): string => `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`
@@ -453,6 +531,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     clampPosition()
     applyConfigToUi()
     loadKeyField()
+    renderThread()
     input.focus()
   }
   const close = (): void => {
@@ -474,6 +553,11 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     }
     toggleOpen()
   })
+  clearBtn.addEventListener('click', () => {
+    messages.length = 0
+    invoke('chat_history_save', { content: '[]' }).catch(() => {})
+    renderThread()
+  })
   closeBtn.addEventListener('click', close)
   window.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleOpen() }
@@ -485,6 +569,18 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     const detail = (e as CustomEvent<AiAskDetail>).detail
     runner = detail.runner // enables/clears the Run button depending on the origin
     tools = detail.tools   // enables/clears function-calling depending on the origin
+    if (detail.projectPath) {
+      setActiveProjectPath(detail.projectPath)
+      cfg = { ...cfg, providerId: 'agent' }
+      agentSelect.value = detail.agentType ?? 'claude'
+      applyConfigToUi()
+      persist()
+    }
+    if (detail.inject) {
+      messages.push({ role: detail.inject.role, content: detail.inject.content })
+      renderThread()
+      saveHistory(messages)
+    }
     open()
     input.value = detail.text
     input.dispatchEvent(new Event('input')) // recalculates the textarea height
