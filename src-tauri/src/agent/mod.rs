@@ -68,6 +68,8 @@ pub struct StartAgentArgs {
     pub custom_args: Option<Vec<String>>,
     #[serde(default)]
     pub review: bool,
+    #[serde(default)]
+    pub cleanup_project_path: bool,
 }
 
 #[tauri::command]
@@ -145,7 +147,7 @@ pub async fn start_agent(
         }
         other => return Err(format!("unsupported agent: {other}")),
     };
-    command.current_dir(root);
+    command.current_dir(&root);
     set_process_group(&mut command);
     command
         .stdout(std::process::Stdio::piped())
@@ -197,9 +199,13 @@ pub async fn start_agent(
     let manager = state.inner().clone();
     let id = request_id.to_string();
     let agent = args.agent.clone();
+    let cleanup_path = args.cleanup_project_path.then_some(root.clone());
     let timeout = if args.review { REVIEW_TIMEOUT } else { AGENT_TIMEOUT };
     tokio::spawn(async move {
         run_agent(window, id.clone(), agent, child, cancel_rx, timeout).await;
+        if let Some(path) = cleanup_path {
+            let _ = crate::review::release_managed_context_path(&path);
+        }
         let _ = done_tx.send(());
         manager
             .state

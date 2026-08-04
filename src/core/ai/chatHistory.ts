@@ -15,6 +15,9 @@ export interface ChatHistoryState {
 export interface ChatConversationContext {
   projectPath: string
   agentType: 'claude' | 'opencode' | 'codex' | 'custom'
+  title?: string
+  branch?: string
+  commit?: string
 }
 
 const validMessage = (value: unknown): value is ChatMessage => {
@@ -61,6 +64,9 @@ export function parseChatHistory(raw: string): ChatHistoryState {
       const value = context as Record<string, unknown>
       return typeof value.projectPath === 'string' && value.projectPath.length <= 2_000
         && ['claude', 'opencode', 'codex', 'custom'].includes(String(value.agentType))
+        && (value.title === undefined || (typeof value.title === 'string' && value.title.length <= 500))
+        && (value.branch === undefined || (typeof value.branch === 'string' && value.branch.length <= 2_000))
+        && (value.commit === undefined || (typeof value.commit === 'string' && /^[0-9a-f]{40,64}$/i.test(value.commit)))
     }))
     return { version: 2, activeConversation: active, conversations, contexts }
   } catch {

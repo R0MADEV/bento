@@ -16,6 +16,7 @@ export interface AgentParams {
   projectPath: string
   sessionId?: string | null
   review?: boolean
+  cleanupProjectPath?: boolean
   customExecutable?: string
   customArgs?: string[]
   diff?: string
@@ -115,6 +116,7 @@ export function startAgent(
         custom_executable: params.customExecutable ?? null,
         custom_args: params.customArgs ?? null,
         review: params.review ?? false,
+        cleanup_project_path: params.cleanupProjectPath ?? false,
       } })
     } catch (error) {
       complete()

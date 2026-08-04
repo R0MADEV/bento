@@ -17,12 +17,26 @@ describe('chat history', () => {
         global: [{ role: 'user', content: 'general' }],
         'tech-review:/repo:feat/a': [{ role: 'assistant', content: 'review' }],
       },
-      contexts: { 'tech-review:/repo:feat/a': { projectPath: '/repo', agentType: 'claude' } },
+      contexts: {
+        'tech-review:/repo:feat/a': {
+          projectPath: '/repo',
+          agentType: 'claude',
+          title: 'repo · feat/a',
+          branch: 'feat/a',
+          commit: '1111111111111111111111111111111111111111',
+        },
+      },
     })
 
     const parsed = parseChatHistory(raw)
     expect(parsed.conversations['tech-review:/repo:feat/a'][0].content).toBe('review')
-    expect(parsed.contexts['tech-review:/repo:feat/a']).toEqual({ projectPath: '/repo', agentType: 'claude' })
+    expect(parsed.contexts['tech-review:/repo:feat/a']).toEqual({
+      projectPath: '/repo',
+      agentType: 'claude',
+      title: 'repo · feat/a',
+      branch: 'feat/a',
+      commit: '1111111111111111111111111111111111111111',
+    })
   })
 
   it('normalizes Windows paths in Tech Review conversation keys', () => {

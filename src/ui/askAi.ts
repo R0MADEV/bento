@@ -26,6 +26,9 @@ export interface AiAskDetail {
   projectPath?: string
   agentType?: string
   conversationKey?: string
+  conversationTitle?: string
+  conversationBranch?: string
+  conversationCommit?: string
 }
 
 // Opens the chat with the text preloaded; autoSend=true sends it directly.
@@ -33,6 +36,6 @@ export interface AiAskDetail {
 // enables function-calling (the AI requests schema data on demand).
 // inject (optional) prepends a synthetic assistant message to the thread.
 // projectPath + agentType switch the chat to agent mode for immediate follow-ups.
-export function askAi(text: string, autoSend = false, runner?: AiQueryRunner, tools?: AiTool[], inject?: { role: 'assistant'; content: string }, projectPath?: string, agentType?: string, conversationKey?: string): void {
-  window.dispatchEvent(new CustomEvent<AiAskDetail>(AI_ASK_EVENT, { detail: { text, autoSend, runner, tools, inject, projectPath, agentType, conversationKey } }))
+export function askAi(text: string, autoSend = false, runner?: AiQueryRunner, tools?: AiTool[], inject?: { role: 'assistant'; content: string }, projectPath?: string, agentType?: string, conversationKey?: string, conversationTitle?: string, conversationBranch?: string, conversationCommit?: string): void {
+  window.dispatchEvent(new CustomEvent<AiAskDetail>(AI_ASK_EVENT, { detail: { text, autoSend, runner, tools, inject, projectPath, agentType, conversationKey, conversationTitle, conversationBranch, conversationCommit } }))
 }

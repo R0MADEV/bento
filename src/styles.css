@@ -3380,6 +3380,8 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   outline: none;
 }
 .ai-select { flex: 0 1 auto; min-width: 0; }
+.ai-history-select { flex: 1 1 180px; max-width: 280px; }
+.ai-branch-stale { color: var(--warning, #d99a31); }
 .ai-model { flex: 1 1 120px; min-width: 80px; }
 .ai-select:focus,
 .ai-model:focus,

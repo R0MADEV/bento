@@ -1494,6 +1494,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const reviewBaseBranch = baseBranch
     const reviewAgent = reviewAgentSelect.value as 'claude' | 'opencode' | 'codex'
     const reviewConversationKey = techReviewConversationKey(reviewRepoPath, reviewBranch)
+    const reviewProjectName = reviewRepoPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? reviewRepoPath
     const MAX_DIFF_CHARS = 18_000
     const rawDiff = lastFiles.map(f => f.chunk).join('\n')
     const diff = rawDiff.length > MAX_DIFF_CHARS
@@ -1529,11 +1530,12 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       progressMeta.textContent = chars ? `${chars} chars · ${secs}s` : `${secs}s`
     }, 500)
 
-    const showResult = (result: ReviewResponse): void => {
+    const showResult = (result: ReviewResponse, reviewCommit: string): void => {
       progressBox.remove()
       const verdictIcon = result.verdict === 'pass' ? '✅' : result.verdict === 'fail' ? '❌' : '⚠️'
       const lines = [
         `## Revisión: ${reviewBranch}`,
+        `Base: \`${reviewBaseBranch}\` · Commit: \`${reviewCommit.slice(0, 7)}\``,
         `${verdictIcon} **${result.verdict}** — ${result.summary}`,
       ]
       if (result.findings.length) {
@@ -1545,19 +1547,21 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           lines.push('')
         })
       }
-      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, reviewRepoPath, reviewAgent, reviewConversationKey)
+      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, reviewRepoPath, reviewAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit)
     }
     let worktree = ''
+    let managedWorktree = false
     let handle: ReturnType<typeof startAgent> | undefined
     try {
-      const snapshotBefore = await invoke<string>('review_snapshot', { repoPath: reviewRepoPath })
       progressStatus.textContent = 'Creating isolated worktree…'
-      worktree = await invoke<string>('review_worktree_create', {
+      const branchContext = await invoke<{ path: string; commit: string; managed: boolean }>('review_branch_context_prepare', {
         repoPath: reviewRepoPath,
-        reviewId: crypto.randomUUID(),
-        reference: 'HEAD',
-        includeWorkingTree: true,
+        reference: reviewBranch,
+        commit: null,
       })
+      worktree = branchContext.path
+      managedWorktree = branchContext.managed
+      const snapshotBefore = await invoke<string>('review_snapshot', { repoPath: worktree })
       progressStatus.textContent = 'Gathering context…'
       const contextProvider = createContextProvider({
         lexis: async () => {
@@ -1577,10 +1581,12 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         contextSources: context.sources,
         lexisContext: context.snippets.filter(snippet => snippet.reason !== 'changed').map(snippet => `${snippet.path}\n${snippet.content}`).join('\n\n'),
       })
-      const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath: reviewRepoPath })
+      const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath: worktree })
       if (snapshotBeforeAgent !== snapshotBefore) throw new Error('Repository changed while preparing the review')
       const agentLabel = reviewAgent === 'claude' ? 'Claude' : reviewAgent === 'opencode' ? 'OpenCode' : 'Codex'
       progressStatus.textContent = `${agentLabel} is reviewing…`
+      let finishResult!: () => void
+      const resultFinished = new Promise<void>(resolve => { finishResult = resolve })
       handle = startAgent(
         { agent: reviewAgent, message: prompt, history: [], projectPath: worktree, review: true },
         chunk => {
@@ -1593,24 +1599,31 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
               const json = extractFirstJsonObject(output)
               if (!json) throw new Error('No JSON object found in response')
               const result = validateReviewResponse(JSON.parse(json))
-              await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: reviewRepoPath, relative: finding.file })))
-              showResult(result)
+              await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: worktree, relative: finding.file })))
+              showResult(result, branchContext.commit)
             } catch (error) { progressBox.remove(); showReviewError(`Invalid AI review: ${String(error)}`) }
+            finally { finishResult() }
           })()
         },
-        message => { progressBox.remove(); showReviewError(message) },
+        message => { progressBox.remove(); showReviewError(message); finishResult() },
         tool => { progressStatus.textContent = `${agentLabel}: ${tool}` },
       )
       await handle.ready
       await handle.completed
-      const snapshotAfter = await invoke<string>('review_snapshot', { repoPath: reviewRepoPath })
+      await resultFinished
+      const snapshotAfter = await invoke<string>('review_snapshot', { repoPath: worktree })
       if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
     } catch (error) { progressBox.remove(); showReviewError(String(error)) }
     finally {
       clearInterval(timer)
       progressBox.remove()  // no-op si ya fue quitado por showResult/onError
       handle?.unlisten()
-      if (worktree) await invoke('review_worktree_remove', { repoPath: reviewRepoPath, worktree }).catch(error => showReviewError(String(error)))
+      if (managedWorktree) {
+        await invoke('review_branch_context_release', {
+          repoPath: reviewRepoPath,
+          reference: reviewBranch,
+        }).catch(error => showReviewError(String(error)))
+      }
       aiReviewBtn.disabled = false
       aiReviewBtn.title = 'AI Review'
     }

@@ -57,4 +57,15 @@ describe('Agent client context', () => {
     await handle.ready
     expect(mocks.invoke).not.toHaveBeenCalledWith('start_agent', expect.anything())
   })
+
+  it('forwards managed project cleanup to the backend', async () => {
+    const handle = startAgent(params({ cleanupProjectPath: true }), vi.fn(), vi.fn(), vi.fn())
+    await handle.ready
+
+    expect(mocks.invoke).toHaveBeenCalledWith('start_agent', {
+      args: expect.objectContaining({ cleanup_project_path: true }),
+    })
+    mocks.listeners.get(`agent://done:${handle.requestId}`)?.({ payload: { session_id: null } })
+    await handle.completed
+  })
 })
