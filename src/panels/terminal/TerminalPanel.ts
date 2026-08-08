@@ -4,6 +4,7 @@ import { FitAddon } from 'xterm-addon-fit'
 import { WebLinksAddon } from 'xterm-addon-web-links'
 import { SearchAddon } from 'xterm-addon-search'
 import { Unicode11Addon } from 'xterm-addon-unicode11'
+import { SerializeAddon } from 'xterm-addon-serialize'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
@@ -15,6 +16,8 @@ import { getThemeName, onThemeChange } from './themePreference'
 import { nextTheme } from '../../core/terminal/nextTheme'
 import type { TerminalProfile } from '../../core/terminal/profiles'
 import { createActivityTracker } from '../../core/terminal/activityTracker'
+import { createAgentStatusTracker } from '../../core/terminal/agentStatusTracker'
+import type { AgentStore } from '../../core/terminal/agentStore'
 import { parseOsc7Path, toDisplayPath } from '../../core/terminal/osc7'
 import { createSearchBar } from './searchBar'
 import { createTerminalAppearanceControls } from './appearanceControls'
@@ -47,11 +50,16 @@ export interface TerminalPanelHandle {
   onReady: (api: PanelApi) => void
   getCwd: () => string | undefined
   sendInput: (text: string) => void
+  onInput: (cb: (line: string) => void) => () => void
+  onBell: (cb: () => void) => () => void
+  getSnapshot: () => string
+  writeSnapshot: (data: string) => void
+  getPtyId: () => string
 }
 
 const DEFAULT_FONT_FAMILY = '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace'
 
-export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void, execCommand?: string[]): TerminalPanelHandle {
+export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void, execCommand?: string[], store?: AgentStore): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -84,6 +92,11 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   // focusin bubbles from xterm's internal textarea — public API has no onFocus
   const onRootFocus = () => tracker.onFocus()
   root.addEventListener('focusin', onRootFocus)
+
+  const agentStatus = createAgentStatusTracker()
+  agentStatus.onChange(status => {
+    store?.setStatus(id, status)
+  })
 
   const applyBackground = (background: string): void => {
     // xterm DOM renderer: update the viewport directly (it doesn't wait for activity)
@@ -149,8 +162,10 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const fitAddon = new FitAddon()
   const searchAddon = new SearchAddon()
+  const serializeAddon = new SerializeAddon()
   term.loadAddon(fitAddon)
   term.loadAddon(searchAddon)
+  term.loadAddon(serializeAddon)
   term.loadAddon(new Unicode11Addon())
   term.unicode.activeVersion = '11'
 
@@ -166,6 +181,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   root.appendChild(searchBar.element)
 
   const id = `pty-${++ptyCounter}`
+  store?.register(id, projectPath || 'Terminal')
   let disposed = false
   const eventUnlisteners: Array<() => void> = []
 
@@ -211,13 +227,18 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   let firstOutputSeen = false
   setTimeout(markShellReady, 1500)
 
-  // OSC 133;C = command start, 133;D = command end (shell integration)
+  // OSC 133 shell integration: A/B = prompt, C = command start, D = command end.
+  // A and B mean "shell is at the prompt" — use them to force idle so the shell
+  // printing its prompt does not appear as working (fallback output-based detection
+  // would otherwise trigger working on every prompt redraw).
   let commandRunning = false
   term.parser.registerOscHandler(133, data => {
-    if (data.startsWith('C')) commandRunning = true
+    if (data.startsWith('A') || data.startsWith('B')) agentStatus.onCommandEnd()
+    if (data.startsWith('C')) { commandRunning = true; agentStatus.onCommandStart() }
     const isCommandEnd = commandRunning && data.startsWith('D')
     if (isCommandEnd) {
       commandRunning = false
+      agentStatus.onCommandEnd()
       const groupView = root.closest<HTMLElement>('.dv-groupview')
       const isVisible = groupView?.classList.contains('dv-active-group') ?? false
       if (!isVisible) showCommandDoneToast(root)
@@ -239,6 +260,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     if (flush) {
       term.write(flush)
       tracker.onOutput(root.contains(document.activeElement))
+      agentStatus.onOutput()
     }
     if (safety) clearTimeout(safety)
     // Never hold an unterminated frame indefinitely (spec uses a ~150ms cap).
@@ -249,8 +271,53 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   // if we're already disposing (closing the panel kills the PTY, firing this too).
   listenTo(`pty-exit-${id}`, () => { if (!disposed) onExit?.() })
 
+  let inputCallback: ((line: string) => void) | undefined
+  let inputBuffer = ''
+
   term.onData(data => {
     invoke('pty_write', { id, data }).catch(() => {})
+    if (!inputCallback) return
+    if (data === '\r' || data === '\n') {
+      const line = inputBuffer.trim()
+      if (line) inputCallback(line)
+      inputBuffer = ''
+    } else if (data === '\x7f' || data === '\b') {
+      inputBuffer = inputBuffer.slice(0, -1)
+    } else if (data === '\x15') {
+      inputBuffer = '' // Ctrl+U clears line
+    } else if (data.length === 1 && data >= ' ') {
+      inputBuffer += data
+    }
+  })
+
+  const onInput = (cb: (line: string) => void): (() => void) => {
+    inputCallback = cb
+    return () => { inputCallback = undefined; inputBuffer = '' }
+  }
+
+  // Terminal bell (\a): agents like Claude Code ring it when a turn finishes or
+  // they need input/permission — a precise "this agent wants you" signal.
+  let bellCallback: (() => void) | undefined
+  term.onBell(() => bellCallback?.())
+  const onBell = (cb: () => void): (() => void) => {
+    bellCallback = cb
+    return () => { bellCallback = undefined }
+  }
+
+  // Drag files/folders from Finder → paste shell-quoted paths at the cursor.
+  // Uses tauri://drag-drop (dragDropEnabled: true) to get real OS paths; checks
+  // that the drop landed inside this terminal by comparing position to its rect.
+  listenTo<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', event => {
+    const { paths, position } = event.payload
+    if (!paths.length) return
+    const rect = root.getBoundingClientRect()
+    const isOver = position.x >= rect.left && position.x <= rect.right &&
+                   position.y >= rect.top  && position.y <= rect.bottom
+    if (!isOver) return
+    const quoted = paths.map(p =>
+      /[ "'\\$`!#&;()|<>]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p
+    )
+    invoke('pty_write', { id, data: quoted.join(' ') }).catch(() => {})
   })
 
   term.onSelectionChange(() => {
@@ -348,8 +415,13 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   const fit = () => {
     // requestAnimationFrame ensures the container already has its final size
     requestAnimationFrame(() => {
+      // Skip entirely when hidden (display:none → 0×0 px). Calling fitAddon.fit()
+      // on an invisible container corrupts xterm's internal state and can send a
+      // 0-row SIGWINCH to the PTY, crashing TUI processes like OpenCode.
+      if (root.offsetWidth === 0 && root.offsetHeight === 0) return
       fitAddon.fit()
       const dims: Dims = { rows: term.rows, cols: term.cols }
+      if (dims.rows === 0 || dims.cols === 0) return
       if (!dimsChanged(lastDims, dims)) return
       lastDims = dims
       invoke('pty_resize', { id, ...dims }).catch(() => {})
@@ -368,19 +440,25 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     eventUnlisteners.splice(0).forEach(unlisten => unlisten())
     unsubscribeTheme()
     root.removeEventListener('focusin', onRootFocus)
+    agentStatus.dispose()
+    store?.unregister(id)
     invoke('pty_kill', { id }).catch(() => {})
     try { term.dispose() } catch { /* ignore */ }
   }
 
   const onTitleChange = (cb: (title: string) => void): (() => void) => {
     titleCallback = cb
-    const d1 = term.onTitleChange(title => { if (title) tracker.setBase(title) })
+    const d1 = term.onTitleChange(title => {
+      if (title) { tracker.setBase(title); store?.setTitle(id, title) }
+    })
 
     const d2 = term.parser.registerOscHandler(7, data => {
       const path = parseOsc7Path(data)
       if (path) {
         lastCwd = path
-        tracker.setBase(toDisplayPath(path))
+        const display = toDisplayPath(path)
+        tracker.setBase(display)
+        store?.setTitle(id, display)
       }
       return true
     })
@@ -432,5 +510,11 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     else queuedInput.push(text)
   }
 
-  return { element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady, getCwd: () => lastCwd || undefined, sendInput }
+  return {
+    element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady,
+    getCwd: () => lastCwd || undefined, sendInput, onInput, onBell,
+    getSnapshot: () => serializeAddon.serialize({ scrollback: 500 }),
+    writeSnapshot: (data: string) => { if (data) term.write(data) },
+    getPtyId: () => id,
+  }
 }

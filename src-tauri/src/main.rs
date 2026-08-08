@@ -5,6 +5,8 @@
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
 mod agent;
+mod agent_sessions;
+mod agent_socket;
 mod chat_history;
 mod command_error;
 mod db;
@@ -180,6 +182,7 @@ fn main() {
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder
         .setup(|app| {
+            app.manage(agent_socket::start(app.handle()));
             #[cfg(target_os = "macos")]
             install_menu(app)?;
             if let Some(window) = app.get_webview_window("main") {
@@ -211,9 +214,15 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             http_get,
             http_request,
+            http_fetch_base64,
             app_identifier,
             agent::start_agent,
             agent::cancel_agent,
+            agent_sessions::agent_codex_clear_lock,
+            agent_sessions::agent_claude_session_exists,
+            agent_sessions::agent_find_opencode_session,
+            agent_socket::agent_get_session,
+            agent_socket::agent_socket_path,
             review::review_branch_context_prepare,
             review::review_branch_context_check,
             review::review_branch_context_update,

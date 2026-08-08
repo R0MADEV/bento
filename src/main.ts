@@ -2,7 +2,8 @@ import 'dockview-core/dist/styles/dockview.css'
 import './styles.css'
 import { createPanelRegistry } from './panels/registry'
 import { tvPanelDefinition } from './panels/tv/definition'
-import { terminalPanelDefinition } from './panels/terminal/definition'
+import { agentsPanelDefinition } from './panels/agents/definition'
+
 import { webPanelDefinition } from './panels/web/definition'
 import { notesPanelDefinition } from './panels/notes/definition'
 import { httpPanelDefinition } from './panels/http/definition'
@@ -73,7 +74,7 @@ const stateRepo = new TauriWorkspaceStateRepository()
 
 const panels = createPanelRegistry()
 panels.register(tvPanelDefinition(channelRepo, favoritesRepo, worldRepo))
-panels.register(terminalPanelDefinition)
+panels.register(agentsPanelDefinition())
 panels.register(webPanelDefinition)
 panels.register(notesPanelDefinition)
 panels.register(httpPanelDefinition)

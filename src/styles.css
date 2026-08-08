@@ -1673,6 +1673,396 @@ html, body, #app {
   to { opacity: 0; transform: translateX(-50%) translateY(-6px); }
 }
 
+/* Agent status badge */
+.term-agent-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 6px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--fg);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  opacity: 0.2;
+  transition: opacity 0.2s;
+}
+
+.terminal-panel:hover .term-agent-badge { opacity: 1; }
+
+.term-agent-badge[data-status="working"] { opacity: 0.9; border-color: #22c55e44; }
+.term-agent-badge[data-status="blocked"]  { opacity: 1;   border-color: #f59e0b88; }
+
+.term-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+
+.term-agent-badge[data-status="working"] .term-agent-dot {
+  background: #22c55e;
+  animation: agent-pulse 1.5s ease-in-out infinite;
+}
+
+.term-agent-badge[data-status="blocked"] .term-agent-dot {
+  background: #f59e0b;
+}
+
+.term-agent-timer { opacity: 0.65; }
+
+@keyframes agent-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 #22c55e66; }
+  50%       { opacity: 0.5; box-shadow: 0 0 0 4px transparent; }
+}
+
+/* Agents hub panel */
+.agents-hub-wrapper,
+.agents-hub {
+  height: 100%;
+  width: 100%;
+  display: flex;
+}
+
+.agents-hub {
+  font-family: "JetBrainsMono Nerd Font", "MesloLGS NF", "JetBrains Mono", "Fira Code", Menlo, monospace;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+/* Sidebar */
+.agents-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 85%, var(--surface));
+  overflow: hidden;
+  transition: width 0.2s ease;
+}
+
+.agents-sidebar.collapsed {
+  width: 32px;
+}
+
+.agents-sidebar.collapsed .agents-sidebar-list,
+.agents-sidebar.collapsed .agents-sidebar-footer,
+.agents-sidebar.collapsed .agents-sidebar-title {
+  display: none;
+}
+
+.agents-sidebar-header {
+  padding: 13px 14px 11px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agents-sidebar.collapsed .agents-sidebar-header {
+  padding: 10px 0;
+  justify-content: center;
+  border-bottom: none;
+}
+
+.agents-sidebar-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+/* Mini dots column — visible only when sidebar is collapsed */
+.agents-sidebar-mini {
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.agents-sidebar.collapsed .agents-sidebar-mini {
+  display: flex;
+}
+
+/* Each wrap matches the height of a full sidebar item so dots stay aligned */
+.agents-mini-dot-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: background 0.1s;
+}
+
+.agents-mini-dot-wrap:hover { background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.agents-mini-dot-wrap.active { background: var(--surface); }
+
+.agents-mini-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 20%, transparent);
+  pointer-events: none;
+}
+
+.agents-mini-dot-wrap.active .agents-mini-dot[data-status="working"] {
+  background: #22c55e;
+  animation: agent-pulse 1.5s ease-in-out infinite;
+}
+
+.agents-mini-dot-wrap.active .agents-mini-dot[data-status="blocked"] { background: #f59e0b; }
+
+.agents-sidebar-toggle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.1s;
+}
+
+.agents-sidebar-toggle:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.agents-sidebar-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.agents-sidebar-item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: start;
+  gap: 8px;
+  padding: 8px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.agents-sidebar-item:hover { background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.agents-sidebar-item.active { background: var(--surface); }
+
+.agents-sidebar-icon {
+  font-size: 11px;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--fg) 30%, transparent);
+  flex-shrink: 0;
+}
+
+.agents-sidebar-item[data-status="working"] .agents-sidebar-icon { color: #22c55e; }
+.agents-sidebar-item[data-status="blocked"]  .agents-sidebar-icon { color: #f59e0b; }
+
+.agents-sidebar-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agents-sidebar-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.agents-sidebar-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  cursor: text;
+  flex: 1;
+  min-width: 0;
+}
+
+.agents-sidebar-close {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0;
+  pointer-events: none; /* invisible → no captura eventos → sin parpadeo */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agents-sidebar-item:hover .agents-sidebar-close {
+  opacity: 0.45;
+  pointer-events: auto;
+}
+
+/* Usar el contexto del item padre para evitar flicker por hover independiente */
+.agents-sidebar-item:hover .agents-sidebar-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+}
+
+/* Attention badge on a background agent. 'bell' is the precise signal (the agent
+   rang the terminal bell) → bright blue, pulsing. 'blocked' is a soft heuristic
+   (30s of silence) → static amber. */
+.agents-sidebar-badge {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 2px;
+}
+.agents-sidebar-badge[data-kind="bell"] {
+  background: #3b82f6;
+  animation: agent-pulse 1.5s ease-in-out infinite;
+}
+.agents-sidebar-badge[data-kind="blocked"] { background: #f59e0b; opacity: 0.7; }
+
+/* Same signals on the collapsed mini-dots, shown even when not active. */
+.agents-mini-dot-wrap[data-attention="bell"] .agents-mini-dot {
+  background: #3b82f6;
+  animation: agent-pulse 1.5s ease-in-out infinite;
+}
+.agents-mini-dot-wrap[data-attention="blocked"] .agents-mini-dot { background: #f59e0b; opacity: 0.7; }
+
+.agents-sidebar-name-input {
+  flex: 1;
+  min-width: 0;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 1px 4px;
+  outline: none;
+}
+
+.agents-sidebar-cwd {
+  font-size: 10px;
+  opacity: 0.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-sidebar-elapsed {
+  font-size: 10px;
+  opacity: 0.4;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.agents-sidebar-item[data-status="working"] .agents-sidebar-elapsed,
+.agents-sidebar-item[data-status="blocked"]  .agents-sidebar-elapsed { opacity: 0.65; }
+
+.agents-sidebar-footer {
+  padding: 6px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.agents-new-btn {
+  width: 100%;
+  padding: 7px 10px;
+  background: none;
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+}
+
+.agents-new-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.agents-new-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* Terminal area */
+.agents-term-area {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.agents-term-slot {
+  position: absolute;
+  inset: 0;
+  /* visibility instead of display so all slots keep their real dimensions.
+     display:none → 0×0 → SIGWINCH → TUI apps like OpenCode jump on switch. */
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.agents-term-slot.active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.agents-term-slot .terminal-panel {
+  height: 100%;
+  width: 100%;
+}
+
+.agents-hub-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.agents-hub-empty > span:first-child { opacity: 0.4; font-size: 13px; }
+
+.agents-empty-hint {
+  font-size: 11px;
+  opacity: 0.25;
+}
+
 /* Thin futuristic scrollbars */
 ::-webkit-scrollbar {
   width: 4px;

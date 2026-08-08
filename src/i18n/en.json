@@ -593,6 +593,15 @@
     "aiBaseUrlPlaceholder": "https://api.openai.com/v1"
   },
   "panels": {
+    "agents": {
+      "noTerminals": "No agents running",
+      "noTerminalsHint": "Click \"+ New Agent\" to start",
+      "terminalCount": "{count} agent",
+      "terminalsCount": "{count} agents",
+      "newAgent": "New Agent",
+      "waitingForInput": "Waiting for input",
+      "wantsAttention": "Wants your attention"
+    },
     "db": {
       "connecting": "Connecting…",
       "databases": "Databases",
@@ -916,7 +925,10 @@
       "profileDescription": "Shell: {shell} · Theme: {theme} · {fontSize}px{fontFamily}",
       "shell": "Shell",
       "autoShell": "Auto (SHELL)",
-      "monospacePlaceholder": "monospace"
+      "monospacePlaceholder": "monospace",
+      "agentIdle": "Idle",
+      "agentWorking": "Working",
+      "agentBlocked": "Blocked"
     },
     "tv": {
       "country": "Country",

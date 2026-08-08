@@ -83,6 +83,7 @@ pub fn pty_spawn(
     // the user's login shell — used by the Docker panel's exec terminal.
     command: Option<Vec<String>>,
     state: tauri::State<Arc<PtyManager>>,
+    agent_socket: tauri::State<Arc<crate::agent_socket::AgentSocket>>,
     app: AppHandle,
 ) -> Result<(), String> {
     let pty_system = native_pty_system();
@@ -117,11 +118,24 @@ pub fn pty_spawn(
         }
     };
     cmd.env("TERM", "xterm-256color");
+    // Inject herdr-compatible env vars so existing agent hooks (Claude, Codex,
+    // OpenCode) can report their session ID back to Bento's socket server.
+    cmd.env("HERDR_ENV", "1");
+    cmd.env("HERDR_SOCKET_PATH", &agent_socket.socket_path);
+    cmd.env("HERDR_PANE_ID", &id);
 
     // Restore the saved cwd if it still exists (so a reopened terminal lands where
     // it was), else start in the user's home like a normal terminal.
+    // Expand leading ~ so display paths saved by the frontend work correctly.
     let start_dir = cwd
-        .filter(|d| !d.is_empty() && std::path::Path::new(d).is_dir())
+        .map(|d| {
+            if d.starts_with("~/") {
+                dirs_home().map(|h| h + &d[1..]).unwrap_or(d)
+            } else {
+                d
+            }
+        })
+        .filter(|d| !d.is_empty() && std::path::Path::new(d.as_str()).is_dir())
         .or_else(dirs_home);
     if let Some(dir) = start_dir {
         cmd.cwd(dir);

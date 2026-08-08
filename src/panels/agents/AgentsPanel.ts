@@ -1,0 +1,532 @@
+import { t as i18nT } from '../../i18n'
+import { appT } from '../../core/i18n'
+import { invoke } from '@tauri-apps/api/core'
+import { createAgentStore } from '../../core/terminal/agentStore'
+import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
+import { KNOWN_AGENTS, detectAgentCmd } from './detectAgent'
+
+const MAX_AGENTS = 20
+const SESSIONS_KEY = 'bento.agents.sessions'
+const COLLAPSED_KEY = 'bento.agents.collapsed'
+
+interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string; snapshot?: string }
+
+const STATUS_ICON: Record<string, string> = {
+  working: '●',
+  blocked: '◉',
+  idle: '○',
+}
+
+// Agents whose herdr hooks report the exact session_id via the Bento socket
+// (keyed by HERDR_PANE_ID). This is the reliable path.
+const SOCKET_AGENTS = new Set(['claude', 'codex'])
+// Agents without a socket-reporting hook: find the session on disk by creation
+// time. Only OpenCode needs this (it has no hook; its session lives in SQLite).
+const SESSION_FIND: Record<string, string> = {
+  'opencode': 'agent_find_opencode_session',
+}
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+// Builds the exact resume command, verifying the session still exists on disk
+// before using --resume to avoid "No conversation found" errors.
+async function buildResumeCmd(cmd: string, cwd: string, sessionId?: string): Promise<string> {
+  if (cmd === 'claude') {
+    if (sessionId) {
+      const exists = await invoke<boolean>('agent_claude_session_exists', { cwd, sessionId }).catch(() => false)
+      return exists ? `claude --resume ${sessionId}` : 'claude'
+    }
+    return 'claude'
+  }
+  if (cmd === 'opencode') return sessionId ? `opencode --session ${sessionId}` : 'opencode'
+  if (cmd === 'codex') {
+    if (sessionId) {
+      // Clear stale thread-writer lock so codex doesn't reject with
+      // "already has an active writer" when the previous PTY was killed externally.
+      await invoke('agent_codex_clear_lock', { sessionId }).catch(() => {})
+      return `codex resume ${sessionId}`
+    }
+    return 'codex'
+  }
+  return cmd
+}
+
+
+interface AgentSlot {
+  num: number
+  customName: string
+  cmd?: string
+  sessionId?: string
+  handle: TerminalPanelHandle
+  slot: HTMLDivElement
+  titleCleanup: () => void
+}
+
+export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit: () => void; dispose: () => void } {
+  const store = createAgentStore()
+  const slots: AgentSlot[] = []
+  let activeIndex = -1
+  let agentCounter = 0
+  let isEditing = false
+  let initialized = false
+  // Global registry of session IDs already claimed by an agent slot in this
+  // panel. Prevents two concurrent agents in the same directory from racing
+  // to capture the same session.
+  const claimedSessionIds = new Set<string>()
+
+  // Attention flags for background agents that need the user's eyes. Keyed by the
+  // terminal's store id, cleared when the user views that agent.
+  //  'bell'    — the agent rang the terminal bell (precise: turn done / needs
+  //              input). This is the real signal and always wins.
+  //  'blocked' — soft heuristic: no output for 30s (agentStatusTracker). Kept as
+  //              a fallback for agents that never ring the bell; auto-clears if
+  //              the agent resumes output (the silence was a false alarm).
+  type Attention = 'blocked' | 'bell'
+  const attention = new Map<string, Attention>()
+
+  // Writes the current agents to localStorage. Serializing each terminal's
+  // scrollback (getSnapshot) is expensive, so persistSessions() coalesces the
+  // frequent render-driven calls; persistNow() flushes immediately for critical
+  // events (session captured, panel disposed).
+  let persistTimer: ReturnType<typeof setTimeout> | undefined
+  const persistNow = () => {
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = undefined }
+    if (!initialized) return
+    const entries = store.getAll()
+    const sessions: SavedSession[] = slots.map((slot, i) => ({
+      name: slot.customName,
+      cwd: slot.handle.getCwd() || entries[i]?.title || '',
+      cmd: slot.cmd,
+      sessionId: slot.sessionId,
+      snapshot: slot.handle.getSnapshot(),
+    }))
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions))
+    } catch {
+      // Quota exceeded (scrollback too large): retry without snapshots so the
+      // resume-critical metadata (cmd + sessionId) is never lost.
+      try {
+        const light = sessions.map(({ snapshot: _snapshot, ...meta }) => meta)
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify(light))
+      } catch { /* storage unavailable — nothing else we can do */ }
+    }
+  }
+  const persistSessions = () => {
+    if (persistTimer || !initialized) return
+    persistTimer = setTimeout(() => { persistTimer = undefined; persistNow() }, 1500)
+  }
+
+  // Bind an agent to its own conversation. Claude/Codex report their exact
+  // session via the socket (keyed by pane id); OpenCode is matched on disk by
+  // creation time at/after launch (`sinceMs`), which never grabs another agent's
+  // session. Polls for the whole agent lifetime because OpenCode only writes the
+  // session on the first message, which may be long after launch.
+  const captureSession = async (agentSlot: AgentSlot, cmd: string, cwd: string, sinceMs: number) => {
+    const useSocket = SOCKET_AGENTS.has(cmd)
+    const findCmd = SESSION_FIND[cmd]
+    if (!useSocket && !findCmd) return
+
+    const paneId = agentSlot.handle.getPtyId()
+    let attempt = 0
+    const agentIsAlive = () => slots.includes(agentSlot) && !agentSlot.sessionId
+
+    // Socket agents report on SessionStart (seconds after launch); if the hook
+    // hasn't fired in ~1 min it never will, so stop polling. OpenCode writes its
+    // session only on the first message, which can be much later — poll long.
+    const maxAttempts = useSocket ? 15 : 120
+
+    while (agentIsAlive() && attempt < maxAttempts) {
+      await delay(Math.min(2000 + attempt * 500, 5000))
+      attempt++
+
+      // Socket (Claude/Codex): exact match by HERDR_PANE_ID.
+      // File-based (OpenCode): newest session created at/after sinceMs, skipping
+      // ones already claimed by another agent in this panel.
+      const [socketId, fileId] = await Promise.all([
+        useSocket
+          ? invoke<string | null>('agent_get_session', { paneId }).catch(() => null)
+          : Promise.resolve(null),
+        findCmd
+          ? invoke<string | null>(findCmd, { cwd, sinceMs, exclude: [...claimedSessionIds] }).catch(() => null)
+          : Promise.resolve(null),
+      ])
+
+      const id = (socketId && !claimedSessionIds.has(socketId)) ? socketId
+               : (fileId  && !claimedSessionIds.has(fileId))  ? fileId
+               : null
+
+      if (id) {
+        claimedSessionIds.add(id)
+        agentSlot.sessionId = id
+        persistNow()
+        return
+      }
+    }
+  }
+
+  // ── Root ──────────────────────────────────────────────────────
+  const root = document.createElement('div')
+  root.className = 'agents-hub'
+
+  // ── Sidebar ───────────────────────────────────────────────────
+  const sidebar = document.createElement('div')
+  sidebar.className = 'agents-sidebar'
+
+  let sidebarCollapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'
+
+  const toggleBtn = document.createElement('button')
+  toggleBtn.className = 'agents-sidebar-toggle'
+  toggleBtn.title = 'Toggle sidebar'
+  toggleBtn.textContent = sidebarCollapsed ? '›' : '‹'
+  toggleBtn.addEventListener('click', () => {
+    sidebarCollapsed = !sidebarCollapsed
+    sidebar.classList.toggle('collapsed', sidebarCollapsed)
+    toggleBtn.textContent = sidebarCollapsed ? '›' : '‹'
+    localStorage.setItem(COLLAPSED_KEY, String(sidebarCollapsed))
+    // Refit the active terminal after the CSS transition ends
+    setTimeout(() => slots[activeIndex]?.handle.fit?.(), 210)
+  })
+
+  // Mini dots shown when sidebar is collapsed — one per agent with status color
+  const miniDots = document.createElement('div')
+  miniDots.className = 'agents-sidebar-mini'
+
+  const sidebarHeader = document.createElement('div')
+  sidebarHeader.className = 'agents-sidebar-header'
+  sidebarHeader.innerHTML = `<span class="agents-sidebar-title">${appT('panelTerminal').toUpperCase()}</span>`
+  sidebarHeader.appendChild(toggleBtn)
+
+  const sidebarList = document.createElement('ul')
+  sidebarList.className = 'agents-sidebar-list'
+
+  const sidebarFooter = document.createElement('div')
+  sidebarFooter.className = 'agents-sidebar-footer'
+
+  const newBtn = document.createElement('button')
+  newBtn.className = 'agents-new-btn'
+  newBtn.textContent = `+ ${i18nT('agents.newAgent')}`
+  newBtn.addEventListener('click', () => addAgent())
+  sidebarFooter.appendChild(newBtn)
+
+  if (sidebarCollapsed) sidebar.classList.add('collapsed')
+  sidebar.append(sidebarHeader, miniDots, sidebarList, sidebarFooter)
+
+  // ── Terminal area ──────────────────────────────────────────────
+  const termArea = document.createElement('div')
+  termArea.className = 'agents-term-area'
+
+  const emptyMsg = document.createElement('div')
+  emptyMsg.className = 'agents-hub-empty'
+  emptyMsg.innerHTML = `<span>${i18nT('agents.noTerminals')}</span><span class="agents-empty-hint">${i18nT('agents.noTerminalsHint')}</span>`
+  termArea.appendChild(emptyMsg)
+
+  root.append(sidebar, termArea)
+
+  // ── Inline name edit ──────────────────────────────────────────
+  const startRename = (slot: AgentSlot, nameEl: HTMLElement) => {
+    // The click preceding dblclick can trigger activateAgent → renderSidebar,
+    // detaching nameEl before dblclick fires. Guard against that case.
+    if (!nameEl.isConnected) return
+    isEditing = true
+    const input = document.createElement('input')
+    input.className = 'agents-sidebar-name-input'
+    input.value = slot.customName
+    nameEl.replaceWith(input)
+    input.focus()
+    input.select()
+
+    let committed = false
+    const commit = () => {
+      if (committed) return
+      committed = true
+      const val = input.value.trim()
+      slot.customName = val || slot.customName
+      isEditing = false
+      renderSidebar()
+    }
+
+    input.addEventListener('blur', commit)
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur() }
+      if (e.key === 'Escape') { committed = true; isEditing = false; renderSidebar() }
+    })
+  }
+
+  // ── Sidebar render ─────────────────────────────────────────────
+
+  const renderSidebar = () => {
+    if (isEditing) return
+    sidebarList.innerHTML = ''
+    const entries = store.getAll()
+
+    newBtn.disabled = entries.length >= MAX_AGENTS
+    persistSessions()
+
+    // Update mini dots (visible when sidebar is collapsed)
+    // Each wrap has the same height as a full sidebar item so dots align with rows
+    miniDots.innerHTML = ''
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]
+      const wrap = document.createElement('div')
+      wrap.className = `agents-mini-dot-wrap${i === activeIndex ? ' active' : ''}`
+      const att = attention.get(entry.id)
+      if (att) wrap.dataset.attention = att
+      const dot = document.createElement('span')
+      dot.className = 'agents-mini-dot'
+      dot.dataset.status = entry.status
+      const name = slots[i]?.customName ?? ''
+      wrap.title = entry.title ? `${name}\n${entry.title}` : name
+      wrap.appendChild(dot)
+      wrap.addEventListener('click', () => {
+        if (sidebarCollapsed) activateAgent(i)
+      })
+      miniDots.appendChild(wrap)
+    }
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]
+      const slot = slots[i]
+      if (!slot) continue
+      const isActive = i === activeIndex
+
+      const li = document.createElement('li')
+      li.className = `agents-sidebar-item${isActive ? ' active' : ''}`
+      li.dataset.status = entry.status
+      const att = attention.get(entry.id)
+      if (att) li.dataset.attention = att
+
+      const icon = document.createElement('span')
+      icon.className = 'agents-sidebar-icon'
+      icon.textContent = STATUS_ICON[entry.status] ?? '○'
+
+      const info = document.createElement('div')
+      info.className = 'agents-sidebar-info'
+
+      const nameRow = document.createElement('div')
+      nameRow.className = 'agents-sidebar-name-row'
+
+      const nameEl = document.createElement('span')
+      nameEl.className = 'agents-sidebar-name'
+      nameEl.textContent = slot.customName
+      nameEl.addEventListener('dblclick', e => {
+        e.stopPropagation()
+        startRename(slot, nameEl)
+      })
+
+      // Tooltip on the whole row: name + path (useful when name is truncated)
+      li.title = entry.title
+        ? `${slot.customName}\n${entry.title}`
+        : slot.customName
+
+      const closeBtn = document.createElement('button')
+      closeBtn.className = 'agents-sidebar-close'
+      closeBtn.textContent = '×'
+      closeBtn.title = 'Close agent'
+      closeBtn.addEventListener('click', e => {
+        e.stopPropagation()
+        removeAgent(i)
+      })
+
+      if (att) {
+        const badge = document.createElement('span')
+        badge.className = 'agents-sidebar-badge'
+        badge.dataset.kind = att
+        const label = att === 'blocked' ? i18nT('agents.waitingForInput') : i18nT('agents.wantsAttention')
+        badge.title = label
+        badge.setAttribute('aria-label', label)
+        nameRow.append(nameEl, badge, closeBtn)
+      } else {
+        nameRow.append(nameEl, closeBtn)
+      }
+
+      const cwd = document.createElement('div')
+      cwd.className = 'agents-sidebar-cwd'
+      cwd.textContent = entry.title
+      cwd.title = entry.title
+
+      info.append(nameRow, cwd)
+      li.append(icon, info)
+      li.addEventListener('click', () => activateAgent(i))
+      sidebarList.appendChild(li)
+    }
+  }
+
+  // ── Status → soft 'blocked' attention flag ─────────────────────
+  // The precise 'bell' flag is set from the terminal bell (see addAgent).
+  store.onChange(entries => {
+    const activeId = slots[activeIndex]?.handle.getPtyId()
+    for (const e of entries) {
+      // The agent the user is looking at never needs an attention flag.
+      if (e.id === activeId) { attention.delete(e.id); continue }
+      const wentQuiet = e.status === 'blocked' && attention.get(e.id) !== 'bell'
+      const resumedOutput = e.status === 'working' && attention.get(e.id) === 'blocked'
+      if (wentQuiet) attention.set(e.id, 'blocked')
+      else if (resumedOutput) attention.delete(e.id)
+    }
+    renderSidebar()
+  })
+
+  // ── Activate agent by index ────────────────────────────────────
+  // Does NOT call renderSidebar — only patches the CSS active class so that
+  // the existing nameEl DOM nodes stay connected (required for dblclick → rename).
+  const activateAgent = (index: number) => {
+    if (activeIndex >= 0 && slots[activeIndex]) {
+      slots[activeIndex].slot.classList.remove('active')
+    }
+    activeIndex = index
+    if (slots[index]) {
+      emptyMsg.hidden = true
+      slots[index].slot.classList.add('active')
+      slots[index].handle.fit?.()
+      slots[index].handle.focus?.()
+    }
+    // Viewing an agent clears its attention flag. activateAgent must not call
+    // renderSidebar (it would detach nameEl mid-dblclick), so patch in place.
+    const activeId = slots[index]?.handle.getPtyId()
+    if (activeId) attention.delete(activeId)
+    sidebarList.querySelectorAll<HTMLElement>('.agents-sidebar-item').forEach((li, i) => {
+      const isActive = i === index
+      li.classList.toggle('active', isActive)
+      if (isActive) {
+        li.removeAttribute('data-attention')
+        li.querySelector('.agents-sidebar-badge')?.remove()
+      }
+    })
+    ;(miniDots.children[index] as HTMLElement | undefined)?.removeAttribute('data-attention')
+  }
+
+  // ── Add agent ─────────────────────────────────────────────────
+  const addAgent = (savedName?: string, savedCwd?: string, savedCmd?: string, savedSessionId?: string, savedSnapshot?: string) => {
+    if (slots.length >= MAX_AGENTS) return
+
+    const num = ++agentCounter
+    const defaultName = `Agent ${num}`
+
+    const slot = document.createElement('div')
+    slot.className = 'agents-term-slot'
+    termArea.appendChild(slot)
+
+    const handle = createTerminalPanel(
+      `agent-${num}`,
+      savedCwd || projectPath,
+      () => removeAgent(slots.findIndex(s => s.handle === handle)),
+      undefined,
+      store,
+    )
+
+    slot.appendChild(handle.element)
+
+    const agentSlot: AgentSlot = {
+      num,
+      customName: savedName || defaultName,
+      cmd: savedCmd,
+      sessionId: savedSessionId,
+      handle,
+      slot,
+      titleCleanup: () => {},
+    }
+    const offTitle = handle.onTitleChange(() => renderSidebar())
+    // Bell from a background agent = it wants the user's eyes → flag immediately.
+    const offBell = handle.onBell(() => {
+      const id = handle.getPtyId()
+      if (slots[activeIndex]?.handle.getPtyId() === id) return
+      attention.set(id, 'bell')
+      renderSidebar()
+    })
+    agentSlot.titleCleanup = () => { offTitle(); offBell() }
+
+    if (savedSnapshot) handle.writeSnapshot(savedSnapshot)
+    if (savedCmd) {
+      buildResumeCmd(savedCmd, savedCwd || projectPath, savedSessionId).then(cmd => {
+        handle.sendInput(cmd)
+        // If the command contains --resume / --session the stored sessionId is
+        // still valid and capture can be skipped.  Otherwise the session file no
+        // longer exists (or was never captured) — clear the stale ID so the
+        // agentIsAlive() guard inside captureSession lets it poll.
+        const isResuming = cmd.includes('--resume') || cmd.includes('--session') || cmd.includes(' resume ')
+        if (!isResuming) {
+          if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
+          agentSlot.sessionId = undefined
+          captureSession(agentSlot, savedCmd, handle.getCwd() || savedCwd || projectPath, Date.now())
+        }
+      })
+    }
+
+    // Detect known agent CLIs from what the user types.
+    // Rename only if still at the default name; always (re)capture the session.
+    handle.onInput(line => {
+      const cmd = detectAgentCmd(line)
+      if (!cmd) return
+      if (agentSlot.customName === defaultName) {
+        agentSlot.customName = KNOWN_AGENTS[cmd]
+        agentSlot.cmd = cmd
+        renderSidebar()
+      } else if (!agentSlot.cmd) {
+        agentSlot.cmd = cmd
+      }
+      // Always restart session capture so a new run of the same agent updates
+      // the stored sessionId even after a rename or app restart.
+      if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
+      agentSlot.sessionId = undefined
+      captureSession(agentSlot, cmd, handle.getCwd() || savedCwd || projectPath, Date.now())
+    })
+
+    slots.push(agentSlot)
+
+    activateAgent(slots.length - 1)
+  }
+
+  // ── Remove agent ──────────────────────────────────────────────
+  const removeAgent = (index: number) => {
+    if (index < 0 || index >= slots.length) return
+    const s = slots[index]
+    attention.delete(s.handle.getPtyId())
+    s.titleCleanup()
+    s.handle.dispose?.()
+    s.slot.remove()
+    slots.splice(index, 1)
+
+    if (slots.length === 0) {
+      activeIndex = -1
+      emptyMsg.hidden = false
+    } else {
+      activateAgent(Math.min(index, slots.length - 1))
+    }
+    renderSidebar()
+  }
+
+  // ── Fit ───────────────────────────────────────────────────────
+  const fit = () => {
+    if (activeIndex >= 0 && slots[activeIndex]) {
+      slots[activeIndex].handle.fit?.()
+    }
+  }
+
+  // ── Dispose ───────────────────────────────────────────────────
+  const dispose = () => {
+    persistNow()
+    for (const s of slots) {
+      s.titleCleanup()
+      s.handle.dispose?.()
+    }
+    slots.length = 0
+  }
+
+  // Restore previously open agents, or start with one fresh agent
+  const savedSessions = (() => {
+    try { return JSON.parse(localStorage.getItem(SESSIONS_KEY) ?? '[]') as SavedSession[] }
+    catch { return [] }
+  })()
+
+  if (savedSessions.length > 0) {
+    for (const s of savedSessions) {
+      if (s.sessionId) claimedSessionIds.add(s.sessionId)
+      addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, s.snapshot)
+    }
+  } else {
+    addAgent()
+  }
+  initialized = true
+
+  return { element: root, fit, dispose }
+}
