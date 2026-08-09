@@ -30,3 +30,17 @@ export function detectAgentCmd(line: string): string | undefined {
   const base = first.split('/').pop() || first
   return KNOWN_AGENTS[base] ? base : undefined
 }
+
+// The name + cmd a terminal's slot should have after `detected` is run in it.
+// cmd ALWAYS follows the latest agent so it stays consistent with the session
+// captured for that same agent — mixing a previous agent's cmd with a new
+// agent's session id yields e.g. `opencode --session <codex-id>`. The display
+// name only auto-updates while the slot still has its default name.
+export function resolveAgentIdentity(
+  currentName: string,
+  defaultName: string,
+  detected: string,
+): { name: string; cmd: string } {
+  const name = currentName === defaultName ? (KNOWN_AGENTS[detected] ?? currentName) : currentName
+  return { name, cmd: detected }
+}

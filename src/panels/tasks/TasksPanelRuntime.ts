@@ -29,6 +29,7 @@ import { buildCommitLogView } from './CommitLogView'
 import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
 import { buildSyncErrorView, buildWorktreeTerminalView } from './TaskAuxiliaryViews'
 import { loadTaskData } from './TaskDataLoader'
+import { taskProgress } from './taskProgress'
 import { buildIncomingChangesView } from './IncomingChangesView'
 import { taskRowActions } from './TaskRowActions'
 import { TauriAppSettingsRepository } from '../../adapters/TauriAppSettingsRepository'
@@ -44,6 +45,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   let detailCleanup: () => void = () => {}
   let selectedRow: HTMLElement | null = null
   let filterText = ''
+  let projectCollapsed = false
   let lastStatuses = new Map<string, number>()
   let lastRunningPaths = new Set<string>()
   let baseBranch = panelStore.base()
@@ -142,7 +144,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   const listWrap = document.createElement('div')
   listWrap.className = 'tasks-list-wrap'
 
-  sidebar.append(filterInput, listWrap)
+  const progressFooter = document.createElement('div')
+  progressFooter.className = 'tasks-progress'
+
+  sidebar.append(filterInput, listWrap, progressFooter)
 
   const detailPane = document.createElement('div')
   detailPane.className = 'tasks-detail'
@@ -315,7 +320,37 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     applyFilter()
   }
 
+  function progressBar(label: string, v: { done: number; total: number }): HTMLElement {
+    const pct = v.total ? Math.round((v.done / v.total) * 100) : 0
+    const wrap = document.createElement('div')
+    wrap.className = 'tasks-progress-item'
+    const head = document.createElement('div')
+    head.className = 'tasks-progress-head'
+    head.append(
+      Object.assign(document.createElement('span'), { className: 'tasks-progress-label', textContent: label }),
+      Object.assign(document.createElement('span'), { className: 'tasks-progress-stat', textContent: `${v.done}/${v.total} · ${pct}%` }),
+    )
+    const track = document.createElement('div')
+    track.className = 'tasks-progress-track'
+    const fill = document.createElement('div')
+    fill.className = 'tasks-progress-fill'
+    fill.style.width = `${pct}%`
+    track.appendChild(fill)
+    wrap.append(head, track)
+    return wrap
+  }
+
+  // Footer progress bars: aggregate health of the repo's worktrees (see taskProgress).
+  function updateProgress(): void {
+    const p = taskProgress(worktrees, lastStatuses, aheadBehindMap)
+    progressFooter.replaceChildren(
+      progressBar(taskT('tasksClean'), p.clean),
+      progressBar(taskT('tasksSynced'), p.synced),
+    )
+  }
+
   function applyFilter(): void {
+    updateProgress()
     const lf = filterText.toLowerCase()
     const filtered = filterText
       ? worktrees.filter(wt => (wt.branch ?? '').toLowerCase().includes(lf) || wt.path.toLowerCase().includes(lf))
@@ -335,7 +370,28 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       const isMain = i === 0 && !filterText
       list.appendChild(buildRow(wt, isMain, lastStatuses.get(wt.path) ?? 0, lastRunningPaths.has(wt.path)))
     })
-    listWrap.append(list, buildCreateForm())
+
+    // Group the worktrees under a collapsible project header (the repo name),
+    // matching the reference's "acme-web / acme-internal" grouping.
+    const group = document.createElement('div')
+    group.className = `tasks-project${projectCollapsed ? ' collapsed' : ''}`
+    const projectHeader = document.createElement('button')
+    projectHeader.type = 'button'
+    projectHeader.className = 'tasks-project-header'
+    const chevron = document.createElement('span')
+    chevron.className = 'tasks-project-chevron'
+    chevron.innerHTML = icon('chevron-down')
+    projectHeader.append(
+      chevron,
+      Object.assign(document.createElement('span'), { className: 'tasks-project-name', textContent: projectKey() }),
+      Object.assign(document.createElement('span'), { className: 'tasks-project-count', textContent: String(filtered.length) }),
+    )
+    projectHeader.addEventListener('click', () => {
+      projectCollapsed = !projectCollapsed
+      group.classList.toggle('collapsed', projectCollapsed)
+    })
+    group.append(projectHeader, list)
+    listWrap.append(group, buildCreateForm())
   }
 
   function buildRow(wt: Worktree, isMain: boolean, changes: number, hasRunning: boolean): HTMLElement {

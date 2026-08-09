@@ -3,7 +3,7 @@ import { appT } from '../../core/i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { createAgentStore } from '../../core/terminal/agentStore'
 import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
-import { KNOWN_AGENTS, detectAgentCmd } from './detectAgent'
+import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
 
 const MAX_AGENTS = 20
 const SESSIONS_KEY = 'bento.agents.sessions'
@@ -457,15 +457,13 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     handle.onInput(line => {
       const cmd = detectAgentCmd(line)
       if (!cmd) return
-      if (agentSlot.customName === defaultName) {
-        agentSlot.customName = KNOWN_AGENTS[cmd]
-        agentSlot.cmd = cmd
-        renderSidebar()
-      } else if (!agentSlot.cmd) {
-        agentSlot.cmd = cmd
-      }
-      // Always restart session capture so a new run of the same agent updates
-      // the stored sessionId even after a rename or app restart.
+      // cmd ALWAYS follows the latest agent run in this terminal, so it stays
+      // consistent with the session captured for it (else you get e.g.
+      // `opencode --session <codex-id>`). Name auto-updates only while default.
+      const { name } = resolveAgentIdentity(agentSlot.customName, defaultName, cmd)
+      if (name !== agentSlot.customName) { agentSlot.customName = name; renderSidebar() }
+      agentSlot.cmd = cmd
+      // Restart session capture so the stored sessionId reflects this agent.
       if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
       agentSlot.sessionId = undefined
       captureSession(agentSlot, cmd, handle.getCwd() || savedCwd || projectPath, Date.now())

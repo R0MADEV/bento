@@ -1,4 +1,5 @@
 import { appendOperation, type GitOperationEntry } from '../../core/git/rebaseWorkflow'
+import { addRepo, removeRepo } from './repoList'
 
 export class TaskPanelStore {
   private readonly prefix: string
@@ -19,6 +20,21 @@ export class TaskPanelStore {
     localStorage.removeItem(this.key('projectKey'))
     localStorage.removeItem(this.key('devcontainerDir'))
   }
+
+  // Multi-repo list. Migrates from the legacy single `repo` key on first read.
+  repositories(): string[] {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.key('repos')) ?? '[]')
+      if (Array.isArray(raw) && raw.length) return raw as string[]
+    } catch { /* fall through to migration */ }
+    const legacy = this.repository()
+    return legacy ? [legacy] : []
+  }
+  private setRepositories(list: string[]): void {
+    localStorage.setItem(this.key('repos'), JSON.stringify(list))
+  }
+  addRepository(path: string): void { this.setRepositories(addRepo(this.repositories(), path)) }
+  removeRepository(path: string): void { this.setRepositories(removeRepo(this.repositories(), path)) }
 
   projectKey(): string | null { return localStorage.getItem(this.key('projectKey')) }
   setProjectKey(projectKey: string): void {

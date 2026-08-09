@@ -11,6 +11,9 @@ import { setTheme } from '../panels/terminal/themePreference'
 import { isMac } from '../ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition } from '../ui/sessionBarPreference'
+import { createPanelLauncher } from '../ui/panelLauncher'
+import { createHomeView } from './createHomeView'
+import { getLauncherPosition, setLauncherPosition, onLauncherPositionChange, onLauncherCollapsedChange, LAUNCHER_POSITIONS, type LauncherPosition } from '../ui/launcherPreference'
 import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
 import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
@@ -68,11 +71,77 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   body.className = 'session-body'
 
   content.append(bar, body)
-  root.appendChild(content)
+
+  // Panel launcher: a movable dock that opens panels into the active session.
+  // It lives OUTSIDE session-content so it simply stacks with the session bar
+  // (no collision handling needed). openPanel targets the active session.
+  const openPanel = (type: string): void => {
+    // With no sessions open, activeId is null — create one first so the click
+    // always opens the panel instead of doing nothing.
+    if (!state.activeId) { state = addSession(state); render() }
+    if (state.activeId) ensureView(state.activeId).addPanel(type)
+  }
+  // Always makes a NEW session (unlike openPanel, which targets the active one)
+  // and opens a terminal in it, so "new session" never lands on an empty center.
+  const newSessionWithTerminal = (): void => {
+    state = addSession(state)
+    render()
+    if (state.activeId) ensureView(state.activeId).addPanel('terminal')
+  }
+  const launcher = createPanelLauncher(openPanel)
+
+  // Center home, shown only when there are no sessions (see render()).
+  const home = createHomeView({
+    // New session lands you in a terminal/agent so the center is never a
+    // confusing empty workspace.
+    onNewSession: () => newSessionWithTerminal(),
+    onResumeAgents: () => openPanel('terminal'),
+    onOpenProject: (cwd) => {
+      state = addSession(state)
+      if (state.activeId) state = setSessionProject(state, state.activeId, cwd)
+      render()
+      openPanel('terminal')
+    },
+  })
+  body.appendChild(home.element)
+
+  const shell = document.createElement('div')
+  shell.className = 'session-shell'
+  shell.append(launcher.element, content)
+  root.appendChild(shell)
 
   const applyBarPosition = (): void => { root.dataset.barPos = getBarPosition() }
   applyBarPosition()
   onBarPositionChange(applyBarPosition)
+
+  const refitActive = (): void => {
+    if (state.activeId) requestAnimationFrame(() => views.get(state.activeId!)?.fit())
+  }
+  const applyLauncherPosition = (): void => { root.dataset.launcherPos = getLauncherPosition() }
+  applyLauncherPosition()
+  onLauncherPositionChange(() => { applyLauncherPosition(); refitActive() })
+  onLauncherCollapsedChange(refitActive)
+
+  // Session shortcuts: Ctrl+Alt+] → next session, Ctrl+Alt+[ → previous.
+  // Cycle only (the user's Cmd+digit and Ctrl+digit are both bound elsewhere).
+  // Captured on window so we intercept before the terminal; matched by physical
+  // key code (Alt changes the produced character on some layouts).
+  const gotoSession = (id: string): void => {
+    if (id === state.activeId) return
+    state = setActiveSession(state, id)
+    render()
+  }
+  window.addEventListener('keydown', (e) => {
+    const isBracket = e.code === 'BracketRight' || e.code === 'BracketLeft'
+    if (!e.ctrlKey || !e.altKey || e.metaKey || !isBracket) return
+    if (state.sessions.length < 2) return
+    e.preventDefault()
+    e.stopPropagation()
+    const current = state.sessions.findIndex(s => s.id === state.activeId)
+    const delta = e.code === 'BracketRight' ? 1 : -1
+    const next = (current + delta + state.sessions.length) % state.sessions.length
+    gotoSession(state.sessions[next].id)
+  }, true)
 
   const views = new Map<string, WorkspaceView>()
   let savedLayouts: Record<string, unknown> = {}
@@ -97,13 +166,29 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     if (existing) return existing
     const view = createWorkspaceView(panels, {
       savedLayout: savedLayouts[id],
-      onChange: persist,
+      // Re-evaluate the home too: closing the last panel returns to the landing.
+      onChange: () => { persist(); updateHomeVisibility() },
       projectPath: () => state.sessions.find(s => s.id === id)?.projectPath,
     })
     view.element.classList.add('session-instance')
     body.appendChild(view.element)
     views.set(id, view)
     return view
+  }
+
+  // The home shows when there is nothing to work on: no sessions, or the active
+  // session has no panels (the user closed them all). The launcher is chrome for
+  // working, so it hides whenever the home shows.
+  const updateHomeVisibility = (): void => {
+    const activeView = state.activeId ? views.get(state.activeId) : undefined
+    const activeEmpty = !!activeView && activeView.panelTitles().length === 0
+    const showHome = state.sessions.length === 0 || activeEmpty
+    home.element.classList.toggle('hidden', !showHome)
+    launcher.element.classList.toggle('hidden', showHome)
+    // The empty active view (which paints its own empty state over the body) must
+    // be hidden so our home shows through; shown again once it has panels.
+    if (activeView) activeView.element.classList.toggle('hidden', showHome)
+    if (showHome) home.refresh()
   }
 
   const disposeView = (id: string): void => {
@@ -275,7 +360,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     add.innerHTML = icon('plus')
     add.title = appT('newSession')
     add.setAttribute('aria-label', appT('newSession'))
-    add.addEventListener('click', () => { state = addSession(state); render() })
+    add.addEventListener('click', () => newSessionWithTerminal())
     tabsArea.appendChild(add)
 
     views.forEach((view, id) => view.element.classList.toggle('hidden', id !== state.activeId))
@@ -286,6 +371,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       requestAnimationFrame(() => view.fit())
     }
 
+    updateHomeVisibility()
     persist()
   }
 
@@ -385,6 +471,18 @@ const barPos = getBarPosition()
         label: `${barPos === pos ? '✓' : '○'} ${appT('sessionsPosition', { position: label })}`,
         keywords: ['barra', 'sesiones', 'posición', 'mover', label],
         run: () => setBarPosition(pos),
+      })
+    })
+    const launcherPos = getLauncherPosition()
+    const launcherLabels: Record<LauncherPosition, string> = {
+      left: appT('left'), right: appT('right'), top: appT('top'), bottom: appT('bottom'),
+    }
+    LAUNCHER_POSITIONS.forEach(pos => {
+      commands.push({
+        id: `launcher-${pos}`,
+        label: `${launcherPos === pos ? '✓' : '○'} ${appT('launcherPosition', { position: launcherLabels[pos] })}`,
+        keywords: ['launcher', 'paneles', 'dock', 'posición', 'mover', launcherLabels[pos]],
+        run: () => setLauncherPosition(pos),
       })
     })
     themeNames.forEach(name => {
