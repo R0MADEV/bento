@@ -12,6 +12,7 @@ import { isMac } from '../ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import { getBarPosition, setBarPosition, onBarPositionChange, type BarPosition } from '../ui/sessionBarPreference'
 import { createPanelLauncher } from '../ui/panelLauncher'
+import { createAgentStatusBar } from '../ui/agentStatusBar'
 import { createHomeView } from './createHomeView'
 import { getLauncherPosition, setLauncherPosition, onLauncherPositionChange, onLauncherCollapsedChange, LAUNCHER_POSITIONS, type LauncherPosition } from '../ui/launcherPreference'
 import { panelTitlesFromLayout } from '../core/workspace/panelTitles'
@@ -89,6 +90,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     if (state.activeId) ensureView(state.activeId).addPanel('terminal')
   }
   const launcher = createPanelLauncher(openPanel)
+  const agentStatusBar = createAgentStatusBar({ onOpenAgents: () => openPanel('terminal') })
 
   // Center home, shown only when there are no sessions (see render()).
   const home = createHomeView({
@@ -108,7 +110,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const shell = document.createElement('div')
   shell.className = 'session-shell'
   shell.append(launcher.element, content)
-  root.appendChild(shell)
+  root.append(shell, agentStatusBar.element)
 
   const applyBarPosition = (): void => { root.dataset.barPos = getBarPosition() }
   applyBarPosition()

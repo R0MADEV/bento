@@ -411,7 +411,7 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
 
   // Cheap re-display of a prepared task's URLs (reads .devcontainer/.env, no isolate).
   // Returns false when the task isn't a prepared devcontainer.
-  const showDevcontainerUrls = async (worktree: Worktree, devcontainerDir?: string): Promise<boolean> => {
+  const showDevcontainerUrls = async (worktree: Worktree, devcontainerDir?: string, shouldShow = () => true): Promise<boolean> => {
     try {
       const urls = await invoke<{ service: string; url: string }[]>('devcontainer_urls', {
         worktreePath: worktree.path,
@@ -421,6 +421,7 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
         worktreePath: worktree.path,
         devcontainerDir: devcontainerDir || null,
       }).catch(() => null)
+      if (!shouldShow()) return true
       showDevcontainer({ subnet: '', urls, recipe: recipe ?? undefined }, worktree)
       return true
     } catch {

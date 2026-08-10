@@ -79,9 +79,9 @@ export async function loadTaskData(options: {
     const selectedWt = worktrees.find(w => maps.rebase.get(w.path)?.active) ?? (savedPath ? worktrees.find(w => w.path === savedPath) : undefined)
     if (selectedWt) {
       const rows = listWrap.querySelectorAll<HTMLElement>('.tasks-row')
-      const idx = worktrees.indexOf(selectedWt)
-      if (rows[idx]) {
-        selectRow(rows[idx]); panelStore.setSelected(selectedWt.path)
+      const row = [...rows].find(item => item.dataset.path === selectedWt.path)
+      if (row) {
+        selectRow(row); panelStore.setSelected(selectedWt.path)
         const rebase = maps.rebase.get(selectedWt.path)
         if (rebase?.active) showRebasePaused(selectedWt, rebase); else showChanges(selectedWt)
       }

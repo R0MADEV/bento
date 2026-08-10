@@ -7,9 +7,11 @@ import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { initUndo, commit, undo, redo, current, type UndoState } from '../../core/notes/undoStack'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
+import { createHorizontalResizablePane } from '../../ui/resizablePane'
 
 type ViewMode = 'edit' | 'preview' | 'split-h' | 'split-v'
 const VIEW_KEY = 'bento.notes.view'
+const SIDEBAR_WIDTH_KEY = 'bento.notes.sidebarWidth'
 
 interface Entry { name: string; note: ParsedNote }
 
@@ -19,6 +21,9 @@ export function createNotesPanel() {
 
   const sidebar = document.createElement('div')
   sidebar.className = 'notes-sidebar'
+  const savedSidebarWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+  const hasSavedSidebarWidth = Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0
+  if (hasSavedSidebarWidth) sidebar.style.width = `${savedSidebarWidth}px`
   const addBtn = document.createElement('button')
   addBtn.className = 'notes-add'
   addBtn.innerHTML = `${icon('plus')}<span>${i18nT('notes.newNote')}</span>`
@@ -31,6 +36,14 @@ export function createNotesPanel() {
 
   const editArea = document.createElement('div')
   editArea.className = 'notes-main'
+  const sidebarResizer = createHorizontalResizablePane({
+    target: sidebar,
+    container: root,
+    initialWidth: hasSavedSidebarWidth ? savedSidebarWidth : null,
+    minWidth: 150,
+    minRemaining: 360,
+    onWidthChange: width => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width))),
+  })
   const header = document.createElement('div')
   header.className = 'notes-header'
   const titleInput = document.createElement('input')
@@ -78,7 +91,7 @@ export function createNotesPanel() {
   // Keep typing local — the workspace swallows some global shortcuts.
   metaFields.forEach(el => el.addEventListener('keydown', e => e.stopPropagation()))
 
-  root.append(sidebar, editArea)
+  root.append(sidebar, sidebarResizer.element, editArea)
 
   let entries: Entry[] = []
   let selectedName: string | null = null

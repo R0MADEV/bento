@@ -52,6 +52,13 @@ export class TaskPanelStore {
   selected(): string | null { return localStorage.getItem(this.key('selected')) }
   setSelected(path: string): void { localStorage.setItem(this.key('selected'), path) }
 
+  sidebarWidth(): number | null {
+    const width = Number(localStorage.getItem(this.key('sidebarWidth')))
+    const isValidWidth = Number.isFinite(width) && width > 0
+    return isValidWidth ? width : null
+  }
+  setSidebarWidth(width: number): void { localStorage.setItem(this.key('sidebarWidth'), String(Math.round(width))) }
+
   operations(): GitOperationEntry[] {
     try { return JSON.parse(localStorage.getItem(this.key('gitOperations')) ?? '[]') as GitOperationEntry[] }
     catch { return [] }

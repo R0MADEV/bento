@@ -7,6 +7,7 @@ import { mysqlCreds, mongoCreds, pgCreds } from '../../core/db/credentials'
 import { DEFAULT_PORT, LISTABLE, kindForPort, type DbServer, type DbKind } from '../../core/db/dbServer'
 import { icon } from '../../ui/icons'
 import { askAi, type AiQueryRunner, type AiTool } from '../../ui/askAi'
+import { createHorizontalResizablePane } from '../../ui/resizablePane'
 import { buildJoinPath, type Relation } from '../../core/db/joinPath'
 import { withRowLimit } from '../../core/db/rowLimit'
 import { buildJoinQuery, buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from './queryBuilders'
@@ -352,9 +353,19 @@ export function createDbPanel(): { element: HTMLElement } {
   body.className = 'db-body'
   const tree = document.createElement('div')
   tree.className = 'db-tree'
+  const savedTreeWidth = Number(localStorage.getItem('bento.db.sidebarWidth'))
+  const hasSavedTreeWidth = Number.isFinite(savedTreeWidth) && savedTreeWidth > 0
+  const treeResizer = createHorizontalResizablePane({
+    target: tree,
+    container: body,
+    initialWidth: hasSavedTreeWidth ? savedTreeWidth : null,
+    minWidth: 160,
+    minRemaining: 420,
+    onWidthChange: width => localStorage.setItem('bento.db.sidebarWidth', String(Math.round(width))),
+  })
   const detail = document.createElement('div')
   detail.className = 'db-detail'
-  body.append(tree, detail)
+  body.append(tree, treeResizer.element, detail)
   root.append(header, body)
 
   const showDetail = (...nodes: HTMLElement[]): void => { detail.replaceChildren(...nodes) }

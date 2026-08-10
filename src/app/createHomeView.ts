@@ -1,17 +1,16 @@
 import { icon } from '../ui/icons'
 import { appT } from '../core/i18n'
 import { resumableAgents, recentProjects } from './homeData'
+import { AGENT_SESSIONS_KEY } from '../core/terminal/agentDockState'
 
 // Home shown in the center when there are no open sessions. v1 of the agent
 // cockpit: a welcome + "new session" + the agents you can jump back into.
 // Only agents that truly had a session (ran a CLI + captured a session id) are
 // offered — a bare terminal has nothing to resume (see homeData).
 
-const AGENTS_KEY = 'bento.agents.sessions'
-
 function readResumableAgents() {
   try {
-    return resumableAgents(JSON.parse(localStorage.getItem(AGENTS_KEY) ?? '[]'))
+    return resumableAgents(JSON.parse(localStorage.getItem(AGENT_SESSIONS_KEY) ?? '[]'))
   } catch {
     return []
   }

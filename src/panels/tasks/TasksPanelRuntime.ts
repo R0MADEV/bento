@@ -4,11 +4,11 @@ import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-di
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
-import { statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
+import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
 import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
 import { previewRebase, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
 import {
-  fetchIssue, fetchTransitions, applyTransition, browseUrl,
+  fetchIssue, fetchTransitions, applyTransition, browseUrl, loadJiraConfig,
   type JiraConfig, type TaskIssue,
 } from './taskJiraClient'
 import { buildOperationHistoryView } from './OperationHistoryView'
@@ -34,6 +34,8 @@ import { buildIncomingChangesView } from './IncomingChangesView'
 import { taskRowActions } from './TaskRowActions'
 import { TauriAppSettingsRepository } from '../../adapters/TauriAppSettingsRepository'
 import type { AppSettings } from '../../ports/AppSettingsRepository'
+import { isRunning, parseContainers } from '../../core/docker/containers'
+import { createHorizontalResizablePane } from '../../ui/resizablePane'
 
 export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
   const panelStore = new TaskPanelStore(panelId)
@@ -44,8 +46,15 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   let repoPath = panelStore.repository()
   let detailCleanup: () => void = () => {}
   let selectedRow: HTMLElement | null = null
+  let selectedWorktreePath = panelStore.selected() ?? ''
+  let selectedRepositoryPath = repoPath
+  let selectionVersion = 0
+  let detailVersion = 0
   let filterText = ''
-  let projectCollapsed = false
+  // Multi-repo: which repo each worktree belongs to, and per-repo collapse state.
+  const repoOf = new Map<string, string>()
+  const baseOf = new Map<string, string>()
+  const collapsedRepos = new Set<string>()
   let lastStatuses = new Map<string, number>()
   let lastRunningPaths = new Set<string>()
   let baseBranch = panelStore.base()
@@ -58,14 +67,34 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   const upstreamStatusMap = new Map<string, UpstreamStatus>()
   let diffRefreshInterval: ReturnType<typeof setInterval> | null = null
 
+  const repositoryFor = (wt: Worktree): string => repoOf.get(wt.path) ?? repoPath
+  const baseFor = (wt: Worktree): string => baseOf.get(wt.path) ?? baseBranch
+
   const recordOperation = (wt: Worktree, operation: string, status: 'success' | 'error', detail: string): void => {
-    panelStore.recordOperation(repoPath, wt.branch ?? '(detached)', operation, status, detail)
+    panelStore.recordOperation(repositoryFor(wt), wt.branch ?? '(detached)', operation, status, detail)
   }
 
   const selectRow = (row: HTMLElement): void => {
     selectedRow?.classList.remove('tasks-row--selected')
     selectedRow = row
     row.classList.add('tasks-row--selected')
+  }
+
+  const selectedRepository = (): string => selectedRepositoryPath || repoPath
+
+  const selectWorktree = (row: HTMLElement, wt: Worktree): number => {
+    selectRow(row)
+    selectedWorktreePath = wt.path
+    selectedRepositoryPath = repositoryFor(wt)
+    panelStore.setSelected(wt.path)
+    selectionVersion += 1
+    detailVersion += 1
+    return selectionVersion
+  }
+
+  const isCurrentSelection = (version: number, wt: Worktree): boolean => {
+    const isSameSelectionVersion = version === selectionVersion
+    return isSameSelectionVersion && selectedWorktreePath === wt.path
   }
 
   const stopDiffRefresh = (): void => {
@@ -100,9 +129,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   repoBtn.addEventListener('click', async () => {
     const picked = await pickFolder({ directory: true, defaultPath: repoPath || undefined }).catch(() => null)
     if (!picked || typeof picked !== 'string') return
-    repoPath = picked
-    panelStore.setRepository(repoPath)
-    updateRepoBtn()
+    // Add to the repo list (multi-repo). First pick behaves as before (one repo).
+    panelStore.addRepository(picked)
     load()
   })
   const baseSelect = document.createElement('select')
@@ -143,15 +171,69 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
   const listWrap = document.createElement('div')
   listWrap.className = 'tasks-list-wrap'
+  let dragStartX = 0
+  let dragStartY = 0
+  let dragScrollLeft = 0
+  let dragScrollTop = 0
+  let didDragList = false
+  let dragPointerId: number | null = null
+  listWrap.addEventListener('pointerdown', e => {
+    const target = e.target as HTMLElement
+    const isInteractiveTarget = !!target.closest('button,input,select,textarea,a')
+    if (isInteractiveTarget || e.button !== 0) return
+    didDragList = false
+    dragPointerId = e.pointerId
+    dragStartX = e.clientX
+    dragStartY = e.clientY
+    dragScrollLeft = listWrap.scrollLeft
+    dragScrollTop = listWrap.scrollTop
+  })
+  listWrap.addEventListener('pointermove', e => {
+    if (dragPointerId !== e.pointerId) return
+    const dx = e.clientX - dragStartX
+    const dy = e.clientY - dragStartY
+    const hasDraggedEnough = Math.abs(dx) > 3 || Math.abs(dy) > 3
+    if (!hasDraggedEnough) return
+    if (!listWrap.hasPointerCapture(e.pointerId)) listWrap.setPointerCapture(e.pointerId)
+    didDragList = true
+    listWrap.classList.add('tasks-list-wrap--dragging')
+    listWrap.scrollLeft = dragScrollLeft - dx
+    listWrap.scrollTop = dragScrollTop - dy
+  })
+  listWrap.addEventListener('pointerup', e => {
+    if (listWrap.hasPointerCapture(e.pointerId)) listWrap.releasePointerCapture(e.pointerId)
+    if (dragPointerId === e.pointerId) dragPointerId = null
+    listWrap.classList.remove('tasks-list-wrap--dragging')
+  })
+  listWrap.addEventListener('pointercancel', e => {
+    if (listWrap.hasPointerCapture(e.pointerId)) listWrap.releasePointerCapture(e.pointerId)
+    if (dragPointerId === e.pointerId) dragPointerId = null
+    listWrap.classList.remove('tasks-list-wrap--dragging')
+  })
+  listWrap.addEventListener('click', e => {
+    if (!didDragList) return
+    didDragList = false
+    e.preventDefault()
+    e.stopPropagation()
+  }, true)
 
   const progressFooter = document.createElement('div')
   progressFooter.className = 'tasks-progress'
 
   sidebar.append(filterInput, listWrap, progressFooter)
 
+  const sidebarResizer = createHorizontalResizablePane({
+    target: sidebar,
+    container: body,
+    initialWidth: panelStore.sidebarWidth(),
+    minWidth: 180,
+    minRemaining: 280,
+    onWidthChange: width => panelStore.setSidebarWidth(width),
+  })
+
   const detailPane = document.createElement('div')
   detailPane.className = 'tasks-detail'
-  body.append(sidebar, detailPane)
+  body.append(sidebar, sidebarResizer.element, detailPane)
   root.append(header, body)
 
   const note = (text: string, cls = 'tasks-note'): HTMLElement =>
@@ -174,8 +256,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     setCleanup: cleanup => { detailCleanup = cleanup },
   })
 
-  const defaultProjectKey = (): string => repoPath.replace(/\/$/, '').split('/').pop() ?? ''
-  const projectKey = (): string => panelStore.projectKey() || defaultProjectKey()
+  const defaultProjectKey = (repository = repoPath): string => repository.replace(/\/$/, '').split('/').pop() ?? ''
+  const projectKey = (repository = repoPath): string => panelStore.projectKey() || defaultProjectKey(repository)
 
   const prepareTaskDevcontainer = async (worktree: Worktree): Promise<boolean> => {
     await settingsReady
@@ -183,7 +265,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     return dockerView.prepareDevcontainer(
       worktree,
       appSettings.devcontainerRecipesDir,
-      projectKey(),
+      projectKey(repositoryFor(worktree)),
       panelStore.devcontainerDir() ?? undefined,
       path => panelStore.setDevcontainerDir(path),
     )
@@ -358,47 +440,81 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
     listWrap.replaceChildren()
     if (filtered.length === 0) {
+      const repos = panelStore.repositories()
+      const shouldShowRepoForms = repos.length > 1 && worktrees.length === 0
+      const createForms = shouldShowRepoForms ? repos.map(repo => buildCreateForm(repo)) : [buildCreateForm()]
       listWrap.append(
         note(worktrees.length === 0 ? taskT('noWorktrees') : taskT('noResults')),
-        buildCreateForm(),
+        ...createForms,
       )
       return
     }
-    const list = document.createElement('div')
-    list.className = 'tasks-list'
-    filtered.forEach((wt, i) => {
-      const isMain = i === 0 && !filterText
-      list.appendChild(buildRow(wt, isMain, lastStatuses.get(wt.path) ?? 0, lastRunningPaths.has(wt.path)))
-    })
 
-    // Group the worktrees under a collapsible project header (the repo name),
-    // matching the reference's "acme-web / acme-internal" grouping.
+    // Group worktrees by their repo (single repo → one group), preserving order.
+    const byRepo = new Map<string, Worktree[]>()
+    for (const wt of filtered) {
+      const repo = repoOf.get(wt.path) ?? repoPath
+      const bucket = byRepo.get(repo) ?? []
+      bucket.push(wt)
+      byRepo.set(repo, bucket)
+    }
+    const isMultiRepo = panelStore.repositories().length > 1
+    for (const [repo, wts] of byRepo) listWrap.appendChild(buildProjectGroup(repo, wts, isMultiRepo))
+    if (!isMultiRepo) listWrap.append(buildCreateForm())
+  }
+
+  // Collapsible project header (repo name + count) grouping that repo's worktrees.
+  function buildProjectGroup(repo: string, wts: Worktree[], includeCreateForm = false): HTMLElement {
+    const repoRoot = repo.replace(/\/$/, '')
     const group = document.createElement('div')
-    group.className = `tasks-project${projectCollapsed ? ' collapsed' : ''}`
-    const projectHeader = document.createElement('button')
-    projectHeader.type = 'button'
-    projectHeader.className = 'tasks-project-header'
+    group.className = `tasks-project${collapsedRepos.has(repo) ? ' collapsed' : ''}`
+    const header = document.createElement('div')
+    header.className = 'tasks-project-header'
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'tasks-project-toggle'
+    toggle.setAttribute('aria-expanded', String(!collapsedRepos.has(repo)))
     const chevron = document.createElement('span')
     chevron.className = 'tasks-project-chevron'
     chevron.innerHTML = icon('chevron-down')
-    projectHeader.append(
+    toggle.append(
       chevron,
-      Object.assign(document.createElement('span'), { className: 'tasks-project-name', textContent: projectKey() }),
-      Object.assign(document.createElement('span'), { className: 'tasks-project-count', textContent: String(filtered.length) }),
+      Object.assign(document.createElement('span'), { className: 'tasks-project-name', textContent: repoRoot.split('/').pop() ?? repo }),
+      Object.assign(document.createElement('span'), { className: 'tasks-project-count', textContent: String(wts.length) }),
     )
-    projectHeader.addEventListener('click', () => {
-      projectCollapsed = !projectCollapsed
-      group.classList.toggle('collapsed', projectCollapsed)
+    header.appendChild(toggle)
+    // Remove this repo from the list (only offered when there's more than one).
+    if (panelStore.repositories().length > 1) {
+      const remove = Object.assign(document.createElement('button'), {
+        type: 'button', className: 'tasks-project-remove', textContent: '×', title: taskT('removeRepo'),
+      })
+      remove.addEventListener('click', e => { e.stopPropagation(); panelStore.removeRepository(repo); load() })
+      header.appendChild(remove)
+    }
+    toggle.addEventListener('click', () => {
+      selectedRepositoryPath = repo
+      if (collapsedRepos.has(repo)) collapsedRepos.delete(repo); else collapsedRepos.add(repo)
+      group.classList.toggle('collapsed')
+      toggle.setAttribute('aria-expanded', String(!collapsedRepos.has(repo)))
     })
-    group.append(projectHeader, list)
-    listWrap.append(group, buildCreateForm())
+    const list = document.createElement('div')
+    list.className = 'tasks-list'
+    wts.forEach(wt => {
+      const isMain = wt.path.replace(/\/$/, '') === repoRoot
+      list.appendChild(buildRow(wt, isMain, lastStatuses.get(wt.path) ?? 0, lastRunningPaths.has(wt.path)))
+    })
+    group.append(header, list)
+    if (includeCreateForm) group.appendChild(buildCreateForm(repo))
+    return group
   }
 
   function buildRow(wt: Worktree, isMain: boolean, changes: number, hasRunning: boolean): HTMLElement {
+    const worktreeBase = baseFor(wt)
     const row = document.createElement('div')
     row.className = 'tasks-row'
     row.dataset.testid = 'tasks-row'
     row.dataset.branch = wt.branch ?? ''
+    row.dataset.path = wt.path
     row.tabIndex = 0
     row.setAttribute('role', 'button')
     row.setAttribute('aria-label', `${taskT('tasks')}: ${wt.branch ?? ''}, ${taskT('changes', { count: changes })}`)
@@ -484,7 +600,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       if (ab.ahead > 0) parts.push(`↑${ab.ahead}`)
       if (ab.behind > 0) parts.push(`↓${ab.behind}`)
       abEl.textContent = parts.join(' ')
-      abEl.title = taskT('aheadBehindTitle', { ahead: ab.ahead, behind: ab.behind, branch: baseBranch })
+      abEl.title = taskT('aheadBehindTitle', { ahead: ab.ahead, behind: ab.behind, branch: worktreeBase })
     }
 
     // PR status badge
@@ -545,7 +661,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
     const runSync = async (mode: 'fetch' | 'merge' | 'rebase'): Promise<void> => {
       if (mode === 'rebase') {
-        const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => null)
+        const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: worktreeBase }).catch(() => null)
         if (preflight?.operation) {
           selectRow(row); showSyncError('rebase', taskT('operationInProgress', { operation: preflight.operation }), wt)
           return
@@ -570,8 +686,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       }
       flashBadge(taskT('syncing'), '', 60000)
       try {
-        const out = await invoke<string>('git_sync', { path: wt.path, base: baseBranch, mode, autostash })
-        recordOperation(wt, mode, 'success', `origin/${baseBranch}${out.trim() ? ` · ${out.trim()}` : ''}`)
+        const out = await invoke<string>('git_sync', { path: wt.path, base: worktreeBase, mode, autostash })
+        recordOperation(wt, mode, 'success', `origin/${worktreeBase}${out.trim() ? ` · ${out.trim()}` : ''}`)
         flashBadge(out.trim() || taskT('upToDate'), 'tasks-badge--ok', 3000)
         load()
       } catch (e) {
@@ -692,7 +808,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     const createPR = async (): Promise<void> => {
       flashBadge(taskT('creatingPr'), '', 60000)
       try {
-        const result = await invoke<string>('git_create_pr', { path: wt.path, base: baseBranch })
+        const result = await invoke<string>('git_create_pr', { path: wt.path, base: worktreeBase })
         flashBadge(taskT('prCreated'), 'tasks-badge--ok', 3000)
         if (result.startsWith('http')) openUrl(result).catch(() => {})
         load()
@@ -720,7 +836,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     const hasPr = !!pr && (pr.state === 'OPEN' || pr.state === 'DRAFT')
 
     const menuItems = () => taskRowActions({
-      worktree: wt, row, isMain, baseBranch, ahead, hasPr, issue: !!issue, jiraConfigured: !!jiraCfg, pr, backup, rebase,
+      worktree: wt, row, isMain, baseBranch: worktreeBase, ahead, hasPr, issue: !!issue, jiraConfigured: !!jiraCfg, pr, backup, rebase,
       selectRow, showRebasePaused, showChanges, showHistory: showCommitLog, showGraph: showCommitGraph,
       showInteractiveRebase, showTerminal: showWorktreeTerminal, showPrDetails, showReset: showResetView,
       showBackups: showBackupHistory, showOperations: showOperationHistory,
@@ -741,11 +857,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     actions.appendChild(menuBtn)
 
     row.addEventListener('click', async () => {
-      selectRow(row)
-      panelStore.setSelected(wt.path)
+      const version = selectWorktree(row, wt)
       if (rebase?.active) { showRebasePaused(wt, rebase); return }
       // Devcontainer tasks show their URLs (cheap read); anything else shows the diff.
-      if (!isMain && await dockerView.showDevcontainerUrls(wt, panelStore.devcontainerDir() ?? undefined)) return
+      const hasDevcontainerUrls = !isMain && await dockerView.showDevcontainerUrls(wt, panelStore.devcontainerDir() ?? undefined, () => isCurrentSelection(version, wt))
+      if (!isCurrentSelection(version, wt)) return
+      if (hasDevcontainerUrls) return
       showChanges(wt)
     })
     row.addEventListener('keydown', e => {
@@ -754,19 +871,21 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     })
     row.addEventListener('contextmenu', e => {
       e.preventDefault()
-      selectRow(row)
+      selectWorktree(row, wt)
       showContextMenu(e.clientX, e.clientY, menuItems())
     })
     row.append(runDot, left, abEl, prEl, rebaseEl, upstreamEl, backupEl, recipeEl, badge, actions)
     return row
   }
 
-  function buildCreateForm(): HTMLElement {
+  function buildCreateForm(repository?: string): HTMLElement {
     const form = document.createElement('div')
     form.className = 'tasks-create'
     const input = Object.assign(document.createElement('input'), { className: 'tasks-name-input', type: 'text', placeholder: taskT('newTask') })
-    const btn = iconBtn('plus', taskT('createTask'), () => createTask(input.value.trim()))
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') createTask(input.value.trim()) })
+    const submit = (): void => { void createTask(input.value.trim(), repository ?? selectedRepository()) }
+    const btn = iconBtn('plus', taskT('createTask'), submit)
+    input.addEventListener('focus', () => { if (repository) selectedRepositoryPath = repository })
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') submit() })
     form.append(input, btn)
     return form
   }
@@ -775,6 +894,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   async function showChanges(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
+    const requestVersion = ++detailVersion
     showDetail(note(taskT('loadingChanges'), 'db-detail-loading'))
     try {
       const [raw, statusRaw, rebaseStatus] = await Promise.all([
@@ -782,6 +902,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         taskGit.safeStatus(wt.path),
         invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false })),
       ])
+      if (requestVersion !== detailVersion) return
       const rebaseActive = rebaseStatus.active
       showDetail(buildDiffView(raw, wt, { statusRaw: statusRaw.raw, rebaseActive }))
       // Auto-refresh: re-fetch diff every 5 s and update if content changed
@@ -791,6 +912,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           invoke<string>('git_diff', { path: wt.path }).catch(() => null),
           taskGit.safeStatus(wt.path),
         ])
+        if (requestVersion !== detailVersion) return
         const snapshot = `${newStatus.raw}\0${newRaw ?? ''}`
         if (newRaw !== null && snapshot !== lastSnapshot) {
           lastSnapshot = snapshot
@@ -886,7 +1008,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         showCommitStatus(wasAmend ? taskT('commitAmended') : taskT('commitCreated'))
         // Update sidebar badge and ahead/behind
         lastStatuses.set(wt.path, (await taskGit.safeStatus(wt.path)).total)
-        const abRaw = await invoke<string>('git_ahead_behind', { path: wt.path, base: baseBranch }).catch(() => '')
+        const abRaw = await invoke<string>('git_ahead_behind', { path: wt.path, base: baseFor(wt) }).catch(() => '')
         aheadBehindMap.set(wt.path, parseAheadBehind(abRaw))
         applyFilter()
       } catch (e) {
@@ -931,16 +1053,17 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     detailCleanup(); detailCleanup = () => {}
     showDetail(note(taskT('loadingCommits'), 'db-detail-loading'))
     try {
-      const entries = await taskGit.rebaseLog(wt.path, baseBranch)
+      const worktreeBase = baseFor(wt)
+      const entries = await taskGit.rebaseLog(wt.path, worktreeBase)
       if (entries.length === 0) {
-        showDetail(note(taskT('noOwnCommits', { base: baseBranch }), 'db-detail-hint'))
+        showDetail(note(taskT('noOwnCommits', { base: worktreeBase }), 'db-detail-hint'))
         return
       }
 
       const incomingFiles = new Set(files ?? diffFileNames(incomingDiff))
       const [recommendations, blameRecommendations] = await Promise.all([
-        taskGit.recommendations(wt.path, baseBranch, [...incomingFiles]).catch(() => []),
-        taskGit.blameRecommendations(wt.path, baseBranch, incomingDiff).catch(() => []),
+        taskGit.recommendations(wt.path, worktreeBase, [...incomingFiles]).catch(() => []),
+        taskGit.blameRecommendations(wt.path, worktreeBase, incomingDiff).catch(() => []),
       ])
       const historyScores = recommendationMap(recommendations)
       const blameScores = recommendationMap(blameRecommendations)
@@ -996,7 +1119,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
         })
         const statusEl = Object.assign(document.createElement('span'), { className: 'tasks-rebase-status-msg' })
         chooseBtn.addEventListener('click', async () => {
-          const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: baseBranch }).catch(() => null)
+          const preflight = await invoke<RewritePreflight | null>('git_rewrite_preflight', { path: wt.path, base: worktreeBase }).catch(() => null)
           if (preflight?.operation) {
             statusEl.textContent = taskT('operationInProgress', { operation: preflight.operation })
             return
@@ -1011,7 +1134,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
           list.querySelectorAll('button').forEach(button => { button.disabled = true })
           statusEl.textContent = taskT('fixupRunning')
           try {
-            const result = await invoke<string>('git_fixup', { path: wt.path, target: entry.hash, base: baseBranch, files, patch: selectedPatch })
+            const result = await invoke<string>('git_fixup', { path: wt.path, target: entry.hash, base: worktreeBase, files, patch: selectedPatch })
             recordOperation(wt, 'fixup + autosquash', 'success', `${entry.short} ${entry.subject}`)
             if (result === 'paused') {
               showRebasePaused(wt, await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }))
@@ -1076,13 +1199,14 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
     const branch = wt.branch ?? taskT('detached')
+    const repository = repositoryFor(wt)
     showDetail(buildOperationHistoryView({
       branch,
-      repository: repoPath,
+      repository,
       entries: panelStore.operations(),
       onBack: () => showChanges(wt),
       onClear: () => {
-        panelStore.clearOperations(repoPath, branch)
+        panelStore.clearOperations(repository, branch)
         showOperationHistory(wt)
       },
     }))
@@ -1094,7 +1218,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     detailCleanup(); detailCleanup = () => {}
     showDetail(buildResetView({
       worktree: wt,
-      baseBranch,
+      baseBranch: baseFor(wt),
       buildSubHead,
       onBack: () => showChanges(wt),
       onComplete: () => { showChanges(wt); load() },
@@ -1108,7 +1232,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     detailCleanup(); detailCleanup = () => {}
     await buildGraphView({
       worktree: wt,
-      baseBranch,
+      baseBranch: baseFor(wt),
       buildSubHead,
       onBack: () => showChanges(wt),
       showDetail,
@@ -1120,7 +1244,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
     showDetail(buildPrStatusView({
-      pr, baseBranch,
+      pr, baseBranch: baseFor(wt),
       onBack: () => showChanges(wt),
       onOpen: () => openUrl(pr.url).catch(() => {}),
     }))
@@ -1155,12 +1279,13 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       const st = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path })
       if (st.active) { showRebasePaused(wt, st); return }
 
+      const worktreeBase = baseFor(wt)
       const [entries, merges] = await Promise.all([
-        taskGit.rebaseLog(wt.path, baseBranch),
-        taskGit.mergeLog(wt.path, baseBranch).catch(() => []),
+        taskGit.rebaseLog(wt.path, worktreeBase),
+        taskGit.mergeLog(wt.path, worktreeBase).catch(() => []),
       ])
       if (entries.length === 0) {
-        showDetail(note(taskT('noOwnCommits', { base: baseBranch }), 'db-detail-hint'))
+        showDetail(note(taskT('noOwnCommits', { base: worktreeBase }), 'db-detail-hint'))
         return
       }
       if (merges.length) showMergeRebaseWarning(wt, entries, merges)
@@ -1171,7 +1296,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   function showMergeRebaseWarning(wt: Worktree, entries: CommitEntry[], merges: CommitEntry[]): void {
     buildRebaseMergeWarning({
       worktree: wt,
-      baseBranch,
+      baseBranch: baseFor(wt),
       entries,
       merges,
       buildSubHead,
@@ -1193,7 +1318,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
     const wrap = document.createElement('div')
     wrap.className = 'tasks-rebase-wrap'
-    wrap.append(buildSubHead(taskT('interactiveTitle', { branch: wt.branch ?? '', base: baseBranch }), () => showChanges(wt)))
+    wrap.append(buildSubHead(taskT('interactiveTitle', { branch: wt.branch ?? '', base: baseFor(wt) }), () => showChanges(wt)))
 
     const hint = Object.assign(document.createElement('p'), {
       className: 'tasks-rebase-hint',
@@ -1398,7 +1523,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       }
       let preflight: RewritePreflight
       try {
-        preflight = await invoke<RewritePreflight>('git_rewrite_preflight', { path: wt.path, base: baseBranch })
+        preflight = await invoke<RewritePreflight>('git_rewrite_preflight', { path: wt.path, base: baseFor(wt) })
       } catch (e) {
         statusEl.textContent = taskT('validationError', { error: String(e).slice(0, 100) })
         return
@@ -1425,8 +1550,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       const rewordMessages = new Map(items.filter(i => i.action === 'reword').map(i => [i.hash, i.newMessage || i.subject]))
       const todoLines = items.map(i => `${i.action === 'reword' ? 'edit' : i.action} ${i.hash} ${i.subject}`)
       try {
-        await invoke('git_rebase_start', { path: wt.path, base: baseBranch, todoLines })
-        recordOperation(wt, 'rebase interactivo', 'success', `${items.length} instrucciones sobre origin/${baseBranch}`)
+        await invoke('git_rebase_start', { path: wt.path, base: baseFor(wt), todoLines })
+        recordOperation(wt, 'rebase interactivo', 'success', `${items.length} instrucciones sobre origin/${baseFor(wt)}`)
         const st = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path })
         if (st.active) {
           // If this commit was a reword, pre-fill the message with the new title
@@ -1681,23 +1806,31 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   }
 
   // ---- mutations ----
-  async function createTask(name: string): Promise<void> {
-    if (!name || !repoPath) return
+  async function createTask(name: string, repository = repoPath): Promise<void> {
+    if (!name || !repository) return
     const branch = taskBranch(name)
-    const path = taskPath(repoPath, branch.slice('feat/'.length))
+    const path = taskPath(repository, branch.slice('feat/'.length))
     listWrap.replaceChildren(note(taskT('creatingTask'), 'db-detail-loading'))
     try {
-      const base = await invoke<string>('git_default_branch', { repo: repoPath })
-      await invoke('git_worktree_add', { repo: repoPath, path, branch, base })
+      const base = await invoke<string>('git_default_branch', { repo: repository })
+      await invoke('git_worktree_add', { repo: repository, path, branch, base })
       await load()
       const wt = worktrees.find(w => w.path === path)
+      const row = [...listWrap.querySelectorAll<HTMLElement>('.tasks-row')].find(item => item.dataset.path === path)
+      if (wt && row) {
+        selectWorktree(row, wt)
+        row.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }
       try {
         const result = await invoke<IsolateResult>('docker_compose_isolate', { worktreePath: path })
         if (wt) dockerView.show(result, wt)
       } catch (e) {
         // No root docker-compose.yml → maybe a devcontainer project (compose under .devcontainer/).
         if (String(e) !== 'no-compose') { showDetail(note(String(e), 'db-detail-error')); return }
-        if (wt && repoPath) await prepareTaskDevcontainer(wt)
+        if (wt) {
+          const prepared = await prepareTaskDevcontainer(wt)
+          if (!prepared) showChanges(wt)
+        }
       }
     } catch (e) { listWrap.replaceChildren(note(String(e), 'db-detail-error')) }
   }
@@ -1711,20 +1844,88 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     if (!ok) return
     try {
       await invoke('docker_compose_down', { worktreePath: wt.path }).catch(() => {})
-      await invoke('git_worktree_remove', { repo: repoPath, path: wt.path, force: total > 0, branch: wt.branch ?? null })
+      await invoke('git_worktree_remove', { repo: repositoryFor(wt), path: wt.path, force: total > 0, branch: wt.branch ?? null })
       showDetail(note(taskT('selectTask'), 'db-detail-hint'))
       await load()
     } catch (e) { await askConfirm(String(e), { title: taskT('genericError'), kind: 'error' }) }
   }
 
   // ---- load ----
+  async function loadMultiRepo(repos: string[]): Promise<void> {
+    listWrap.replaceChildren(note(taskT('loading'), 'db-detail-loading'))
+    repoOf.clear()
+    baseOf.clear()
+    ;[issueMap, prStatusMap, backupStatusMap, rebaseStatusMap, upstreamStatusMap].forEach(m => m.clear())
+    aheadBehindMap.clear()
+    try {
+      const [repoData, containers, config] = await Promise.all([
+        Promise.all(repos.map(async repo => ({
+          repo,
+          base: await invoke<string>('git_default_branch', { repo }).catch(() => 'main'),
+          worktrees: await taskGit.worktrees(repo),
+        }))),
+        invoke<string>('docker_list').catch(() => '').then(parseContainers),
+        loadJiraConfig(),
+      ])
+      jiraCfg = config
+      worktrees = repoData.flatMap(({ repo, base, worktrees: items }) => {
+        items.forEach(wt => {
+          repoOf.set(wt.path, repo)
+          baseOf.set(wt.path, base)
+        })
+        return items
+      })
+      const statuses = new Map<string, number>()
+      await Promise.all(worktrees.map(async wt => {
+        const base = baseFor(wt)
+        const key = extractIssueKey(wt.branch ?? null)
+        const [status, aheadBehind, issue, pr, backup, rebase, upstream] = await Promise.all([
+          taskGit.safeStatus(wt.path),
+          invoke<string>('git_ahead_behind', { path: wt.path, base }).catch(() => ''),
+          key && jiraCfg ? fetchIssue(key, jiraCfg) : null,
+          invoke<PrStatus | null>('git_pr_status', { path: wt.path }).catch(() => null),
+          invoke<BackupStatus>('git_backup_status', { path: wt.path }).catch(() => ({ available: false, different: null, hash: null, short: null, subject: null })),
+          invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => ({ active: false } as RebaseStatus)),
+          invoke<UpstreamStatus | null>('git_upstream_status', { path: wt.path }).catch(() => null),
+        ])
+        statuses.set(wt.path, status.total)
+        aheadBehindMap.set(wt.path, parseAheadBehind(aheadBehind))
+        issueMap.set(wt.path, issue)
+        prStatusMap.set(wt.path, pr)
+        backupStatusMap.set(wt.path, backup)
+        rebaseStatusMap.set(wt.path, rebase)
+        if (upstream) upstreamStatusMap.set(wt.path, upstream)
+      }))
+      const runningPaths = new Set(worktrees.filter(wt => {
+        const directory = wt.path.replace(/\/$/, '').split('/').pop()!
+        return containers.some(container => isRunning(container) && container.name.startsWith(`${directory}-`))
+      }).map(wt => wt.path))
+      renderList(statuses, runningPaths)
+    } catch (error) {
+      listWrap.replaceChildren(note(String(error), 'db-detail-error'))
+    }
+  }
+
   async function load(): Promise<void> {
-    if (!repoPath) {
+    const repos = panelStore.repositories()
+    if (repos.length === 0) {
       baseSelect.disabled = true
       filterInput.style.display = 'none'
       listWrap.replaceChildren(note(taskT('selectRepoHint')), buildCreateForm())
       return
     }
+    repoPath = repos[0]
+    if (!repos.includes(selectedRepositoryPath)) selectedRepositoryPath = repoPath
+    updateRepoBtn()
+    if (repos.length > 1) {
+      filterInput.style.display = ''
+      baseSelect.style.display = 'none'
+      fetchAgeEl.style.display = 'none'
+      await loadMultiRepo(repos)
+      return
+    }
+    baseSelect.style.display = ''
+    fetchAgeEl.style.display = ''
     await loadTaskData({
       repoPath,
       panelStore,
@@ -1741,6 +1942,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       selectRow,
       showChanges,
       showRebasePaused,
+    })
+    repoOf.clear()
+    baseOf.clear()
+    worktrees.forEach(w => {
+      repoOf.set(w.path, repoPath)
+      baseOf.set(w.path, baseBranch)
     })
   }
 

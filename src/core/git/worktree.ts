@@ -63,6 +63,8 @@ export function parseStatus(porcelain: string): StatusSummary {
 /** Sanitizes a task name into a branch name, e.g. "Login Form" → "feat/login-form". */
 export function taskBranch(name: string): string {
   const sanitized = name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[\s_/]/g, '-')
     .replace(/[^a-z0-9-]/g, '')

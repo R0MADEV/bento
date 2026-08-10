@@ -37,6 +37,7 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
 
   const md = createMasterDetail({
     title: i18nT('docker.containers'),
+    resizableSidebar: { storageKey: 'bento.docker.sidebarWidth', minWidth: 180, minRemaining: 320 },
     collapsibleGroups: true,
     emptyText: i18nT('docker.thereAreNoContainersIsDockerRunning'),
     headerActions: [iconBtn('refresh', i18nT('common.reload'), () => load())],

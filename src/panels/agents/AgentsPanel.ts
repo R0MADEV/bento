@@ -4,10 +4,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { createAgentStore } from '../../core/terminal/agentStore'
 import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
 import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
+import { AGENT_SESSIONS_KEY, emitAgentDock, savedAgentDockEntries, type AgentAttention } from '../../core/terminal/agentDockState'
+import { createHorizontalResizablePane } from '../../ui/resizablePane'
 
 const MAX_AGENTS = 20
-const SESSIONS_KEY = 'bento.agents.sessions'
 const COLLAPSED_KEY = 'bento.agents.collapsed'
+const SIDEBAR_WIDTH_KEY = 'bento.agents.sidebarWidth'
 
 interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string; snapshot?: string }
 
@@ -81,8 +83,20 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
   //  'blocked' — soft heuristic: no output for 30s (agentStatusTracker). Kept as
   //              a fallback for agents that never ring the bell; auto-clears if
   //              the agent resumes output (the silence was a false alarm).
-  type Attention = 'blocked' | 'bell'
-  const attention = new Map<string, Attention>()
+  const attention = new Map<string, AgentAttention>()
+
+  const publishDock = (): void => {
+    const entries = store.getAll().map((entry, index) => ({
+      id: entry.id,
+      name: slots[index]?.customName ?? entry.title,
+      cwd: entry.title,
+      cmd: slots[index]?.cmd,
+      status: entry.status,
+      attention: attention.get(entry.id),
+      active: index === activeIndex,
+    }))
+    emitAgentDock(entries)
+  }
 
   // Writes the current agents to localStorage. Serializing each terminal's
   // scrollback (getSnapshot) is expensive, so persistSessions() coalesces the
@@ -101,13 +115,13 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
       snapshot: slot.handle.getSnapshot(),
     }))
     try {
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions))
+        localStorage.setItem(AGENT_SESSIONS_KEY, JSON.stringify(sessions))
     } catch {
       // Quota exceeded (scrollback too large): retry without snapshots so the
       // resume-critical metadata (cmd + sessionId) is never lost.
       try {
         const light = sessions.map(({ snapshot: _snapshot, ...meta }) => meta)
-        localStorage.setItem(SESSIONS_KEY, JSON.stringify(light))
+        localStorage.setItem(AGENT_SESSIONS_KEY, JSON.stringify(light))
       } catch { /* storage unavailable — nothing else we can do */ }
     }
   }
@@ -171,6 +185,9 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
   // ── Sidebar ───────────────────────────────────────────────────
   const sidebar = document.createElement('div')
   sidebar.className = 'agents-sidebar'
+  const savedSidebarWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+  const hasSavedSidebarWidth = Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0
+  if (hasSavedSidebarWidth) sidebar.style.width = `${savedSidebarWidth}px`
 
   let sidebarCollapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'
 
@@ -178,9 +195,10 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
   toggleBtn.className = 'agents-sidebar-toggle'
   toggleBtn.title = 'Toggle sidebar'
   toggleBtn.textContent = sidebarCollapsed ? '›' : '‹'
-  toggleBtn.addEventListener('click', () => {
+ toggleBtn.addEventListener('click', () => {
     sidebarCollapsed = !sidebarCollapsed
     sidebar.classList.toggle('collapsed', sidebarCollapsed)
+    sidebarResizer.element.classList.toggle('hidden', sidebarCollapsed)
     toggleBtn.textContent = sidebarCollapsed ? '›' : '‹'
     localStorage.setItem(COLLAPSED_KEY, String(sidebarCollapsed))
     // Refit the active terminal after the CSS transition ends
@@ -215,12 +233,22 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
   const termArea = document.createElement('div')
   termArea.className = 'agents-term-area'
 
+  const sidebarResizer = createHorizontalResizablePane({
+    target: sidebar,
+    container: root,
+    initialWidth: hasSavedSidebarWidth ? savedSidebarWidth : null,
+    minWidth: 160,
+    minRemaining: 320,
+    onWidthChange: width => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width))),
+  })
+  sidebarResizer.element.classList.toggle('hidden', sidebarCollapsed)
+
   const emptyMsg = document.createElement('div')
   emptyMsg.className = 'agents-hub-empty'
   emptyMsg.innerHTML = `<span>${i18nT('agents.noTerminals')}</span><span class="agents-empty-hint">${i18nT('agents.noTerminalsHint')}</span>`
   termArea.appendChild(emptyMsg)
 
-  root.append(sidebar, termArea)
+  root.append(sidebar, sidebarResizer.element, termArea)
 
   // ── Inline name edit ──────────────────────────────────────────
   const startRename = (slot: AgentSlot, nameEl: HTMLElement) => {
@@ -258,6 +286,7 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     if (isEditing) return
     sidebarList.innerHTML = ''
     const entries = store.getAll()
+    publishDock()
 
     newBtn.disabled = entries.length >= MAX_AGENTS
     persistSessions()
@@ -393,6 +422,7 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
       }
     })
     ;(miniDots.children[index] as HTMLElement | undefined)?.removeAttribute('data-attention')
+    publishDock()
   }
 
   // ── Add agent ─────────────────────────────────────────────────
@@ -508,11 +538,12 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
       s.handle.dispose?.()
     }
     slots.length = 0
+    emitAgentDock(savedAgentDockEntries())
   }
 
   // Restore previously open agents, or start with one fresh agent
   const savedSessions = (() => {
-    try { return JSON.parse(localStorage.getItem(SESSIONS_KEY) ?? '[]') as SavedSession[] }
+    try { return JSON.parse(localStorage.getItem(AGENT_SESSIONS_KEY) ?? '[]') as SavedSession[] }
     catch { return [] }
   })()
 

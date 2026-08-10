@@ -3,6 +3,7 @@
 // item's detail" (Docker, and — pending migration — Notes and DB).
 
 import { icon } from './icons'
+import { createHorizontalResizablePane } from './resizablePane'
 
 export interface MdItem {
   id: string
@@ -23,6 +24,11 @@ export interface MasterDetailOptions {
   // Make group headers collapsible (a chevron toggles their items).
   collapsibleGroups?: boolean
   emptyText?: string
+  resizableSidebar?: {
+    storageKey: string
+    minWidth?: number
+    minRemaining?: number
+  }
 }
 
 export interface MasterDetail {
@@ -40,7 +46,22 @@ export function createMasterDetail(opts: MasterDetailOptions): MasterDetail {
   sidebar.className = 'md-sidebar'
   const detail = document.createElement('div')
   detail.className = 'md-detail'
-  element.append(sidebar, detail)
+  if (opts.resizableSidebar) {
+    element.classList.add('md-panel--resizable')
+    const savedWidth = Number(localStorage.getItem(opts.resizableSidebar.storageKey))
+    const hasSavedWidth = Number.isFinite(savedWidth) && savedWidth > 0
+    const resizer = createHorizontalResizablePane({
+      target: sidebar,
+      container: element,
+      initialWidth: hasSavedWidth ? savedWidth : null,
+      minWidth: opts.resizableSidebar.minWidth,
+      minRemaining: opts.resizableSidebar.minRemaining,
+      onWidthChange: width => localStorage.setItem(opts.resizableSidebar!.storageKey, String(Math.round(width))),
+    })
+    element.append(sidebar, resizer.element, detail)
+  } else {
+    element.append(sidebar, detail)
+  }
 
   const head = document.createElement('div')
   head.className = 'md-head'

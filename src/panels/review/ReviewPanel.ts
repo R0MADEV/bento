@@ -11,9 +11,11 @@ import { redact, startAgent } from '../../core/ai/agentClient'
 import { buildReviewPrompt, createContextProvider, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey } from '../../core/ai/chatHistory'
+import { createHorizontalResizablePane } from '../../ui/resizablePane'
 
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
+const SIDEBAR_WIDTH_KEY = 'bento.review.sidebarWidth'
 
 interface GhComment {
   id: number
@@ -259,6 +261,9 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
   const sidebar = document.createElement('div')
   sidebar.className = 'review-sidebar'
+  const savedSidebarWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+  const hasSavedSidebarWidth = Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0
+  if (hasSavedSidebarWidth) sidebar.style.width = `${savedSidebarWidth}px`
 
   const sidebarTabs = document.createElement('div')
   sidebarTabs.className = 'review-sidebar-tabs'
@@ -277,6 +282,14 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
   const detail = document.createElement('div')
   detail.className = 'review-detail'
+  const sidebarResizer = createHorizontalResizablePane({
+    target: sidebar,
+    container: body,
+    initialWidth: hasSavedSidebarWidth ? savedSidebarWidth : null,
+    minWidth: 180,
+    minRemaining: 420,
+    onWidthChange: width => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width))),
+  })
 
   const diffSearchInput = Object.assign(document.createElement('input'), {
     className: 'review-diff-search hidden', type: 'search', placeholder: reviewT('searchDiff'),
@@ -308,7 +321,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   commentBar.append(prMetaEl, prBodyEl, discussionEl, commentInput, commentActionsRow)
 
   detail.append(diffSearchInput, filterBar, diffView, commentBar)
-  body.append(sidebar, detail)
+  body.append(sidebar, sidebarResizer.element, detail)
 
   // ── Empty state ───────────────────────────────────────────────────────────
   const emptyState = document.createElement('div')

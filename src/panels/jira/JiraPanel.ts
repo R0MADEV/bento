@@ -23,6 +23,7 @@ export function createJiraPanel(): { element: HTMLElement } {
 
   const md = createMasterDetail({
     title: 'Jira',
+    resizableSidebar: { storageKey: 'bento.jira.sidebarWidth', minWidth: 180, minRemaining: 420 },
     headerActions: [addBtn],
     onSelect: id => {
       const next = accounts.find(a => a.id === id) ?? null

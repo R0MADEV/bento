@@ -71,6 +71,10 @@ describe('taskBranch', () => {
     expect(taskBranch('hello--world')).toBe('feat/hello-world')
   })
 
+  it('keeps readable names with accents', () => {
+    expect(taskBranch('Añadir conexión')).toBe('feat/anadir-conexion')
+  })
+
   it('trims leading and trailing dashes', () => {
     expect(taskBranch('!!hello!!')).toBe('feat/hello')
   })
