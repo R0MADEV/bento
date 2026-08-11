@@ -27,6 +27,8 @@
     "agentWaiting": "esperando",
     "agentWorking": "trabajando",
     "agentIdle": "inactivo",
+    "ramUsage": "Memoria RAM usada por Bento",
+    "ramUnavailable": "Uso de memoria RAM no disponible",
     "resize": "Redimensionar",
     "top": "arriba",
     "bottom": "abajo",

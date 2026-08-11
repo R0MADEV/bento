@@ -1,5 +1,6 @@
 import { AGENT_DOCK_EVENT, savedAgentDockEntries, type AgentDockEntry } from '../core/terminal/agentDockState'
 import { appT } from '../core/i18n'
+import { invoke } from '@tauri-apps/api/core'
 
 interface AgentStatusBarOptions {
   onOpenAgents: () => void
@@ -22,17 +23,32 @@ const statusText = (entry: AgentDockEntry): string => {
   return appT('agentIdle')
 }
 
+export const formatMemoryUsage = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
+  const mb = bytes / (1024 * 1024)
+  if (mb < 1024) return `${Math.round(mb)} MB`
+  return `${(mb / 1024).toFixed(1)} GB`
+}
+
 export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): { element: HTMLElement; dispose: () => void } {
   const element = document.createElement('div')
-  element.className = 'agent-status-bar hidden'
+  element.className = 'agent-status-bar'
   element.setAttribute('role', 'status')
 
   let entries = savedAgentDockEntries()
 
+  const agents = document.createElement('div')
+  agents.className = 'agent-status-list'
+
+  const memory = document.createElement('div')
+  memory.className = 'app-memory-status'
+  memory.setAttribute('aria-label', appT('ramUsage'))
+  memory.title = appT('ramUsage')
+  memory.innerHTML = '<span class="app-memory-label">RAM</span><span class="app-memory-value">—</span>'
+  const memoryValue = memory.querySelector<HTMLElement>('.app-memory-value')!
+
   const render = (): void => {
-    element.replaceChildren()
-    element.classList.toggle('hidden', entries.length === 0)
-    if (entries.length === 0) return
+    agents.replaceChildren()
 
     for (const entry of entries) {
       const button = document.createElement('button')
@@ -56,7 +72,23 @@ export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): {
       })
 
       button.append(dot, bar, label, state)
-      element.appendChild(button)
+      agents.appendChild(button)
+    }
+  }
+
+  let memoryRequestActive = false
+  const refreshMemory = async (): Promise<void> => {
+    if (memoryRequestActive || document.hidden) return
+    memoryRequestActive = true
+    try {
+      const bytes = await invoke<number>('app_memory_usage')
+      memoryValue.textContent = formatMemoryUsage(bytes)
+      memory.title = `${appT('ramUsage')}: ${formatMemoryUsage(bytes)}`
+    } catch {
+      memoryValue.textContent = '—'
+      memory.title = appT('ramUnavailable')
+    } finally {
+      memoryRequestActive = false
     }
   }
 
@@ -65,10 +97,19 @@ export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): {
     render()
   }
   window.addEventListener(AGENT_DOCK_EVENT, onDock)
+  const onVisibilityChange = (): void => { if (!document.hidden) void refreshMemory() }
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  const memoryTimer = window.setInterval(() => void refreshMemory(), 3000)
+  element.replaceChildren(agents, memory)
   render()
+  void refreshMemory()
 
   return {
     element,
-    dispose: () => window.removeEventListener(AGENT_DOCK_EVENT, onDock),
+    dispose: () => {
+      window.removeEventListener(AGENT_DOCK_EVENT, onDock)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.clearInterval(memoryTimer)
+    },
   }
 }

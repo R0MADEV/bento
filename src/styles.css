@@ -199,11 +199,36 @@ html, body, #app {
   border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: color-mix(in srgb, #050608 88%, transparent);
   color: var(--fg-dim);
-  overflow-x: auto;
+  overflow: hidden;
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
 .agent-status-bar.hidden { display: none; }
+.agent-status-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.agent-status-list::-webkit-scrollbar { display: none; }
+.app-memory-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 7px;
+  border-left: 1px solid var(--border);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+.app-memory-label { color: var(--fg-dim); font-weight: 600; }
+.app-memory-value { color: var(--fg); min-width: 48px; text-align: right; }
 .agent-status-chip {
   -webkit-app-region: no-drag;
   display: inline-flex;
