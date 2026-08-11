@@ -1,19 +1,14 @@
-import type { Session } from './sessionModel'
-
+// The persisted workspace: a single layout + optional bound project folder.
+// v1 (multi-session: sessions[]/activeId/layouts{}) is migrated on read by
+// collapsing to the previously-active session's layout + project.
 export interface SavedState {
-  schemaVersion: number
-  sessions: Session[]
-  activeId: string | null
-  layouts: Record<string, unknown>
+  schemaVersion: 2
+  projectPath?: string
+  layout: unknown
 }
 
-function isSession(v: unknown): v is Session {
-  return typeof v === 'object' && v !== null
-    && typeof (v as Session).id === 'string'
-    && typeof (v as Session).name === 'string'
-}
-
-// Validates the state read from disk (trust boundary): returns null if it isn't valid.
+// Validates the state read from disk (trust boundary): returns null if it isn't
+// a shape we recognise; migrates the old multi-session format to a single layout.
 export function parseSavedState(raw: string): SavedState | null {
   let data: unknown
   try {
@@ -21,19 +16,26 @@ export function parseSavedState(raw: string): SavedState | null {
   } catch {
     return null
   }
-
   if (typeof data !== 'object' || data === null) return null
   const obj = data as Record<string, unknown>
 
-  if (!Array.isArray(obj.sessions) || !obj.sessions.every(isSession)) return null
+  if (obj.schemaVersion === 2) {
+    const projectPath = typeof obj.projectPath === 'string' ? obj.projectPath : undefined
+    return { schemaVersion: 2, projectPath, layout: obj.layout }
+  }
 
-  const layouts = typeof obj.layouts === 'object' && obj.layouts !== null
-    ? (obj.layouts as Record<string, unknown>)
-    : {}
-  const activeId = typeof obj.activeId === 'string' ? obj.activeId : null
+  // Legacy v1 multi-session: collapse to the active (or first) session.
+  if (Array.isArray(obj.sessions)) {
+    const sessions = obj.sessions as Array<Record<string, unknown>>
+    const activeId = typeof obj.activeId === 'string' ? obj.activeId : undefined
+    const active = sessions.find(s => s.id === activeId) ?? sessions[0]
+    const layouts = (typeof obj.layouts === 'object' && obj.layouts !== null)
+      ? obj.layouts as Record<string, unknown>
+      : {}
+    const id = active && typeof active.id === 'string' ? active.id : undefined
+    const projectPath = active && typeof active.projectPath === 'string' ? active.projectPath : undefined
+    return { schemaVersion: 2, projectPath, layout: id ? layouts[id] : undefined }
+  }
 
-  const schemaVersion = typeof obj.schemaVersion === 'number' ? obj.schemaVersion : 1
-  if (!Number.isInteger(schemaVersion) || schemaVersion < 1 || schemaVersion > 1) return null
-
-  return { schemaVersion, sessions: obj.sessions, activeId, layouts }
+  return null
 }

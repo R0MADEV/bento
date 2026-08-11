@@ -31,7 +31,7 @@ describe('application i18n', () => {
 
   it('interpolates translated values', () => {
     setAppLocale('en')
-    expect(appT('goTo', { name: 'Backend' })).toBe('Go to Backend')
+    expect(appT('launcherPosition', { position: 'left' })).toBe('Launcher: left')
   })
 
   it('translates semantic panel keys and interpolates their values', () => {

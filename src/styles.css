@@ -40,18 +40,11 @@ input:focus, textarea:focus, select:focus {
 }
 
 .tv-btn,
-.session-add,
-.session-tab-close,
 .window-control,
 .term-theme-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-.session-tab-close .icon {
-  width: 12px;
-  height: 12px;
 }
 
 .tv-btn.loading .icon {
@@ -176,15 +169,10 @@ html, body, #app {
   backdrop-filter: blur(12px);
   overflow-x: auto;
   flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
   /* Drag the window from the bar (the title bar is an overlay) */
   -webkit-app-region: drag;
 }
-
-/* Border on the side that touches the panels, according to the bar's position */
-.session-manager[data-bar-pos="top"] .session-bar { border-bottom: 1px solid var(--border); }
-.session-manager[data-bar-pos="bottom"] .session-bar { border-top: 1px solid var(--border); }
-.session-manager[data-bar-pos="left"] .session-bar { border-right: 1px solid var(--border); }
-.session-manager[data-bar-pos="right"] .session-bar { border-left: 1px solid var(--border); }
 
 .agent-status-bar {
   display: flex;
@@ -248,25 +236,12 @@ html, body, #app {
 .agent-status-label { color: var(--fg); overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
 .agent-status-text { color: var(--fg-dim); }
 
-/* macOS: the mac-title-strip sits above the session bar in all positions and
-   handles the vertical space for the traffic lights. The bar only needs the
-   horizontal gap (82px) when it's at the top so tabs don't overlap the strip. */
-.is-mac .session-manager[data-bar-pos="top"] .session-bar {
+/* macOS: leave room on the left of the title bar for the traffic lights. */
+.is-mac .session-bar {
   padding-left: 82px;
 }
 
-.session-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-}
-
 /* Interactive elements must not drag the window */
-.session-tab,
-.session-add,
 .window-control {
   -webkit-app-region: no-drag;
 }
@@ -299,76 +274,6 @@ html, body, #app {
 .window-control.close:hover {
   background: #e81123;
   color: #fff;
-}
-
-.session-tab-label {
-  -webkit-app-region: no-drag;
-  flex: 1;
-}
-
-.session-tab-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 10px;
-}
-
-.session-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 14px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  /* Dimmed but legible: --fg-dim (the theme's brightBlack) had too little
-     contrast. The active one uses full --fg, so it's still distinguishable. */
-  color: color-mix(in srgb, var(--fg) 72%, transparent);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  min-width: 0;
-  max-width: min(240px, 35vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
-}
-
-.session-tab:hover {
-  color: var(--fg);
-}
-
-.session-tab.active {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 0 12px var(--glow-accent-sm), inset 0 0 12px var(--glow-accent-sm);
-  text-shadow: 0 0 8px var(--glow-accent);
-}
-
-.session-tab-close {
-  font-size: 10px;
-  opacity: 0.5;
-}
-
-.session-tab-close:hover {
-  opacity: 1;
-}
-
-.session-add {
-  padding: 4px 8px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius);
-  color: var(--fg-dim);
-  font-size: 14px;
-  cursor: pointer;
-  transition: color 0.12s;
-}
-
-.session-add:hover {
-  color: var(--fg);
 }
 
 .session-body {
@@ -1651,8 +1556,7 @@ html, body, #app {
   width: 100%;
 }
 
-/* ===== Rename inputs (session tab & dockview tab) ===== */
-.session-tab-rename,
+/* ===== Rename input (dockview tab) ===== */
 .dv-tab-rename {
   background: transparent;
   border: none;
@@ -1662,25 +1566,6 @@ html, body, #app {
   font: inherit;
   width: 100%;
   padding: 0;
-}
-
-/* Duplicate session button */
-.session-tab-duplicate {
-  opacity: 0;
-  font-size: 12px;
-  cursor: pointer;
-  padding: 0 2px;
-  color: var(--fg-dim);
-  transition: opacity 0.15s, color 0.15s;
-}
-
-.session-tab:hover .session-tab-duplicate,
-.session-tab.active .session-tab-duplicate {
-  opacity: 1;
-}
-
-.session-tab-duplicate:hover {
-  color: var(--accent);
 }
 
 /* Shell selector in the terminal popover */
@@ -2243,29 +2128,13 @@ html, body, #app {
 
 /* ===== Minimalist: auto-hide controls (they appear on hover) ===== */
 
-/* Session "+" button and window controls: hidden until hovering the bar */
-.session-add,
+/* Window controls: hidden until hovering the bar */
 .window-controls {
   opacity: 0;
   transition: opacity 0.18s ease;
 }
 
-.session-bar:hover .session-add,
 .session-bar:hover .window-controls {
-  opacity: 1;
-}
-
-/* Close session: only when hovering the tab */
-.session-tab-close {
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.session-tab.active:hover .session-tab-close {
-  opacity: 0.6;
-}
-
-.session-tab.active:hover .session-tab-close:hover {
   opacity: 1;
 }
 
@@ -2424,10 +2293,9 @@ html, body, #app {
 .session-content {
   flex: 1;
   display: flex;
+  flex-direction: column;   /* title bar on top, workspace below */
   min-width: 0;
   min-height: 0;
-  /* Positioning context for the absolute lateral bar so it stays below
-     the mac-title-strip and never overlaps the traffic lights. */
   position: relative;
 }
 
@@ -2439,11 +2307,6 @@ html, body, #app {
   min-height: 0;
   max-width: 100%;
 }
-
-.session-manager[data-bar-pos="top"] .session-content { flex-direction: column; }
-.session-manager[data-bar-pos="bottom"] .session-content { flex-direction: column-reverse; }
-.session-manager[data-bar-pos="left"] .session-content { flex-direction: row; }
-.session-manager[data-bar-pos="right"] .session-content { flex-direction: row-reverse; }
 
 /* ── Panel launcher ───────────────────────────────────────────────────────────
    A movable dock that opens panels. Lives outside .session-content so it just
@@ -2632,195 +2495,6 @@ html, body, #app {
 .home-recent:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
 .home-recent-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-recent-path { flex-shrink: 0; color: var(--fg-dim); font-size: 11px; font-family: var(--font-mono, monospace); }
-
-/* Vertical bar on the sides: 4px strip by default, expands on
-   hover pushing the panels (normal flow, no overlay). */
-.session-manager[data-bar-pos="left"] .session-bar,
-.session-manager[data-bar-pos="right"] .session-bar {
-  flex-direction: column;
-  align-items: stretch;
-  overflow: hidden;
-  padding: 0;
-  width: 4px;
-  min-width: 4px;
-  max-width: 4px;
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  backdrop-filter: none;
-  border: none;
-  transition: width 0.2s ease, min-width 0.2s ease, max-width 0.2s ease,
-              padding 0.2s ease, background 0.2s ease, backdrop-filter 0.2s ease;
-}
-
-/* On hover: pushes the panels (no overlay) */
-.session-manager[data-bar-pos="left"] .session-bar:hover,
-.session-manager[data-bar-pos="right"] .session-bar:hover {
-  width: 160px;
-  min-width: 160px;
-  max-width: 160px;
-  padding: 8px 4px;
-  background: color-mix(in srgb, var(--surface) 85%, transparent);
-  backdrop-filter: blur(12px);
-}
-
-.session-manager[data-bar-pos="left"] .session-tabs,
-.session-manager[data-bar-pos="right"] .session-tabs {
-  flex-direction: column;
-  align-items: stretch;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.session-manager[data-bar-pos="left"] .window-controls,
-.session-manager[data-bar-pos="right"] .window-controls {
-  flex-direction: column;
-  margin-left: 0;
-  margin-top: auto;
-  padding-left: 0;
-}
-
-/* Smaller gap on the side stuck to the bar */
-/* Gap between session bar and workspace is handled by inset: 10px on all sides. */
-
-/* macOS: top strip for the traffic lights when the bar is not at the top */
-.mac-title-strip {
-  display: none;
-}
-
-.is-mac .mac-title-strip {
-  display: block;
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-  /* Thin invisible hover zone when bar is NOT at top */
-  height: 4px;
-  overflow: hidden;
-  transition: height 0.18s ease;
-}
-
-.is-mac .mac-title-strip:hover {
-  height: 36px;
-}
-
-/* When bar is at top, the bar itself IS the title bar — hide the strip */
-.is-mac .session-manager[data-bar-pos="top"] .mac-title-strip {
-  display: none;
-}
-
-/* Top/bottom on macOS: thin 4px strip by default, expands on hover to show
-   sessions. Content hidden with opacity so nothing leaks through the 4px gap. */
-.is-mac .session-manager[data-bar-pos="top"] .session-bar,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar {
-  height: 4px;
-  min-height: 4px;
-  padding: 0;
-  overflow: hidden;
-  transition: height 0.18s ease, min-height 0.18s ease, padding 0.18s ease,
-              opacity 0.18s ease;
-}
-
-.is-mac .session-manager[data-bar-pos="top"] .session-bar:not(:hover) .session-tabs,
-.is-mac .session-manager[data-bar-pos="top"] .session-bar:not(:hover) .session-add,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .session-tabs,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .session-add,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .window-controls {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.is-mac .session-manager[data-bar-pos="top"] .session-bar:hover {
-  height: 38px;
-  min-height: 38px;
-  padding: 0 8px 0 82px;
-  align-items: center;
-}
-
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:hover {
-  height: 38px;
-  min-height: 38px;
-  padding: 0 8px;
-  align-items: center;
-}
-
-/* ── Side bar: narrow by default, expands on hover ───────────────────────
-   Only on left/right. Top/bottom don't have this behavior.               */
-.session-tab-badge {
-  display: none;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-}
-
-.session-manager[data-bar-pos="left"] .session-tab,
-.session-manager[data-bar-pos="right"] .session-tab {
-  padding: 8px 6px;
-  width: 100%;
-  border-radius: 6px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-/* Content hidden while the bar is collapsed (4px) */
-.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .session-tabs,
-.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .session-tabs,
-.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .window-controls,
-.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .window-controls,
-.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .session-add,
-.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .session-add {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* Badge and name visible when expanded */
-.session-manager[data-bar-pos="left"] .session-tab-badge,
-.session-manager[data-bar-pos="right"] .session-tab-badge {
-  display: flex;
-  flex-shrink: 0;
-}
-
-.session-manager[data-bar-pos="left"] .session-tab-label,
-.session-manager[data-bar-pos="right"] .session-tab-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Informational session popover (name + open panels) */
-.session-popover {
-  position: fixed;
-  z-index: 1000;
-  min-width: 140px;
-  max-width: 240px;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(14px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-  pointer-events: none;
-}
-
-.session-popover.hidden {
-  display: none;
-}
-
-.session-popover-title {
-  color: var(--fg);
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.session-popover-item {
-  color: color-mix(in srgb, var(--fg) 72%, transparent);
-  font-size: 12px;
-  padding: 1px 0;
-}
-
-.session-popover-empty {
-  color: var(--fg-dim);
-  font-size: 12px;
-  font-style: italic;
-}
 
 /* Scripts panel: lists scripts found in the user's folders; click runs in the terminal */
 .scripts-panel {
