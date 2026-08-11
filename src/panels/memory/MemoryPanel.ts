@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { confirm as askConfirm, open as pickFolder } from '@tauri-apps/plugin-dialog'
 import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import type { MemoryEntry, MemoryKind, NewMemoryEntry } from '../../core/memory/MemoryEntry'
 import {
   MEMORY_ARCHIVED_TAG,
@@ -104,31 +105,29 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   const sourcesCollapsedKey = `bento.memory.sources.collapsed:${currentProject || '__global__'}`
   let sourcesCollapsed = localStorage.getItem(sourcesCollapsedKey) !== '0'
 
-  const header = document.createElement('div')
-  header.className = 'memory-header'
-  const title = document.createElement('span')
-  title.className = 'memory-title'
-  title.textContent = i18nT('memory.memory')
-  const project = document.createElement('span')
-  project.className = 'memory-project'
-  project.textContent = currentProject || i18nT('common.global')
   const addBtn = document.createElement('button')
-  addBtn.className = 'memory-action'
   addBtn.title = i18nT('memory.newEntry')
   addBtn.innerHTML = icon('plus')
   const importClaudeBtn = document.createElement('button')
-  importClaudeBtn.className = 'memory-action'
   importClaudeBtn.title = i18nT('memory.importFromClaude')
-  importClaudeBtn.textContent = i18nT('memory.claude')
+  importClaudeBtn.innerHTML = icon('download')
   const importCodexBtn = document.createElement('button')
-  importCodexBtn.className = 'memory-action'
   importCodexBtn.title = i18nT('memory.importFromCodex')
-  importCodexBtn.textContent = i18nT('memory.codex')
+  importCodexBtn.innerHTML = icon('code')
   const refreshBtn = document.createElement('button')
-  refreshBtn.className = 'memory-action'
   refreshBtn.title = i18nT('memory.reloadMemory')
-  refreshBtn.textContent = i18nT('common.reload')
-  header.append(title, project, refreshBtn, importClaudeBtn, importCodexBtn, addBtn)
+  refreshBtn.innerHTML = icon('refresh')
+
+  const cs = createCollapsibleSidebar({
+    storageKey: 'bento.memory.sidebar',
+    title: i18nT('memory.memory'),
+    defaultWidth: 300,
+    minWidth: 220,
+    minRemaining: 380,
+    container: root,
+  })
+  cs.actions.append(addBtn, importClaudeBtn, importCodexBtn, refreshBtn)
+  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
 
   const controls = document.createElement('div')
   controls.className = 'memory-controls'
@@ -257,9 +256,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   sourcesGrid.append(sourcesControl, sourcePreviewPanel)
   sourcesPanel.append(sourcesHead, sourcesGrid)
 
-  const body = document.createElement('div')
-  body.className = 'memory-body'
-
   const list = document.createElement('div')
   list.className = 'memory-list'
 
@@ -342,8 +338,8 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   form.append(kind, source, titleInput, tags, files, summary, details, saveBtn)
   detail.append(detailHead, form)
-  body.append(list, detail)
-  root.append(header, controls, summaryJobsPanel, sourcesPanel, body)
+  cs.list.append(controls, summaryJobsPanel, sourcesPanel, list)
+  root.append(cs.element, cs.resizer, detail)
 
   let entries: MemoryEntry[] = []
   let summaryJobs: MemorySummaryJob[] = []
@@ -877,6 +873,11 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   const renderList = (): void => {
     list.innerHTML = ''
     const rows = visibleRows()
+    cs.setMiniItems(rows.map(entry => ({
+      label: entry.title || i18nT('memory.untitled'),
+      active: entry.id === selectedId,
+      onClick: () => { selectedId = entry.id; fillForm(entry); renderList() },
+    })))
     if (!rows.length) {
       const empty = document.createElement('div')
       empty.className = 'memory-empty'

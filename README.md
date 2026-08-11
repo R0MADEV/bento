@@ -1,248 +1,166 @@
 # Bento
 
-**Bento** es un workspace de escritorio modular y open source. Una caja donde pones los paneles que quieras: reproductor TV, terminal real, navegador, notas, monitores, lo que se te ocurra.
+**Bento** is an open-source developer cockpit built with Tauri. A modular desktop workspace where you can open and arrange developer panels — Git worktrees, terminals, code review, databases, containers, scripts, and more — side by side, with a persistent layout that survives restarts.
 
-Inspirado en VSCode, pero **genérico**: no asume que trabajas con código. Funciona en **Linux, macOS, Windows**. Paneles redimensionables, tabs, workspaces guardados, ventanas flotantes, multi-window.
-
-> **Estado**: paneles **Terminal, TV, Web, Notas y HTTP** funcionando, con sesiones
-> atadas a proyecto, temas, layout tile/tabs, persistencia y un asistente de IA
-> opcional vía terminal. Pendiente: ventanas flotantes y multi-window.
-
-## Paneles disponibles
-
-| Panel | Qué hace |
-|-------|----------|
-| **Terminal** | Shell real (xterm + PTY): temas por terminal, perfiles, búsqueda, historial, zoom, restaura el directorio al reabrir |
-| **TV** | IPTV con HLS.js: lista de canales (M3U + iptv-org), favoritos, embeds (YouTube/Twitch…) |
-| **Web** | Navegador embebido (webview nativo): bookmarks por proyecto, historial, user-agent por sitio |
-| **Notas** | Editor markdown en archivos `.md` (`~/.config/bento/notes/`): frontmatter (categoría, tags), vista previa, undo propio |
-| **HTTP** | Cliente tipo Postman: métodos, cabeceras, body, plantillas, e **importa OpenAPI/Swagger** como colecciones navegables |
-| **Tareas** | Worktrees por tarea, flujo Git y devcontainers aislados con [recetas locales por proyecto](docs/devcontainer-recipes.md) |
-
-**Sesiones = proyectos**: una sesión se ata a la carpeta de la terminal activa, y las
-terminales nuevas arrancan ahí.
+Runs natively on **macOS, Linux, and Windows**.
 
 ---
 
-## 1. Visión
+![Bento home](assets/screenshots/home.png)
 
-Un **workspace modular y personal** donde:
+<details>
+<summary>More screenshots</summary>
 
-- Cada **panel** es independiente: TV, terminal, navegador, notas, lo que quieras.
-- Los paneles se organizan en un **layout tile** (como VSCode) o flotante (como Photoshop).
-- Puedes tener múltiples **tabs** dentro de cada panel (varias terminales, varios canales).
-- Los layouts se guardan como **workspaces** — cada uno es una configuración completa.
-- Las **ventanas flotantes** persisten entre workspaces.
-- **Multi-window**: varios windows reales del SO, útil para 2+ monitores.
-- **Open source** desde el principio: MIT license, aportes bienvenidos.
+![Tasks](assets/screenshots/tareas.png)
+![Changes](assets/screenshots/changes.png)
+![Tech Review](assets/screenshots/tec-review.png)
+![Database](assets/screenshots/database.png)
+![Agent](assets/screenshots/agent.png)
 
----
-
-## 2. Stack técnico
-
-| Componente | Decisión | Por qué |
-|---|---|---|
-| Framework app | **Tauri 2** | 5-15 MB binarios; WebView del sistema; backend Rust seguro |
-| Backend | **Rust** | Requerido por Tauri; pty, plugins nativos |
-| Frontend | **TypeScript + Vite** | Tipado, HMR rápido, soporte nativo de Tauri |
-| Layout system | **Dockview** | Paneles tile + tabs + floating |
-| Terminal | **xterm.js** + **portable-pty** | Emulador profesional; shell real |
-| Reproducción | **hls.js** + **HTML5 Audio** | Streaming adaptativo |
-| Persistencia | JSON en **~/.config/bento/** | Sin BBDD; versionable |
-| Licencia | **MIT** | Máxima permisividad |
+</details>
 
 ---
 
-## 3. Desarrollo con Docker
+## Panels
 
-El entorno de desarrollo corre 100% en Docker. No necesitas instalar Rust, Node ni nada más — solo Docker Desktop y un servidor X11 para mostrar la ventana gráfica.
+| Panel | What it does |
+|-------|-------------|
+| **Tasks** | Git worktrees per task — branch, changes, commit, PR, rebase, merge. Linear integration. Multi-repo. Docker devcontainer support. |
+| **Terminal** | Real shell via xterm.js + PTY. Multiple terminals, profiles, themes, search, zoom, cwd restore on reopen. |
+| **Tech Review** | AI-assisted code review. Set a base branch, browse changed files, open PRs, diff split/tree view, inline comments, chat with an AI agent. |
+| **Diff** | Browse Git history or worktree changes. File list on the left, rendered patch on the right. Grouped log view per commit. |
+| **DB** | Database explorer. Connect to SQLite, PostgreSQL, MySQL. Tree view of schemas and tables, query editor with results. |
+| **Docker** | Container manager grouped by project. Start/stop individual containers or entire project groups. Logs and terminal per container. |
+| **Jira** | Jira board inside Bento. Multiple accounts, board view, backlog, issue search, create and edit issues. |
+| **Scripts** | Script runner. Scan folders for shell scripts, run them in an embedded terminal. Filter by folder. |
+| **Notes** | Markdown notes as `.md` files. Categories, tags, preview, Ask-AI from sidebar. |
+| **HTTP** | REST client. Methods, headers, body (JSON, form, raw), saved collections. Imports OpenAPI / Swagger specs as a browsable collection. |
+| **TV** | IPTV player with HLS.js. M3U channel list (iptv-org), favourites, YouTube/Twitch embeds. |
+| **Web** | Embedded browser (native WebView). Bookmarks and history per project. |
 
-### Prerrequisitos
+---
 
-Instala [Docker Desktop](https://www.docker.com/products/docker-desktop/) para tu SO.
+## Agent Integration
 
-Además, según tu SO, necesitas un servidor X11:
+Bento detects running AI agent sessions (Claude Code, Codex, OpenCode) and shows their status in the sidebar. When you resume a workspace, agents that were active are highlighted so you can pick up where you left off.
 
-#### macOS
+Session detection works via:
+- **Claude Code** — IPC socket + disk session files
+- **Codex** — IPC socket
+- **OpenCode** — disk session files
 
-Instala [XQuartz](https://www.xquartz.org/) (vídeo) y PulseAudio (audio):
+No API key is required on Bento's side. Each agent manages its own credentials.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (stable)
+- [Node.js](https://nodejs.org/) 20+
+- On Linux: `libwebkit2gtk-4.1`, `libgtk-3`, `libayatana-appindicator3` (see [Tauri Linux deps](https://tauri.app/start/prerequisites/#linux))
+
+### Install dependencies
 
 ```bash
-brew install --cask xquartz
-brew install pulseaudio
-```
-
-Luego:
-1. Abre XQuartz
-2. Ve a **XQuartz → Preferences → Security**
-3. Activa **"Allow connections from network clients"**
-4. Cierra y vuelve a abrir XQuartz
-
-`make dev` arranca PulseAudio automáticamente.
-
-#### Linux
-
-Ya tienes X11. No necesitas instalar nada extra.
-
-#### Windows
-
-Instala [VcXsrv](https://sourceforge.net/projects/vcxsrv/):
-
-1. Descarga e instala VcXsrv
-2. Lánzalo con **XLaunch**: selecciona "Multiple windows" → "Start no client" → activa **"Disable access control"**
-3. VcXsrv quedará corriendo en la bandeja del sistema
-
----
-
-### Primer uso (solo la primera vez)
-
-```bash
-git clone <repo>
+git clone https://github.com/R0MADEV/bento
 cd bento
-make setup
+npm install
 ```
 
-`make setup` construye la imagen Docker con Rust, Node, Tauri CLI y todas las dependencias.
+### Run in development
+
+```bash
+npm run tauri:dev
+```
+
+### Build for distribution
+
+```bash
+npm run tauri:build
+```
+
+Produces a native binary (`.dmg` on macOS, `.AppImage`/`.deb` on Linux, `.msi`/`.exe` on Windows).
 
 ---
 
-### Desarrollar
-
-#### macOS
+## Development
 
 ```bash
-# 1. Abre XQuartz (si no está abierto)
-open -a XQuartz
-
-# 2. Autoriza conexiones desde Docker
-xhost +127.0.0.1
-
-# 3. Lanza la app
-make dev
+npm run dev          # frontend only (Vite, no Tauri shell)
+npm run typecheck    # TypeScript — zero errors required
+npm run lint         # ESLint
+npm test             # Vitest (unit tests, no browser)
+npm run ci:local     # full local CI: lint + typecheck + test + bindings + build
 ```
 
-#### Linux
+Generated Rust → TypeScript bindings live in `src/generated/bindings/`. Regenerate after changing Tauri DTOs:
 
 ```bash
-make dev
-```
-
-#### Windows (PowerShell)
-
-```powershell
-# 1. Asegúrate de que VcXsrv está corriendo
-# 2. Lanza la app
-$env:DISPLAY = "host.docker.internal:0"
-docker-compose run --rm bento sh -c 'dbus-run-session -- npm run tauri:dev'
+npm run bindings:generate
+npm run bindings:check   # CI fails if bindings are stale
 ```
 
 ---
 
-### Otros comandos
+## Tech Stack
 
-```bash
-make dev-native  # desarrollo nativo en el host (sin Docker)
-make build       # genera binarios de distribución
-make shell       # abre una shell dentro del contenedor
-make test        # ejecuta los tests
-```
-
-> **Nota sobre el terminal**: dentro de Docker el WebView es WebKit2GTK
-> sobre X11, que no enruta el teclado al terminal embebido (xterm.js).
-> El resto de paneles funcionan. Para probar el terminal usa `make dev-native`
-> (requiere Rust + Node en el host) o el binario distribuido — en WKWebView
-> (macOS) y WebView2 (Windows) el teclado funciona con normalidad.
-
-**Los binarios para distribución** (`.AppImage`, `.dmg`, `.msi`) se generan automáticamente en **GitHub Actions** (matrix: Linux/macOS/Windows) en cada push a `main`.
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| App framework | **Tauri 2** | Native binaries 5–15 MB; system WebView; Rust backend |
+| Backend | **Rust** | PTY, native filesystem, DB drivers, Docker IPC |
+| Frontend | **TypeScript + Vite** | Type safety, fast HMR, first-class Tauri support |
+| Layout | **dockview-core** | Tile panels + tabs, drag-and-drop, serialisable layout |
+| Terminal | **xterm.js** + **portable-pty** | Real shell emulator; PTY spawned in Rust |
+| Streaming | **hls.js** | Adaptive HLS for the TV panel |
+| Tests | **Vitest** | Fast, no browser required for pure logic |
+| Persistence | JSON in `~/.config/bento/` | No database; human-readable; versionable |
+| License | **MIT** | Maximum permissiveness |
 
 ---
 
-## 4. Estructura del proyecto
+## Project Structure
 
 ```
 bento/
-├── package.json / tsconfig.json / vite.config.ts
-├── index.html
-├── src/                               ← Frontend (TypeScript)
-│   ├── main.ts                        ← composition root: registra paneles, monta la app
-│   ├── app/                           ← createSessionManager, createWorkspaceView
-│   ├── core/                          ← lógica pura testeada (session, terminal, channel, web, notes, http…)
-│   ├── panels/                        ← terminal/, tv/, web/, notes/, http/ + registry
-│   ├── ui/                            ← commandPalette, contextMenu, icons, preferencias
-│   ├── adapters/ · ports/             ← repos (canales, favoritos, estado) e interfaces
-│   ├── assets/                        ← M3U bundled, etc.
+├── src/                          # Frontend (TypeScript)
+│   ├── main.ts                   # Composition root — registers panels, mounts app
+│   ├── app/                      # createSessionManager, createWorkspaceView, home
+│   ├── core/                     # Pure, tested logic (git, docker, memory, http, notes…)
+│   ├── panels/                   # One folder per panel (tasks/, terminal/, diff/, …)
+│   ├── ui/                       # Shared UI: collapsibleSidebar, icons, commandPalette, aiChat…
+│   ├── adapters/ · ports/        # Repository implementations and interfaces
+│   ├── i18n/                     # en.json / es.json
 │   └── styles.css
-├── src-tauri/                         ← Backend (Rust)
-│   ├── Cargo.toml · tauri.conf.json · icons/
+├── src-tauri/                    # Backend (Rust)
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
 │   └── src/
-│       ├── main.rs                    ← comandos (http_request…) + menú + arranque
-│       ├── pty.rs                     ← terminal PTY (+ restaura cwd)
-│       ├── web_panel.rs               ← webview nativo embebido
-│       ├── notes.rs                   ← notas como archivos .md
-│       ├── traffic_lights.rs          ← semáforos macOS
-│       └── window_prefs.rs            ← decoraciones de ventana
-├── tests/                             ← Vitest (núcleo puro)
-└── README.md
+│       ├── main.rs               # Tauri commands + app setup
+│       ├── pty.rs                # PTY (terminal) + cwd restore
+│       ├── git.rs                # Git operations
+│       ├── docker.rs             # Docker container management
+│       ├── db.rs                 # Database connections
+│       ├── memory.rs             # Persistent memory store
+│       ├── workspace_io.rs       # Workspace state persistence
+│       └── …
+├── tests/                        # Vitest — unit tests for src/core and src/ui
+└── scripts/                      # Dev scripts (bindings, i18n audit, memory tools)
 ```
 
 ---
 
-## 5. Plan de implementación
+## Contributing
 
-- **Fase 0**: Setup entorno ✅
-- **Fase 1**: Scaffold Tauri mínimo ✅
-- **Fase 2**: Layout con paneles (Dockview: splits, mover, maximizar) ✅
-- **Fase 3**: Panel TV (IPTV + hls.js, favoritos, embeds) ✅
-- **Fase 4**: Terminal embebida (xterm.js + PTY, temas, perfiles, búsqueda) ✅
-- **Fase 5**: Tabs dentro de paneles ✅
-- **Fase 6**: Persistencia y sesiones (renombrar, duplicar, export/import) ✅
-- **Fase 7**: Panel Web (webview nativo, bookmarks, historial) ✅
-- **Fase 8**: Panel Notas (archivos `.md`, frontmatter, vista previa) ✅
-- **Fase 9**: Sesiones atadas a proyecto ✅
-- **Fase 10**: Panel HTTP (cliente REST + import OpenAPI/Swagger) ✅
-- **Fase 11**: Ventanas flotantes — pendiente
-- **Fase 12**: Multi-window (varios windows del SO) — pendiente
-- **Fase 13**: Pulido y distribución — en curso
+Pull requests are welcome. Before opening one:
+
+1. Run `npm run ci:local` — it must pass with zero errors.
+2. Follow the commit convention: `feat: added …` / `fix: corrected …`
+3. Branch names: `feat/short-description` or `fix/short-description`
 
 ---
 
-## 6. Asistente de IA (opcional)
+## License
 
-bento **no trae IA empaquetada**: es un workspace, no un agente. Pero como sus
-terminales son reales, puedes correr ahí cualquier agente de IA. Lo único que
-bento aporta es que **al reabrir, la terminal vuelve al proyecto donde estaba**
-(vía OSC 7), así el agente trabaja sobre el código correcto.
-
-El motor de contexto y el agente los instalas tú:
-
-| Pieza | Rol | Instalación |
-|-------|-----|-------------|
-| [**lexis**](https://github.com/R0MADEV/lexis) | Motor de contexto: indexa el código y se lo da "masticado" al agente vía MCP | `cd lexis && npm link` |
-| [**OpenCode**](https://opencode.ai) (o aider, cline, Claude Code…) | Agente que edita el código, multi-proveedor (gratis y de pago) | ver su web |
-
-### Puesta en marcha
-
-```bash
-# 1. lexis disponible como comando (una vez)
-cd /ruta/a/lexis && npm link
-
-# 2. Conecta lexis como MCP a tu agente
-lexis setup --client opencode --global    # o claude-code, cursor, cline…
-
-# 3. En una terminal de bento, dentro de tu proyecto:
-cd ~/mi-proyecto
-lexis index .                 # indexa el proyecto (una vez)
-opencode                      # o claude — el agente ya tiene el contexto de lexis
-```
-
-El flujo: **lexis** da el contexto preciso → el **agente** (con su propia key)
-implementa los cambios. bento es el espacio donde todo ocurre.
-
-> La API key la gestiona cada agente con su propio login (`opencode auth`, etc.).
-> Para preguntas rápidas: `lexis ask "qué hace X"` con tu modelo configurado.
-
----
-
-## 7. Licencia
-
-MIT — libre para usar, modificar y distribuir.
+MIT — free to use, modify and distribute.

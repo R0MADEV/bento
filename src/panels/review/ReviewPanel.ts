@@ -11,11 +11,10 @@ import { redact, startAgent } from '../../core/ai/agentClient'
 import { buildReviewPrompt, createContextProvider, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey } from '../../core/ai/chatHistory'
-import { createHorizontalResizablePane } from '../../ui/resizablePane'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
-const SIDEBAR_WIDTH_KEY = 'bento.review.sidebarWidth'
 
 interface GhComment {
   id: number
@@ -207,10 +206,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let currentPrTitle = ''
   let currentPrBody = ''
 
-  // ── Toolbar ───────────────────────────────────────────────────────────────
-  const toolbar = document.createElement('div')
-  toolbar.className = 'review-toolbar'
-
+  // ── Controls (mounted inside the collapsible sidebar below) ─────────────────
   const baseLabel = Object.assign(document.createElement('span'), { className: 'review-base-label', textContent: reviewT('baseBranch') })
   const branchWrap = document.createElement('div')
   branchWrap.className = 'review-branch-wrap'
@@ -253,17 +249,31 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   reviewAgentSelect.value = localStorage.getItem(REVIEW_AGENT_KEY) ?? 'claude'
   reviewAgentSelect.addEventListener('change', () => localStorage.setItem(REVIEW_AGENT_KEY, reviewAgentSelect.value))
 
-  toolbar.append(baseLabel, branchWrap, openBtn, refreshBtn, autoBtn, expandAllBtn, collapseAllBtn, treeViewBtn, splitViewBtn, copyDiffBtn, reviewAgentSelect, aiReviewBtn, commentNavWrap, viewedCounterEl)
-
-  // ── Body ──────────────────────────────────────────────────────────────────
+  // ── Body: collapsible sidebar (all controls + lists) + free detail ──────────
   const body = document.createElement('div')
   body.className = 'review-body'
 
-  const sidebar = document.createElement('div')
-  sidebar.className = 'review-sidebar'
-  const savedSidebarWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
-  const hasSavedSidebarWidth = Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0
-  if (hasSavedSidebarWidth) sidebar.style.width = `${savedSidebarWidth}px`
+  const cs = createCollapsibleSidebar({
+    storageKey: 'bento.review.sidebar',
+    title: reviewT('title'),
+    defaultWidth: 240,
+    minWidth: 180,
+    minRemaining: 420,
+    container: body,
+  })
+  // Fixed controls/tabs on top, scrolling branch/PR list below.
+  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
+
+  // Header actions: open repo · refresh · auto-refresh · AI review.
+  cs.actions.append(openBtn, refreshBtn, autoBtn, aiReviewBtn)
+
+  // Controls: base branch input + review agent selector.
+  const controls = document.createElement('div')
+  controls.className = 'review-controls'
+  const baseRow = document.createElement('div')
+  baseRow.className = 'review-base-row'
+  baseRow.append(baseLabel, branchWrap)
+  controls.append(baseRow, reviewAgentSelect)
 
   const sidebarTabs = document.createElement('div')
   sidebarTabs.className = 'review-sidebar-tabs'
@@ -278,18 +288,16 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   branchList.className = 'review-branch-list'
   const prList = document.createElement('div')
   prList.className = 'review-pr-list hidden'
-  sidebar.append(sidebarTabs, branchSearch, branchList, prList)
+  cs.list.append(controls, sidebarTabs, branchSearch, branchList, prList)
+
+  // Diff-view tools live in the sidebar footer so the detail stays free.
+  const viewTools = document.createElement('div')
+  viewTools.className = 'review-view-tools'
+  viewTools.append(expandAllBtn, collapseAllBtn, treeViewBtn, splitViewBtn, copyDiffBtn, commentNavWrap, viewedCounterEl)
+  cs.footer.append(viewTools)
 
   const detail = document.createElement('div')
   detail.className = 'review-detail'
-  const sidebarResizer = createHorizontalResizablePane({
-    target: sidebar,
-    container: body,
-    initialWidth: hasSavedSidebarWidth ? savedSidebarWidth : null,
-    minWidth: 180,
-    minRemaining: 420,
-    onWidthChange: width => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width))),
-  })
 
   const diffSearchInput = Object.assign(document.createElement('input'), {
     className: 'review-diff-search hidden', type: 'search', placeholder: reviewT('searchDiff'),
@@ -321,7 +329,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   commentBar.append(prMetaEl, prBodyEl, discussionEl, commentInput, commentActionsRow)
 
   detail.append(diffSearchInput, filterBar, diffView, commentBar)
-  body.append(sidebar, sidebarResizer.element, detail)
+  body.append(cs.element, cs.resizer, detail)
 
   // ── Empty state ───────────────────────────────────────────────────────────
   const emptyState = document.createElement('div')
@@ -334,7 +342,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   )
 
   // Body is always visible — empty state shows inside diffView, never hides the panel
-  root.append(toolbar, body)
+  root.append(body)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const showNoRepo = (): void => { diffView.replaceChildren(emptyState) }

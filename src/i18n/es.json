@@ -1,11 +1,9 @@
 {
   "app": {
     "empty": "(vacía)",
-    "duplicateSession": "Duplicar sesión",
-    "closeSession": "Cerrar sesión",
     "newSession": "Nueva sesión",
-    "session": "Sesión",
     "copy": "copia",
+    "closePanel": "Cerrar",
     "newTerminal": "Nueva terminal",
     "newTv": "Nuevo panel TV",
     "newWeb": "Nuevo panel Web",
@@ -17,13 +15,7 @@
     "newDocker": "Nuevo panel Docker",
     "newTasks": "Nuevo panel Tareas",
     "newMemory": "Nuevo panel Memoria",
-    "bindProject": "Atar sesión a la carpeta de la terminal activa",
-    "exportWorkspace": "Exportar workspace",
-    "importWorkspace": "Importar workspace",
-    "invalidFormat": "Formato inválido",
-    "importError": "Error al importar: {error}",
-    "goTo": "Ir a {name}",
-    "sessionsPosition": "Sesiones: {position}",
+    "bindProject": "Atar a la carpeta de la terminal activa",
     "launcherPosition": "Launcher: {position}",
     "panelLauncher": "Lanzador de paneles",
     "collapse": "Colapsar",
@@ -134,6 +126,7 @@
     "nextUnviewed": "Siguiente sin ver (u)"
   },
   "diff": {
+    "title": "Diff",
     "worktreeMode": "Worktree",
     "logMode": "Historial",
     "noRepo": "No hay repositorio seleccionado",
@@ -902,6 +895,7 @@
       "codex": "Codex"
     },
     "notes": {
+      "title": "Notas",
       "search": "Buscar…",
       "newNote": "Nueva nota",
       "writeMarkdown": "Escribe… (markdown)",
@@ -915,6 +909,7 @@
     },
     "scripts": {
       "noScripts": "Sin scripts",
+      "runHint": "Ejecuta un script para ver su salida aquí",
       "showHideTerminal": "Mostrar/ocultar terminal",
       "addFolderToScan": "Añadir carpeta a escanear",
       "scanAgain": "Volver a escanear",

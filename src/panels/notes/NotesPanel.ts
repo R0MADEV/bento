@@ -7,11 +7,10 @@ import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { initUndo, commit, undo, redo, current, type UndoState } from '../../core/notes/undoStack'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
-import { createHorizontalResizablePane } from '../../ui/resizablePane'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 type ViewMode = 'edit' | 'preview' | 'split-h' | 'split-v'
 const VIEW_KEY = 'bento.notes.view'
-const SIDEBAR_WIDTH_KEY = 'bento.notes.sidebarWidth'
 
 interface Entry { name: string; note: ParsedNote }
 
@@ -19,31 +18,33 @@ export function createNotesPanel() {
   const root = document.createElement('div')
   root.className = 'notes-panel'
 
-  const sidebar = document.createElement('div')
-  sidebar.className = 'notes-sidebar'
-  const savedSidebarWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
-  const hasSavedSidebarWidth = Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0
-  if (hasSavedSidebarWidth) sidebar.style.width = `${savedSidebarWidth}px`
+  const cs = createCollapsibleSidebar({
+    storageKey: 'bento.notes.sidebar',
+    title: i18nT('notes.title'),
+    defaultWidth: 210,
+    minWidth: 150,
+    minRemaining: 360,
+    container: root,
+  })
+  // Fixed search on top, scrolling notes list below.
+  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
+
+  // New-note action lives in the sidebar header.
   const addBtn = document.createElement('button')
   addBtn.className = 'notes-add'
-  addBtn.innerHTML = `${icon('plus')}<span>${i18nT('notes.newNote')}</span>`
+  addBtn.title = i18nT('notes.newNote')
+  addBtn.innerHTML = icon('plus')
+  cs.actions.append(addBtn)
+
   const search = document.createElement('input')
   search.className = 'notes-search'
   search.placeholder = i18nT('notes.search')
   const list = document.createElement('div')
   list.className = 'notes-list'
-  sidebar.append(addBtn, search, list)
+  cs.list.append(search, list)
 
   const editArea = document.createElement('div')
   editArea.className = 'notes-main'
-  const sidebarResizer = createHorizontalResizablePane({
-    target: sidebar,
-    container: root,
-    initialWidth: hasSavedSidebarWidth ? savedSidebarWidth : null,
-    minWidth: 150,
-    minRemaining: 360,
-    onWidthChange: width => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width))),
-  })
   const header = document.createElement('div')
   header.className = 'notes-header'
   const titleInput = document.createElement('input')
@@ -63,7 +64,9 @@ export function createNotesPanel() {
     const title = titleInput.value.trim()
     askAi(`Contexto — nota${title ? ` "${title}"` : ''}:\n\n${content}\n\n`)
   })
-  header.append(titleInput, layoutBtn, askAiBtn)
+  header.append(titleInput)
+  // View toggle + Ask-AI act on the open note → live in the sidebar header.
+  cs.actions.append(layoutBtn, askAiBtn)
   const metaRow = document.createElement('div')
   metaRow.className = 'notes-meta'
   const categoryInput = document.createElement('input')
@@ -91,7 +94,7 @@ export function createNotesPanel() {
   // Keep typing local — the workspace swallows some global shortcuts.
   metaFields.forEach(el => el.addEventListener('keydown', e => e.stopPropagation()))
 
-  root.append(sidebar, sidebarResizer.element, editArea)
+  root.append(cs.element, cs.resizer, editArea)
 
   let entries: Entry[] = []
   let selectedName: string | null = null
@@ -144,7 +147,8 @@ export function createNotesPanel() {
 
   const renderList = (): void => {
     list.innerHTML = ''
-    groups().forEach(g => {
+    const gs = groups()
+    gs.forEach(g => {
       const header = document.createElement('div')
       header.className = 'notes-group'
       header.textContent = g.category
@@ -164,6 +168,11 @@ export function createNotesPanel() {
         list.appendChild(item)
       })
     })
+    cs.setMiniItems(gs.flatMap(g => g.items).map(e => ({
+      label: displayTitle(e.note),
+      active: e.name === selectedName,
+      onClick: () => select(e.name),
+    })))
   }
 
   const fillEditor = (): void => {

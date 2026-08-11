@@ -10,7 +10,7 @@ function validState(value: unknown): SavedState | null {
 
 export class TauriWorkspaceStateRepository implements WorkspaceStateRepository {
   async load(): Promise<SavedState | null> {
-    const stored = validState(await invoke<SavedState | null>('workspace_load'))
+    const stored = validState(await invoke<unknown>('workspace_load'))
     if (stored) return stored
 
     const legacyRaw = localStorage.getItem(LEGACY_KEY)

@@ -1,11 +1,9 @@
 {
   "app": {
     "empty": "(empty)",
-    "duplicateSession": "Duplicate session",
-    "closeSession": "Close session",
     "newSession": "New session",
-    "session": "Session",
     "copy": "copy",
+    "closePanel": "Close",
     "newTerminal": "New terminal",
     "newTv": "New TV panel",
     "newWeb": "New Web panel",
@@ -17,13 +15,7 @@
     "newDocker": "New Docker panel",
     "newTasks": "New Tasks panel",
     "newMemory": "New Memory panel",
-    "bindProject": "Bind session to the active terminal folder",
-    "exportWorkspace": "Export workspace",
-    "importWorkspace": "Import workspace",
-    "invalidFormat": "Invalid format",
-    "importError": "Import failed: {error}",
-    "goTo": "Go to {name}",
-    "sessionsPosition": "Sessions: {position}",
+    "bindProject": "Bind to the active terminal folder",
     "launcherPosition": "Launcher: {position}",
     "panelLauncher": "Panel launcher",
     "collapse": "Collapse",
@@ -134,6 +126,7 @@
     "nextUnviewed": "Next unviewed (u)"
   },
   "diff": {
+    "title": "Diff",
     "worktreeMode": "Worktree",
     "logMode": "Log",
     "noRepo": "No repository selected",
@@ -902,6 +895,7 @@
       "codex": "Codex"
     },
     "notes": {
+      "title": "Notes",
       "search": "Search…",
       "newNote": "New note",
       "writeMarkdown": "Write… (Markdown)",
@@ -915,6 +909,7 @@
     },
     "scripts": {
       "noScripts": "No scripts",
+      "runHint": "Run a script to see its output here",
       "showHideTerminal": "Show/hide terminal",
       "addFolderToScan": "Add folder to scan",
       "scanAgain": "Scan again",

@@ -1,9 +1,5 @@
 import { icon } from './icons'
 import { appT } from '../core/i18n'
-import {
-  getLauncherPosition, onLauncherPositionChange,
-  getLauncherCollapsed, toggleLauncherCollapsed, onLauncherCollapsedChange,
-} from './launcherPreference'
 
 // A panel type the launcher can open, with its icon and a label thunk (thunk so
 // the label re-reads the active locale, and keeps appT's key typing intact).
@@ -19,7 +15,6 @@ const ENTRIES: LauncherEntry[] = [
   { type: 'tasks',    icon: 'tasks',    label: () => appT('newTasks') },
   { type: 'diff',     icon: 'diff',     label: () => appT('newDiff') },
   { type: 'review',   icon: 'review',   label: () => appT('newReview') },
-  { type: 'memory',   icon: 'memory',   label: () => appT('newMemory') },
   { type: 'docker',   icon: 'docker',   label: () => appT('newDocker') },
   { type: 'db',       icon: 'db',       label: () => appT('newDb') },
   { type: 'http',     icon: 'http',     label: () => appT('newHttp') },
@@ -30,19 +25,16 @@ const ENTRIES: LauncherEntry[] = [
   { type: 'tv',       icon: 'tv',       label: () => appT('newTv') },
 ]
 
-// Vertical (left/right) or horizontal (top/bottom) dock of buttons, each opening
-// its panel in the active session. Position is driven by launcherPreference.
-export function createPanelLauncher(openPanel: (type: string) => void): { element: HTMLElement } {
+// A horizontal toolbar of panel icons. It lives inside the top title strip
+// (revealed on hover), so it costs no persistent space. Each button opens — or
+// focuses, if already open — its panel in the workspace.
+export function createPanelLauncher(openPanel: (type: string) => void): { element: HTMLElement; setOpenTypes: (open: Set<string>) => void } {
   const element = document.createElement('div')
   element.className = 'panel-launcher'
   element.setAttribute('role', 'toolbar')
   element.setAttribute('aria-label', appT('panelLauncher'))
 
-  // Collapse toggle pinned at the start; icons fill and center the rest.
-  const toggle = document.createElement('button')
-  toggle.type = 'button'
-  toggle.className = 'panel-launcher-toggle'
-  toggle.innerHTML = icon('chevron')
+  const buttons = new Map<string, HTMLButtonElement>()
 
   const icons = document.createElement('div')
   icons.className = 'panel-launcher-icons'
@@ -55,24 +47,15 @@ export function createPanelLauncher(openPanel: (type: string) => void): { elemen
     btn.title = label
     btn.setAttribute('aria-label', label)
     btn.addEventListener('click', () => openPanel(entry.type))
+    buttons.set(entry.type, btn)
     icons.appendChild(btn)
   }
 
-  element.append(toggle, icons)
-
-  const applyPos = (): void => { element.dataset.pos = getLauncherPosition() }
-  const applyCollapsed = (): void => {
-    const collapsed = getLauncherCollapsed()
-    element.dataset.collapsed = collapsed ? '1' : '0'
-    const label = collapsed ? appT('expand') : appT('collapse')
-    toggle.title = label
-    toggle.setAttribute('aria-label', label)
+  // Highlight the panel types that already have an open panel in the workspace.
+  const setOpenTypes = (open: Set<string>): void => {
+    buttons.forEach((btn, type) => btn.classList.toggle('open', open.has(type)))
   }
-  applyPos()
-  applyCollapsed()
-  onLauncherPositionChange(applyPos)
-  onLauncherCollapsedChange(applyCollapsed)
-  toggle.addEventListener('click', () => toggleLauncherCollapsed())
 
-  return { element }
+  element.appendChild(icons)
+  return { element, setOpenTypes }
 }

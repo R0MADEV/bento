@@ -36,7 +36,7 @@ describe('ReviewPanel', () => {
   it('renders sidebar and detail panes', () => {
     setup()
     const { element } = createReviewPanel()
-    expect(element.querySelector('.review-sidebar')).not.toBeNull()
+    expect(element.querySelector('.cs-sidebar')).not.toBeNull()
     expect(element.querySelector('.review-detail')).not.toBeNull()
   })
 

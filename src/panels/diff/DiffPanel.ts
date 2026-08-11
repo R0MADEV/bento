@@ -1,5 +1,5 @@
 import { open as pickFolder } from '@tauri-apps/plugin-dialog'
-import { createMasterDetail } from '../../ui/masterDetail'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { renderPatchHtml, buildCommitFileList } from '../tasks/TaskCodeView'
 import { icon } from '../../ui/icons'
 import type { CommitEntry } from '../tasks/gitTypes'
@@ -29,6 +29,9 @@ export const diffRepoPathsFromKeys = (keys: string[]): string[] => keys
   })
   .filter((path, index, paths) => path !== '' && paths.indexOf(path) === index)
 
+// A row in the left list: a changed file (worktree mode) or a commit (log mode).
+interface DiffRow { id: string; label: string; group: string; leading?: HTMLElement }
+
 export function createDiffPanel(sessionPath?: string, panelId?: string): { element: HTMLElement } {
   const root = document.createElement('div')
   root.className = 'diff-panel'
@@ -39,83 +42,142 @@ export function createDiffPanel(sessionPath?: string, panelId?: string): { eleme
   let mode: Mode = 'worktree'
   let logEntries: CommitEntry[] = []
   let worktreeChunks = new Map<string, string>()
+  let rows: DiffRow[] = []
+  let selectedId = ''
 
-  // ── Toolbar ───────────────────────────────────────────────────────────────
-  const toolbar = document.createElement('div')
-  toolbar.className = 'diff-toolbar'
+  // ── Layout: collapsible sidebar (all controls + list) + free detail pane ────
+  const body = document.createElement('div')
+  body.className = 'diff-body'
 
-  const worktreeBtn = Object.assign(document.createElement('button'), {
-    className: 'diff-mode-btn diff-mode-btn--active',
-    textContent: diffT('worktreeMode'),
+  const cs = createCollapsibleSidebar({
+    storageKey: `bento.diff.${panelId ?? sessionPath ?? 'default'}.sidebar`,
+    title: diffT('title'),
+    defaultWidth: 240,
+    minWidth: 180,
+    minRemaining: 320,
+    container: body,
   })
-  const logBtn = Object.assign(document.createElement('button'), {
-    className: 'diff-mode-btn',
-    textContent: diffT('logMode'),
-  })
+  // Fixed controls on top, scrolling list below.
+  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
+
+  // Header actions (open repo · refresh) sit in the sidebar header, by the toggle.
   const refreshBtn = Object.assign(document.createElement('button'), {
-    className: 'diff-icon-btn',
-    title: diffT('refresh'),
-    innerHTML: icon('refresh'),
+    className: 'diff-icon-btn', title: diffT('refresh'), innerHTML: icon('refresh'),
   })
   const openBtn = Object.assign(document.createElement('button'), {
-    className: 'diff-open-btn',
-    textContent: diffT('openRepo'),
-    innerHTML: icon('folder') + `<span>${diffT('openRepo')}</span>`,
+    className: 'diff-icon-btn', title: diffT('openRepo'), innerHTML: icon('folder'),
   })
+  cs.actions.append(openBtn, refreshBtn)
+
+  // Controls row: mode toggle (worktree/log) + repo selector.
+  const controls = document.createElement('div')
+  controls.className = 'diff-controls'
+  const worktreeBtn = Object.assign(document.createElement('button'), {
+    className: 'diff-mode-btn diff-mode-btn--active', textContent: diffT('worktreeMode'),
+  })
+  const logBtn = Object.assign(document.createElement('button'), {
+    className: 'diff-mode-btn', textContent: diffT('logMode'),
+  })
+  const modeToggle = document.createElement('div')
+  modeToggle.className = 'diff-mode-toggle'
+  modeToggle.append(worktreeBtn, logBtn)
   const repoSelect = document.createElement('select')
   repoSelect.className = 'diff-repo-select hidden'
+  controls.append(modeToggle, repoSelect)
 
-  toolbar.append(worktreeBtn, logBtn, refreshBtn, repoSelect, openBtn)
+  const listWrap = document.createElement('div')
+  listWrap.className = 'diff-list'
+  cs.list.append(controls, listWrap)
 
-  // ── Master-detail ─────────────────────────────────────────────────────────
-  const md = createMasterDetail({
-    title: '',
-    onSelect: id => showItem(id),
-    emptyText: diffT('noFiles'),
-  })
+  const detail = document.createElement('div')
+  detail.className = 'diff-detail'
+
+  body.append(cs.element, cs.resizer, detail)
 
   // ── Empty state (no repo) ─────────────────────────────────────────────────
   const emptyState = document.createElement('div')
   emptyState.className = 'diff-empty-state'
   const emptyTitle = Object.assign(document.createElement('p'), {
-    className: 'diff-empty-title',
-    textContent: diffT('noRepo'),
+    className: 'diff-empty-title', textContent: diffT('noRepo'),
   })
   const emptyHint = Object.assign(document.createElement('p'), {
-    className: 'diff-empty-hint',
-    textContent: diffT('noRepoHint'),
+    className: 'diff-empty-hint', textContent: diffT('noRepoHint'),
   })
   const emptyOpenBtn = Object.assign(document.createElement('button'), {
-    className: 'diff-empty-open-btn',
-    textContent: diffT('openRepo'),
+    className: 'diff-empty-open-btn', textContent: diffT('openRepo'),
   })
   emptyState.append(emptyTitle, emptyHint, emptyOpenBtn)
 
-  root.append(toolbar, md.element, emptyState)
+  root.append(body, emptyState)
 
-  // ── Visibility helpers ────────────────────────────────────────────────────
   const showEmpty = (on: boolean): void => {
     emptyState.classList.toggle('hidden', !on)
-    md.element.classList.toggle('hidden', on)
+    body.classList.toggle('hidden', on)
     emptyState.style.display = on ? 'flex' : 'none'
-    md.element.style.display = on ? 'none' : 'flex'
+    body.style.display = on ? 'none' : 'flex'
+  }
+
+  const hint = (text: string): HTMLElement =>
+    Object.assign(document.createElement('div'), { className: 'diff-hint', textContent: text })
+
+  // ── Left list (grouped, selectable) ─────────────────────────────────────────
+  const refreshMini = (): void => {
+    cs.setMiniItems(rows.map(r => ({
+      label: r.label,
+      active: r.id === selectedId,
+      onClick: () => selectRow(r.id),
+    })))
+  }
+
+  const updateSelected = (): void => {
+    listWrap.querySelectorAll<HTMLElement>('.diff-row').forEach(el => {
+      el.classList.toggle('diff-row--selected', el.dataset.id === selectedId)
+    })
+  }
+
+  const renderList = (): void => {
+    listWrap.replaceChildren()
+    let currentGroup: string | null = null
+    for (const r of rows) {
+      if (r.group && r.group !== currentGroup) {
+        currentGroup = r.group
+        listWrap.appendChild(Object.assign(document.createElement('div'), { className: 'diff-group', textContent: r.group }))
+      }
+      const row = document.createElement('button')
+      row.type = 'button'
+      row.className = 'diff-row'
+      row.dataset.id = r.id
+      if (r.leading) row.appendChild(r.leading)
+      row.appendChild(Object.assign(document.createElement('span'), { className: 'diff-row-label', textContent: r.label, title: r.label }))
+      row.addEventListener('click', () => selectRow(r.id))
+      listWrap.appendChild(row)
+    }
+    updateSelected()
+    refreshMini()
+  }
+
+  const setItems = (next: DiffRow[]): void => { rows = next; renderList() }
+
+  const selectRow = (id: string): void => {
+    selectedId = id
+    updateSelected()
+    refreshMini()
+    showItem(id)
   }
 
   // ── Item detail ───────────────────────────────────────────────────────────
   const showItem = async (id: string): Promise<void> => {
-    md.detail.replaceChildren()
+    detail.replaceChildren()
     if (mode === 'worktree') {
       const chunk = worktreeChunks.get(id) ?? ''
       const pre = document.createElement('pre')
       pre.className = 'diff-patch'
       pre.innerHTML = renderPatchHtml(chunk)
-      md.detail.appendChild(pre)
+      detail.appendChild(pre)
     } else {
       const entry = logEntries.find(e => e.hash === id)
       if (!entry) return
-      md.detail.replaceChildren(
-        Object.assign(document.createElement('div'), { className: 'diff-hint', textContent: diffT('loading') }),
-      )
+      detail.replaceChildren(hint(diffT('loading')))
       try {
         const files = await diffGit.files(repoPath, entry.hash)
         const nodes = buildCommitFileList(
@@ -123,9 +185,9 @@ export function createDiffPanel(sessionPath?: string, panelId?: string): { eleme
           file => diffGit.showDiff(repoPath, entry.hash, file),
           file => diffGit.showFile(repoPath, entry.hash, file),
         )
-        md.detail.replaceChildren(...nodes)
+        detail.replaceChildren(...nodes)
       } catch (e) {
-        md.detail.textContent = String(e)
+        detail.textContent = String(e)
       }
     }
   }
@@ -136,36 +198,33 @@ export function createDiffPanel(sessionPath?: string, panelId?: string): { eleme
     showEmpty(false)
     worktreeChunks = new Map()
     logEntries = []
-    md.detail.replaceChildren(
-      Object.assign(document.createElement('div'), { className: 'diff-hint', textContent: diffT('loading') }),
-    )
+    selectedId = ''
+    detail.replaceChildren(hint(diffT('loading')))
 
     if (mode === 'worktree') {
       try {
         const raw = await diffGit.diff(repoPath)
         const files = parseDiffFiles(raw)
         if (!files.length) {
-          md.setItems([])
-          md.detail.replaceChildren(
-            Object.assign(document.createElement('div'), { className: 'diff-hint', textContent: diffT('noChanges') }),
-          )
+          setItems([])
+          detail.replaceChildren(hint(diffT('noChanges')))
           return
         }
         for (const f of files) worktreeChunks.set(f.file, f.chunk)
-        md.setItems(files.map(f => ({
+        setItems(files.map(f => ({
           id: f.file,
           label: f.file,
           group: '',
           leading: buildStatsBadge(f.additions, f.deletions),
         })))
-        if (files[0]) { md.select(files[0].file); showItem(files[0].file) }
+        if (files[0]) selectRow(files[0].file)
       } catch (e) {
-        md.detail.textContent = String(e)
+        detail.textContent = String(e)
       }
     } else {
       try {
         logEntries = await diffGit.log(repoPath)
-        md.setItems(logEntries.map(e => ({
+        setItems(logEntries.map(e => ({
           id: e.hash,
           label: e.subject,
           group: e.date,
@@ -174,9 +233,9 @@ export function createDiffPanel(sessionPath?: string, panelId?: string): { eleme
             textContent: e.short,
           }),
         })))
-        if (logEntries[0]) { md.select(logEntries[0].hash); showItem(logEntries[0].hash) }
+        if (logEntries[0]) selectRow(logEntries[0].hash)
       } catch (e) {
-        md.detail.textContent = String(e)
+        detail.textContent = String(e)
       }
     }
   }

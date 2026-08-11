@@ -17,7 +17,9 @@ export interface WorkspaceView {
   isFocused: () => boolean
   serialize: () => object
   panelTitles: () => string[]
+  panelTypes: () => string[]
   addPanel: (type: string) => void
+  focusOrAddPanel: (type: string) => void
   activeCwd: () => string | undefined
   dispose: () => void
 }
@@ -85,6 +87,15 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const addInActiveGroup = (type: string): void =>
     addPanel(type, api.activeGroup ? { referenceGroup: api.activeGroup, direction: 'within' } : undefined)
 
+  // Launcher-driven navigation (tabs are hidden): focus the panel of this type if
+  // one is already open, otherwise create it.
+  const focusOrAddPanel = (type: string): void => {
+    const existing = api.panels.find(p => typeOf(p.id) === type)
+    if (!existing) { addInActiveGroup(type); return }
+    existing.api.setActive()
+    requestAnimationFrame(() => instanceMap.get(existing.id)?.focus?.())
+  }
+
   const api: DockviewApi = createDockview(dockHost, {
     createComponent({ id, name }) {
       const def = panels.get(name)
@@ -94,10 +105,27 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       instanceMap.set(id, instance)
       fits.add(instance.fit ?? (() => {}))
 
-      // Context menu: split, move (HTML5 drag doesn't work in WKWebView)
-      instance.element.addEventListener('contextmenu', e => {
+      // The tab bar (with its × close) is hidden, so wrap each panel and overlay a
+      // hover close button in the corner — reliable across win/mac/linux (macOS's
+      // WKWebView swallows the right-click menu). Kept alongside the context menu.
+      const wrapper = document.createElement('div')
+      wrapper.className = 'panel-wrapper'
+      wrapper.appendChild(instance.element)
+
+      const closeBtn = document.createElement('button')
+      closeBtn.type = 'button'
+      closeBtn.className = 'panel-close'
+      closeBtn.title = appT('closePanel')
+      closeBtn.setAttribute('aria-label', appT('closePanel'))
+      closeBtn.innerHTML = icon('x')
+      closeBtn.addEventListener('click', () => removePanel(id))
+      wrapper.appendChild(closeBtn)
+
+      // Context menu: close, split, move (HTML5 drag doesn't work in WKWebView)
+      wrapper.addEventListener('contextmenu', e => {
         e.preventDefault()
         showContextMenu(e.clientX, e.clientY, [
+          { label: appT('closePanel'), onClick: () => removePanel(id) },
           { label: appT('moveRight'), onClick: () => movePanel(id, 'right') },
           { label: appT('moveLeft'), onClick: () => movePanel(id, 'left') },
           { label: appT('moveUp'), onClick: () => movePanel(id, 'above') },
@@ -111,7 +139,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       })
 
       return {
-        element: instance.element,
+        element: wrapper,
         init: params => {
           if (instance.fit) {
             params.api.onDidDimensionsChange(() => instance.fit!())
@@ -326,7 +354,9 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     isFocused,
     serialize: () => api.toJSON(),
     panelTitles: () => api.panels.map(p => p.title ?? p.id),
+    panelTypes: () => [...new Set(api.panels.map(p => typeOf(p.id)))],
     addPanel: type => addInActiveGroup(type),
+    focusOrAddPanel,
     activeCwd: () => (api.activePanel ? instanceMap.get(api.activePanel.id)?.getCwd?.() : undefined),
     dispose: () => {
       window.removeEventListener('keydown', onKeydown)

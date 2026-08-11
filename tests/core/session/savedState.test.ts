@@ -2,41 +2,41 @@ import { describe, it, expect } from 'vitest'
 import { parseSavedState } from '../../../src/core/session/savedState'
 
 describe('parseSavedState', () => {
-  it('parses a valid state', () => {
-    const raw = JSON.stringify({
-      sessions: [{ id: 'session-1', name: 'Sesión 1' }],
-      activeId: 'session-1',
-      layouts: { 'session-1': { foo: 'bar' } },
-    })
-    expect(parseSavedState(raw)).toEqual({
+  it('round-trips the v2 single-workspace shape', () => {
+    const state = { schemaVersion: 2, projectPath: '/repo', layout: { panels: ['a'] } }
+    expect(parseSavedState(JSON.stringify(state))).toEqual(state)
+  })
+
+  it('omits projectPath when absent, keeps the layout', () => {
+    expect(parseSavedState(JSON.stringify({ schemaVersion: 2, layout: 42 })))
+      .toEqual({ schemaVersion: 2, projectPath: undefined, layout: 42 })
+  })
+
+  it('migrates a v1 multi-session blob to the active session layout + project', () => {
+    const v1 = {
       schemaVersion: 1,
-      sessions: [{ id: 'session-1', name: 'Sesión 1' }],
-      activeId: 'session-1',
-      layouts: { 'session-1': { foo: 'bar' } },
-    })
+      sessions: [
+        { id: 'session-1', name: 'A', projectPath: '/a' },
+        { id: 'session-2', name: 'B', projectPath: '/b' },
+      ],
+      activeId: 'session-2',
+      layouts: { 'session-1': { l: 1 }, 'session-2': { l: 2 } },
+    }
+    expect(parseSavedState(JSON.stringify(v1)))
+      .toEqual({ schemaVersion: 2, projectPath: '/b', layout: { l: 2 } })
   })
 
-  it('defaults layouts to an empty object when missing', () => {
-    const raw = JSON.stringify({ sessions: [{ id: 's', name: 'S' }], activeId: 's' })
-    expect(parseSavedState(raw)?.layouts).toEqual({})
+  it('falls back to the first session when activeId is missing', () => {
+    const v1 = {
+      sessions: [{ id: 's1', name: 'A', projectPath: '/a' }],
+      layouts: { s1: { l: 1 } },
+    }
+    expect(parseSavedState(JSON.stringify(v1)))
+      .toEqual({ schemaVersion: 2, projectPath: '/a', layout: { l: 1 } })
   })
 
-  it('migrates unversioned state to version 1 and rejects future schemas', () => {
-    const legacy = JSON.stringify({ sessions: [{ id: 's', name: 'S' }], activeId: 's' })
-    expect(parseSavedState(legacy)?.schemaVersion).toBe(1)
-    expect(parseSavedState(JSON.stringify({ schemaVersion: 2, sessions: [] }))).toBeNull()
-  })
-
-  it('returns null for invalid JSON', () => {
+  it('rejects garbage and non-JSON', () => {
     expect(parseSavedState('{not json')).toBeNull()
-  })
-
-  it('returns null when sessions is missing or not an array', () => {
-    expect(parseSavedState('{}')).toBeNull()
-    expect(parseSavedState(JSON.stringify({ sessions: 'x' }))).toBeNull()
-  })
-
-  it('returns null when a session lacks id or name', () => {
-    expect(parseSavedState(JSON.stringify({ sessions: [{ id: 'x' }] }))).toBeNull()
+    expect(parseSavedState(JSON.stringify({ nope: true }))).toBeNull()
   })
 })

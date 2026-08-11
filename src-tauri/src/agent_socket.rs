@@ -1,12 +1,35 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Mutex};
+
+/// Shared state: maps HERDR_PANE_ID → agent_session_id
+pub struct AgentSocket {
+    pub socket_path: String,
+    sessions: Arc<Mutex<HashMap<String, String>>>,
+}
+
+impl AgentSocket {
+    pub fn get_session(&self, pane_id: &str) -> Option<String> {
+        self.sessions.lock().ok()?.get(pane_id).cloned()
+    }
+}
+
+pub fn start(app_handle: &tauri::AppHandle) -> Arc<AgentSocket> {
+    let _ = app_handle;
+    #[cfg(unix)]
+    return start_unix();
+    #[cfg(not(unix))]
+    Arc::new(AgentSocket {
+        socket_path: String::new(),
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+    })
+}
 
 /// Removes leftover /tmp/bento-agent-*.sock files from previous runs. A socket is
 /// stale if nothing is listening (connect refused); sockets of other live Bento
 /// instances still accept a connection and are left untouched.
+#[cfg(unix)]
 fn sweep_stale_sockets(current: &str) {
+    use std::os::unix::net::UnixStream;
     let Ok(entries) = std::fs::read_dir("/tmp") else { return };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -22,25 +45,15 @@ fn sweep_stale_sockets(current: &str) {
     }
 }
 
-/// Shared state: maps HERDR_PANE_ID → agent_session_id
-pub struct AgentSocket {
-    pub socket_path: String,
-    sessions: Arc<Mutex<HashMap<String, String>>>,
-}
-
-impl AgentSocket {
-    pub fn get_session(&self, pane_id: &str) -> Option<String> {
-        self.sessions.lock().ok()?.get(pane_id).cloned()
-    }
-}
-
 /// Starts the Unix socket server in a background thread and returns the shared
 /// state. Call once at app startup; inject socket_path + pane_id into every
 /// agent PTY so existing herdr hooks can report their session ID back here.
-pub fn start(app_handle: &tauri::AppHandle) -> Arc<AgentSocket> {
-    let _ = app_handle; // used for future extensibility
-    let socket_path = format!("/tmp/bento-agent-{}.sock", std::process::id());
+#[cfg(unix)]
+fn start_unix() -> Arc<AgentSocket> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
 
+    let socket_path = format!("/tmp/bento-agent-{}.sock", std::process::id());
     let _ = std::fs::remove_file(&socket_path);
     let sessions: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -101,8 +114,7 @@ pub fn start(app_handle: &tauri::AppHandle) -> Arc<AgentSocket> {
                         }
                     }
                 }
-                let response =
-                    format!("{{\"id\":\"{request_id}\",\"result\":{{}}}}\n");
+                let response = format!("{{\"id\":\"{request_id}\",\"result\":{{}}}}\n");
                 let _ = stream.write_all(response.as_bytes());
             });
         }

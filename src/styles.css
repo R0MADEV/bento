@@ -40,18 +40,11 @@ input:focus, textarea:focus, select:focus {
 }
 
 .tv-btn,
-.session-add,
-.session-tab-close,
 .window-control,
 .term-theme-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-.session-tab-close .icon {
-  width: 12px;
-  height: 12px;
 }
 
 .tv-btn.loading .icon {
@@ -164,27 +157,38 @@ html, body, #app {
   height: 100%;
 }
 
+/* Thin drag strip overlaid on the top edge — costs no layout height, so the
+   workspace (and its panel tabs) fills to the very top. Expands on hover to
+   reveal the window controls / macOS traffic lights. */
 .session-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above panel chrome (close ×, sticky headers ≤ 50) so the thin strip reliably
+     receives :hover; below modals/overlays/palettes (≥ 200) which cover it. */
+  z-index: 100;
   display: flex;
   align-items: center;
-  min-width: 0;
   gap: 2px;
+  height: 6px;
+  min-height: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  background: transparent;
+  /* Drag the window from the strip (the title bar is an overlay) */
+  -webkit-app-region: drag;
+  transition: height 0.18s ease, padding 0.18s ease, background 0.18s ease,
+              backdrop-filter 0.18s ease, border-color 0.18s ease;
+  border-bottom: 1px solid transparent;
+}
+.session-bar:hover {
+  height: 40px;
   padding: 4px 8px;
-  min-height: 36px;
-  /* Subtle glass background + border: so it reads as chrome, not as a panel */
   background: color-mix(in srgb, var(--surface) 35%, transparent);
   backdrop-filter: blur(12px);
-  overflow-x: auto;
-  flex-shrink: 0;
-  /* Drag the window from the bar (the title bar is an overlay) */
-  -webkit-app-region: drag;
+  border-bottom-color: var(--border);
 }
-
-/* Border on the side that touches the panels, according to the bar's position */
-.session-manager[data-bar-pos="top"] .session-bar { border-bottom: 1px solid var(--border); }
-.session-manager[data-bar-pos="bottom"] .session-bar { border-top: 1px solid var(--border); }
-.session-manager[data-bar-pos="left"] .session-bar { border-right: 1px solid var(--border); }
-.session-manager[data-bar-pos="right"] .session-bar { border-left: 1px solid var(--border); }
 
 .agent-status-bar {
   display: flex;
@@ -248,25 +252,18 @@ html, body, #app {
 .agent-status-label { color: var(--fg); overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
 .agent-status-text { color: var(--fg-dim); }
 
-/* macOS: the mac-title-strip sits above the session bar in all positions and
-   handles the vertical space for the traffic lights. The bar only needs the
-   horizontal gap (82px) when it's at the top so tabs don't overlap the strip. */
-.is-mac .session-manager[data-bar-pos="top"] .session-bar {
+/* macOS: when the strip expands, leave room on the left for the traffic lights. */
+.is-mac .session-bar:hover {
   padding-left: 82px;
 }
 
-.session-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-}
+/* Window controls + panel launcher: revealed only when the top strip is hovered. */
+.window-controls,
+.session-bar .panel-launcher { opacity: 0; transition: opacity 0.15s ease; }
+.session-bar:hover .window-controls,
+.session-bar:hover .panel-launcher { opacity: 1; }
 
 /* Interactive elements must not drag the window */
-.session-tab,
-.session-add,
 .window-control {
   -webkit-app-region: no-drag;
 }
@@ -301,76 +298,6 @@ html, body, #app {
   color: #fff;
 }
 
-.session-tab-label {
-  -webkit-app-region: no-drag;
-  flex: 1;
-}
-
-.session-tab-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 10px;
-}
-
-.session-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 14px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  /* Dimmed but legible: --fg-dim (the theme's brightBlack) had too little
-     contrast. The active one uses full --fg, so it's still distinguishable. */
-  color: color-mix(in srgb, var(--fg) 72%, transparent);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  min-width: 0;
-  max-width: min(240px, 35vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
-}
-
-.session-tab:hover {
-  color: var(--fg);
-}
-
-.session-tab.active {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 0 12px var(--glow-accent-sm), inset 0 0 12px var(--glow-accent-sm);
-  text-shadow: 0 0 8px var(--glow-accent);
-}
-
-.session-tab-close {
-  font-size: 10px;
-  opacity: 0.5;
-}
-
-.session-tab-close:hover {
-  opacity: 1;
-}
-
-.session-add {
-  padding: 4px 8px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius);
-  color: var(--fg-dim);
-  font-size: 14px;
-  cursor: pointer;
-  transition: color 0.12s;
-}
-
-.session-add:hover {
-  color: var(--fg);
-}
-
 .session-body {
   position: relative;
   flex: 1;
@@ -399,6 +326,40 @@ html, body, #app {
   opacity: 0;
   pointer-events: none;
 }
+
+/* Panel wrapper fills the dockview panel; the panel itself flexes to fill it and
+   a hover close button overlays the top-right corner (the tab bar is hidden). */
+.panel-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+.panel-wrapper > :not(.panel-close) { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.panel-close {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 20;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--surface) 75%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.panel-wrapper:hover .panel-close { opacity: 0.65; }
+.panel-close:hover { opacity: 1; color: #f7768e; background: var(--surface-2); }
+.panel-close svg { width: 12px; height: 12px; }
 
 .dv-host {
   width: 100%;
@@ -451,8 +412,8 @@ html, body, #app {
   padding: 4px;
 }
 
-/* The dv-view's overflow:auto would clip the groupview's border-radius;
-   with visible it lets the rounded corners show correctly. */
+/* The dv-view's overflow:auto would clip the active group's glow (box-shadow);
+   with visible it lets it bleed past the panel edge. */
 .workspace-view .dv-split-view-container .dv-view {
   overflow: visible;
 }
@@ -478,7 +439,7 @@ html, body, #app {
 
 
 .workspace-view .dv-groupview {
-  border-radius: 12px;
+  border-radius: 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   transition: border-color 0.2s, box-shadow 0.2s;
@@ -498,34 +459,10 @@ html, body, #app {
   flex-shrink: 0;
 }
 
-/* Tabs shrink/scroll instead of pushing the "+" out */
-.workspace-view .dv-tabs-container {
-  min-width: 0;
-}
-
+/* Launcher-driven navigation: the panel tab bar is hidden entirely so panels
+   fill to the very top. Open/switch from the side launcher; close via right-click. */
 .workspace-view .dv-groupview > .dv-tabs-and-actions-container {
-  height: 26px;
-  background: color-mix(in srgb, var(--surface) 28%, transparent);
-  border-bottom: none;
-  backdrop-filter: blur(14px);
-}
-
-.workspace-view .dv-groupview > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab {
-  border-right: none;
-}
-
-.workspace-view .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab,
-.workspace-view .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-active-tab {
-  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: var(--accent);
-  box-shadow: inset 0 2px 0 var(--accent), 0 0 8px var(--glow-accent-sm);
-  text-shadow: 0 0 6px var(--glow-accent);
-}
-
-.workspace-view .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-inactive-tab,
-.workspace-view .dv-groupview.dv-inactive-group > .dv-tabs-and-actions-container .dv-tabs-container > .dv-tab.dv-inactive-tab {
-  background-color: transparent;
-  color: var(--fg-dim);
+  display: none;
 }
 
 .panel-placeholder {
@@ -1028,31 +965,24 @@ html, body, #app {
   height: 100%;
   background: var(--bg);
 }
-.notes-sidebar {
-  width: 180px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
 .notes-add {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  margin: 6px;
-  border: 1px dashed var(--border);
-  border-radius: 6px;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
   background: none;
   color: var(--fg-dim);
-  font-size: 12px;
   cursor: pointer;
   flex-shrink: 0;
 }
-.notes-add:hover { color: var(--fg); border-color: var(--accent); }
-.notes-add .icon { width: 14px; height: 14px; }
+.notes-add:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.notes-add svg, .notes-add .icon { width: 14px; height: 14px; }
 .notes-search {
-  margin: 0 6px 6px;
+  margin: 6px;
   padding: 5px 8px;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1062,7 +992,7 @@ html, body, #app {
   outline: none;
 }
 .notes-search:focus { border-color: var(--accent); }
-.notes-list { overflow-y: auto; padding: 0 6px 6px; display: flex; flex-direction: column; gap: 1px; }
+.notes-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 6px; display: flex; flex-direction: column; gap: 1px; }
 .notes-group {
   font-size: 10px;
   text-transform: uppercase;
@@ -1651,8 +1581,7 @@ html, body, #app {
   width: 100%;
 }
 
-/* ===== Rename inputs (session tab & dockview tab) ===== */
-.session-tab-rename,
+/* ===== Rename input (dockview tab) ===== */
 .dv-tab-rename {
   background: transparent;
   border: none;
@@ -1662,25 +1591,6 @@ html, body, #app {
   font: inherit;
   width: 100%;
   padding: 0;
-}
-
-/* Duplicate session button */
-.session-tab-duplicate {
-  opacity: 0;
-  font-size: 12px;
-  cursor: pointer;
-  padding: 0 2px;
-  color: var(--fg-dim);
-  transition: opacity 0.15s, color 0.15s;
-}
-
-.session-tab:hover .session-tab-duplicate,
-.session-tab.active .session-tab-duplicate {
-  opacity: 1;
-}
-
-.session-tab-duplicate:hover {
-  color: var(--accent);
 }
 
 /* Shell selector in the terminal popover */
@@ -1825,6 +1735,8 @@ html, body, #app {
 }
 .cs-sidebar.collapsed .cs-sidebar-header { padding: 10px 0; justify-content: center; border-bottom: none; }
 .cs-sidebar-title {
+  flex: 1;
+  min-width: 0;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.6px;
@@ -1841,6 +1753,29 @@ html, body, #app {
 /* Header action buttons: cluster to the right, before the toggle. */
 .cs-sidebar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
 .cs-sidebar.collapsed .cs-sidebar-actions { display: none; }
+
+/* Normalize ANY action button dropped in the header so every panel's header
+   icons look identical (borderless, same size, aligned) regardless of the
+   panel-specific class they carry (.db-action, .scripts-action, .diff-icon-btn…). */
+.cs-sidebar-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: 0;
+  gap: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.cs-sidebar-actions > button:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.cs-sidebar-actions > button > span { display: none; }
+.cs-sidebar-actions > button svg { width: 14px; height: 14px; }
 
 .cs-sidebar-toggle {
   -webkit-app-region: no-drag;
@@ -2243,32 +2178,6 @@ html, body, #app {
 
 /* ===== Minimalist: auto-hide controls (they appear on hover) ===== */
 
-/* Session "+" button and window controls: hidden until hovering the bar */
-.session-add,
-.window-controls {
-  opacity: 0;
-  transition: opacity 0.18s ease;
-}
-
-.session-bar:hover .session-add,
-.session-bar:hover .window-controls {
-  opacity: 1;
-}
-
-/* Close session: only when hovering the tab */
-.session-tab-close {
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.session-tab.active:hover .session-tab-close {
-  opacity: 0.6;
-}
-
-.session-tab.active:hover .session-tab-close:hover {
-  opacity: 1;
-}
-
 /* TV action buttons: hidden until hovering the bar */
 .tv-btn {
   opacity: 0;
@@ -2424,10 +2333,9 @@ html, body, #app {
 .session-content {
   flex: 1;
   display: flex;
+  flex-direction: column;   /* title bar on top, workspace below */
   min-width: 0;
   min-height: 0;
-  /* Positioning context for the absolute lateral bar so it stays below
-     the mac-title-strip and never overlaps the traffic lights. */
   position: relative;
 }
 
@@ -2440,92 +2348,41 @@ html, body, #app {
   max-width: 100%;
 }
 
-.session-manager[data-bar-pos="top"] .session-content { flex-direction: column; }
-.session-manager[data-bar-pos="bottom"] .session-content { flex-direction: column-reverse; }
-.session-manager[data-bar-pos="left"] .session-content { flex-direction: row; }
-.session-manager[data-bar-pos="right"] .session-content { flex-direction: row-reverse; }
-
-/* ── Panel launcher ───────────────────────────────────────────────────────────
-   A movable dock that opens panels. Lives outside .session-content so it just
-   stacks with the session bar (no collision handling). Direction follows its
-   position; the whole thing is centered on its axis (as requested). */
+/* ── Panel launcher (inside the hover title strip) ────────────────────────────
+   A horizontal toolbar of panel icons living in the top strip. It reveals with
+   the strip (fade handled by the .session-bar rules above), so the panel dock
+   costs no persistent space. */
 .session-shell { flex: 1; display: flex; min-width: 0; min-height: 0; }
-.session-manager[data-launcher-pos="left"]   .session-shell { flex-direction: row; }
-.session-manager[data-launcher-pos="right"]  .session-shell { flex-direction: row-reverse; }
-.session-manager[data-launcher-pos="top"]    .session-shell { flex-direction: column; }
-.session-manager[data-launcher-pos="bottom"] .session-shell { flex-direction: column-reverse; }
 
 .panel-launcher {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-start; /* toggle at the start; icons container centers */
-  gap: 4px;
-  flex-shrink: 0;
-  background: color-mix(in srgb, var(--surface) 35%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-app-region: drag; /* same chrome behavior as the session bar */
+  -webkit-app-region: no-drag;
 }
-.panel-launcher[data-pos="left"],
-.panel-launcher[data-pos="right"] { flex-direction: column; width: 48px; padding: 8px 0; }
-.panel-launcher[data-pos="top"],
-.panel-launcher[data-pos="bottom"] { flex-direction: row; min-height: 44px; padding: 0 8px; }
-.panel-launcher[data-pos="left"]   { border-right: 1px solid var(--border); }
-.panel-launcher[data-pos="right"]  { border-left: 1px solid var(--border); }
-.panel-launcher[data-pos="top"]    { border-bottom: 1px solid var(--border); }
-.panel-launcher[data-pos="bottom"] { border-top: 1px solid var(--border); }
-
-/* Hidden on the home (no sessions): the launcher is chrome for working. */
+/* Hidden on the home (no panels): the launcher is chrome for working. */
 .panel-launcher.hidden { display: none; }
 
-/* Icons container fills the remaining space and centers the buttons. */
+/* Icons row fills the strip and centers the buttons; the window controls that
+   follow keep to the right via their own margin-left:auto. */
 .panel-launcher-icons {
   flex: 1;
   min-width: 0;
-  min-height: 0;
   display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  overflow: auto;
+  overflow-x: auto;
 }
-.panel-launcher[data-pos="left"] .panel-launcher-icons,
-.panel-launcher[data-pos="right"] .panel-launcher-icons { flex-direction: column; }
-.panel-launcher[data-pos="top"] .panel-launcher-icons,
-.panel-launcher[data-pos="bottom"] .panel-launcher-icons { flex-direction: row; }
-
-/* Collapse toggle: pinned at the dock's start; rotates when collapsed. */
-.panel-launcher-toggle {
-  -webkit-app-region: no-drag;
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: none;
-  border: none;
-  border-radius: var(--radius);
-  color: var(--fg);
-  opacity: 0.5;
-  cursor: pointer;
-}
-.panel-launcher-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.panel-launcher-toggle svg { width: 14px; height: 14px; transition: transform 0.15s; }
-.panel-launcher[data-collapsed="1"] .panel-launcher-toggle svg { transform: rotate(180deg); }
-
-/* Collapsed: hide the icons, shrink the dock to just the toggle. */
-.panel-launcher[data-collapsed="1"] .panel-launcher-icons { display: none; }
-.panel-launcher[data-collapsed="1"][data-pos="left"],
-.panel-launcher[data-collapsed="1"][data-pos="right"] { width: 30px; }
-.panel-launcher[data-collapsed="1"][data-pos="top"],
-.panel-launcher[data-collapsed="1"][data-pos="bottom"] { min-height: 30px; }
 
 .panel-launcher-btn {
   -webkit-app-region: no-drag;
+  position: relative;
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2539,7 +2396,21 @@ html, body, #app {
   transition: opacity 0.12s, background 0.12s;
 }
 .panel-launcher-btn:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 12%, transparent); }
-.panel-launcher-btn svg { width: 18px; height: 18px; }
+.panel-launcher-btn svg { width: 17px; height: 17px; }
+
+/* Panel type already open in the workspace: highlight + accent dot. */
+.panel-launcher-btn.open { opacity: 1; color: var(--accent); }
+.panel-launcher-btn.open::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--glow-accent-sm);
+}
 
 /* ── Center home (shown when there are no sessions) ───────────────────────── */
 .home-view {
@@ -2633,212 +2504,16 @@ html, body, #app {
 .home-recent-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-recent-path { flex-shrink: 0; color: var(--fg-dim); font-size: 11px; font-family: var(--font-mono, monospace); }
 
-/* Vertical bar on the sides: 4px strip by default, expands on
-   hover pushing the panels (normal flow, no overlay). */
-.session-manager[data-bar-pos="left"] .session-bar,
-.session-manager[data-bar-pos="right"] .session-bar {
-  flex-direction: column;
-  align-items: stretch;
-  overflow: hidden;
-  padding: 0;
-  width: 4px;
-  min-width: 4px;
-  max-width: 4px;
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  backdrop-filter: none;
-  border: none;
-  transition: width 0.2s ease, min-width 0.2s ease, max-width 0.2s ease,
-              padding 0.2s ease, background 0.2s ease, backdrop-filter 0.2s ease;
-}
-
-/* On hover: pushes the panels (no overlay) */
-.session-manager[data-bar-pos="left"] .session-bar:hover,
-.session-manager[data-bar-pos="right"] .session-bar:hover {
-  width: 160px;
-  min-width: 160px;
-  max-width: 160px;
-  padding: 8px 4px;
-  background: color-mix(in srgb, var(--surface) 85%, transparent);
-  backdrop-filter: blur(12px);
-}
-
-.session-manager[data-bar-pos="left"] .session-tabs,
-.session-manager[data-bar-pos="right"] .session-tabs {
-  flex-direction: column;
-  align-items: stretch;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.session-manager[data-bar-pos="left"] .window-controls,
-.session-manager[data-bar-pos="right"] .window-controls {
-  flex-direction: column;
-  margin-left: 0;
-  margin-top: auto;
-  padding-left: 0;
-}
-
-/* Smaller gap on the side stuck to the bar */
-/* Gap between session bar and workspace is handled by inset: 10px on all sides. */
-
-/* macOS: top strip for the traffic lights when the bar is not at the top */
-.mac-title-strip {
-  display: none;
-}
-
-.is-mac .mac-title-strip {
-  display: block;
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-  /* Thin invisible hover zone when bar is NOT at top */
-  height: 4px;
-  overflow: hidden;
-  transition: height 0.18s ease;
-}
-
-.is-mac .mac-title-strip:hover {
-  height: 36px;
-}
-
-/* When bar is at top, the bar itself IS the title bar — hide the strip */
-.is-mac .session-manager[data-bar-pos="top"] .mac-title-strip {
-  display: none;
-}
-
-/* Top/bottom on macOS: thin 4px strip by default, expands on hover to show
-   sessions. Content hidden with opacity so nothing leaks through the 4px gap. */
-.is-mac .session-manager[data-bar-pos="top"] .session-bar,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar {
-  height: 4px;
-  min-height: 4px;
-  padding: 0;
-  overflow: hidden;
-  transition: height 0.18s ease, min-height 0.18s ease, padding 0.18s ease,
-              opacity 0.18s ease;
-}
-
-.is-mac .session-manager[data-bar-pos="top"] .session-bar:not(:hover) .session-tabs,
-.is-mac .session-manager[data-bar-pos="top"] .session-bar:not(:hover) .session-add,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .session-tabs,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .session-add,
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:not(:hover) .window-controls {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.is-mac .session-manager[data-bar-pos="top"] .session-bar:hover {
-  height: 38px;
-  min-height: 38px;
-  padding: 0 8px 0 82px;
-  align-items: center;
-}
-
-.is-mac .session-manager[data-bar-pos="bottom"] .session-bar:hover {
-  height: 38px;
-  min-height: 38px;
-  padding: 0 8px;
-  align-items: center;
-}
-
-/* ── Side bar: narrow by default, expands on hover ───────────────────────
-   Only on left/right. Top/bottom don't have this behavior.               */
-.session-tab-badge {
-  display: none;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-}
-
-.session-manager[data-bar-pos="left"] .session-tab,
-.session-manager[data-bar-pos="right"] .session-tab {
-  padding: 8px 6px;
-  width: 100%;
-  border-radius: 6px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-/* Content hidden while the bar is collapsed (4px) */
-.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .session-tabs,
-.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .session-tabs,
-.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .window-controls,
-.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .window-controls,
-.session-manager[data-bar-pos="left"] .session-bar:not(:hover) .session-add,
-.session-manager[data-bar-pos="right"] .session-bar:not(:hover) .session-add {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* Badge and name visible when expanded */
-.session-manager[data-bar-pos="left"] .session-tab-badge,
-.session-manager[data-bar-pos="right"] .session-tab-badge {
-  display: flex;
-  flex-shrink: 0;
-}
-
-.session-manager[data-bar-pos="left"] .session-tab-label,
-.session-manager[data-bar-pos="right"] .session-tab-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Informational session popover (name + open panels) */
-.session-popover {
-  position: fixed;
-  z-index: 1000;
-  min-width: 140px;
-  max-width: 240px;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(14px);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-  pointer-events: none;
-}
-
-.session-popover.hidden {
-  display: none;
-}
-
-.session-popover-title {
-  color: var(--fg);
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.session-popover-item {
-  color: color-mix(in srgb, var(--fg) 72%, transparent);
-  font-size: 12px;
-  padding: 1px 0;
-}
-
-.session-popover-empty {
-  color: var(--fg-dim);
-  font-size: 12px;
-  font-style: italic;
-}
-
 /* Scripts panel: lists scripts found in the user's folders; click runs in the terminal */
 .scripts-panel {
   display: flex;
-  flex-direction: column;
   height: 100%;
   background: var(--bg);
   overflow: hidden;
 }
-.scripts-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.scripts-title { flex: 1; font-size: 12px; font-weight: 600; color: var(--fg); }
+.scripts-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.scripts-detail-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--fg-dim); font-size: 12px; font-style: italic; }
+.scripts-detail-empty.hidden { display: none; }
 .scripts-action {
   display: flex;
   align-items: center;
@@ -2886,8 +2561,7 @@ html, body, #app {
 }
 .scripts-dir-del:hover { color: var(--accent); }
 
-/* Body: scrollable list on top, embedded terminal below */
-.scripts-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+/* Scripts list (inside the collapsible sidebar) */
 .scripts-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
 .scripts-hint { color: var(--fg-dim); font-size: 12px; font-style: italic; padding: 10px; }
 .scripts-item {
@@ -2918,21 +2592,10 @@ html, body, #app {
   text-overflow: ellipsis;
   direction: rtl;
 }
-.scripts-divider { height: 6px; flex-shrink: 0; cursor: row-resize; background: var(--border); }
-.scripts-divider:hover { background: var(--accent); }
-.scripts-term { flex-shrink: 0; position: relative; overflow: hidden; }
+.scripts-term { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 
 /* DB panel: detected database servers (Docker + local), expand to list databases */
 .db-panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); overflow: hidden; }
-.db-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.db-title { flex: 1; font-size: 12px; font-weight: 600; color: var(--fg); }
 .db-action {
   display: flex;
   padding: 4px 6px;
@@ -2947,14 +2610,8 @@ html, body, #app {
 /* Master-detail: tree of servers/dbs/tables on the left, data on the right */
 .db-body { flex: 1; display: flex; min-height: 0; }
 .db-children.hidden { display: none; }
-.scripts-term.hidden, .scripts-divider.hidden, .scripts-dir-del.hidden { display: none; }
-.db-tree {
-  width: min(250px, 35%);
-  min-width: 140px;
-  flex-shrink: 0;
-  overflow: auto;
-  padding: 6px 0;
-}
+.scripts-term.hidden, .scripts-dir-del.hidden { display: none; }
+.db-tree { padding: 6px 0; }
 .db-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .db-hint, .db-note { color: var(--fg-dim); font-size: 12px; padding: 6px 10px; font-style: italic; }
 .db-detail-hint, .db-detail-loading { color: var(--fg-dim); font-size: 13px; padding: 16px; font-style: italic; }
@@ -3306,18 +2963,7 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 }
 
 /* Memory panel: per-project reusable context (decisions, facts, tasks, notes). */
-.memory-panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); overflow: hidden; }
-.memory-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-.memory-title { font-size: 12px; font-weight: 600; color: var(--fg); }
-.memory-project {
-  flex: 1;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--fg-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.memory-panel { display: flex; height: 100%; overflow: hidden; }
 .memory-action {
   display: flex;
   align-items: center;
@@ -3334,6 +2980,7 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 .memory-action.danger:hover:not(:disabled) { color: #f7768e; border-color: #f7768e; }
 .memory-action .icon { width: 13px; height: 13px; }
 .memory-controls {
+  flex-shrink: 0;
   display: flex;
   gap: 8px;
   padding: 8px 10px;
@@ -3674,13 +3321,11 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   font-size: 12px;
 }
 .memory-toggle input { accent-color: var(--accent); }
-.memory-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
 .memory-list {
-  width: 280px;
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px;
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -3815,6 +3460,16 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 /* Jira panel: connect with a personal API token, list/detail/create issues */
 .jira-header { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .jira-title { flex: 1; font-size: 12px; font-weight: 600; color: var(--fg); }
+/* Layout: collapsible sidebar (accounts) + detail (issues board/list) */
+.jira-panel { display: flex; height: 100%; overflow: hidden; }
+.jira-detail-pane { flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column; overflow: auto; }
+.jira-account-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; color: var(--fg-dim); font-size: 12px; }
+.jira-account-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); }
+.jira-account-row.selected { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); color: var(--fg); }
+.jira-account-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jira-account-del { opacity: 0; flex-shrink: 0; }
+.jira-account-row:hover .jira-account-del, .jira-account-row.selected .jira-account-del { opacity: 0.6; }
+.jira-account-del:hover { opacity: 1 !important; }
 .jira-action { display: flex; padding: 4px 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); cursor: pointer; }
 .jira-action:hover { color: var(--fg); border-color: var(--accent); }
 .jira-action .icon { width: 13px; height: 13px; }
@@ -3928,13 +3583,8 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 .jira-board-card.jira-card-moving { opacity: 0.6; pointer-events: none; }
 .jira-board-card-summary { margin: 0; font-size: 12px; color: var(--fg); line-height: 1.4; }
 
-/* Reusable master-detail layout (sidebar list + detail pane) */
-.md-panel { display: flex; height: 100%; background: var(--bg); overflow: hidden; }
-.md-sidebar { width: 200px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: hidden; }
-.md-panel--resizable .md-sidebar { border-right: none; }
-.md-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.md-title { flex: 1; font-size: 12px; font-weight: 600; color: var(--fg); }
-.md-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+/* Grouped list styles (collapsible project groups + items) — used by the Docker
+   sidebar list rendered inside cs-sidebar. */
 .md-empty { padding: 12px; font-size: 12px; color: var(--fg-dim); font-style: italic; }
 .md-cat { display: flex; align-items: center; gap: 6px; padding: 8px 6px 3px; }
 .md-cat-name { flex: 1; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -3950,9 +3600,10 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 .md-item:hover { background: var(--surface-2); color: var(--fg); }
 .md-item.active { background: var(--surface-2); color: var(--fg); }
 .md-item-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.md-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
 
-/* Docker panel: detail content (uses the reusable master-detail above) */
+/* Docker panel: collapsible sidebar (containers) + detail (logs/terminal) */
+.docker-panel { display: flex; height: 100%; overflow: hidden; }
+.docker-detail-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
 .docker-action { display: flex; padding: 4px 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); cursor: pointer; }
 .docker-action:hover { color: var(--fg); border-color: var(--accent); }
 .docker-action:disabled { opacity: 0.4; cursor: default; }
@@ -4801,30 +4452,37 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 
 /* ── Diff panel ─────────────────────────────────────────────────────────── */
 .diff-panel { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.diff-toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.diff-panel .md-panel { display: flex; flex: 1; overflow: hidden; min-height: 0; }
-.diff-panel .md-sidebar { width: 220px; min-width: 140px; border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; }
-.diff-panel .md-detail { flex: 1; overflow: auto; min-width: 0; }
+.diff-body { flex: 1; display: flex; min-height: 0; }
+.diff-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: auto; }
+
+/* Controls + list live inside the collapsible sidebar; detail is free. */
+.diff-controls { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; flex-shrink: 0; }
+.diff-mode-toggle { display: flex; gap: 4px; }
+.diff-mode-toggle .diff-mode-btn { flex: 1; text-align: center; }
+.diff-controls .diff-repo-select { width: 100%; max-width: none; box-sizing: border-box; }
+.diff-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; padding: 0 4px 4px; }
+.diff-group { font-size: 10px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--fg-dim); padding: 8px 6px 3px; }
+.diff-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: none; background: none; border-radius: 6px; color: var(--fg-dim); font-size: 12px; font-family: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.diff-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); }
+.diff-row--selected, .diff-row--selected:hover { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); color: var(--fg); }
+.diff-row > .diff-stats, .diff-row > .diff-short { flex-shrink: 0; }
+.diff-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diff-mode-btn { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--fg-dim); background: transparent; border: 1px solid transparent; cursor: pointer; }
 .diff-mode-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .diff-mode-btn--active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.diff-panel .md-panel { flex: 1; overflow: hidden; }
 .diff-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; flex: 1; padding: 32px; text-align: center; }
 .diff-empty-state.hidden,
-.md-panel.hidden { display: none; }
+.diff-body.hidden { display: none; }
 .diff-empty-title { font-size: 14px; font-weight: 600; color: var(--fg); margin: 0; }
 .diff-empty-hint { font-size: 12px; color: var(--fg-dim); margin: 0; }
 .diff-empty-open-btn { margin-top: 8px; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); cursor: pointer; }
 .diff-empty-open-btn:hover { background: color-mix(in srgb, var(--accent) 25%, transparent); }
 .diff-hint { padding: 16px; color: var(--fg-dim); font-size: 12px; }
-.diff-open-btn { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--fg-dim); background: transparent; border: 1px solid var(--border); cursor: pointer; }
 .diff-repo-select { min-width: 120px; max-width: 220px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--fg); font: inherit; }
 .diff-repo-select.hidden { display: none; }
-.diff-open-btn:hover { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-.diff-open-btn .icon { width: 12px; height: 12px; }
 .diff-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 4px; color: var(--fg-dim); background: transparent; border: 1px solid transparent; cursor: pointer; }
 .diff-icon-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.diff-icon-btn .icon { width: 13px; height: 13px; }
+.diff-icon-btn svg { width: 13px; height: 13px; }
 .diff-patch { margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6; overflow: auto; height: 100%; box-sizing: border-box; }
 .diff-stats { display: inline-flex; gap: 4px; font-size: 10px; font-weight: 600; }
 .diff-add { color: #73daca; }
@@ -4862,7 +4520,12 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-ai-followup-msg { font-size: 11px; padding: 4px 8px; border-radius: 4px; white-space: pre-wrap; }
 .review-ai-followup-msg--user { background: var(--surface-2); color: var(--fg-dim); align-self: flex-end; max-width: 85%; }
 .review-ai-followup-msg--agent { background: var(--surface); color: var(--fg); border-left: 2px solid var(--accent); }
-.review-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+/* Controls block inside the sidebar (base branch + review agent) */
+.review-controls { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; flex-shrink: 0; }
+.review-base-row { display: flex; align-items: center; gap: 6px; }
+.review-base-row .review-branch-wrap { flex: 1; min-width: 0; }
+.review-controls .review-branch-input { width: 100%; box-sizing: border-box; }
+.review-controls .review-agent-select { width: 100%; }
 .review-base-label { font-size: 11px; color: var(--fg-dim); }
 .review-branch-wrap { position: relative; }
 .review-branch-input { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); color: var(--fg); width: 160px; }
@@ -4874,9 +4537,10 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-icon-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .review-icon-btn .icon { width: 13px; height: 13px; }
 .review-icon-btn--active { color: var(--accent) !important; background: color-mix(in srgb, var(--accent) 12%, transparent) !important; }
-/* Body: sidebar + detail */
+/* Body: collapsible sidebar + detail */
 .review-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }
-.review-sidebar { width: 200px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Diff-view tools row in the sidebar footer (keeps the detail free) */
+.review-view-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px 6px; border-top: 1px solid var(--border); }
 .review-branch-search { padding: 5px 8px; font-size: 11px; background: var(--surface); border: none; border-bottom: 1px solid var(--border); color: var(--fg); flex-shrink: 0; }
 .review-branch-search:focus { outline: none; }
 .review-branch-list { flex: 1; overflow-y: auto; padding: 4px 0; }
