@@ -27,7 +27,7 @@
     "agentWaiting": "waiting",
     "agentWorking": "working",
     "agentIdle": "idle",
-    "ramUsage": "RAM used by Bento",
+    "ramUsage": "Physical RAM used by Bento and its processes",
     "ramUnavailable": "RAM usage unavailable",
     "resize": "Resize",
     "top": "top",
