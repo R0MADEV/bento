@@ -513,8 +513,11 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   return {
     element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady,
     getCwd: () => lastCwd || undefined, sendInput, onInput, onBell,
-    getSnapshot: () => serializeAddon.serialize({ scrollback: 500 }),
-    writeSnapshot: (data: string) => { if (data) term.write(data) },
+    getSnapshot: () => { try { return serializeAddon.serialize({ scrollback: 500 }) } catch { return '' } },
+    // A malformed/huge restored snapshot must not throw — that would drop the
+    // agent from restore. Worst case the scrollback isn't painted; the agent
+    // still restores and resumes.
+    writeSnapshot: (data: string) => { if (data) { try { term.write(data) } catch { /* skip unpaintable snapshot */ } } },
     getPtyId: () => id,
   }
 }

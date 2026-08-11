@@ -4,14 +4,24 @@ import { invoke } from '@tauri-apps/api/core'
 import { createAgentStore } from '../../core/terminal/agentStore'
 import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
 import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
-import { AGENT_SESSIONS_KEY, emitAgentDock, savedAgentDockEntries, type AgentAttention } from '../../core/terminal/agentDockState'
-import { createHorizontalResizablePane } from '../../ui/resizablePane'
+import { emitAgentDock, savedAgentDockEntries, type AgentAttention } from '../../core/terminal/agentDockState'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 const MAX_AGENTS = 20
-const COLLAPSED_KEY = 'bento.agents.collapsed'
-const SIDEBAR_WIDTH_KEY = 'bento.agents.sidebarWidth'
 
-interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string; snapshot?: string }
+export interface AgentsPanelOptions {
+  // Namespace for this panel's localStorage (sessions + sidebar state). Lets a
+  // per-worktree panel keep its own agents, isolated from the global one.
+  storageScope?: string
+  // Whether to broadcast agents to the global dock/status bar. Off for embedded
+  // per-worktree panels so they don't pollute the global agent list.
+  publishToDock?: boolean
+}
+
+// herdr-style split: the small, critical resume metadata (agent list + session
+// refs) is persisted separately from the large, optional scrollback history, so
+// a huge/over-quota snapshot can never evict or corrupt the resume info.
+interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string }
 
 const STATUS_ICON: Record<string, string> = {
   working: '●',
@@ -43,6 +53,11 @@ async function buildResumeCmd(cmd: string, cwd: string, sessionId?: string): Pro
   if (cmd === 'opencode') return sessionId ? `opencode --session ${sessionId}` : 'opencode'
   if (cmd === 'codex') {
     if (sessionId) {
+      // Codex only writes the rollout on the first message: a session captured at
+      // launch but closed before any turn was never saved. Verify it exists before
+      // resuming, else `codex resume <id>` fails hard with "No saved session found".
+      const exists = await invoke<boolean>('agent_codex_session_exists', { sessionId }).catch(() => false)
+      if (!exists) return 'codex'
       // Clear stale thread-writer lock so codex doesn't reject with
       // "already has an active writer" when the previous PTY was killed externally.
       await invoke('agent_codex_clear_lock', { sessionId }).catch(() => {})
@@ -62,15 +77,26 @@ interface AgentSlot {
   handle: TerminalPanelHandle
   slot: HTMLDivElement
   titleCleanup: () => void
+  // herdr model: when the shell/process exits we keep the slot (marked exited)
+  // instead of removing it — the user closes it with ×. Runtime-only; on restore
+  // the agent is relaunched (resumed), so this isn't persisted.
+  exited?: boolean
 }
 
-export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit: () => void; dispose: () => void } {
+export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {}): { element: HTMLElement; fit: () => void; persist: () => void; dispose: () => void } {
+  const { storageScope = 'bento.agents', publishToDock = true } = opts
+  const sessionsKey = `${storageScope}.sessions`   // resume metadata (critical)
+  const historyKey = `${storageScope}.history`     // scrollback (best-effort)
   const store = createAgentStore()
   const slots: AgentSlot[] = []
   let activeIndex = -1
   let agentCounter = 0
   let isEditing = false
   let initialized = false
+  // Once disposed the hub must never persist again: dispose already flushed the
+  // final state, and any late persist (a stray navigate/debounce on the dead hub)
+  // would clobber it with an empty list.
+  let disposed = false
   // Global registry of session IDs already claimed by an agent slot in this
   // panel. Prevents two concurrent agents in the same directory from racing
   // to capture the same session.
@@ -86,6 +112,7 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
   const attention = new Map<string, AgentAttention>()
 
   const publishDock = (): void => {
+    if (!publishToDock) return
     const entries = store.getAll().map((entry, index) => ({
       id: entry.id,
       name: slots[index]?.customName ?? entry.title,
@@ -98,32 +125,50 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     emitAgentDock(entries)
   }
 
-  // Writes the current agents to localStorage. Serializing each terminal's
-  // scrollback (getSnapshot) is expensive, so persistSessions() coalesces the
-  // frequent render-driven calls; persistNow() flushes immediately for critical
-  // events (session captured, panel disposed).
+  // Persists the agents in two independent writes (herdr-style):
+  //  1. resume metadata (name/cwd/cmd/sessionId) — tiny, must survive; written first.
+  //  2. scrollback history — large, best-effort; dropped silently if over quota so
+  //     it can never evict the metadata.
+  // getSnapshot is expensive, so persistSessions() coalesces render-driven calls;
+  // persistNow() flushes immediately for critical events (capture, dispose, unload).
   let persistTimer: ReturnType<typeof setTimeout> | undefined
   const persistNow = () => {
     if (persistTimer) { clearTimeout(persistTimer); persistTimer = undefined }
-    if (!initialized) return
+    // A disposed hub already flushed its final state; a late persist would clobber
+    // it with an empty list. Not yet initialized → nothing to save yet.
+    if (disposed || !initialized) return
     const entries = store.getAll()
     const sessions: SavedSession[] = slots.map((slot, i) => ({
       name: slot.customName,
       cwd: slot.handle.getCwd() || entries[i]?.title || '',
       cmd: slot.cmd,
       sessionId: slot.sessionId,
-      snapshot: slot.handle.getSnapshot(),
     }))
-    try {
-        localStorage.setItem(AGENT_SESSIONS_KEY, JSON.stringify(sessions))
-    } catch {
-      // Quota exceeded (scrollback too large): retry without snapshots so the
-      // resume-critical metadata (cmd + sessionId) is never lost.
-      try {
-        const light = sessions.map(({ snapshot: _snapshot, ...meta }) => meta)
-        localStorage.setItem(AGENT_SESSIONS_KEY, JSON.stringify(light))
-      } catch { /* storage unavailable — nothing else we can do */ }
+    // Metadata is sacred: if the store is full, sacrifice this panel's disposable
+    // scrollback (and, as a last resort, other panels' scrollback) and retry, so
+    // the resume list is never lost to a quota error.
+    const metaJson = JSON.stringify(sessions)
+    const writeMeta = (): boolean => {
+      try { localStorage.setItem(sessionsKey, metaJson); return true } catch { return false }
     }
+    if (!writeMeta()) {
+      try { localStorage.removeItem(historyKey) } catch { /* ignore */ }
+      if (!writeMeta()) {
+        // Still no room: drop every panel's scrollback (keys ending in .history).
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i)
+          if (k && k.endsWith('.history')) { try { localStorage.removeItem(k) } catch { /* ignore */ } }
+        }
+        writeMeta()
+      }
+    }
+
+    // Scrollback: best-effort; must never fail the (already written) metadata.
+    const history = slots.map(slot => {
+      try { return slot.handle.getSnapshot() } catch { return '' }
+    })
+    try { localStorage.setItem(historyKey, JSON.stringify(history)) }
+    catch { try { localStorage.removeItem(historyKey) } catch { /* ignore */ } }
   }
   const persistSessions = () => {
     if (persistTimer || !initialized) return
@@ -144,13 +189,14 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     let attempt = 0
     const agentIsAlive = () => slots.includes(agentSlot) && !agentSlot.sessionId
 
-    // Socket agents report on SessionStart (seconds after launch); if the hook
-    // hasn't fired in ~1 min it never will, so stop polling. OpenCode writes its
+    // Socket agents report on SessionStart (right after launch); poll fast early
+    // so closing the panel a couple seconds in still captures the resume id. If
+    // the hook hasn't fired in ~1 min it never will, so stop. OpenCode writes its
     // session only on the first message, which can be much later — poll long.
-    const maxAttempts = useSocket ? 15 : 120
+    const maxAttempts = useSocket ? 24 : 120
 
     while (agentIsAlive() && attempt < maxAttempts) {
-      await delay(Math.min(2000 + attempt * 500, 5000))
+      await delay(useSocket ? Math.min(500 + attempt * 400, 3000) : Math.min(2000 + attempt * 500, 5000))
       attempt++
 
       // Socket (Claude/Codex): exact match by HERDR_PANE_ID.
@@ -183,72 +229,32 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
   root.className = 'agents-hub'
 
   // ── Sidebar ───────────────────────────────────────────────────
-  const sidebar = document.createElement('div')
-  sidebar.className = 'agents-sidebar'
-  const savedSidebarWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
-  const hasSavedSidebarWidth = Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0
-  if (hasSavedSidebarWidth) sidebar.style.width = `${savedSidebarWidth}px`
-
-  let sidebarCollapsed = localStorage.getItem(COLLAPSED_KEY) === 'true'
-
-  const toggleBtn = document.createElement('button')
-  toggleBtn.className = 'agents-sidebar-toggle'
-  toggleBtn.title = 'Toggle sidebar'
-  toggleBtn.textContent = sidebarCollapsed ? '›' : '‹'
- toggleBtn.addEventListener('click', () => {
-    sidebarCollapsed = !sidebarCollapsed
-    sidebar.classList.toggle('collapsed', sidebarCollapsed)
-    sidebarResizer.element.classList.toggle('hidden', sidebarCollapsed)
-    toggleBtn.textContent = sidebarCollapsed ? '›' : '‹'
-    localStorage.setItem(COLLAPSED_KEY, String(sidebarCollapsed))
-    // Refit the active terminal after the CSS transition ends
-    setTimeout(() => slots[activeIndex]?.handle.fit?.(), 210)
+  const cs = createCollapsibleSidebar({
+    storageKey: storageScope,
+    title: appT('panelTerminal'),
+    defaultWidth: 220,
+    minWidth: 160,
+    minRemaining: 320,
+    container: root,
+    onToggle: () => setTimeout(() => slots[activeIndex]?.handle.fit?.(), 210),
   })
-
-  // Mini dots shown when sidebar is collapsed — one per agent with status color
-  const miniDots = document.createElement('div')
-  miniDots.className = 'agents-sidebar-mini'
-
-  const sidebarHeader = document.createElement('div')
-  sidebarHeader.className = 'agents-sidebar-header'
-  sidebarHeader.innerHTML = `<span class="agents-sidebar-title">${appT('panelTerminal').toUpperCase()}</span>`
-  sidebarHeader.appendChild(toggleBtn)
-
-  const sidebarList = document.createElement('ul')
-  sidebarList.className = 'agents-sidebar-list'
-
-  const sidebarFooter = document.createElement('div')
-  sidebarFooter.className = 'agents-sidebar-footer'
 
   const newBtn = document.createElement('button')
   newBtn.className = 'agents-new-btn'
   newBtn.textContent = `+ ${i18nT('agents.newAgent')}`
   newBtn.addEventListener('click', () => addAgent())
-  sidebarFooter.appendChild(newBtn)
-
-  if (sidebarCollapsed) sidebar.classList.add('collapsed')
-  sidebar.append(sidebarHeader, miniDots, sidebarList, sidebarFooter)
+  cs.footer.appendChild(newBtn)
 
   // ── Terminal area ──────────────────────────────────────────────
   const termArea = document.createElement('div')
   termArea.className = 'agents-term-area'
-
-  const sidebarResizer = createHorizontalResizablePane({
-    target: sidebar,
-    container: root,
-    initialWidth: hasSavedSidebarWidth ? savedSidebarWidth : null,
-    minWidth: 160,
-    minRemaining: 320,
-    onWidthChange: width => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(width))),
-  })
-  sidebarResizer.element.classList.toggle('hidden', sidebarCollapsed)
 
   const emptyMsg = document.createElement('div')
   emptyMsg.className = 'agents-hub-empty'
   emptyMsg.innerHTML = `<span>${i18nT('agents.noTerminals')}</span><span class="agents-empty-hint">${i18nT('agents.noTerminalsHint')}</span>`
   termArea.appendChild(emptyMsg)
 
-  root.append(sidebar, sidebarResizer.element, termArea)
+  root.append(cs.element, cs.resizer, termArea)
 
   // ── Inline name edit ──────────────────────────────────────────
   const startRename = (slot: AgentSlot, nameEl: HTMLElement) => {
@@ -282,35 +288,29 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
 
   // ── Sidebar render ─────────────────────────────────────────────
 
+  const refreshMiniItems = () => {
+    const entries = store.getAll()
+    cs.setMiniItems(entries.map((entry, i) => {
+      const att = attention.get(entry.id)
+      const name = slots[i]?.customName ?? ''
+      return {
+        label: entry.title ? `${name}\n${entry.title}` : name,
+        dot: att ?? entry.status,
+        active: i === activeIndex,
+        onClick: () => activateAgent(i),
+      }
+    }))
+  }
+
   const renderSidebar = () => {
     if (isEditing) return
-    sidebarList.innerHTML = ''
+    cs.list.innerHTML = ''
     const entries = store.getAll()
     publishDock()
 
     newBtn.disabled = entries.length >= MAX_AGENTS
     persistSessions()
-
-    // Update mini dots (visible when sidebar is collapsed)
-    // Each wrap has the same height as a full sidebar item so dots align with rows
-    miniDots.innerHTML = ''
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i]
-      const wrap = document.createElement('div')
-      wrap.className = `agents-mini-dot-wrap${i === activeIndex ? ' active' : ''}`
-      const att = attention.get(entry.id)
-      if (att) wrap.dataset.attention = att
-      const dot = document.createElement('span')
-      dot.className = 'agents-mini-dot'
-      dot.dataset.status = entry.status
-      const name = slots[i]?.customName ?? ''
-      wrap.title = entry.title ? `${name}\n${entry.title}` : name
-      wrap.appendChild(dot)
-      wrap.addEventListener('click', () => {
-        if (sidebarCollapsed) activateAgent(i)
-      })
-      miniDots.appendChild(wrap)
-    }
+    refreshMiniItems()
 
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i]
@@ -319,14 +319,15 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
       const isActive = i === activeIndex
 
       const li = document.createElement('li')
-      li.className = `agents-sidebar-item${isActive ? ' active' : ''}`
+      li.className = `agents-sidebar-item${isActive ? ' active' : ''}${slot.exited ? ' exited' : ''}`
       li.dataset.status = entry.status
       const att = attention.get(entry.id)
       if (att) li.dataset.attention = att
 
       const icon = document.createElement('span')
       icon.className = 'agents-sidebar-icon'
-      icon.textContent = STATUS_ICON[entry.status] ?? '○'
+      // Exited agents show a hollow marker; live ones use their status icon.
+      icon.textContent = slot.exited ? '✕' : (STATUS_ICON[entry.status] ?? '○')
 
       const info = document.createElement('div')
       info.className = 'agents-sidebar-info'
@@ -376,7 +377,7 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
       info.append(nameRow, cwd)
       li.append(icon, info)
       li.addEventListener('click', () => activateAgent(i))
-      sidebarList.appendChild(li)
+      cs.list.appendChild(li)
     }
   }
 
@@ -413,7 +414,7 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     // renderSidebar (it would detach nameEl mid-dblclick), so patch in place.
     const activeId = slots[index]?.handle.getPtyId()
     if (activeId) attention.delete(activeId)
-    sidebarList.querySelectorAll<HTMLElement>('.agents-sidebar-item').forEach((li, i) => {
+    cs.list.querySelectorAll<HTMLElement>('.agents-sidebar-item').forEach((li, i) => {
       const isActive = i === index
       li.classList.toggle('active', isActive)
       if (isActive) {
@@ -421,7 +422,7 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
         li.querySelector('.agents-sidebar-badge')?.remove()
       }
     })
-    ;(miniDots.children[index] as HTMLElement | undefined)?.removeAttribute('data-attention')
+    refreshMiniItems()
     publishDock()
   }
 
@@ -439,7 +440,8 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     const handle = createTerminalPanel(
       `agent-${num}`,
       savedCwd || projectPath,
-      () => removeAgent(slots.findIndex(s => s.handle === handle)),
+      // Process exited: mark the slot (herdr keeps the pane), don't remove it.
+      () => markAgentExited(slots.findIndex(s => s.handle === handle)),
       undefined,
       store,
     )
@@ -465,21 +467,27 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     })
     agentSlot.titleCleanup = () => { offTitle(); offBell() }
 
-    if (savedSnapshot) handle.writeSnapshot(savedSnapshot)
     if (savedCmd) {
       buildResumeCmd(savedCmd, savedCwd || projectPath, savedSessionId).then(cmd => {
-        handle.sendInput(cmd)
         // If the command contains --resume / --session the stored sessionId is
         // still valid and capture can be skipped.  Otherwise the session file no
         // longer exists (or was never captured) — clear the stale ID so the
         // agentIsAlive() guard inside captureSession lets it poll.
         const isResuming = cmd.includes('--resume') || cmd.includes('--session') || cmd.includes(' resume ')
+        // A resuming agent replays the whole conversation itself; painting the
+        // saved snapshot too would double it (and mis-render it at another width).
+        // Only restore the snapshot when there's no replay.
+        if (!isResuming && savedSnapshot) handle.writeSnapshot(savedSnapshot)
+        handle.sendInput(cmd)
         if (!isResuming) {
           if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
           agentSlot.sessionId = undefined
           captureSession(agentSlot, savedCmd, handle.getCwd() || savedCwd || projectPath, Date.now())
         }
       })
+    } else if (savedSnapshot) {
+      // Plain shell (no agent to replay): restore its scrollback for context.
+      handle.writeSnapshot(savedSnapshot)
     }
 
     // Detect known agent CLIs from what the user types.
@@ -502,6 +510,18 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     slots.push(agentSlot)
 
     activateAgent(slots.length - 1)
+  }
+
+  // ── Process exited ────────────────────────────────────────────
+  // herdr keeps a pane whose process died (marked exited) instead of removing
+  // it, so the agent survives — in the list and in persistence — until the user
+  // closes it with ×. Persist so a mass exit (app reload) can't lose agents.
+  const markAgentExited = (index: number) => {
+    const s = slots[index]
+    if (!s || s.exited) return
+    s.exited = true
+    renderSidebar()
+    persistNow()
   }
 
   // ── Remove agent ──────────────────────────────────────────────
@@ -530,32 +550,59 @@ export function createAgentsPanel(projectPath = ''): { element: HTMLElement; fit
     }
   }
 
+  // Save agents synchronously if the page is torn down (reload/close) before a
+  // clean dispose runs — otherwise a just-created agent could be lost.
+  const onBeforeUnload = () => persistNow()
+  window.addEventListener('beforeunload', onBeforeUnload)
+
   // ── Dispose ───────────────────────────────────────────────────
   const dispose = () => {
+    window.removeEventListener('beforeunload', onBeforeUnload)
     persistNow()
+    disposed = true   // block any late persist from clobbering the saved list
     for (const s of slots) {
       s.titleCleanup()
       s.handle.dispose?.()
     }
     slots.length = 0
-    emitAgentDock(savedAgentDockEntries())
+    if (publishToDock) emitAgentDock(savedAgentDockEntries())
   }
 
-  // Restore previously open agents, or start with one fresh agent
+  // Restore previously open agents, or start with one fresh agent. Metadata and
+  // scrollback are read from separate keys; a missing/corrupt history just means
+  // agents restore without their old scrollback (they still resume).
   const savedSessions = (() => {
-    try { return JSON.parse(localStorage.getItem(AGENT_SESSIONS_KEY) ?? '[]') as SavedSession[] }
+    try { return JSON.parse(localStorage.getItem(sessionsKey) ?? '[]') as SavedSession[] }
+    catch { return [] }
+  })()
+  const savedHistory = (() => {
+    try { return JSON.parse(localStorage.getItem(historyKey) ?? '[]') as string[] }
     catch { return [] }
   })()
 
-  if (savedSessions.length > 0) {
-    for (const s of savedSessions) {
-      if (s.sessionId) claimedSessionIds.add(s.sessionId)
-      addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, s.snapshot)
+  try {
+    if (savedSessions.length > 0) {
+      savedSessions.forEach((s, i) => {
+        if (s.sessionId) claimedSessionIds.add(s.sessionId)
+        // One bad entry must not abort the whole restore — otherwise the rest are
+        // lost and the panel reopens with 1.
+        try { addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, savedHistory[i]) }
+        catch { /* skip this agent, keep restoring the others */ }
+      })
+      if (slots.length === 0) addAgent()
+    } else {
+      addAgent()
     }
-  } else {
-    addAgent()
+  } finally {
+    // Always mark ready, even if restore threw: a false `initialized` silently
+    // disables all persistence (nothing would ever be saved again).
+    initialized = true
   }
-  initialized = true
 
-  return { element: root, fit, dispose }
+  // Flush current agents to storage without tearing them down. Lets an embedding
+  // host (e.g. the Tasks worktree terminal) save on navigation, so idle agents
+  // survive even if dispose never fires (abrupt close).
+  const persist = () => persistNow()
+
+  return { element: root, fit, persist, dispose }
 }

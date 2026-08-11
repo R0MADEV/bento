@@ -42,25 +42,3 @@ export function buildSyncErrorView(options: {
   }
   showDetail(wrap)
 }
-
-export async function buildWorktreeTerminalView(options: {
-  worktreePath: string
-  branch: string
-  buildSubHead: (title: string, goBack: () => void) => HTMLElement
-  onBack: () => void
-  showDetail: (...nodes: HTMLElement[]) => void
-  setCleanup: (cleanup: () => void) => void
-}): Promise<void> {
-  const { worktreePath, branch, buildSubHead, onBack, showDetail, setCleanup } = options
-  const { createTerminalPanel } = await import('../terminal/TerminalPanel')
-  const wrap = document.createElement('div')
-  wrap.className = 'tasks-term-wrap'
-  const termBody = document.createElement('div')
-  termBody.className = 'tasks-term-body'
-  const term = createTerminalPanel('', worktreePath, onBack)
-  termBody.appendChild(term.element)
-  wrap.append(buildSubHead(`Terminal · ${branch}`, onBack), termBody)
-  showDetail(wrap)
-  requestAnimationFrame(() => term.fit())
-  setCleanup(() => term.dispose())
-}

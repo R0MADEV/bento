@@ -21,12 +21,17 @@ export class TaskPanelStore {
     localStorage.removeItem(this.key('devcontainerDir'))
   }
 
-  // Multi-repo list. Migrates from the legacy single `repo` key on first read.
+  // Multi-repo list. Migrates from the legacy single `repo` key only when the
+  // `repos` key was never written — once it exists (even as []), it wins, so
+  // removing the last repo doesn't resurrect the legacy value.
   repositories(): string[] {
-    try {
-      const raw = JSON.parse(localStorage.getItem(this.key('repos')) ?? '[]')
-      if (Array.isArray(raw) && raw.length) return raw as string[]
-    } catch { /* fall through to migration */ }
+    const stored = localStorage.getItem(this.key('repos'))
+    if (stored !== null) {
+      try {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed)) return parsed as string[]
+      } catch { /* corrupt — fall through to migration */ }
+    }
     const legacy = this.repository()
     return legacy ? [legacy] : []
   }

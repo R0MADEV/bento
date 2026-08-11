@@ -1799,6 +1799,100 @@ html, body, #app {
   background: var(--bg);
 }
 
+/* ── Collapsible sidebar (shared component) ───────────────────────────────
+   Used by the agents panel, tasks panel, and any future panel that needs a
+   collapsible left/right sidebar with mini-dot indicators.                  */
+.cs-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface) 25%, transparent);
+  border-right: 1px solid var(--border);
+  transition: width 0.18s ease;
+  min-width: 32px;
+}
+.cs-sidebar.collapsed { width: 32px !important; min-width: 32px; }
+
+.cs-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 4px;
+  flex-shrink: 0;
+  gap: 4px;
+  -webkit-app-region: drag;
+}
+.cs-sidebar.collapsed .cs-sidebar-header { padding: 10px 0; justify-content: center; border-bottom: none; }
+.cs-sidebar-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-sidebar.collapsed .cs-sidebar-title { display: none; }
+.cs-sidebar.collapsed .cs-sidebar-list,
+.cs-sidebar.collapsed .cs-sidebar-footer { display: none; }
+
+/* Header action buttons: cluster to the right, before the toggle. */
+.cs-sidebar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; -webkit-app-region: no-drag; }
+.cs-sidebar.collapsed .cs-sidebar-actions { display: none; }
+
+.cs-sidebar-toggle {
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.12s;
+}
+.cs-sidebar-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.cs-sidebar-toggle svg { width: 13px; height: 13px; transition: transform 0.18s; }
+.cs-sidebar.collapsed .cs-sidebar-toggle svg { transform: rotate(180deg); }
+
+.cs-sidebar-list { flex: 1; overflow-y: auto; min-height: 0; }
+.cs-sidebar-footer { flex-shrink: 0; }
+
+/* Mini dots — visible only when collapsed, one per item */
+.cs-sidebar-mini { display: none; flex-direction: column; align-items: center; gap: 4px; padding: 4px 0; }
+.cs-sidebar.collapsed .cs-sidebar-mini { display: flex; }
+.cs-mini-wrap {
+  width: 32px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+.cs-mini-wrap:hover { background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.cs-mini-wrap.active { background: var(--surface); }
+.cs-mini-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  pointer-events: none;
+}
+.cs-mini-wrap.active .cs-mini-dot { background: var(--accent); }
+.cs-mini-dot[data-dot="working"] { background: #22c55e; animation: agent-pulse 1.5s ease-in-out infinite; }
+.cs-mini-dot[data-dot="blocked"] { background: #f59e0b; }
+.cs-mini-dot[data-dot="bell"]    { background: #3b82f6; animation: agent-pulse 1.5s ease-in-out infinite; }
+
 /* Sidebar */
 .agents-sidebar {
   width: 220px;
@@ -1933,6 +2027,9 @@ html, body, #app {
 
 .agents-sidebar-item:hover { background: color-mix(in srgb, var(--surface) 60%, transparent); }
 .agents-sidebar-item.active { background: var(--surface); }
+/* Process exited (herdr model): kept in the list, dimmed, until closed with ×. */
+.agents-sidebar-item.exited { opacity: 0.5; }
+.agents-sidebar-item.exited .agents-sidebar-icon { color: var(--fg-dim); }
 
 .agents-sidebar-icon {
   font-size: 11px;
@@ -4378,10 +4475,14 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 
 /* ── Tasks panel ─────────────────────────────────────────────────────────── */
 .tasks-panel { display: flex; flex-direction: column; height: 100%; background: var(--bg); overflow: hidden; }
-.tasks-header { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.tasks-title { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; }
 .tasks-repo-btn { flex: 1; display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; font-family: inherit; cursor: pointer; min-width: 0; overflow: hidden; }
 .tasks-repo-btn:hover { border-color: var(--accent); }
+/* repoBtn moved into the sidebar footer: repo selector + remove, above the form. */
+.tasks-repo-row { display: flex; align-items: center; gap: 6px; margin: 8px 10px 0; }
+.tasks-repo-remove { flex-shrink: 0; color: var(--fg-dim); }
+.tasks-repo-remove:hover { color: #f87171; }
+.tasks-base-row { display: flex; align-items: center; gap: 6px; margin: 6px 10px 0; }
+.tasks-base-row .tasks-base-select { flex: 1; max-width: none; }
 .tasks-repo-btn .icon { width: 13px; height: 13px; flex-shrink: 0; color: var(--fg-dim); }
 .tasks-repo-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tasks-repo-input { flex: 1; padding: 4px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; outline: none; min-width: 0; }
@@ -4394,12 +4495,12 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 .resizable-pane-handle.hidden { display: none; }
 .tasks-filter-input { margin: 6px 8px; padding: 5px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; outline: none; font-family: inherit; }
 .tasks-filter-input:focus { border-color: var(--accent); }
-.tasks-list-wrap { flex: 1; overflow: auto; display: flex; flex-direction: column; cursor: grab; }
+.tasks-list-wrap { flex: 1; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; cursor: grab; }
 .tasks-list-wrap--dragging { cursor: grabbing; user-select: none; }
 .tasks-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .tasks-note { color: var(--fg-dim); font-size: 12px; padding: 10px 12px; font-style: italic; }
 /* Collapsible project header grouping the repo's worktrees. */
-.tasks-project { display: flex; flex-direction: column; min-width: max-content; }
+.tasks-project { display: flex; flex-direction: column; min-width: 0; }
 .tasks-project-header { display: flex; align-items: center; gap: 6px; padding: 9px 10px 3px; -webkit-app-region: no-drag; }
 .tasks-project-toggle { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding: 0; background: none; border: none; color: inherit; cursor: pointer; }
 .tasks-project-chevron { display: inline-flex; color: var(--fg-dim); transition: transform 0.15s; }
@@ -4414,14 +4515,17 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 .tasks-project.collapsed .tasks-list { display: none; }
 
 /* Linear-style list: no per-row borders; rounded hover/selection with breathing room. */
-.tasks-list { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px; min-width: max-content; }
-.tasks-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.tasks-list { display: flex; flex-direction: column; gap: 1px; padding: 4px 6px; min-width: 0; }
+.tasks-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
 .tasks-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .tasks-row--selected,
 .tasks-row--selected:hover { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
-.tasks-run-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+.tasks-run-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); flex-shrink: 0; margin-top: 5px; }
 .tasks-run-dot.docker-up { background: #9ece6a; }
 .tasks-row-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* Badges wrap under the name so the branch title always predominates. */
+.tasks-row-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 1px; }
+.tasks-row-badges:empty, .tasks-row-badges > :empty { display: none; }
 .tasks-branch { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tasks-path { font-size: 11px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tasks-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: var(--surface-2); color: var(--fg-dim); white-space: nowrap; flex-shrink: 0; }
@@ -4447,10 +4551,12 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
 .tasks-issue-summary { font-size: 11px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .tasks-actions { display: flex; gap: 3px; flex-shrink: 0; }
 .tasks-delete:hover { color: #f7768e; border-color: #f7768e; }
-/* action button only appears on hover / selected to keep rows clean */
-.tasks-row .tasks-actions { opacity: 0; transition: opacity 0.12s; }
+/* actions menu (⋮) stays visible so it's always reachable; dims until hovered */
+.tasks-row .tasks-actions { opacity: 0.55; transition: opacity 0.12s; }
 .tasks-row:hover .tasks-actions, .tasks-row--selected .tasks-actions { opacity: 1; }
-.tasks-create { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.tasks-create { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.tasks-create-repo { flex: 1 0 100%; padding: 4px 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); font-size: 12px; outline: none; }
+.tasks-create-repo:focus { border-color: var(--accent); color: var(--fg); }
 .tasks-name-input { flex: 1; padding: 5px 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; outline: none; min-width: 0; }
 .tasks-name-input:focus { border-color: var(--accent); }
 .tasks-isolate-detail { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; }
@@ -4524,9 +4630,8 @@ details[open] > .tasks-diff-summary::before { transform: rotate(90deg); }
 .tasks-pr-closed { background: color-mix(in srgb, #f7768e 20%, transparent); color: #f7768e; }
 .tasks-backup-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; color: #e0af68; background: color-mix(in srgb, #e0af68 15%, transparent); border: 1px solid color-mix(in srgb, #e0af68 45%, transparent); }
 .tasks-rebase-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; cursor: pointer; color: #ff9e64; background: color-mix(in srgb, #ff9e64 15%, transparent); border: 1px solid color-mix(in srgb, #ff9e64 45%, transparent); }
-.tasks-base-select, .tasks-locale-select { max-width: 150px; min-width: 92px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--fg-dim); font-size: 11px; outline: none; }
-.tasks-locale-select { min-width: 42px; max-width: 76px; }
-.tasks-base-select:focus, .tasks-locale-select:focus { border-color: var(--accent); color: var(--fg); }
+.tasks-base-select { max-width: 150px; min-width: 92px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--fg-dim); font-size: 11px; outline: none; }
+.tasks-base-select:focus { border-color: var(--accent); color: var(--fg); }
 
 .tasks-settings-view { display: flex; flex-direction: column; gap: 12px; max-width: 720px; padding: 18px; }
 .tasks-settings-view h3 { margin: 0; font-size: 15px; font-weight: 600; }

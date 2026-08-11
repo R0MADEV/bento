@@ -24,6 +24,45 @@ pub fn agent_codex_clear_lock(session_id: String) {
     let _ = std::fs::remove_file(lock);
 }
 
+/// Returns true if a Codex rollout for this session exists on disk. Codex only
+/// writes the rollout on the first message, so a just-launched (or empty) session
+/// may not exist yet — checking avoids `codex resume <id>` failing hard with
+/// "No saved session found with ID". Codex stores rollouts under
+/// ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl (uuid = session id).
+#[tauri::command]
+pub fn agent_codex_session_exists(session_id: String) -> bool {
+    let Ok(home) = std::env::var("HOME") else {
+        return false;
+    };
+    let root = PathBuf::from(home).join(".codex/sessions");
+    codex_dir_has_session(&root, &session_id, 0)
+}
+
+fn codex_dir_has_session(dir: &std::path::Path, session_id: &str, depth: usize) -> bool {
+    // sessions/YYYY/MM/DD/rollout-*.jsonl → 4 levels is enough; bound the walk.
+    if depth > 4 {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if codex_dir_has_session(&path, session_id, depth + 1) {
+                return true;
+            }
+        } else if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.contains(session_id))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Encodes a cwd the way Claude Code names its project folder under
 /// ~/.claude/projects: every `/` and `.` becomes `-` (the leading slash too, so
 /// `/Users/x` → `-Users-x`). Do NOT strip the leading slash.
@@ -107,5 +146,27 @@ mod tests {
             dir.file_name().unwrap().to_str().unwrap(),
             "-Users-x-Desktop-roma-bento",
         );
+    }
+
+    #[test]
+    fn codex_session_found_by_uuid_in_nested_rollout_filename() {
+        let tmp = std::env::temp_dir().join(format!("bento-codex-{}", std::process::id()));
+        let day = tmp.join("2026/08/10");
+        std::fs::create_dir_all(&day).unwrap();
+        let id = "029da883-ba90-4730-a76b-7a2ecfe4168c";
+        std::fs::write(day.join(format!("rollout-2026-08-10T12-00-00-{id}.jsonl")), b"{}").unwrap();
+
+        assert!(codex_dir_has_session(&tmp, id, 0));
+        assert!(!codex_dir_has_session(&tmp, "deadbeef-0000-0000-0000-000000000000", 0));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn codex_session_missing_dir_is_false_not_panic() {
+        assert!(!codex_dir_has_session(
+            &PathBuf::from("/no/such/codex/sessions"),
+            "any-id",
+            0,
+        ));
     }
 }

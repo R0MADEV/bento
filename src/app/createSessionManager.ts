@@ -87,7 +87,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const newSessionWithTerminal = (): void => {
     state = addSession(state)
     render()
-    if (state.activeId) ensureView(state.activeId).addPanel('terminal')
+    if (state.activeId) ensureView(state.activeId).addPanel('tasks')
   }
   const launcher = createPanelLauncher(openPanel)
   const agentStatusBar = createAgentStatusBar({ onOpenAgents: () => openPanel('terminal') })

@@ -14,7 +14,7 @@ import {
 import { buildOperationHistoryView } from './OperationHistoryView'
 import type { BackupStatus, CommitEntry, PrStatus, RebaseStatus, RewritePreflight, UpstreamStatus } from './gitTypes'
 import { buildPrStatusView } from './PrStatusView'
-import { getTaskLocale, setTaskLocale, taskT, type TaskLocale } from './i18n'
+import { taskT } from './i18n'
 import { buildBackupHistoryView } from './BackupHistoryView'
 import { buildConflictResolverView } from './ConflictResolverView'
 import { buildChangesFileView } from './ChangesFileView'
@@ -27,7 +27,7 @@ import { buildResetView } from './ResetView'
 import { buildGraphView } from './GraphView'
 import { buildCommitLogView } from './CommitLogView'
 import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
-import { buildSyncErrorView, buildWorktreeTerminalView } from './TaskAuxiliaryViews'
+import { buildSyncErrorView } from './TaskAuxiliaryViews'
 import { loadTaskData } from './TaskDataLoader'
 import { taskProgress } from './taskProgress'
 import { buildIncomingChangesView } from './IncomingChangesView'
@@ -35,9 +35,9 @@ import { taskRowActions } from './TaskRowActions'
 import { TauriAppSettingsRepository } from '../../adapters/TauriAppSettingsRepository'
 import type { AppSettings } from '../../ports/AppSettingsRepository'
 import { isRunning, parseContainers } from '../../core/docker/containers'
-import { createHorizontalResizablePane } from '../../ui/resizablePane'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
-export function createTasksPanel(panelId = 'default'): { element: HTMLElement } {
+export function createTasksPanel(panelId = 'default'): { element: HTMLElement; dispose: () => void } {
   const panelStore = new TaskPanelStore(panelId)
   const settingsRepository = new TauriAppSettingsRepository()
   let appSettings: AppSettings = {}
@@ -45,6 +45,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   let worktrees: Worktree[] = []
   let repoPath = panelStore.repository()
   let detailCleanup: () => void = () => {}
+  // Live agents hub per worktree. Kept alive across detail navigation so the
+  // running agents/terminals survive switching to changes/history and back;
+  // disposed only when the worktree is removed or the whole panel closes.
+  const worktreeTerminals = new Map<string, { element: HTMLElement; fit: () => void; persist: () => void; dispose: () => void }>()
   let selectedRow: HTMLElement | null = null
   let selectedWorktreePath = panelStore.selected() ?? ''
   let selectedRepositoryPath = repoPath
@@ -82,6 +86,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
   const selectedRepository = (): string => selectedRepositoryPath || repoPath
 
+  // Populated after cs is created; called on every selection/list change.
+  let refreshMiniItems: () => void = () => {}
+
   const selectWorktree = (row: HTMLElement, wt: Worktree): number => {
     selectRow(row)
     selectedWorktreePath = wt.path
@@ -89,6 +96,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     panelStore.setSelected(wt.path)
     selectionVersion += 1
     detailVersion += 1
+    refreshMiniItems()
     return selectionVersion
   }
 
@@ -106,12 +114,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   root.dataset.testid = 'tasks-panel'
   root.dataset.panelId = panelId
 
-  // ---- header ----
-  const header = document.createElement('div')
-  header.className = 'tasks-header'
-  const titleEl = document.createElement('span')
-  titleEl.className = 'tasks-title'
-  titleEl.textContent = taskT('tasks')
+  // ---- controls (mounted inside the left sidebar; no top header bar) ----
   const repoBtn = document.createElement('button')
   repoBtn.className = 'tasks-repo-btn'
   repoBtn.dataset.testid = 'tasks-select-repository'
@@ -143,24 +146,24 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   })
   const fetchAgeEl = document.createElement('span')
   fetchAgeEl.className = 'tasks-fetch-age'
-  const localeSelect = document.createElement('select')
-  localeSelect.className = 'tasks-locale-select'
-  localeSelect.title = taskT('language')
-  ;(['es', 'en'] as TaskLocale[]).forEach(locale => localeSelect.appendChild(Object.assign(document.createElement('option'), {
-    value: locale, textContent: locale === 'es' ? taskT('spanish') : taskT('english'), selected: locale === getTaskLocale(),
-  })))
-  localeSelect.addEventListener('change', () => { setTaskLocale(localeSelect.value as TaskLocale); location.reload() })
   const refreshBtn = iconBtn('refresh', taskT('reload'), () => load())
   const settingsBtn = iconBtn('settings', taskT('taskSettings'), () => { void showTaskSettings() })
   settingsBtn.dataset.testid = 'tasks-settings'
-  header.append(titleEl, repoBtn, baseSelect, localeSelect, settingsBtn, fetchAgeEl, refreshBtn)
 
   // ---- layout ----
   const body = document.createElement('div')
   body.className = 'tasks-body'
 
-  const sidebar = document.createElement('div')
-  sidebar.className = 'tasks-sidebar'
+  const cs = createCollapsibleSidebar({
+    storageKey: `bento.tasks.${panelId}.sidebar`,
+    title: taskT('tasks'),
+    defaultWidth: 260,
+    minWidth: 180,
+    minRemaining: 280,
+    container: body,
+  })
+  // Make cs.list a flex column so filterInput stays fixed and listWrap scrolls
+  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
 
   const filterInput = Object.assign(document.createElement('input'), {
     className: 'tasks-filter-input',
@@ -220,21 +223,50 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   const progressFooter = document.createElement('div')
   progressFooter.className = 'tasks-progress'
 
-  sidebar.append(filterInput, listWrap, progressFooter)
+  // Persistent host for the single create form (rebuilt on repo-list changes).
+  const createFormWrap = document.createElement('div')
 
-  const sidebarResizer = createHorizontalResizablePane({
-    target: sidebar,
-    container: body,
-    initialWidth: panelStore.sidebarWidth(),
-    minWidth: 180,
-    minRemaining: 280,
-    onWidthChange: width => panelStore.setSidebarWidth(width),
+  // Remove the principal repo from Bento (list only — never touches the repo on
+  // disk or its worktrees).
+  const removeRepoBtn = iconBtn('x', taskT('removeRepo'), () => {
+    if (!repoPath) return
+    panelStore.removeRepository(repoPath)
+    load()
   })
+  removeRepoBtn.classList.add('tasks-repo-remove')
+  const repoRow = document.createElement('div')
+  repoRow.className = 'tasks-repo-row'
+  repoRow.append(repoBtn, removeRepoBtn)
+
+  // Base branch + last-fetch age live below the repo row.
+  const baseRow = document.createElement('div')
+  baseRow.className = 'tasks-base-row'
+  baseRow.append(baseSelect, fetchAgeEl)
+
+  // Header actions (settings · refresh) go in the sidebar header, by the toggle.
+  cs.actions.append(settingsBtn, refreshBtn)
+
+  cs.list.append(filterInput, listWrap)
+  // Bottom zone: repo selector + base branch + new-task form + progress.
+  cs.footer.append(repoRow, baseRow, createFormWrap, progressFooter)
 
   const detailPane = document.createElement('div')
   detailPane.className = 'tasks-detail'
-  body.append(sidebar, sidebarResizer.element, detailPane)
-  root.append(header, body)
+  body.append(cs.element, cs.resizer, detailPane)
+  root.append(body)
+
+  refreshMiniItems = (): void => {
+    cs.setMiniItems(worktrees.map(wt => {
+      const changes = lastStatuses.get(wt.path) ?? 0
+      const hasRunning = lastRunningPaths.has(wt.path)
+      return {
+        label: wt.branch ?? wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path,
+        dot: hasRunning ? 'working' : changes > 0 ? 'blocked' : undefined,
+        active: wt.path === selectedWorktreePath,
+        onClick: () => listWrap.querySelector<HTMLElement>(`[data-path="${CSS.escape(wt.path)}"]`)?.click(),
+      }
+    }))
+  }
 
   const note = (text: string, cls = 'tasks-note'): HTMLElement =>
     Object.assign(document.createElement('div'), { className: cls, textContent: text })
@@ -439,14 +471,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       : worktrees
 
     listWrap.replaceChildren()
+    refreshCreateForm()
     if (filtered.length === 0) {
-      const repos = panelStore.repositories()
-      const shouldShowRepoForms = repos.length > 1 && worktrees.length === 0
-      const createForms = shouldShowRepoForms ? repos.map(repo => buildCreateForm(repo)) : [buildCreateForm()]
-      listWrap.append(
-        note(worktrees.length === 0 ? taskT('noWorktrees') : taskT('noResults')),
-        ...createForms,
-      )
+      listWrap.append(note(worktrees.length === 0 ? taskT('noWorktrees') : taskT('noResults')))
+      refreshMiniItems()
       return
     }
 
@@ -458,13 +486,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       bucket.push(wt)
       byRepo.set(repo, bucket)
     }
-    const isMultiRepo = panelStore.repositories().length > 1
-    for (const [repo, wts] of byRepo) listWrap.appendChild(buildProjectGroup(repo, wts, isMultiRepo))
-    if (!isMultiRepo) listWrap.append(buildCreateForm())
+    for (const [repo, wts] of byRepo) listWrap.appendChild(buildProjectGroup(repo, wts))
+    refreshMiniItems()
   }
 
   // Collapsible project header (repo name + count) grouping that repo's worktrees.
-  function buildProjectGroup(repo: string, wts: Worktree[], includeCreateForm = false): HTMLElement {
+  function buildProjectGroup(repo: string, wts: Worktree[]): HTMLElement {
     const repoRoot = repo.replace(/\/$/, '')
     const group = document.createElement('div')
     group.className = `tasks-project${collapsedRepos.has(repo) ? ' collapsed' : ''}`
@@ -504,7 +531,6 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       list.appendChild(buildRow(wt, isMain, lastStatuses.get(wt.path) ?? 0, lastRunningPaths.has(wt.path)))
     })
     group.append(header, list)
-    if (includeCreateForm) group.appendChild(buildCreateForm(repo))
     return group
   }
 
@@ -874,20 +900,54 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
       selectWorktree(row, wt)
       showContextMenu(e.clientX, e.clientY, menuItems())
     })
-    row.append(runDot, left, abEl, prEl, rebaseEl, upstreamEl, backupEl, recipeEl, badge, actions)
+    // Badges wrap onto their own line under the name/path so the branch name
+    // always predominates and never gets crowded out. Empty ones are hidden by CSS.
+    const badges = document.createElement('div')
+    badges.className = 'tasks-row-badges'
+    badges.append(abEl, prEl, rebaseEl, upstreamEl, backupEl, recipeEl, badge)
+    left.appendChild(badges)
+
+    // Row: status dot · name/path/badges column · always-visible actions menu.
+    row.append(runDot, left, actions)
     return row
   }
 
-  function buildCreateForm(repository?: string): HTMLElement {
+  // Single create form for the whole panel: a repo selector (only when several
+  // repos are open) + task name. Replaces the per-project forms.
+  function buildCreateForm(): HTMLElement {
     const form = document.createElement('div')
     form.className = 'tasks-create'
+    const repos = panelStore.repositories()
+
+    let repoSelect: HTMLSelectElement | undefined
+    if (repos.length > 1) {
+      repoSelect = document.createElement('select')
+      repoSelect.className = 'tasks-create-repo'
+      repoSelect.title = taskT('selectRepo')
+      for (const repo of repos) {
+        repoSelect.appendChild(Object.assign(document.createElement('option'), {
+          value: repo,
+          textContent: repo.replace(/\/$/, '').split('/').pop() ?? repo,
+          selected: repo === selectedRepository(),
+        }))
+      }
+      repoSelect.addEventListener('change', () => { selectedRepositoryPath = repoSelect!.value })
+    }
+
     const input = Object.assign(document.createElement('input'), { className: 'tasks-name-input', type: 'text', placeholder: taskT('newTask') })
-    const submit = (): void => { void createTask(input.value.trim(), repository ?? selectedRepository()) }
+    const submit = (): void => { void createTask(input.value.trim(), repoSelect?.value || selectedRepository()) }
     const btn = iconBtn('plus', taskT('createTask'), submit)
-    input.addEventListener('focus', () => { if (repository) selectedRepositoryPath = repository })
     input.addEventListener('keydown', e => { if (e.key === 'Enter') submit() })
-    form.append(input, btn)
+
+    if (repoSelect) form.append(repoSelect, input, btn)
+    else form.append(input, btn)
     return form
+  }
+
+  // Rebuilds the footer create form so its repo selector reflects the current
+  // repo list. Called from load()/applyFilter after the repo set may change.
+  function refreshCreateForm(): void {
+    createFormWrap.replaceChildren(panelStore.repositories().length > 0 ? buildCreateForm() : document.createDocumentFragment())
   }
 
   // ---- detail: changes (GitHub-style diff + commit bar) ----
@@ -1788,14 +1848,27 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
   async function showWorktreeTerminal(wt: Worktree): Promise<void> {
     stopDiffRefresh()
     detailCleanup(); detailCleanup = () => {}
-    await buildWorktreeTerminalView({
-      worktreePath: wt.path,
-      branch: wt.branch ?? '',
-      buildSubHead,
-      onBack: () => showChanges(wt),
-      showDetail,
-      setCleanup: cleanup => { detailCleanup = cleanup },
-    })
+    const { createAgentsPanel } = await import('../agents/AgentsPanel')
+    // Reuse the live hub for this worktree if we already opened it; otherwise
+    // create one scoped to the worktree (own storage, off the global dock).
+    let panel = worktreeTerminals.get(wt.path)
+    if (!panel) {
+      panel = createAgentsPanel(wt.path, { storageScope: `bento.agents.wt:${wt.path}`, publishToDock: false })
+      worktreeTerminals.set(wt.path, panel)
+    }
+    const wrap = document.createElement('div')
+    wrap.className = 'tasks-term-wrap'
+    const termBody = document.createElement('div')
+    termBody.className = 'tasks-term-body'
+    termBody.appendChild(panel.element)
+    wrap.append(buildSubHead(`Terminal · ${wt.branch ?? ''}`, () => showChanges(wt)), termBody)
+    showDetail(wrap)
+    requestAnimationFrame(() => panel.fit())
+    // Navigating away only detaches the element (showDetail replaces it); the
+    // hub stays alive in the cache, so the agents keep running. Persist on leave
+    // so they're restorable even if the tab closes without a clean dispose.
+    const livePanel = panel
+    detailCleanup = () => livePanel.persist()
   }
 
   // ---- detail: git sync error (with conflict detection + AI explain) ----
@@ -1845,6 +1918,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     try {
       await invoke('docker_compose_down', { worktreePath: wt.path }).catch(() => {})
       await invoke('git_worktree_remove', { repo: repositoryFor(wt), path: wt.path, force: total > 0, branch: wt.branch ?? null })
+      // Tear down the worktree's live agents hub (its worktree is gone).
+      worktreeTerminals.get(wt.path)?.dispose()
+      worktreeTerminals.delete(wt.path)
       showDetail(note(taskT('selectTask'), 'db-detail-hint'))
       await load()
     } catch (e) { await askConfirm(String(e), { title: taskT('genericError'), kind: 'error' }) }
@@ -1911,21 +1987,28 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
     if (repos.length === 0) {
       baseSelect.disabled = true
       filterInput.style.display = 'none'
-      listWrap.replaceChildren(note(taskT('selectRepoHint')), buildCreateForm())
+      baseRow.style.display = 'none'
+      repoPath = ''
+      updateRepoBtn()
+      removeRepoBtn.style.display = 'none'
+      refreshCreateForm()
+      listWrap.replaceChildren(note(taskT('selectRepoHint')))
       return
     }
+    // Protect the principal repo: only offer to remove it when another repo
+    // remains, so a stray click can never leave Bento with no repositories.
+    removeRepoBtn.style.display = repos.length > 1 ? '' : 'none'
     repoPath = repos[0]
     if (!repos.includes(selectedRepositoryPath)) selectedRepositoryPath = repoPath
     updateRepoBtn()
     if (repos.length > 1) {
       filterInput.style.display = ''
-      baseSelect.style.display = 'none'
-      fetchAgeEl.style.display = 'none'
+      baseRow.style.display = 'none'
       await loadMultiRepo(repos)
       return
     }
-    baseSelect.style.display = ''
-    fetchAgeEl.style.display = ''
+    baseSelect.disabled = false
+    baseRow.style.display = ''
     await loadTaskData({
       repoPath,
       panelStore,
@@ -1962,5 +2045,10 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement } 
 
   filterInput.style.display = 'none'
   load()
-  return { element: root }
+  // Dispose all live worktree hubs when the panel/tab closes (persists each).
+  const dispose = (): void => {
+    for (const panel of worktreeTerminals.values()) panel.dispose()
+    worktreeTerminals.clear()
+  }
+  return { element: root, dispose }
 }

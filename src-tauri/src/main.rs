@@ -220,6 +220,7 @@ fn main() {
             agent::cancel_agent,
             agent_sessions::agent_codex_clear_lock,
             agent_sessions::agent_claude_session_exists,
+            agent_sessions::agent_codex_session_exists,
             agent_sessions::agent_find_opencode_session,
             agent_socket::agent_get_session,
             agent_socket::agent_socket_path,

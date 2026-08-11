@@ -26,6 +26,15 @@ describe('TaskPanelStore', () => {
     expect(second.selected()).toBeNull()
   })
 
+  it('does not resurrect the legacy repo after removing the last repository', () => {
+    const store = new TaskPanelStore('one')
+    store.setRepository('/legacy')   // legacy single-repo key (pre multi-repo)
+    store.addRepository('/legacy')   // migrate it into the repos list
+    expect(store.repositories()).toEqual(['/legacy'])
+    store.removeRepository('/legacy')
+    expect(store.repositories()).toEqual([])
+  })
+
   it('redacts credentials and clears one branch operation history', () => {
     const store = new TaskPanelStore('one')
     store.recordOperation('/repo', 'feat/a', 'push', 'error', 'token=secret-value')
