@@ -5,6 +5,7 @@
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
 mod agent;
+mod agent_history;
 mod agent_sessions;
 mod agent_socket;
 mod chat_history;
@@ -222,6 +223,9 @@ fn main() {
             agent_sessions::agent_claude_session_exists,
             agent_sessions::agent_codex_session_exists,
             agent_sessions::agent_find_opencode_session,
+            agent_history::agent_history_load,
+            agent_history::agent_history_save,
+            agent_history::agent_history_clear,
             agent_socket::agent_get_session,
             agent_socket::agent_socket_path,
             review::review_branch_context_prepare,

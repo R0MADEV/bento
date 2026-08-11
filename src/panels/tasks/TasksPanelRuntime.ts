@@ -1918,9 +1918,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
     try {
       await invoke('docker_compose_down', { worktreePath: wt.path }).catch(() => {})
       await invoke('git_worktree_remove', { repo: repositoryFor(wt), path: wt.path, force: total > 0, branch: wt.branch ?? null })
-      // Tear down the worktree's live agents hub (its worktree is gone).
+      // Tear down the worktree's live agents hub (its worktree is gone) and drop
+      // its persisted agents + scrollback so nothing is left orphaned.
       worktreeTerminals.get(wt.path)?.dispose()
       worktreeTerminals.delete(wt.path)
+      try { localStorage.removeItem(`bento.agents.wt:${wt.path}.sessions`) } catch { /* ignore */ }
+      void invoke('agent_history_clear', { scope: `bento.agents.wt:${wt.path}` }).catch(() => {})
       showDetail(note(taskT('selectTask'), 'db-detail-hint'))
       await load()
     } catch (e) { await askConfirm(String(e), { title: taskT('genericError'), kind: 'error' }) }

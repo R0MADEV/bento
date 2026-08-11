@@ -85,8 +85,7 @@ interface AgentSlot {
 
 export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {}): { element: HTMLElement; fit: () => void; persist: () => void; dispose: () => void } {
   const { storageScope = 'bento.agents', publishToDock = true } = opts
-  const sessionsKey = `${storageScope}.sessions`   // resume metadata (critical)
-  const historyKey = `${storageScope}.history`     // scrollback (best-effort)
+  const sessionsKey = `${storageScope}.sessions`   // resume metadata → localStorage
   const store = createAgentStore()
   const slots: AgentSlot[] = []
   let activeIndex = -1
@@ -125,10 +124,10 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     emitAgentDock(entries)
   }
 
-  // Persists the agents in two independent writes (herdr-style):
-  //  1. resume metadata (name/cwd/cmd/sessionId) — tiny, must survive; written first.
-  //  2. scrollback history — large, best-effort; dropped silently if over quota so
-  //     it can never evict the metadata.
+  // Persists the agents in two stores (herdr-style):
+  //  1. resume metadata (name/cwd/cmd/sessionId) → localStorage. Tiny, always fits.
+  //  2. scrollback history → a file (agent_history), off the browser quota, so a
+  //     huge scrollback can never evict the resume list. Best-effort, async.
   // getSnapshot is expensive, so persistSessions() coalesces render-driven calls;
   // persistNow() flushes immediately for critical events (capture, dispose, unload).
   let persistTimer: ReturnType<typeof setTimeout> | undefined
@@ -144,31 +143,13 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       cmd: slot.cmd,
       sessionId: slot.sessionId,
     }))
-    // Metadata is sacred: if the store is full, sacrifice this panel's disposable
-    // scrollback (and, as a last resort, other panels' scrollback) and retry, so
-    // the resume list is never lost to a quota error.
-    const metaJson = JSON.stringify(sessions)
-    const writeMeta = (): boolean => {
-      try { localStorage.setItem(sessionsKey, metaJson); return true } catch { return false }
-    }
-    if (!writeMeta()) {
-      try { localStorage.removeItem(historyKey) } catch { /* ignore */ }
-      if (!writeMeta()) {
-        // Still no room: drop every panel's scrollback (keys ending in .history).
-        for (let i = localStorage.length - 1; i >= 0; i--) {
-          const k = localStorage.key(i)
-          if (k && k.endsWith('.history')) { try { localStorage.removeItem(k) } catch { /* ignore */ } }
-        }
-        writeMeta()
-      }
-    }
+    try { localStorage.setItem(sessionsKey, JSON.stringify(sessions)) }
+    catch { /* metadata is tiny; nothing we can do if even this fails */ }
 
-    // Scrollback: best-effort; must never fail the (already written) metadata.
     const history = slots.map(slot => {
       try { return slot.handle.getSnapshot() } catch { return '' }
     })
-    try { localStorage.setItem(historyKey, JSON.stringify(history)) }
-    catch { try { localStorage.removeItem(historyKey) } catch { /* ignore */ } }
+    void invoke('agent_history_save', { scope: storageScope, content: JSON.stringify(history) }).catch(() => {})
   }
   const persistSessions = () => {
     if (persistTimer || !initialized) return
@@ -568,35 +549,44 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     if (publishToDock) emitAgentDock(savedAgentDockEntries())
   }
 
-  // Restore previously open agents, or start with one fresh agent. Metadata and
-  // scrollback are read from separate keys; a missing/corrupt history just means
-  // agents restore without their old scrollback (they still resume).
+  // Restore previously open agents, or start with one fresh agent. Metadata comes
+  // from localStorage (sync); scrollback comes from a file (async). A missing/
+  // corrupt history just means agents restore without their old scrollback.
   const savedSessions = (() => {
     try { return JSON.parse(localStorage.getItem(sessionsKey) ?? '[]') as SavedSession[] }
     catch { return [] }
   })()
-  const savedHistory = (() => {
-    try { return JSON.parse(localStorage.getItem(historyKey) ?? '[]') as string[] }
-    catch { return [] }
-  })()
+  // One-time migration: drop the pre-file scrollback key from localStorage.
+  try { localStorage.removeItem(`${storageScope}.history`) } catch { /* ignore */ }
 
-  try {
-    if (savedSessions.length > 0) {
+  const restoreFrom = (history: string[]): void => {
+    if (disposed) return
+    try {
       savedSessions.forEach((s, i) => {
         if (s.sessionId) claimedSessionIds.add(s.sessionId)
         // One bad entry must not abort the whole restore — otherwise the rest are
         // lost and the panel reopens with 1.
-        try { addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, savedHistory[i]) }
+        try { addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, history[i]) }
         catch { /* skip this agent, keep restoring the others */ }
       })
       if (slots.length === 0) addAgent()
-    } else {
-      addAgent()
+    } finally {
+      // Always mark ready, even if restore threw: a false `initialized` silently
+      // disables all persistence (nothing would ever be saved again).
+      initialized = true
     }
-  } finally {
-    // Always mark ready, even if restore threw: a false `initialized` silently
-    // disables all persistence (nothing would ever be saved again).
-    initialized = true
+  }
+
+  if (savedSessions.length === 0) {
+    restoreFrom([])
+  } else {
+    // Agents are coming from the async history load — hide the empty state so it
+    // doesn't flash, then restore once the scrollback file resolves.
+    emptyMsg.hidden = true
+    invoke<string>('agent_history_load', { scope: storageScope })
+      .then(json => { try { return JSON.parse(json) as string[] } catch { return [] } })
+      .catch(() => [] as string[])
+      .then(restoreFrom)
   }
 
   // Flush current agents to storage without tearing them down. Lets an embedding
