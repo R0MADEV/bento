@@ -105,8 +105,24 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       instanceMap.set(id, instance)
       fits.add(instance.fit ?? (() => {}))
 
-      // Context menu: split, move (HTML5 drag doesn't work in WKWebView)
-      instance.element.addEventListener('contextmenu', e => {
+      // The tab bar (with its × close) is hidden, so wrap each panel and overlay a
+      // hover close button in the corner — reliable across win/mac/linux (macOS's
+      // WKWebView swallows the right-click menu). Kept alongside the context menu.
+      const wrapper = document.createElement('div')
+      wrapper.className = 'panel-wrapper'
+      wrapper.appendChild(instance.element)
+
+      const closeBtn = document.createElement('button')
+      closeBtn.type = 'button'
+      closeBtn.className = 'panel-close'
+      closeBtn.title = appT('closePanel')
+      closeBtn.setAttribute('aria-label', appT('closePanel'))
+      closeBtn.innerHTML = icon('x')
+      closeBtn.addEventListener('click', () => removePanel(id))
+      wrapper.appendChild(closeBtn)
+
+      // Context menu: close, split, move (HTML5 drag doesn't work in WKWebView)
+      wrapper.addEventListener('contextmenu', e => {
         e.preventDefault()
         showContextMenu(e.clientX, e.clientY, [
           { label: appT('closePanel'), onClick: () => removePanel(id) },
@@ -123,7 +139,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       })
 
       return {
-        element: instance.element,
+        element: wrapper,
         init: params => {
           if (instance.fit) {
             params.api.onDidDimensionsChange(() => instance.fit!())
