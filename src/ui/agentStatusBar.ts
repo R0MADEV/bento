@@ -97,19 +97,35 @@ export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): {
     render()
   }
   window.addEventListener(AGENT_DOCK_EVENT, onDock)
-  const onVisibilityChange = (): void => { if (!document.hidden) void refreshMemory() }
+
+  // Schedule the next RAM read during idle time (avoids contending with frame
+  // rendering), but with a hard deadline so it still fires under sustained load.
+  let idleHandle: ReturnType<typeof setTimeout> | number | undefined
+  const scheduleRefresh = (): void => {
+    idleHandle = window.setTimeout(() => {
+      if (typeof requestIdleCallback !== 'undefined') {
+        idleHandle = requestIdleCallback(() => void refreshMemory().finally(scheduleRefresh), { timeout: 2000 })
+      } else {
+        void refreshMemory().finally(scheduleRefresh)
+      }
+    }, 3000)
+  }
+
+  const onVisibilityChange = (): void => { if (!document.hidden) void refreshMemory().finally(scheduleRefresh) }
   document.addEventListener('visibilitychange', onVisibilityChange)
-  const memoryTimer = window.setInterval(() => void refreshMemory(), 3000)
   element.replaceChildren(agents, memory)
   render()
-  void refreshMemory()
+  void refreshMemory().finally(scheduleRefresh)
 
   return {
     element,
     dispose: () => {
       window.removeEventListener(AGENT_DOCK_EVENT, onDock)
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.clearInterval(memoryTimer)
+      if (typeof idleHandle === 'number') {
+        clearTimeout(idleHandle)
+        if (typeof cancelIdleCallback !== 'undefined') cancelIdleCallback(idleHandle)
+      }
     },
   }
 }
