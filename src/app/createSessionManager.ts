@@ -62,7 +62,9 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     return view
   }
 
-  const openPanel = (type: string): void => { ensureView().addPanel(type) }
+  // Launcher/home open a panel — or focus it if that type is already open, since
+  // the tab bar is hidden and the launcher is the navigation hub.
+  const openPanel = (type: string): void => { ensureView().focusOrAddPanel(type) }
   const launcher = createPanelLauncher(openPanel)
   const agentStatusBar = createAgentStatusBar({ onOpenAgents: () => openPanel('terminal') })
 

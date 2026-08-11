@@ -19,6 +19,7 @@ export interface WorkspaceView {
   panelTitles: () => string[]
   panelTypes: () => string[]
   addPanel: (type: string) => void
+  focusOrAddPanel: (type: string) => void
   activeCwd: () => string | undefined
   dispose: () => void
 }
@@ -86,6 +87,15 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
   const addInActiveGroup = (type: string): void =>
     addPanel(type, api.activeGroup ? { referenceGroup: api.activeGroup, direction: 'within' } : undefined)
 
+  // Launcher-driven navigation (tabs are hidden): focus the panel of this type if
+  // one is already open, otherwise create it.
+  const focusOrAddPanel = (type: string): void => {
+    const existing = api.panels.find(p => typeOf(p.id) === type)
+    if (!existing) { addInActiveGroup(type); return }
+    existing.api.setActive()
+    requestAnimationFrame(() => instanceMap.get(existing.id)?.focus?.())
+  }
+
   const api: DockviewApi = createDockview(dockHost, {
     createComponent({ id, name }) {
       const def = panels.get(name)
@@ -99,6 +109,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       instance.element.addEventListener('contextmenu', e => {
         e.preventDefault()
         showContextMenu(e.clientX, e.clientY, [
+          { label: appT('closePanel'), onClick: () => removePanel(id) },
           { label: appT('moveRight'), onClick: () => movePanel(id, 'right') },
           { label: appT('moveLeft'), onClick: () => movePanel(id, 'left') },
           { label: appT('moveUp'), onClick: () => movePanel(id, 'above') },
@@ -329,6 +340,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     panelTitles: () => api.panels.map(p => p.title ?? p.id),
     panelTypes: () => [...new Set(api.panels.map(p => typeOf(p.id)))],
     addPanel: type => addInActiveGroup(type),
+    focusOrAddPanel,
     activeCwd: () => (api.activePanel ? instanceMap.get(api.activePanel.id)?.getCwd?.() : undefined),
     dispose: () => {
       window.removeEventListener('keydown', onKeydown)
