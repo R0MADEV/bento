@@ -1748,6 +1748,7 @@ html, body, #app {
   border-right: 1px solid var(--border);
   transition: width 0.18s ease;
   min-width: 32px;
+  will-change: width;
 }
 .cs-sidebar.collapsed { width: 32px !important; min-width: 32px; }
 
@@ -1822,7 +1823,7 @@ html, body, #app {
   transition: opacity 0.12s;
 }
 .cs-sidebar-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
-.cs-sidebar-toggle svg { width: 13px; height: 13px; transition: transform 0.18s; }
+.cs-sidebar-toggle svg { width: 13px; height: 13px; transition: transform 0.18s; will-change: transform; }
 .cs-sidebar.collapsed .cs-sidebar-toggle svg { transform: rotate(180deg); }
 
 .cs-sidebar-list { flex: 1; overflow-y: auto; min-height: 0; }
@@ -1865,6 +1866,7 @@ html, body, #app {
   background: color-mix(in srgb, var(--bg) 85%, var(--surface));
   overflow: hidden;
   transition: width 0.2s ease;
+  will-change: width;
 }
 
 .agents-sidebar.collapsed {
@@ -3758,6 +3760,7 @@ select.db-cell-input { appearance: auto; cursor: pointer; }
   backdrop-filter: blur(24px) saturate(160%);
   transition: width 0.16s ease;
   transform: translate(var(--ai-drag-x, 0px), var(--ai-drag-y, 0px));
+  will-change: transform, width;
 }
 .ai-modal.hidden { display: none; }
 .ai-agent-select.hidden { display: none; }
