@@ -282,10 +282,11 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
     )
     return head
   }
+  let detailResume: () => void = () => {}
   const dockerView = createTaskDockerView({
     showDetail,
-    resetDetail: () => { stopDiffRefresh(); detailCleanup(); detailCleanup = () => {} },
-    setCleanup: cleanup => { detailCleanup = cleanup },
+    resetDetail: () => { stopDiffRefresh(); detailCleanup(); detailCleanup = () => {}; detailResume = () => {} },
+    setCleanup: (cleanup, resume = () => {}) => { detailCleanup = cleanup; detailResume = resume },
   })
 
   const defaultProjectKey = (repository = repoPath): string => repository.replace(/\/$/, '').split('/').pop() ?? ''
@@ -2058,6 +2059,9 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   return {
     element: root,
     dispose,
-    onVisibilityChange: (visible: boolean) => { if (!visible) { stopDiffRefresh(); detailCleanup() } },
+    onVisibilityChange: (visible: boolean) => {
+      if (!visible) { stopDiffRefresh(); detailCleanup() }
+      else detailResume()
+    },
   }
 }

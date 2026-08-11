@@ -42,7 +42,7 @@ export interface RecipeApplyResult {
 interface TaskDockerViewOptions {
   showDetail: (...nodes: HTMLElement[]) => void
   resetDetail: () => void
-  setCleanup: (cleanup: () => void) => void
+  setCleanup: (cleanup: () => void, resume?: () => void) => void
 }
 
 function iconButton(name: string, title: string, onClick: () => void): HTMLButtonElement {
@@ -225,8 +225,10 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
       }
     }
     void refresh()
-    const interval = setInterval(refresh, 3000)
-    options.setCleanup(() => clearInterval(interval))
+    let pollInterval: ReturnType<typeof setInterval> | null = setInterval(refresh, 3000)
+    const stopPoll = (): void => { if (pollInterval !== null) { clearInterval(pollInterval); pollInterval = null } }
+    const resumePoll = (): void => { stopPoll(); void refresh(); pollInterval = setInterval(refresh, 3000) }
+    options.setCleanup(stopPoll, resumePoll)
     options.showDetail(wrap)
   }
 
