@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { scriptCommand } from '../../core/scripts/scriptCommand'
 import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
 import { icon } from '../../ui/icons'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 const DIRS_KEY = 'bento.scripts.dirs'
 
@@ -32,12 +33,17 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
   let files: ScriptFile[] = []
   let filter = '' // selected folder, '' = all
 
-  // ---- header ----
-  const header = document.createElement('div')
-  header.className = 'scripts-header'
-  const title = document.createElement('span')
-  title.className = 'scripts-title'
-  title.textContent = i18nT('common.scripts')
+  // ---- collapsible sidebar (controls + scripts list) ----
+  const cs = createCollapsibleSidebar({
+    storageKey: 'bento.scripts.sidebar',
+    title: i18nT('common.scripts'),
+    defaultWidth: 260,
+    minWidth: 180,
+    minRemaining: 360,
+    container: root,
+  })
+  // Fixed folder filter on top, scrolling scripts list below.
+  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
 
   const termToggle = document.createElement('button')
   termToggle.className = 'scripts-action'
@@ -47,14 +53,14 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
   const addBtn = document.createElement('button')
   addBtn.className = 'scripts-action'
   addBtn.title = i18nT('scripts.addFolderToScan')
-  addBtn.innerHTML = `${icon('plus')}<span>Carpeta</span>`
+  addBtn.innerHTML = icon('plus')
 
   const refreshBtn = document.createElement('button')
   refreshBtn.className = 'scripts-action'
   refreshBtn.title = i18nT('scripts.scanAgain')
   refreshBtn.innerHTML = icon('refresh')
 
-  header.append(title, termToggle, addBtn, refreshBtn)
+  cs.actions.append(termToggle, addBtn, refreshBtn)
 
   // ---- folder dropdown (the routes the scripts come from) ----
   const filterRow = document.createElement('div')
@@ -67,25 +73,27 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
   removeBtn.textContent = '×'
   filterRow.append(filterSelect, removeBtn)
 
-  // ---- body: scripts list + embedded terminal ----
-  const body = document.createElement('div')
-  body.className = 'scripts-body'
   const listEl = document.createElement('div')
   listEl.className = 'scripts-list'
-  const divider = document.createElement('div')
-  divider.className = 'scripts-divider hidden'
+  cs.list.append(filterRow, listEl)
+
+  // ---- detail: embedded terminal fills the right; shown when a script runs ----
+  const detail = document.createElement('div')
+  detail.className = 'scripts-detail'
   const termWrap = document.createElement('div')
   termWrap.className = 'scripts-term hidden'
-  termWrap.style.height = '240px'
-  body.append(listEl, divider, termWrap)
+  const emptyHint = document.createElement('div')
+  emptyHint.className = 'scripts-detail-empty'
+  emptyHint.textContent = i18nT('scripts.runHint')
+  detail.append(emptyHint, termWrap)
 
-  root.append(header, filterRow, body)
+  root.append(cs.element, cs.resizer, detail)
 
   // ---- embedded terminal (created on first use) ----
   let term: TerminalPanelHandle | undefined
   const hideTerm = (): void => {
     termWrap.classList.add('hidden')
-    divider.classList.add('hidden')
+    emptyHint.classList.remove('hidden')
   }
   // `exit` in the embedded terminal: hide and tear it down; the next run respawns.
   const onTermExit = (): void => {
@@ -103,7 +111,7 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
   const showTerm = (): void => {
     ensureTerm()
     termWrap.classList.remove('hidden')
-    divider.classList.remove('hidden')
+    emptyHint.classList.add('hidden')
     requestAnimationFrame(() => term!.fit())
   }
 
@@ -112,22 +120,8 @@ export function createScriptsPanel(projectPath = ''): ScriptsPanelHandle {
     ensureTerm().sendInput(scriptCommand(path))
   }
 
-  // Drag the divider to resize the terminal height.
-  divider.addEventListener('mousedown', e => {
-    e.preventDefault()
-    const onMove = (ev: MouseEvent): void => {
-      const rect = body.getBoundingClientRect()
-      const h = Math.max(80, Math.min(rect.height - 80, rect.bottom - ev.clientY))
-      termWrap.style.height = `${h}px`
-      term?.fit()
-    }
-    const onUp = (): void => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  })
+  // Fit the terminal to the right pane on any resize (sidebar drag, panel resize).
+  new ResizeObserver(() => term?.fit()).observe(detail)
 
   const renderFilter = (): void => {
     filterSelect.innerHTML = ''

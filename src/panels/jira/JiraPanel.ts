@@ -9,7 +9,7 @@ import { MY_OPEN_ISSUES } from '../../core/jira/jql'
 import { groupByCategory, boardCategory, parseAgileBoards, parseAgileColumns, mapToAgileColumns, type AgileBoard, type AgileColumn } from '../../core/jira/board'
 import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
 import { icon } from '../../ui/icons'
-import { createMasterDetail } from '../../ui/masterDetail'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 interface JiraAccount { id: string; site: string; email: string; token: string }
 interface HttpResponse { status: number; body: string }
@@ -18,37 +18,74 @@ export function createJiraPanel(): { element: HTMLElement } {
   let accounts: JiraAccount[] = []
   let activeAccount: JiraAccount | null = null
 
-  // ---- build master-detail shell ----
+  // ---- collapsible sidebar (accounts) + detail (issues board/list) ----
+  const root = document.createElement('div')
+  root.className = 'jira-panel'
+
   const addBtn = mkBtn('plus', 'Añadir cuenta', () => showConfig())
 
-  const md = createMasterDetail({
+  const cs = createCollapsibleSidebar({
+    storageKey: 'bento.jira.sidebar',
     title: 'Jira',
-    resizableSidebar: { storageKey: 'bento.jira.sidebarWidth', minWidth: 180, minRemaining: 420 },
-    headerActions: [addBtn],
-    onSelect: id => {
-      const next = accounts.find(a => a.id === id) ?? null
-      const isAccountSwitch = next?.id !== activeAccount?.id
-      if (isAccountSwitch) {
-        agileBoards = []
-        selectedBoardId = null
-        agileColumns = []
-        cachedIssues = []
-        activeAssigneeId = ''
-      }
-      activeAccount = next
-      if (activeAccount) showIssues()
-    },
-    groupActions: (group) => [mkBtn('trash', 'Eliminar cuenta', async () => {
-      await invoke('jira_account_delete', { id: group }).catch(() => {})
-      await loadAccounts()
-    })],
-    emptyText: 'Sin cuentas. Usa + para añadir una.',
+    defaultWidth: 220,
+    minWidth: 180,
+    minRemaining: 420,
+    container: root,
   })
+  cs.actions.append(addBtn)
+
+  const detailPane = document.createElement('div')
+  detailPane.className = 'jira-detail-pane'
+  root.append(cs.element, cs.resizer, detailPane)
+
+  let selectedAccountId = ''
+
+  // Highlight only (no reload) — mirrors the old md.select().
+  const highlightAccount = (id: string): void => { selectedAccountId = id; renderAccounts() }
+
+  // Full select (account switch + reload) — mirrors the old md.onSelect().
+  const onSelectAccount = (id: string): void => {
+    const next = accounts.find(a => a.id === id) ?? null
+    const isAccountSwitch = next?.id !== activeAccount?.id
+    if (isAccountSwitch) {
+      agileBoards = []
+      selectedBoardId = null
+      agileColumns = []
+      cachedIssues = []
+      activeAssigneeId = ''
+    }
+    activeAccount = next
+    selectedAccountId = id
+    renderAccounts()
+    if (activeAccount) showIssues()
+  }
+
+  const renderAccounts = (): void => {
+    cs.list.replaceChildren()
+    if (!accounts.length) {
+      cs.list.append(note('Sin cuentas. Usa + para añadir una.', 'jira-note'))
+      return
+    }
+    for (const a of accounts) {
+      const row = document.createElement('div')
+      row.className = a.id === selectedAccountId ? 'jira-account-row selected' : 'jira-account-row'
+      const label = Object.assign(document.createElement('span'), { className: 'jira-account-label', textContent: a.email, title: a.email })
+      const del = mkBtn('trash', 'Eliminar cuenta', async () => {
+        await invoke('jira_account_delete', { id: a.id }).catch(() => {})
+        await loadAccounts()
+      })
+      del.classList.add('jira-account-del')
+      del.addEventListener('click', e => e.stopPropagation())
+      row.append(label, del)
+      row.addEventListener('click', () => onSelectAccount(a.id))
+      cs.list.append(row)
+    }
+  }
 
   // Accounts live one-per-group so the trash button appears per account.
   const loadAccounts = async (): Promise<void> => {
     accounts = await invoke<JiraAccount[]>('jira_accounts_get').catch(() => [] as JiraAccount[])
-    md.setItems(accounts.map(a => ({ id: a.id, label: a.email, group: a.id })))
+    renderAccounts()
     if (!accounts.length) {
       showHint('Sin cuentas. Usa + para añadir una.')
     } else if (!activeAccount || !accounts.find(a => a.id === activeAccount!.id)) {
@@ -167,7 +204,7 @@ export function createJiraPanel(): { element: HTMLElement } {
   }
 
   // ---- detail-pane helpers ----
-  const showDetail = (...nodes: HTMLElement[]): void => { md.detail.replaceChildren(...nodes) }
+  const showDetail = (...nodes: HTMLElement[]): void => { detailPane.replaceChildren(...nodes) }
 
   const showHint = (text: string): void => showDetail(note(text, 'jira-detail-hint'))
 
@@ -215,7 +252,7 @@ export function createJiraPanel(): { element: HTMLElement } {
         const acc = await invoke<JiraAccount>('jira_account_set', { site: s, email: e, token: t })
         await loadAccounts()
         activeAccount = acc
-        md.select(acc.id)
+        highlightAccount(acc.id)
         showIssues()
       } catch (err) {
         status.textContent = String(err)
@@ -910,7 +947,7 @@ export function createJiraPanel(): { element: HTMLElement } {
       left.append(commentTitle, commentList, commentInput, commentSubmit)
     }).catch(() => { descEl.textContent = '(error cargando descripción)' })
     overlay.append(drawer)
-    md.detail.append(overlay)
+    detailPane.append(overlay)
   }
 
   // ---- create ----
@@ -1001,12 +1038,12 @@ export function createJiraPanel(): { element: HTMLElement } {
   loadAccounts().then(() => {
     if (accounts.length === 1) {
       activeAccount = accounts[0]
-      md.select(accounts[0].id)
+      highlightAccount(accounts[0].id)
       showIssues()
     }
   })
 
-  return { element: md.element }
+  return { element: root }
 }
 
 function note(text: string, cls = 'jira-note'): HTMLElement {

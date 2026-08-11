@@ -126,6 +126,7 @@
     "nextUnviewed": "Next unviewed (u)"
   },
   "diff": {
+    "title": "Diff",
     "worktreeMode": "Worktree",
     "logMode": "Log",
     "noRepo": "No repository selected",
@@ -894,6 +895,7 @@
       "codex": "Codex"
     },
     "notes": {
+      "title": "Notes",
       "search": "Search…",
       "newNote": "New note",
       "writeMarkdown": "Write… (Markdown)",
@@ -907,6 +909,7 @@
     },
     "scripts": {
       "noScripts": "No scripts",
+      "runHint": "Run a script to see its output here",
       "showHideTerminal": "Show/hide terminal",
       "addFolderToScan": "Add folder to scan",
       "scanAgain": "Scan again",

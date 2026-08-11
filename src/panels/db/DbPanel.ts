@@ -7,7 +7,7 @@ import { mysqlCreds, mongoCreds, pgCreds } from '../../core/db/credentials'
 import { DEFAULT_PORT, LISTABLE, kindForPort, type DbServer, type DbKind } from '../../core/db/dbServer'
 import { icon } from '../../ui/icons'
 import { askAi, type AiQueryRunner, type AiTool } from '../../ui/askAi'
-import { createHorizontalResizablePane } from '../../ui/resizablePane'
+import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { buildJoinPath, type Relation } from '../../core/db/joinPath'
 import { withRowLimit } from '../../core/db/rowLimit'
 import { buildJoinQuery, buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from './queryBuilders'
@@ -338,35 +338,33 @@ export function createDbPanel(): { element: HTMLElement } {
   const root = document.createElement('div')
   root.className = 'db-panel'
 
-  const header = document.createElement('div')
-  header.className = 'db-header'
-  const title = document.createElement('span')
-  title.className = 'db-title'
-  title.textContent = i18nT('db.databases')
+  // Re-detect action lives in the sidebar header.
   const refreshBtn = document.createElement('button')
   refreshBtn.className = 'db-action'
   refreshBtn.title = i18nT('db.detectAgain')
   refreshBtn.innerHTML = icon('refresh')
-  header.append(title, refreshBtn)
 
   const body = document.createElement('div')
   body.className = 'db-body'
-  const tree = document.createElement('div')
-  tree.className = 'db-tree'
-  const savedTreeWidth = Number(localStorage.getItem('bento.db.sidebarWidth'))
-  const hasSavedTreeWidth = Number.isFinite(savedTreeWidth) && savedTreeWidth > 0
-  const treeResizer = createHorizontalResizablePane({
-    target: tree,
-    container: body,
-    initialWidth: hasSavedTreeWidth ? savedTreeWidth : null,
+
+  const cs = createCollapsibleSidebar({
+    storageKey: 'bento.db.sidebar',
+    title: i18nT('db.databases'),
+    defaultWidth: 250,
     minWidth: 160,
     minRemaining: 420,
-    onWidthChange: width => localStorage.setItem('bento.db.sidebarWidth', String(Math.round(width))),
+    container: body,
   })
+  cs.actions.append(refreshBtn)
+
+  const tree = document.createElement('div')
+  tree.className = 'db-tree'
+  cs.list.append(tree)
+
   const detail = document.createElement('div')
   detail.className = 'db-detail'
-  body.append(tree, treeResizer.element, detail)
-  root.append(header, body)
+  body.append(cs.element, cs.resizer, detail)
+  root.append(body)
 
   const showDetail = (...nodes: HTMLElement[]): void => { detail.replaceChildren(...nodes) }
   showDetail(note(i18nT('db.selectATableOrCollectionToViewIts'), 'db-detail-hint'))

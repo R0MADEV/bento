@@ -11,7 +11,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { createPanelLauncher } from '../ui/panelLauncher'
 import { createAgentStatusBar } from '../ui/agentStatusBar'
 import { createHomeView } from './createHomeView'
-import { getLauncherPosition, setLauncherPosition, onLauncherPositionChange, onLauncherCollapsedChange, LAUNCHER_POSITIONS, type LauncherPosition } from '../ui/launcherPreference'
 import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
 import { setActiveProjectPath } from '../ui/activeProject'
@@ -29,16 +28,27 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   content.className = 'session-content'
 
   // Title bar: a thin drag strip overlaid on the top edge so it costs no vertical
-  // space (the panel tabs sit at the very top). Hovering it reveals the window
-  // controls / macOS traffic lights.
+  // space (panels fill to the very top). Hovering it reveals the window controls
+  // (or macOS traffic lights) and the panel launcher — the workspace navigation.
   const bar = document.createElement('div')
   bar.className = 'session-bar'
-  if (!isMac) bar.appendChild(createWindowControls())
-  if (isMac) {
-    invoke('set_traffic_lights_visible', { visible: false }).catch(() => {})
-    bar.addEventListener('mouseenter', () => invoke('set_traffic_lights_visible', { visible: true }).catch(() => {}))
-    bar.addEventListener('mouseleave', () => invoke('set_traffic_lights_visible', { visible: false }).catch(() => {}))
+
+  // Window controls in the hover strip. macOS uses the native traffic lights,
+  // but ONLY while the window is decorated — turning decorations off (frameless)
+  // makes them vanish, so then (and always on Windows/Linux) we render our own.
+  let customControls: HTMLElement | undefined
+  const syncWindowChrome = (): void => {
+    const useNativeTrafficLights = isMac && getDecorations()
+    const wantCustomControls = !useNativeTrafficLights
+    if (wantCustomControls && !customControls) { customControls = createWindowControls(); bar.appendChild(customControls) }
+    if (!wantCustomControls && customControls) { customControls.remove(); customControls = undefined }
+    if (isMac) invoke('set_traffic_lights_visible', { visible: false }).catch(() => {})
   }
+  if (isMac) {
+    bar.addEventListener('mouseenter', () => { if (getDecorations()) invoke('set_traffic_lights_visible', { visible: true }).catch(() => {}) })
+    bar.addEventListener('mouseleave', () => { if (getDecorations()) invoke('set_traffic_lights_visible', { visible: false }).catch(() => {}) })
+  }
+  syncWindowChrome()
 
   const body = document.createElement('div')
   body.className = 'session-body'
@@ -66,6 +76,9 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   // the tab bar is hidden and the launcher is the navigation hub.
   const openPanel = (type: string): void => { ensureView().focusOrAddPanel(type) }
   const launcher = createPanelLauncher(openPanel)
+  // The launcher lives inside the hover strip (first child; window controls sit
+  // to its right), so it costs no persistent space and reveals with the strip.
+  bar.prepend(launcher.element)
   const agentStatusBar = createAgentStatusBar({ onOpenAgents: () => openPanel('terminal') })
 
   // Center home, shown only when the workspace has no panels.
@@ -82,14 +95,10 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
 
   const shell = document.createElement('div')
   shell.className = 'session-shell'
-  shell.append(launcher.element, content)
+  shell.append(content)
   root.append(shell, agentStatusBar.element)
 
   const refit = (): void => { requestAnimationFrame(() => view?.fit()) }
-  const applyLauncherPosition = (): void => { root.dataset.launcherPos = getLauncherPosition() }
-  applyLauncherPosition()
-  onLauncherPositionChange(() => { applyLauncherPosition(); refit() })
-  onLauncherCollapsedChange(refit)
 
   // Debounced saving: layout changes fire in bursts.
   let saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -156,18 +165,6 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         },
       },
     ]
-    const launcherPos = getLauncherPosition()
-    const launcherLabels: Record<LauncherPosition, string> = {
-      left: appT('left'), right: appT('right'), top: appT('top'), bottom: appT('bottom'),
-    }
-    LAUNCHER_POSITIONS.forEach(pos => {
-      commands.push({
-        id: `launcher-${pos}`,
-        label: `${launcherPos === pos ? '✓' : '○'} ${appT('launcherPosition', { position: launcherLabels[pos] })}`,
-        keywords: ['launcher', 'paneles', 'dock', 'posición', 'mover', launcherLabels[pos]],
-        run: () => setLauncherPosition(pos),
-      })
-    })
     themeNames.forEach(name => {
       commands.push({ id: `theme-${name}`, label: appT('theme', { name: themeLabels[name] ?? name }), keywords: ['theme', 'color'], run: () => setTheme(name) })
     })
@@ -180,6 +177,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         const next = !getDecorations()
         setDecorations(next)
         invoke('set_decorations', { enabled: next }).catch(() => {})
+        syncWindowChrome()
       },
     })
     commands.push(

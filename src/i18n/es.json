@@ -126,6 +126,7 @@
     "nextUnviewed": "Siguiente sin ver (u)"
   },
   "diff": {
+    "title": "Diff",
     "worktreeMode": "Worktree",
     "logMode": "Historial",
     "noRepo": "No hay repositorio seleccionado",
@@ -894,6 +895,7 @@
       "codex": "Codex"
     },
     "notes": {
+      "title": "Notas",
       "search": "Buscar…",
       "newNote": "Nueva nota",
       "writeMarkdown": "Escribe… (markdown)",
@@ -907,6 +909,7 @@
     },
     "scripts": {
       "noScripts": "Sin scripts",
+      "runHint": "Ejecuta un script para ver su salida aquí",
       "showHideTerminal": "Mostrar/ocultar terminal",
       "addFolderToScan": "Añadir carpeta a escanear",
       "scanAgain": "Volver a escanear",
