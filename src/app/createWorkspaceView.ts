@@ -17,6 +17,7 @@ export interface WorkspaceView {
   isFocused: () => boolean
   serialize: () => object
   panelTitles: () => string[]
+  panelTypes: () => string[]
   addPanel: (type: string) => void
   activeCwd: () => string | undefined
   dispose: () => void
@@ -326,6 +327,7 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     isFocused,
     serialize: () => api.toJSON(),
     panelTitles: () => api.panels.map(p => p.title ?? p.id),
+    panelTypes: () => [...new Set(api.panels.map(p => typeOf(p.id)))],
     addPanel: type => addInActiveGroup(type),
     activeCwd: () => (api.activePanel ? instanceMap.get(api.activePanel.id)?.getCwd?.() : undefined),
     dispose: () => {

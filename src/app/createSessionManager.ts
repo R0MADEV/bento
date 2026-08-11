@@ -28,18 +28,12 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const content = document.createElement('div')
   content.className = 'session-content'
 
-  // Minimal top title bar: the window drag region + (non-mac) window controls,
-  // and on macOS reveals the traffic lights on hover (they overlay the corner).
+  // Minimal top title bar: the window drag region + window controls, always
+  // visible (macOS shows its native traffic lights over the reserved corner).
   const bar = document.createElement('div')
   bar.className = 'session-bar'
   if (!isMac) bar.appendChild(createWindowControls())
-  if (isMac) {
-    invoke('set_traffic_lights_visible', { visible: false }).catch(() => {})
-    const showLights = () => invoke('set_traffic_lights_visible', { visible: true }).catch(() => {})
-    const hideLights = () => invoke('set_traffic_lights_visible', { visible: false }).catch(() => {})
-    bar.addEventListener('mouseenter', showLights)
-    bar.addEventListener('mouseleave', hideLights)
-  }
+  if (isMac) invoke('set_traffic_lights_visible', { visible: true }).catch(() => {})
 
   const body = document.createElement('div')
   body.className = 'session-body'
@@ -55,7 +49,7 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     view = createWorkspaceView(panels, {
       savedLayout,
       // Closing the last panel returns to the landing → re-check the home too.
-      onChange: () => { persist(); updateHomeVisibility() },
+      onChange: () => { persist(); updateHomeVisibility(); syncLauncher() },
       projectPath: () => projectPath,
     })
     view.element.classList.add('session-instance')
@@ -111,10 +105,14 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
     if (empty) home.refresh()
   }
 
+  // Mark, in the launcher, the panel types already open in the workspace.
+  const syncLauncher = (): void => { launcher.setOpenTypes(new Set(view?.panelTypes() ?? [])) }
+
   const render = (): void => {
     setActiveProjectPath(projectPath)
     if (view) { view.element.classList.remove('hidden'); refit() }
     updateHomeVisibility()
+    syncLauncher()
     persist()
   }
 

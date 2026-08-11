@@ -2128,16 +2128,6 @@ html, body, #app {
 
 /* ===== Minimalist: auto-hide controls (they appear on hover) ===== */
 
-/* Window controls: hidden until hovering the bar */
-.window-controls {
-  opacity: 0;
-  transition: opacity 0.18s ease;
-}
-
-.session-bar:hover .window-controls {
-  opacity: 1;
-}
-
 /* TV action buttons: hidden until hovering the bar */
 .tv-btn {
   opacity: 0;
@@ -2386,6 +2376,7 @@ html, body, #app {
 
 .panel-launcher-btn {
   -webkit-app-region: no-drag;
+  position: relative;
   flex-shrink: 0;
   width: 34px;
   height: 34px;
@@ -2403,6 +2394,20 @@ html, body, #app {
 }
 .panel-launcher-btn:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 12%, transparent); }
 .panel-launcher-btn svg { width: 18px; height: 18px; }
+
+/* Panel type already open in the workspace: highlight + accent dot. */
+.panel-launcher-btn.open { opacity: 1; color: var(--accent); }
+.panel-launcher-btn.open::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--glow-accent-sm);
+}
 
 /* ── Center home (shown when there are no sessions) ───────────────────────── */
 .home-view {
