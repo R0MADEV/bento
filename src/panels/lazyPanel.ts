@@ -34,6 +34,7 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
     // Remembers the callback until the panel loads; then re-registers it.
     onTitleChange: cb => { titleCb = cb; return () => { titleCb = undefined } },
     onReady: api => { readyApi = api; inner?.onReady?.(api) },
+    onVisibilityChange: (visible) => inner?.onVisibilityChange?.(visible),
     getCwd: () => inner?.getCwd?.(),
   }
 }

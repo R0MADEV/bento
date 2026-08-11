@@ -82,6 +82,15 @@ export class HLSPlayer {
     tracks.forEach((t, i) => { t.mode = i === index ? 'showing' : 'disabled' })
   }
 
+  async pip(): Promise<void> {
+    if (this.video.classList.contains('hidden')) throw new Error('pip-not-video')
+    if (document.pictureInPictureElement === this.video) {
+      await document.exitPictureInPicture()
+    } else {
+      await this.video.requestPictureInPicture()
+    }
+  }
+
   stop(): void {
     if (this.hls) {
       this.hls.destroy()

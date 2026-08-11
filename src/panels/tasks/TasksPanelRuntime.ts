@@ -37,7 +37,7 @@ import type { AppSettings } from '../../ports/AppSettingsRepository'
 import { isRunning, parseContainers } from '../../core/docker/containers'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
-export function createTasksPanel(panelId = 'default'): { element: HTMLElement; dispose: () => void } {
+export function createTasksPanel(panelId = 'default'): { element: HTMLElement; dispose: () => void; onVisibilityChange: (visible: boolean) => void } {
   const panelStore = new TaskPanelStore(panelId)
   const settingsRepository = new TauriAppSettingsRepository()
   let appSettings: AppSettings = {}
@@ -2050,8 +2050,14 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   load()
   // Dispose all live worktree hubs when the panel/tab closes (persists each).
   const dispose = (): void => {
+    stopDiffRefresh()
+    detailCleanup()
     for (const panel of worktreeTerminals.values()) panel.dispose()
     worktreeTerminals.clear()
   }
-  return { element: root, dispose }
+  return {
+    element: root,
+    dispose,
+    onVisibilityChange: (visible: boolean) => { if (!visible) stopDiffRefresh() },
+  }
 }

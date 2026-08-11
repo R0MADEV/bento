@@ -143,8 +143,11 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
         init: params => {
           if (instance.fit) {
             params.api.onDidDimensionsChange(() => instance.fit!())
-            params.api.onDidVisibilityChange(({ isVisible }) => { if (isVisible) instance.fit!() })
           }
+          params.api.onDidVisibilityChange(({ isVisible }) => {
+            if (isVisible && instance.fit) instance.fit()
+            instance.onVisibilityChange?.(isVisible)
+          })
           instance.onTitleChange?.(title => params.api.setTitle(title))
           instance.onReady?.({
             maximize: () => params.api.maximize(),

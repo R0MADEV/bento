@@ -16,7 +16,7 @@ export function createTVPanel(
   repo: ChannelRepository,
   favoritesRepo: FavoritesRepository,
   worldRepo?: ChannelRepository
-): HTMLElement {
+): { element: HTMLElement; dispose: () => void } {
   const root = document.createElement('div')
   root.className = 'tv-panel'
 
@@ -57,9 +57,14 @@ export function createTVPanel(
   toggleButton.innerHTML = icon('panel')
   toggleButton.title = i18nT('tv.showHideChannelList')
 
+  const pipButton = document.createElement('button')
+  pipButton.className = 'tv-btn'
+  pipButton.innerHTML = icon('pip')
+  pipButton.title = 'Picture in Picture'
+
   toolbar.append(input, countrySelect, categorySelect, status)
   if (worldRepo) toolbar.append(worldButton)
-  toolbar.append(favButton, fullscreenButton, toggleButton)
+  toolbar.append(favButton, pipButton, fullscreenButton, toggleButton)
 
   const main = document.createElement('div')
   main.className = 'tv-main'
@@ -87,7 +92,8 @@ export function createTVPanel(
   // dockview the panel can take up any fraction). Container queries don't work
   // here because they would break the position:fixed of cinema mode.
   const syncWide = (w: number) => main.classList.toggle('wide', w >= 700)
-  new ResizeObserver(entries => { for (const e of entries) syncWide(e.contentRect.width) }).observe(main)
+  const resizeObserver = new ResizeObserver(entries => { for (const e of entries) syncWide(e.contentRect.width) })
+  resizeObserver.observe(main)
 
   let data: ChannelData = { channels: [], countries: [], categories: [] }
   let allChannels: Channel[] = []
@@ -156,9 +162,8 @@ export function createTVPanel(
     getCurrentWindow().setFullscreen(on).catch(() => {})
   }
   fullscreenButton.addEventListener('click', () => setCinema(!cinema))
-  window.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && cinema) setCinema(false)
-  })
+  const onEscapeKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && cinema) setCinema(false) }
+  window.addEventListener('keydown', onEscapeKey)
   favButton.addEventListener('click', () => {
     onlyFavorites = !onlyFavorites
     favButton.classList.toggle('active', onlyFavorites)
@@ -179,10 +184,35 @@ export function createTVPanel(
     }
   })
 
+  const onEnterPip = () => pipButton.classList.add('active')
+  const onLeavePip = () => pipButton.classList.remove('active')
+  document.addEventListener('enterpictureinpicture', onEnterPip)
+  document.addEventListener('leavepictureinpicture', onLeavePip)
+
+  pipButton.addEventListener('click', async () => {
+    try {
+      await player.pip()
+    } catch {
+      const prev = pipButton.title
+      pipButton.title = 'Reproduce un canal primero'
+      pipButton.style.opacity = '0.4'
+      setTimeout(() => { pipButton.title = prev; pipButton.style.opacity = '' }, 1500)
+    }
+  })
+
   status.textContent = i18nT('tv.loading')
   repo.fetchAll()
     .then(applyData)
     .catch(err => { status.textContent = i18nT('tv.errorMessage', { message: err.message }) })
 
-  return root
+  return {
+    element: root,
+    dispose: () => {
+      player.dispose()
+      resizeObserver.disconnect()
+      window.removeEventListener('keydown', onEscapeKey)
+      document.removeEventListener('enterpictureinpicture', onEnterPip)
+      document.removeEventListener('leavepictureinpicture', onLeavePip)
+    },
+  }
 }

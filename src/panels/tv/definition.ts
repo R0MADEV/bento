@@ -14,7 +14,7 @@ export function tvPanelDefinition(
     title: appT('panelTv'),
     create: () => lazyPanel(async () => {
       const { createTVPanel } = await import('./TVPanel')
-      return { element: createTVPanel(repo, favoritesRepo, worldRepo) }
+      return createTVPanel(repo, favoritesRepo, worldRepo)
     }),
   }
 }

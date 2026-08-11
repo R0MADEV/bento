@@ -23,6 +23,7 @@ export interface PanelInstance {
   dispose?: () => void
   onTitleChange?: (cb: (title: string) => void) => () => void
   onReady?: (api: PanelApi) => void
+  onVisibilityChange?: (visible: boolean) => void
   // Current working directory (terminals report it via OSC 7)
   getCwd?: () => string | undefined
 }
