@@ -2058,6 +2058,6 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   return {
     element: root,
     dispose,
-    onVisibilityChange: (visible: boolean) => { if (!visible) stopDiffRefresh() },
+    onVisibilityChange: (visible: boolean) => { if (!visible) { stopDiffRefresh(); detailCleanup() } },
   }
 }

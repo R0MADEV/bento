@@ -214,5 +214,9 @@ export function createTVPanel(
       document.removeEventListener('enterpictureinpicture', onEnterPip)
       document.removeEventListener('leavepictureinpicture', onLeavePip)
     },
+    onVisibilityChange: (visible: boolean) => {
+      if (!visible && !player.isInPiP) player.pause()
+      else if (visible) player.resume()
+    },
   }
 }
