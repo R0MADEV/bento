@@ -66,7 +66,7 @@ export class HLSPlayer {
       const { default: Hls } = await import('hls.js')
       const mode = choosePlaybackMode(canPlayNative, Hls.isSupported())
       if (mode !== 'hls') { this.onStatus?.('error'); return }
-      this.hls = new Hls({ lowLatencyMode: false })
+      this.hls = new Hls({ lowLatencyMode: false, maxBufferLength: 10, maxMaxBufferLength: 20 })
       this.hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) this.onStatus?.('error') })
       this.hls.loadSource(url)
       this.hls.attachMedia(this.video)

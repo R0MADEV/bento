@@ -80,7 +80,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     // Opaque background: allowTransparency makes the renderer clear-to-transparent
     // and repaint each frame, which flickers on animated fullscreen TUIs.
     allowTransparency: false,
-    scrollback: 10000,
+    scrollback: 2000,
     theme: getTheme(getThemeName()),
   })
 
