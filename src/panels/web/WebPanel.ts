@@ -273,10 +273,11 @@ export function createWebPanel() {
   let intersecting = true
   let suppressed = false
   let menuOpen = false
+  let dockviewVisible = true
   const reevaluate = () => {
     if (!currentUrl) return
     const style = getComputedStyle(content)
-    const visible = isWebviewVisible({
+    const visible = dockviewVisible && isWebviewVisible({
       intersecting,
       visibility: style.visibility,
       display: style.display,
@@ -322,6 +323,7 @@ export function createWebPanel() {
     element: root,
     fit: () => updateBounds(),
     focus: () => input.focus(),
+    onVisibilityChange: (visible: boolean) => { dockviewVisible = visible; reevaluate() },
     dispose: () => {
       resizeObserver.disconnect()
       intersectionObserver.disconnect()
