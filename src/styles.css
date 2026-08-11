@@ -157,21 +157,35 @@ html, body, #app {
   height: 100%;
 }
 
+/* Thin drag strip overlaid on the top edge — costs no layout height, so the
+   workspace (and its panel tabs) fills to the very top. Expands on hover to
+   reveal the window controls / macOS traffic lights. */
 .session-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
-  min-width: 0;
   gap: 2px;
+  height: 6px;
+  min-height: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  background: transparent;
+  /* Drag the window from the strip (the title bar is an overlay) */
+  -webkit-app-region: drag;
+  transition: height 0.18s ease, padding 0.18s ease, background 0.18s ease,
+              backdrop-filter 0.18s ease, border-color 0.18s ease;
+  border-bottom: 1px solid transparent;
+}
+.session-bar:hover {
+  height: 34px;
   padding: 4px 8px;
-  min-height: 36px;
-  /* Subtle glass background + border: so it reads as chrome, not as a panel */
   background: color-mix(in srgb, var(--surface) 35%, transparent);
   backdrop-filter: blur(12px);
-  overflow-x: auto;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  /* Drag the window from the bar (the title bar is an overlay) */
-  -webkit-app-region: drag;
+  border-bottom-color: var(--border);
 }
 
 .agent-status-bar {
@@ -236,10 +250,14 @@ html, body, #app {
 .agent-status-label { color: var(--fg); overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
 .agent-status-text { color: var(--fg-dim); }
 
-/* macOS: leave room on the left of the title bar for the traffic lights. */
-.is-mac .session-bar {
+/* macOS: when the strip expands, leave room on the left for the traffic lights. */
+.is-mac .session-bar:hover {
   padding-left: 82px;
 }
+
+/* Window controls: revealed only when the top strip is hovered. */
+.window-controls { opacity: 0; transition: opacity 0.15s ease; }
+.session-bar:hover .window-controls { opacity: 1; }
 
 /* Interactive elements must not drag the window */
 .window-control {

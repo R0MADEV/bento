@@ -28,12 +28,17 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   const content = document.createElement('div')
   content.className = 'session-content'
 
-  // Minimal top title bar: the window drag region + window controls, always
-  // visible (macOS shows its native traffic lights over the reserved corner).
+  // Title bar: a thin drag strip overlaid on the top edge so it costs no vertical
+  // space (the panel tabs sit at the very top). Hovering it reveals the window
+  // controls / macOS traffic lights.
   const bar = document.createElement('div')
   bar.className = 'session-bar'
   if (!isMac) bar.appendChild(createWindowControls())
-  if (isMac) invoke('set_traffic_lights_visible', { visible: true }).catch(() => {})
+  if (isMac) {
+    invoke('set_traffic_lights_visible', { visible: false }).catch(() => {})
+    bar.addEventListener('mouseenter', () => invoke('set_traffic_lights_visible', { visible: true }).catch(() => {}))
+    bar.addEventListener('mouseleave', () => invoke('set_traffic_lights_visible', { visible: false }).catch(() => {}))
+  }
 
   const body = document.createElement('div')
   body.className = 'session-body'
