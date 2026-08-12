@@ -553,7 +553,11 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     slots[secondaryIdx].slot.classList.add('split-secondary')
     termArea.classList.add('agents-split')
     emptyMsg.hidden = true
-    setTimeout(() => { slots[primaryIdx].handle.fit?.(); slots[secondaryIdx].handle.fit?.() }, 50)
+    setTimeout(() => {
+      slots[primaryIdx].handle.fit?.()
+      slots[secondaryIdx].handle.fit?.()
+      slots[secondaryIdx].handle.focus?.()
+    }, 80)
   }
 
   // ── Fit ───────────────────────────────────────────────────────
