@@ -40,8 +40,7 @@ input:focus, textarea:focus, select:focus {
 }
 
 .tv-btn,
-.window-control,
-.term-theme-btn {
+.window-control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -638,165 +637,6 @@ html, body, #app {
   height: 0;
 }
 
-.term-theme-btn {
-  position: absolute;
-  bottom: 8px;
-  right: 12px;
-  z-index: 15;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-size: 13px;
-  cursor: pointer;
-  opacity: 0.35;
-  transition: opacity 0.15s;
-}
-
-.term-theme-btn:hover {
-  opacity: 1;
-}
-
-.term-theme-popover {
-  position: absolute;
-  bottom: 42px;
-  right: 8px;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  backdrop-filter: blur(16px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-}
-
-.term-theme-popover.hidden {
-  display: none;
-}
-
-.term-theme-swatches {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
-}
-
-.term-theme-swatch {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform 0.1s, border-color 0.1s;
-}
-
-.term-theme-swatch:hover {
-  transform: scale(1.2);
-  border-color: var(--fg) !important;
-}
-
-.term-theme-color-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--fg-dim);
-  cursor: pointer;
-}
-
-.term-theme-color-row input[type="color"] {
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  padding: 0;
-  cursor: pointer;
-  background: none;
-}
-
-/* Terminal maximize button (next to the palette one) */
-.term-max-btn {
-  bottom: 8px;
-  right: 44px;
-}
-
-.term-add-btn {
-  bottom: 8px;
-  right: 80px;
-  font-size: 18px;
-  font-weight: 300;
-  line-height: 1;
-}
-
-/* Profiles section in the popover */
-.term-profiles-section {
-  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  padding-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.term-profile-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.term-profile-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.term-profile-name {
-  flex: 1;
-  text-align: left;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--fg);
-  font-size: 11px;
-  padding: 3px 8px;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.term-profile-name:hover { border-color: var(--accent); color: var(--accent); }
-
-.term-profile-del {
-  background: transparent;
-  border: none;
-  color: var(--fg-dim);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0 4px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.term-profile-del:hover { color: var(--fg); }
-
-.term-profile-save {
-  background: transparent;
-  border: 1px dashed var(--border);
-  border-radius: 4px;
-  color: var(--fg-dim);
-  font-size: 11px;
-  padding: 4px 8px;
-  cursor: pointer;
-  text-align: left;
-  transition: color 0.1s, border-color 0.1s;
-}
-
-.term-profile-save:hover { color: var(--accent); border-color: var(--accent); }
 
 
 /* Context menu */
@@ -2236,32 +2076,6 @@ html, body, #app {
   pointer-events: auto;
 }
 
-.agents-term-area.agents-split-h { display: flex; flex-direction: row; }
-.agents-term-area.agents-split-v { display: flex; flex-direction: column; }
-
-.agents-term-area.agents-split-h .agents-term-slot.split-member,
-.agents-term-area.agents-split-v .agents-term-slot.split-member {
-  position: relative;
-  inset: auto;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-.agents-term-area.agents-split-h .agents-term-slot.split-member + .agents-term-slot.split-member {
-  border-left: 1px solid var(--border);
-}
-.agents-term-area.agents-split-v .agents-term-slot.split-member + .agents-term-slot.split-member {
-  border-top: 1px solid var(--border);
-}
-
-/* Split group indicator in sidebar */
-.agents-sidebar-item.agents-sidebar-group-member {
-  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
-  padding-left: 6px;
-}
 
 .agents-term-slot .terminal-panel {
   height: 100%;
@@ -2319,14 +2133,6 @@ html, body, #app {
 }
 
 
-/* Terminal theme button: only when hovering the panel */
-.term-theme-btn {
-  opacity: 0;
-}
-
-.terminal-panel:hover .term-theme-btn {
-  opacity: 1;
-}
 
 /* ===== Workspace empty state (no panels open) ===== */
 .workspace-empty {

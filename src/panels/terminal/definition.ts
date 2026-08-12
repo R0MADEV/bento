@@ -9,7 +9,7 @@ export function terminalPanelDefinition(store: AgentStore): PanelDefinition {
     title: appT('panelTerminal'),
     create: (ctx) => lazyPanel(async () => {
       const { createTerminalPanel } = await import('./TerminalPanel')
-      return createTerminalPanel(ctx.panelId, ctx.projectPath, ctx.removeSelf, undefined, store, ctx.newSibling)
+      return createTerminalPanel(ctx.panelId, ctx.projectPath, ctx.removeSelf, undefined, store)
     }),
   }
 }

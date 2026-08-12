@@ -601,11 +601,7 @@
       "terminalsCount": "{count} agentes",
       "newAgent": "Nuevo agente",
       "waitingForInput": "Esperando entrada",
-      "wantsAttention": "Requiere tu atención",
-      "splitLeft": "Dividir a la izquierda",
-      "splitRight": "Dividir a la derecha",
-      "splitAbove": "Dividir arriba",
-      "splitBelow": "Dividir abajo"
+      "wantsAttention": "Requiere tu atención"
     },
     "db": {
       "connecting": "Conectando…",

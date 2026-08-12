@@ -6,7 +6,6 @@ import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/Termi
 import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
 import { emitAgentDock, savedAgentDockEntries, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
-import { showContextMenu } from '../../ui/contextMenu'
 
 const MAX_AGENTS = 20
 
@@ -90,9 +89,6 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   const store = createAgentStore()
   const slots: AgentSlot[] = []
   let activeIndex = -1
-  // Ordered indices of the terminals currently visible in split view (null = single terminal mode).
-  let splitGroup: number[] | null = null
-  let splitDir: 'h' | 'v' = 'h'
   let agentCounter = 0
   let isEditing = false
   let initialized = false
@@ -233,17 +229,6 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // ── Terminal area ──────────────────────────────────────────────
   const termArea = document.createElement('div')
   termArea.className = 'agents-term-area'
-  termArea.addEventListener('contextmenu', e => {
-    e.preventDefault()
-    const slotEl = (e.target as HTMLElement).closest<HTMLElement>('.agents-term-slot')
-    const refIdx = slotEl ? (slots.findIndex(s => s.slot === slotEl) ?? activeIndex) : activeIndex
-    showContextMenu(e.clientX, e.clientY, [
-      { label: `← ${i18nT('agents.splitLeft')}`,  onClick: () => addAgentAtSide('left',  refIdx) },
-      { label: `→ ${i18nT('agents.splitRight')}`, onClick: () => addAgentAtSide('right', refIdx) },
-      { label: `↑ ${i18nT('agents.splitAbove')}`, onClick: () => addAgentAtSide('top',   refIdx) },
-      { label: `↓ ${i18nT('agents.splitBelow')}`, onClick: () => addAgentAtSide('bottom',refIdx) },
-    ])
-  })
 
   const emptyMsg = document.createElement('div')
   emptyMsg.className = 'agents-hub-empty'
@@ -316,7 +301,6 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
       const li = document.createElement('li')
       li.className = `agents-sidebar-item${isActive ? ' active' : ''}${slot.exited ? ' exited' : ''}`
-      if (splitGroup?.includes(i)) li.classList.add('agents-sidebar-group-member')
       li.dataset.status = entry.status
       const att = attention.get(entry.id)
       if (att) li.dataset.attention = att
@@ -396,55 +380,25 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // ── Activate agent by index ────────────────────────────────────
   // Does NOT call renderSidebar — only patches the CSS active class so that
   // the existing nameEl DOM nodes stay connected (required for dblclick → rename).
-  const clearSplit = () => {
-    if (!splitGroup) return
-    splitGroup = null
-    termArea.classList.remove('agents-split-h', 'agents-split-v')
-    slots.forEach(s => { s.slot.classList.remove('split-member'); s.slot.style.order = '' })
-  }
-
-  const applySplit = () => {
-    if (!splitGroup || splitGroup.length < 2) { clearSplit(); return }
-    termArea.classList.remove('agents-split-h', 'agents-split-v')
-    termArea.classList.add(`agents-split-${splitDir}`)
-    slots.forEach(s => { s.slot.classList.remove('split-member', 'active'); s.slot.style.order = '' })
-    splitGroup.forEach((idx, order) => {
-      if (!slots[idx]) return
-      slots[idx].slot.classList.add('split-member')
-      slots[idx].slot.style.order = String(order)
-    })
-    emptyMsg.hidden = true
-  }
-
   const activateAgent = (index: number) => {
-    const isInSplitGroup = splitGroup?.includes(index) ?? false
-
-    if (!isInSplitGroup) {
-      clearSplit()
-      if (activeIndex >= 0 && slots[activeIndex]) {
-        slots[activeIndex].slot.classList.remove('active')
-      }
-      activeIndex = index
-      if (slots[index]) {
-        emptyMsg.hidden = true
-        slots[index].slot.classList.add('active')
-        slots[index].handle.fit?.()
-        slots[index].handle.focus?.()
-      }
-    } else {
-      // Split group member: keep the split, just focus that terminal
-      activeIndex = index
-      slots[index]?.handle.fit?.()
-      slots[index]?.handle.focus?.()
+    if (activeIndex >= 0 && slots[activeIndex]) {
+      slots[activeIndex].slot.classList.remove('active')
     }
-
+    activeIndex = index
+    if (slots[index]) {
+      emptyMsg.hidden = true
+      slots[index].slot.classList.add('active')
+      slots[index].handle.fit?.()
+      slots[index].handle.focus?.()
+    }
     // Viewing an agent clears its attention flag. activateAgent must not call
     // renderSidebar (it would detach nameEl mid-dblclick), so patch in place.
     const activeId = slots[index]?.handle.getPtyId()
     if (activeId) attention.delete(activeId)
     cs.list.querySelectorAll<HTMLElement>('.agents-sidebar-item').forEach((li, i) => {
-      li.classList.toggle('active', i === index)
-      if (i === index) {
+      const isActive = i === index
+      li.classList.toggle('active', isActive)
+      if (isActive) {
         li.removeAttribute('data-attention')
         li.querySelector('.agents-sidebar-badge')?.remove()
       }
@@ -536,13 +490,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
     slots.push(agentSlot)
 
-    // If a split group is active, don't disrupt it: the new agent goes to the
-    // sidebar and the user can switch to it (or split it) from there.
-    if (splitGroup) {
-      renderSidebar()
-    } else {
-      activateAgent(slots.length - 1)
-    }
+    activateAgent(slots.length - 1)
   }
 
   // ── Process exited ────────────────────────────────────────────
@@ -560,28 +508,6 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // ── Remove agent ──────────────────────────────────────────────
   const removeAgent = (index: number) => {
     if (index < 0 || index >= slots.length) return
-
-    // Adjust splitGroup before the splice
-    if (splitGroup) {
-      if (splitGroup.includes(index)) {
-        const next = splitGroup.filter(i => i !== index).map(i => i > index ? i - 1 : i)
-        if (next.length >= 2) {
-          splitGroup = next
-        } else {
-          // Group dissolves: clear CSS before removing slot
-          termArea.classList.remove('agents-split-h', 'agents-split-v')
-          slots.forEach(s => { s.slot.classList.remove('split-member'); s.slot.style.order = '' })
-          splitGroup = null
-        }
-      } else {
-        splitGroup = splitGroup.map(i => i > index ? i - 1 : i)
-      }
-    }
-
-    // Adjust activeIndex before the splice
-    if (activeIndex > index) activeIndex--
-    else if (activeIndex === index) activeIndex = Math.max(0, index - 1)
-
     const s = slots[index]
     attention.delete(s.handle.getPtyId())
     s.titleCleanup()
@@ -591,56 +517,17 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
     if (slots.length === 0) {
       activeIndex = -1
-      splitGroup = null
       emptyMsg.hidden = false
-    } else if (splitGroup) {
-      if (!splitGroup.includes(activeIndex)) activeIndex = splitGroup[0]
-      applySplit()
-      slots[activeIndex]?.handle.fit?.()
-      slots[activeIndex]?.handle.focus?.()
     } else {
-      activateAgent(activeIndex)
+      activateAgent(Math.min(index, slots.length - 1))
     }
     renderSidebar()
   }
 
-  const addAgentAtSide = (dir: 'left' | 'right' | 'top' | 'bottom', refIdx = activeIndex) => {
-    const newDir: 'h' | 'v' = (dir === 'left' || dir === 'right') ? 'h' : 'v'
-    const insertAfter = (dir === 'right' || dir === 'bottom')
-
-    // Perpendicular to current group → clear and start a new split
-    if (splitGroup && splitDir !== newDir) clearSplit()
-
-    addAgent() // internally calls activateAgent(newIdx) → clearSplit()
-    const newIdx = slots.length - 1
-    if (newIdx === refIdx) return // only 1 slot (shouldn't happen)
-
-    if (!splitGroup) {
-      splitGroup = insertAfter ? [refIdx, newIdx] : [newIdx, refIdx]
-      splitDir = newDir
-    } else {
-      const pos = splitGroup.indexOf(refIdx)
-      const insertAt = pos < 0 ? splitGroup.length : (insertAfter ? pos + 1 : pos)
-      splitGroup.splice(insertAt, 0, newIdx)
-    }
-
-    activeIndex = refIdx
-    applySplit()
-    renderSidebar()
-
-    setTimeout(() => {
-      splitGroup!.forEach(idx => slots[idx]?.handle.fit?.())
-      slots[newIdx]?.handle.focus?.()
-    }, 80)
-  }
 
   // ── Fit ───────────────────────────────────────────────────────
   const fit = () => {
-    if (splitGroup) {
-      splitGroup.forEach(idx => slots[idx]?.handle.fit?.())
-    } else if (activeIndex >= 0) {
-      slots[activeIndex]?.handle.fit?.()
-    }
+    if (activeIndex >= 0) slots[activeIndex]?.handle.fit?.()
   }
 
   // Save agents synchronously if the page is torn down (reload/close) before a
