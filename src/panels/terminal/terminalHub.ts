@@ -102,8 +102,8 @@ export function createTerminalHub(panelId: string, projectPath: string, store?: 
   const addBtn = document.createElement('button')
   addBtn.type = 'button'
   addBtn.className = 'terminal-hub-add'
-  addBtn.title = appT('panelTerminal')
-  addBtn.innerHTML = icon('plus')
+  addBtn.title = 'Nueva terminal'
+  addBtn.textContent = '+'
   addBtn.addEventListener('click', () => addTab())
   tabBar.appendChild(addBtn)
 
