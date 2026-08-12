@@ -14,7 +14,7 @@ struct MetricsState {
 
 const TREE_REFRESH_EVERY: u8 = 5; // full scan every ~15 s (at 3 s poll interval)
 
-pub struct SystemMetricsState(pub Mutex<MetricsState>);
+pub struct SystemMetricsState(Mutex<MetricsState>);
 
 impl Default for SystemMetricsState {
     fn default() -> Self {
@@ -26,25 +26,7 @@ impl Default for SystemMetricsState {
     }
 }
 
-fn app_processes(system: &System, root: Pid) -> HashSet<Pid> {
-    // WebKit XPC services are re-parented to launchd on macOS, so a normal
-    // parent/child walk misses most of Bento's UI memory. Resource coalitions
-    // are the kernel grouping that keeps an app and those services together.
-    #[cfg(target_os = "macos")]
-    if let Some(root_coalition) = resource_coalition_id(root) {
-        let members: HashSet<Pid> = system
-            .processes()
-            .keys()
-            .copied()
-            .filter(|pid| resource_coalition_id(*pid) == Some(root_coalition))
-            .collect();
-        if !members.is_empty() {
-            return members;
-        }
-    }
-
-    // Linux and Windows keep the terminal/agent process tree attached to the
-    // host process. This is also the safe fallback if coalition lookup fails.
+fn descendant_processes(system: &System, root: Pid) -> HashSet<Pid> {
     let mut result = HashSet::from([root]);
     loop {
         let before = result.len();
@@ -60,6 +42,49 @@ fn app_processes(system: &System, root: Pid) -> HashSet<Pid> {
             return result;
         }
     }
+}
+
+fn app_processes(system: &System, root: Pid) -> HashSet<Pid> {
+    // WebKit XPC services are re-parented to launchd on macOS, so a normal
+    // parent/child walk misses most of Bento's UI memory. Resource coalitions
+    // are the kernel grouping that keeps an app and those services together.
+    #[cfg(target_os = "macos")]
+    if let Some(root_coalition) = resource_coalition_id(root) {
+        let root_process = system.process(root);
+        let launched_as_app = root_process
+            .and_then(Process::parent)
+            .is_some_and(|parent| parent.as_u32() == 1);
+
+        if launched_as_app {
+            // A packaged app launched by macOS owns an isolated coalition. This
+            // is the authoritative grouping and includes its re-parented XPCs.
+            let members: HashSet<Pid> = system
+                .processes()
+                .keys()
+                .copied()
+                .filter(|pid| resource_coalition_id(*pid) == Some(root_coalition))
+                .collect();
+            if !members.is_empty() {
+                return members;
+            }
+        } else if let Some(started_at) = root_process.map(Process::start_time) {
+            // `tauri dev` inherits the terminal's long-lived coalition, which can
+            // contain hundreds of unrelated/old processes. Keep the real child
+            // tree and add only this run's re-parented WebKit XPC services.
+            let mut members = descendant_processes(system, root);
+            members.extend(system.processes().iter().filter_map(|(pid, process)| {
+                (process.start_time() >= started_at
+                    && process.name().contains("WebKit")
+                    && resource_coalition_id(*pid) == Some(root_coalition))
+                .then_some(*pid)
+            }));
+            return members;
+        }
+    }
+
+    // Linux and Windows keep the terminal/agent process tree attached to the
+    // host process. This is also the safe fallback if coalition lookup fails.
+    descendant_processes(system, root)
 }
 
 #[cfg(target_os = "macos")]
@@ -227,7 +252,10 @@ pub fn app_memory_usage(state: State<'_, SystemMetricsState>) -> Result<u64, Str
         ms.cached_pids = app_processes(&ms.system, root);
         ms.calls_since_tree_refresh = 0;
     } else {
-        for &pid in &ms.cached_pids {
+        // Copy the small cached set first so refreshing `system` does not
+        // mutably borrow `ms` while `cached_pids` is still borrowed.
+        let cached_pids: Vec<Pid> = ms.cached_pids.iter().copied().collect();
+        for pid in cached_pids {
             ms.system.refresh_process(pid);
         }
         ms.calls_since_tree_refresh += 1;

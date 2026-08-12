@@ -10,13 +10,14 @@ import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
 import { icon } from '../../ui/icons'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import type { PanelInstance } from '../registry'
 
 // repo = lightweight base (M3U); worldRepo = heavy source loaded on demand
 export function createTVPanel(
   repo: ChannelRepository,
   favoritesRepo: FavoritesRepository,
   worldRepo?: ChannelRepository
-): { element: HTMLElement; dispose: () => void } {
+): PanelInstance {
   const root = document.createElement('div')
   root.className = 'tv-panel'
 

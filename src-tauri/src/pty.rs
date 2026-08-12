@@ -2,16 +2,111 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
+use sysinfo::{Pid, System};
 use tauri::{AppHandle, Emitter};
 
 struct PtyInstance {
     writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
 #[derive(Default)]
 pub struct PtyManager {
     instances: Mutex<HashMap<String, PtyInstance>>,
+}
+
+#[cfg(unix)]
+fn terminate_process_tree(root: u32) {
+    let session = Pid::from_u32(root);
+    let members = |system: &System| -> Vec<i32> {
+        system
+            .processes()
+            .iter()
+            .filter_map(|(pid, process)| {
+                (process.session_id() == Some(session)).then_some(pid.as_u32() as i32)
+            })
+            .collect()
+    };
+
+    let system = System::new_all();
+    for pid in members(&system) {
+        // SAFETY: the PID comes from the current system process snapshot.
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let system = System::new_all();
+    for pid in members(&system) {
+        // Agents may handle/ignore SIGHUP and SIGTERM; SIGKILL guarantees that
+        // closing their owning terminal actually releases their memory.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(root: u32) {
+    use std::ffi::c_void;
+
+    type Handle = *mut c_void;
+    const PROCESS_TERMINATE: u32 = 0x0001;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
+        fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+
+    let system = System::new_all();
+    let mut tree = vec![Pid::from_u32(root)];
+    loop {
+        let before = tree.len();
+        for (pid, process) in system.processes() {
+            if process
+                .parent()
+                .is_some_and(|parent| tree.contains(&parent))
+                && !tree.contains(pid)
+            {
+                tree.push(*pid);
+            }
+        }
+        if tree.len() == before {
+            break;
+        }
+    }
+
+    // Children first so they cannot survive after their parent disappears.
+    for pid in tree.into_iter().rev() {
+        // SAFETY: handles are checked and closed, and PROCESS_TERMINATE is the
+        // minimum access required for this operation.
+        unsafe {
+            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid.as_u32());
+            if !handle.is_null() {
+                TerminateProcess(handle, 1);
+                CloseHandle(handle);
+            }
+        }
+    }
+}
+
+fn terminate_instance(mut instance: PtyInstance) {
+    if let Some(pid) = instance.child.process_id() {
+        terminate_process_tree(pid);
+    }
+    let _ = instance.child.kill();
+    let _ = instance.child.wait();
+}
+
+pub fn kill_all(manager: &PtyManager) {
+    let instances: Vec<PtyInstance> = manager
+        .instances
+        .lock()
+        .unwrap()
+        .drain()
+        .map(|(_, instance)| instance)
+        .collect();
+    for instance in instances {
+        terminate_instance(instance);
+    }
 }
 
 fn dirs_home() -> Option<String> {
@@ -69,6 +164,38 @@ mod tests {
         let mut p = vec![b'a', 0xE2, 0x94];
         assert_eq!(drain_utf8(&mut p), "a");
         assert_eq!(p, vec![0xE2, 0x94]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminating_a_pty_kills_its_whole_session() {
+        use super::{terminate_instance, PtyInstance};
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "sleep 30 & wait"]);
+        let child = pair.slave.spawn_command(command).unwrap();
+        let pid = child.process_id().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+
+        terminate_instance(PtyInstance {
+            writer,
+            master: pair.master,
+            child,
+        });
+
+        // Signal 0 only checks existence; ESRCH proves the session leader was
+        // killed and reaped rather than merely detached from the UI.
+        let exists = unsafe { libc::kill(pid as i32, 0) } == 0;
+        assert!(!exists, "PTY process {pid} survived termination");
     }
 }
 
@@ -141,7 +268,7 @@ pub fn pty_spawn(
         cmd.cwd(dir);
     }
 
-    let _child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
 
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -149,6 +276,16 @@ pub fn pty_spawn(
     let id_clone = id.clone();
     let app_clone = app.clone();
 
+    state.instances.lock().unwrap().insert(
+        id.clone(),
+        PtyInstance {
+            writer,
+            master: pair.master,
+            child,
+        },
+    );
+
+    let manager = state.inner().clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         // Holds bytes of a multi-byte char split across reads (see drain_utf8).
@@ -167,16 +304,12 @@ pub fn pty_spawn(
         }
         // EOF: the shell exited (e.g. the user typed `exit`); tell the frontend
         // so it can close the panel instead of leaving a dead terminal.
+        let instance = manager.instances.lock().unwrap().remove(&id_clone);
+        if let Some(instance) = instance {
+            terminate_instance(instance);
+        }
         let _ = app_clone.emit(&format!("pty-exit-{}", id_clone), ());
     });
-
-    state.instances.lock().unwrap().insert(
-        id,
-        PtyInstance {
-            writer,
-            master: pair.master,
-        },
-    );
 
     Ok(())
 }
@@ -217,6 +350,9 @@ pub fn pty_resize(
 
 #[tauri::command]
 pub fn pty_kill(id: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
-    state.instances.lock().unwrap().remove(&id);
+    let instance = state.instances.lock().unwrap().remove(&id);
+    if let Some(instance) = instance {
+        terminate_instance(instance);
+    }
     Ok(())
 }
