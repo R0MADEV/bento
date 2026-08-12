@@ -154,6 +154,43 @@ ${files}
 </files>`
 }
 
+// Renders a validated review response as the Markdown body (verdict + summary +
+// findings) shown in the AI chat. Callers prepend their own header if needed.
+export function formatReviewResponse(result: ReviewResponse): string {
+  const verdictIcon = result.verdict === 'pass' ? '✅' : result.verdict === 'fail' ? '❌' : '⚠️'
+  const lines = [`${verdictIcon} **${result.verdict}** — ${result.summary}`]
+  if (result.findings.length) {
+    lines.push('')
+    result.findings.forEach(finding => {
+      const location = finding.line ? `${finding.file}:${finding.line}` : finding.file
+      lines.push(`**${finding.severity.toUpperCase()}** \`${location}\` — ${finding.title}`)
+      lines.push(finding.explanation)
+      lines.push(`→ ${finding.recommendation}`)
+      lines.push('')
+    })
+  }
+  return lines.join('\n')
+}
+
+// Extracts the first balanced JSON object from free-form agent output (agents
+// wrap the review JSON in prose or code fences). Returns null when absent.
+export function extractFirstJsonObject(text: string): string | null {
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (escape) { escape = false; continue }
+    if (inString) { if (ch === '\\') escape = true; else if (ch === '"') inString = false; continue }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') depth++
+    else if (ch === '}') { depth--; if (depth === 0) return text.slice(start, i + 1) }
+  }
+  return null
+}
+
 export function validateReviewResponse(raw: unknown): ReviewResponse {
   if (!raw || typeof raw !== 'object') throw new Error('Review response must be an object')
   const value = raw as Record<string, unknown>

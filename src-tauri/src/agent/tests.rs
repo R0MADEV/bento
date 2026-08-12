@@ -2,7 +2,65 @@ use super::adapter::{parse_json_line, AgentAdapter, ParsedLine};
 use super::codex::CodexAdapter;
 use super::custom::CustomAdapter;
 use super::opencode::OpenCodeAdapter;
-use super::safe_prefix;
+use super::{build_agent_invocation, safe_prefix, AgentInvocation};
+use std::path::Path;
+
+fn args_of(inv: &AgentInvocation) -> Vec<String> {
+    inv.args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+}
+
+#[test]
+fn claude_command_streams_json_and_restricts_tools_in_review() {
+    let inv = build_agent_invocation("claude", "PROMPT", Path::new("/repo"), Some("sess"), true).unwrap();
+    assert_eq!(inv.program, "claude");
+    assert_eq!(
+        args_of(&inv),
+        vec![
+            "-p", "PROMPT", "--output-format", "stream-json", "--verbose",
+            "--resume", "sess", "--allowedTools", "Read,Glob,Grep",
+        ]
+    );
+}
+
+#[test]
+fn claude_command_without_session_or_review() {
+    let inv = build_agent_invocation("claude", "P", Path::new("/repo"), None, false).unwrap();
+    assert_eq!(args_of(&inv), vec!["-p", "P", "--output-format", "stream-json", "--verbose"]);
+}
+
+#[test]
+fn opencode_command_passes_dir_prompt_and_session() {
+    let inv = build_agent_invocation("opencode", "P", Path::new("/repo"), Some("s"), false).unwrap();
+    assert_eq!(inv.program, "opencode");
+    assert_eq!(
+        args_of(&inv),
+        vec!["run", "--format", "json", "--dir", "/repo", "P", "--session", "s"]
+    );
+}
+
+#[test]
+fn codex_resume_puts_session_and_prompt_last() {
+    let inv = build_agent_invocation("codex", "P", Path::new("/repo"), Some("s"), false).unwrap();
+    assert_eq!(inv.program, "codex");
+    assert_eq!(
+        args_of(&inv),
+        vec!["exec", "--sandbox", "read-only", "--cd", "/repo", "resume", "--json", "--skip-git-repo-check", "s", "P"]
+    );
+}
+
+#[test]
+fn codex_without_session_appends_prompt_after_flags() {
+    let inv = build_agent_invocation("codex", "P", Path::new("/repo"), None, false).unwrap();
+    assert_eq!(
+        args_of(&inv),
+        vec!["exec", "--sandbox", "read-only", "--cd", "/repo", "--json", "--skip-git-repo-check", "P"]
+    );
+}
+
+#[test]
+fn unknown_agent_is_rejected() {
+    assert!(build_agent_invocation("foo", "P", Path::new("/repo"), None, false).is_err());
+}
 
 #[test]
 fn parses_claude_session_and_done_without_repeating_result_text() {

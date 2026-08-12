@@ -4,6 +4,23 @@
 
 export type AgentType = 'claude' | 'opencode' | 'codex' | 'custom'
 
+const AGENT_LABELS: Record<AgentType, string> = {
+  claude: 'Claude',
+  opencode: 'OpenCode',
+  codex: 'Codex',
+  custom: 'Agent',
+}
+
+export function agentLabel(agent: AgentType): string {
+  return AGENT_LABELS[agent]
+}
+
+// Normalizes an untrusted string (a <select> value, persisted config) into a
+// known AgentType, defaulting to claude for anything unexpected.
+export function toAgentType(value: string): AgentType {
+  return value in AGENT_LABELS ? value as AgentType : 'claude'
+}
+
 export interface AgentConfig {
   type: AgentType
   executable?: string

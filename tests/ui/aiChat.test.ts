@@ -70,7 +70,8 @@ vi.mock('../../src/ui/aiKeys', () => ({
   setAiKey: vi.fn(async () => true),
   vaultStatus: vi.fn(async () => 'unlocked'),
 }))
-vi.mock('../../src/core/ai/agentClient', () => ({
+vi.mock('../../src/core/ai/agentClient', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/core/ai/agentClient')>()),
   startAgent: mocks.startAgent,
   redact: (value: string) => value,
 }))

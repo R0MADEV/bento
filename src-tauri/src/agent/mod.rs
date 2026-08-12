@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -94,67 +95,30 @@ pub async fn start_agent(
     } else {
         build_prompt(&args.message, &args.history)
     };
-    let mut command = match args.agent.as_str() {
-        "claude" => {
-            let mut command = Command::new("claude");
-            command
-                .arg("-p")
-                .arg(&prompt)
-                .arg("--output-format")
-                .arg("stream-json")
-                .arg("--verbose");
-            if let Some(session_id) = args.session_id.as_deref() {
-                command.arg("--resume").arg(session_id);
-            }
-            if args.review {
-                command.arg("--allowedTools").arg("Read,Glob,Grep");
-            }
-            command
+    let mut command = if args.agent == "custom" {
+        let executable = args
+            .custom_executable
+            .as_deref()
+            .ok_or("custom executable is required")?;
+        let resolved = resolve_executable(executable)
+            .ok_or_else(|| format!("executable not found: {executable}"))?;
+        let mut command = Command::new(resolved);
+        if let Some(custom_args) = args.custom_args.as_ref() {
+            command.args(custom_args);
         }
-        "opencode" => {
-            let mut command = Command::new("opencode");
-            command
-                .args(["run", "--format", "json", "--dir"])
-                .arg(&root)
-                .arg(&prompt);
-            if let Some(session_id) = args.session_id.as_deref() {
-                command.arg("--session").arg(session_id);
-            }
-            command
-        }
-        "codex" => {
-            let mut command = Command::new("codex");
-            command
-                .args(["exec", "--sandbox", "read-only", "--cd"])
-                .arg(&root);
-            if let Some(session_id) = args.session_id.as_deref() {
-                command
-                    .arg("resume")
-                    .args(["--json", "--skip-git-repo-check"])
-                    .arg(session_id)
-                    .arg(&prompt);
-            } else {
-                command
-                    .args(["--json", "--skip-git-repo-check"])
-                    .arg(&prompt);
-            }
-            command
-        }
-        "custom" => {
-            let executable = args
-                .custom_executable
-                .as_deref()
-                .ok_or("custom executable is required")?;
-            let resolved = resolve_executable(executable)
-                .ok_or_else(|| format!("executable not found: {executable}"))?;
-            let mut command = Command::new(resolved);
-            if let Some(custom_args) = args.custom_args.as_ref() {
-                command.args(custom_args);
-            }
-            command.arg(&prompt);
-            command
-        }
-        other => return Err(format!("unsupported agent: {other}")),
+        command.arg(&prompt);
+        command
+    } else {
+        let invocation = build_agent_invocation(
+            &args.agent,
+            &prompt,
+            &root,
+            args.session_id.as_deref(),
+            args.review,
+        )?;
+        let mut command = Command::new(invocation.program);
+        command.args(invocation.args);
+        command
     };
     command.current_dir(&root);
     set_process_group(&mut command);
@@ -276,6 +240,79 @@ pub async fn cancel_all(manager: &AgentManager) {
         let _ = tokio::time::timeout(WAIT_TIMEOUT + Duration::from_secs(5), handle.done_rx).await;
     });
     join_all(waits).await;
+}
+
+struct AgentInvocation {
+    program: &'static str,
+    args: Vec<OsString>,
+}
+
+// Builds the program name and argv for a built-in agent CLI. `custom` is handled
+// by the caller because it needs executable resolution off the filesystem.
+fn build_agent_invocation(
+    agent: &str,
+    prompt: &str,
+    root: &Path,
+    session_id: Option<&str>,
+    review: bool,
+) -> Result<AgentInvocation, String> {
+    match agent {
+        "claude" => {
+            let mut args: Vec<OsString> = vec![
+                "-p".into(),
+                prompt.into(),
+                "--output-format".into(),
+                "stream-json".into(),
+                "--verbose".into(),
+            ];
+            if let Some(session_id) = session_id {
+                args.push("--resume".into());
+                args.push(session_id.into());
+            }
+            if review {
+                args.push("--allowedTools".into());
+                args.push("Read,Glob,Grep".into());
+            }
+            Ok(AgentInvocation { program: "claude", args })
+        }
+        "opencode" => {
+            let mut args: Vec<OsString> = vec![
+                "run".into(),
+                "--format".into(),
+                "json".into(),
+                "--dir".into(),
+                root.as_os_str().to_owned(),
+                prompt.into(),
+            ];
+            if let Some(session_id) = session_id {
+                args.push("--session".into());
+                args.push(session_id.into());
+            }
+            Ok(AgentInvocation { program: "opencode", args })
+        }
+        "codex" => {
+            let mut args: Vec<OsString> = vec![
+                "exec".into(),
+                "--sandbox".into(),
+                "read-only".into(),
+                "--cd".into(),
+                root.as_os_str().to_owned(),
+            ];
+            if let Some(session_id) = session_id {
+                args.push("resume".into());
+                args.push("--json".into());
+                args.push("--skip-git-repo-check".into());
+                args.push(session_id.into());
+                args.push(prompt.into());
+            } else {
+                args.push("--json".into());
+                args.push("--skip-git-repo-check".into());
+                args.push(prompt.into());
+            }
+            Ok(AgentInvocation { program: "codex", args })
+        }
+        other => Err(format!("unsupported agent: {other}")),
+    }
 }
 
 fn build_prompt(message: &str, history: &[Message]) -> String {

@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import { parseConfig, buildChatBody, DEFAULT_AI_CONFIG } from '../../../src/core/ai/config'
+import { parseConfig, buildChatBody, DEFAULT_AI_CONFIG, agentLabel, toAgentType } from '../../../src/core/ai/config'
+
+describe('agent identity helpers', () => {
+  it('maps every agent type to a human label (custom is the generic Agent)', () => {
+    expect(agentLabel('claude')).toBe('Claude')
+    expect(agentLabel('opencode')).toBe('OpenCode')
+    expect(agentLabel('codex')).toBe('Codex')
+    expect(agentLabel('custom')).toBe('Agent')
+  })
+
+  it('normalizes known agent strings and falls back to claude for anything else', () => {
+    expect(toAgentType('codex')).toBe('codex')
+    expect(toAgentType('')).toBe('claude')
+    expect(toAgentType('gpt-9')).toBe('claude')
+  })
+})
 
 describe('parseConfig', () => {
   it('returns defaults for null (nothing saved yet)', () => {

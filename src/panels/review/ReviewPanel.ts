@@ -8,7 +8,8 @@ import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { getUiZoom, toLayoutPixels } from '../../ui/zoom'
 import { redact, startAgent } from '../../core/ai/agentClient'
-import { buildReviewPrompt, createContextProvider, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
+import { agentLabel } from '../../core/ai/config'
+import { buildReviewPrompt, createContextProvider, extractFirstJsonObject, formatReviewResponse, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey } from '../../core/ai/chatHistory'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
@@ -158,23 +159,6 @@ const wordDiff = (oldText: string, newText: string): { oldHtml: string; newHtml:
   return { oldHtml, newHtml }
 }
 
-function extractFirstJsonObject(text: string): string | null {
-  const start = text.indexOf('{')
-  if (start === -1) return null
-  let depth = 0
-  let inString = false
-  let escape = false
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]
-    if (escape) { escape = false; continue }
-    if (inString) { if (ch === '\\') escape = true; else if (ch === '"') inString = false; continue }
-    if (ch === '"') { inString = true; continue }
-    if (ch === '{') depth++
-    else if (ch === '}') { depth--; if (depth === 0) return text.slice(start, i + 1) }
-  }
-  return null
-}
-
 export function createReviewPanel(sessionPath?: string): { element: HTMLElement; dispose?: () => void; onVisibilityChange?: (visible: boolean) => void } {
   const root = document.createElement('div')
   root.className = 'review-panel'
@@ -244,7 +228,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   reviewAgentSelect.className = 'review-agent-select'
   ;(['claude', 'opencode', 'codex'] as const).forEach(val => {
     reviewAgentSelect.appendChild(Object.assign(document.createElement('option'), {
-      value: val, textContent: val === 'claude' ? 'Claude' : val === 'opencode' ? 'OpenCode' : 'Codex',
+      value: val, textContent: agentLabel(val),
     }))
   })
   reviewAgentSelect.value = localStorage.getItem(REVIEW_AGENT_KEY) ?? 'claude'
@@ -1555,22 +1539,12 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
     const showResult = (result: ReviewResponse, reviewCommit: string, sessionId: string | null): void => {
       progressBox.remove()
-      const verdictIcon = result.verdict === 'pass' ? '✅' : result.verdict === 'fail' ? '❌' : '⚠️'
-      const lines = [
+      const content = [
         `## Revisión: ${reviewBranch}`,
         `Base: \`${reviewBaseBranch}\` · Commit: \`${reviewCommit.slice(0, 7)}\``,
-        `${verdictIcon} **${result.verdict}** — ${result.summary}`,
-      ]
-      if (result.findings.length) {
-        lines.push('')
-        result.findings.forEach(f => {
-          lines.push(`**${f.severity.toUpperCase()}** \`${f.file}${f.line ? `:${f.line}` : ''}\` — ${f.title}`)
-          lines.push(f.explanation)
-          lines.push(`→ ${f.recommendation}`)
-          lines.push('')
-        })
-      }
-      askAi('', false, undefined, undefined, { role: 'assistant', content: lines.join('\n') }, reviewRepoPath, reviewAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, sessionId ?? undefined, reviewEvidence)
+        formatReviewResponse(result),
+      ].join('\n')
+      askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, reviewAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, sessionId ?? undefined, reviewEvidence)
     }
     let worktree = ''
     let managedWorktree = false
@@ -1606,8 +1580,8 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       })
       const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath: worktree })
       if (snapshotBeforeAgent !== snapshotBefore) throw new Error('Repository changed while preparing the review')
-      const agentLabel = reviewAgent === 'claude' ? 'Claude' : reviewAgent === 'opencode' ? 'OpenCode' : 'Codex'
-      progressStatus.textContent = `${agentLabel} is reviewing…`
+      const label = agentLabel(reviewAgent)
+      progressStatus.textContent = `${label} is reviewing…`
       let finishResult!: () => void
       const resultFinished = new Promise<void>(resolve => { finishResult = resolve })
       handle = startAgent(
@@ -1632,7 +1606,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         tool => {
           const safeTool = redact(tool).slice(0, 1_000)
           if (!reviewEvidence.includes(safeTool)) reviewEvidence.push(safeTool)
-          progressStatus.textContent = `${agentLabel}: ${safeTool}`
+          progressStatus.textContent = `${label}: ${safeTool}`
         },
       )
       await handle.ready

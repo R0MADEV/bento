@@ -52,6 +52,33 @@ export function truncateHistory(history: AgentMessage[], budget = HISTORY_RESERV
   return result
 }
 
+export interface ReviewSessionContext {
+  branch?: string
+  commit?: string
+  sessionId?: string
+  sessionAgent?: string
+  sessionCommit?: string
+}
+
+// A persisted review session is reusable only when it belongs to the same agent
+// and the same commit; otherwise the review must start a fresh agent session.
+export function resolvePersistedSessionId(ctx: ReviewSessionContext | undefined, agent: AgentType): string | null {
+  if (!ctx?.branch) return null
+  const sameAgent = ctx.sessionAgent === agent
+  const sameCommit = ctx.sessionCommit === ctx.commit
+  if (!sameAgent || !sameCommit) return null
+  return ctx.sessionId ?? null
+}
+
+// On a fresh review session, appends the previous run's tool evidence to the
+// message so the new agent process starts with findings it can no longer see.
+export function buildReviewMessage(message: string, evidence: string[] | undefined, hasPersistedSession: boolean): string {
+  const items = evidence ?? []
+  if (hasPersistedSession || items.length === 0) return message
+  const lines = items.slice(-20).map(item => `- ${item}`).join('\n')
+  return `${message}\n\nPersisted review evidence:\n${lines}`
+}
+
 export function buildContext(params: AgentParams): { message: string; history: AgentMessage[] } {
   const budget = MAX_CONTEXT_CHARS - HISTORY_RESERVE
   const pieces = [params.message, params.diff ?? '', ...(params.lexisSnippets ?? [])]

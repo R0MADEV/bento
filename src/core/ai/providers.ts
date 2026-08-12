@@ -8,6 +8,10 @@ export interface AiProvider {
   models: string[]
 }
 
+// The pseudo-provider that routes to local CLI agents (claude/codex/opencode)
+// instead of an OpenAI-compatible HTTP endpoint.
+export const AGENT_PROVIDER_ID = 'agent'
+
 export const AI_PROVIDERS: AiProvider[] = [
   {
     id: 'openai',
@@ -40,7 +44,7 @@ export const AI_PROVIDERS: AiProvider[] = [
     models: [],
   },
   {
-    id: 'agent',
+    id: AGENT_PROVIDER_ID,
     label: 'Agent',
     baseUrl: '',
     models: [],

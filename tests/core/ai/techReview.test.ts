@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildReviewPrompt, createContextProvider, validateReviewResponse, type ReviewResponse } from '../../../src/core/ai/techReview'
+import { buildReviewPrompt, createContextProvider, extractFirstJsonObject, formatReviewResponse, validateReviewResponse, type ReviewResponse } from '../../../src/core/ai/techReview'
 
 describe('Tech Review', () => {
   it('builds a prompt with the diff and relevant context', () => {
@@ -92,6 +92,48 @@ describe('Tech Review', () => {
       findings: Array(51).fill(f),
       contextSources: ['direct'],
     })).toThrow()
+  })
+
+  it('formats a passing verdict as icon + summary with no findings', () => {
+    const md = formatReviewResponse({ verdict: 'pass', summary: 'All good.', findings: [], contextSources: ['direct'] })
+    expect(md).toBe('✅ **pass** — All good.')
+  })
+
+  it('formats findings with severity, location and recommendation', () => {
+    const md = formatReviewResponse({
+      verdict: 'fail',
+      summary: 'One issue.',
+      findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+      contextSources: ['direct'],
+    })
+    expect(md).toContain('❌ **fail** — One issue.')
+    expect(md).toContain('**HIGH** `src/a.ts:10` — Bug')
+    expect(md).toContain('why')
+    expect(md).toContain('→ fix it')
+  })
+
+  it('omits the line suffix when a finding has no line', () => {
+    const md = formatReviewResponse({
+      verdict: 'needs_review',
+      summary: 'Check.',
+      findings: [{ severity: 'low', file: 'src/a.ts', line: null, title: 'x', explanation: 'y', recommendation: 'z' }],
+      contextSources: ['direct'],
+    })
+    expect(md).toContain('⚠️ **needs_review** — Check.')
+    expect(md).toContain('`src/a.ts`')
+    expect(md).not.toContain('src/a.ts:')
+  })
+
+  it('extracts the first balanced JSON object from surrounding text', () => {
+    expect(extractFirstJsonObject('before {"a":1} after')).toBe('{"a":1}')
+  })
+
+  it('ignores braces inside JSON strings when extracting', () => {
+    expect(extractFirstJsonObject('{"a":"}"}')).toBe('{"a":"}"}')
+  })
+
+  it('returns null when there is no JSON object', () => {
+    expect(extractFirstJsonObject('no json here')).toBeNull()
   })
 
   it('falls back to git and direct context when Lexis is unavailable', async () => {

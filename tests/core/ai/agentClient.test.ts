@@ -13,8 +13,38 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }))
 
-import { buildContext, redact, truncateHistory, type AgentParams } from '../../../src/core/ai/agentClient'
+import { buildContext, redact, truncateHistory, resolvePersistedSessionId, buildReviewMessage, type AgentParams } from '../../../src/core/ai/agentClient'
 import { startAgent } from '../../../src/core/ai/agentClient'
+
+describe('review session helpers', () => {
+  const ctx = { branch: 'feat/x', commit: 'abc', sessionId: 's1', sessionAgent: 'claude', sessionCommit: 'abc' }
+
+  it('reuses the persisted session only for the same agent and commit', () => {
+    expect(resolvePersistedSessionId(ctx, 'claude')).toBe('s1')
+  })
+  it('starts fresh when the agent changed', () => {
+    expect(resolvePersistedSessionId(ctx, 'codex')).toBeNull()
+  })
+  it('starts fresh when the commit changed', () => {
+    expect(resolvePersistedSessionId({ ...ctx, sessionCommit: 'old' }, 'claude')).toBeNull()
+  })
+  it('returns null outside a review conversation', () => {
+    expect(resolvePersistedSessionId({ commit: 'abc' }, 'claude')).toBeNull()
+  })
+
+  it('appends evidence to the message only on a fresh review session', () => {
+    const msg = buildReviewMessage('hi', ['tool a', 'tool b'], false)
+    expect(msg).toContain('hi')
+    expect(msg).toContain('Persisted review evidence:')
+    expect(msg).toContain('- tool a')
+  })
+  it('leaves the message untouched when resuming a session', () => {
+    expect(buildReviewMessage('hi', ['tool a'], true)).toBe('hi')
+  })
+  it('leaves the message untouched when there is no evidence', () => {
+    expect(buildReviewMessage('hi', [], false)).toBe('hi')
+  })
+})
 
 const params = (overrides: Partial<AgentParams> = {}): AgentParams => ({
   agent: 'claude', message: 'hello', history: [], projectPath: '/tmp/project', ...overrides,
