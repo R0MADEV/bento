@@ -90,7 +90,9 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   const store = createAgentStore()
   const slots: AgentSlot[] = []
   let activeIndex = -1
-  let splitIndex = -1
+  // Ordered indices of the terminals currently visible in split view (null = single terminal mode).
+  let splitGroup: number[] | null = null
+  let splitDir: 'h' | 'v' = 'h'
   let agentCounter = 0
   let isEditing = false
   let initialized = false
@@ -233,8 +235,13 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   termArea.className = 'agents-term-area'
   termArea.addEventListener('contextmenu', e => {
     e.preventDefault()
+    const slotEl = (e.target as HTMLElement).closest<HTMLElement>('.agents-term-slot')
+    const refIdx = slotEl ? (slots.findIndex(s => s.slot === slotEl) ?? activeIndex) : activeIndex
     showContextMenu(e.clientX, e.clientY, [
-      { label: i18nT('agents.newAgent'), onClick: () => addAgentAtSide() },
+      { label: `← ${i18nT('agents.splitLeft')}`,  onClick: () => addAgentAtSide('left',  refIdx) },
+      { label: `→ ${i18nT('agents.splitRight')}`, onClick: () => addAgentAtSide('right', refIdx) },
+      { label: `↑ ${i18nT('agents.splitAbove')}`, onClick: () => addAgentAtSide('top',   refIdx) },
+      { label: `↓ ${i18nT('agents.splitBelow')}`, onClick: () => addAgentAtSide('bottom',refIdx) },
     ])
   })
 
@@ -309,8 +316,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
       const li = document.createElement('li')
       li.className = `agents-sidebar-item${isActive ? ' active' : ''}${slot.exited ? ' exited' : ''}`
-      if (splitIndex >= 0 && i === activeIndex) li.classList.add('agents-sidebar-group-primary')
-      else if (splitIndex >= 0 && i === splitIndex) li.classList.add('agents-sidebar-group-secondary')
+      if (splitGroup?.includes(i)) li.classList.add('agents-sidebar-group-member')
       li.dataset.status = entry.status
       const att = attention.get(entry.id)
       if (att) li.dataset.attention = att
@@ -391,14 +397,27 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // Does NOT call renderSidebar — only patches the CSS active class so that
   // the existing nameEl DOM nodes stay connected (required for dblclick → rename).
   const clearSplit = () => {
-    if (splitIndex < 0) return
-    splitIndex = -1
-    termArea.classList.remove('agents-split')
-    slots.forEach(s => s.slot.classList.remove('split-primary', 'split-secondary'))
+    if (!splitGroup) return
+    splitGroup = null
+    termArea.classList.remove('agents-split-h', 'agents-split-v')
+    slots.forEach(s => { s.slot.classList.remove('split-member'); s.slot.style.order = '' })
+  }
+
+  const applySplit = () => {
+    if (!splitGroup || splitGroup.length < 2) { clearSplit(); return }
+    termArea.classList.remove('agents-split-h', 'agents-split-v')
+    termArea.classList.add(`agents-split-${splitDir}`)
+    slots.forEach(s => { s.slot.classList.remove('split-member', 'active'); s.slot.style.order = '' })
+    splitGroup.forEach((idx, order) => {
+      if (!slots[idx]) return
+      slots[idx].slot.classList.add('split-member')
+      slots[idx].slot.style.order = String(order)
+    })
+    emptyMsg.hidden = true
   }
 
   const activateAgent = (index: number) => {
-    const isInSplitGroup = splitIndex >= 0 && (index === activeIndex || index === splitIndex)
+    const isInSplitGroup = splitGroup?.includes(index) ?? false
 
     if (!isInSplitGroup) {
       clearSplit()
@@ -413,7 +432,8 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
         slots[index].handle.focus?.()
       }
     } else {
-      // Clicking a split group member: keep the split, just focus that terminal
+      // Split group member: keep the split, just focus that terminal
+      activeIndex = index
       slots[index]?.handle.fit?.()
       slots[index]?.handle.focus?.()
     }
@@ -534,49 +554,83 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // ── Remove agent ──────────────────────────────────────────────
   const removeAgent = (index: number) => {
     if (index < 0 || index >= slots.length) return
-    if (splitIndex >= 0 && (index === activeIndex || index === splitIndex)) clearSplit()
+
+    // Adjust splitGroup before the splice
+    if (splitGroup) {
+      if (splitGroup.includes(index)) {
+        const next = splitGroup.filter(i => i !== index).map(i => i > index ? i - 1 : i)
+        if (next.length >= 2) {
+          splitGroup = next
+        } else {
+          // Group dissolves: clear CSS before removing slot
+          termArea.classList.remove('agents-split-h', 'agents-split-v')
+          slots.forEach(s => { s.slot.classList.remove('split-member'); s.slot.style.order = '' })
+          splitGroup = null
+        }
+      } else {
+        splitGroup = splitGroup.map(i => i > index ? i - 1 : i)
+      }
+    }
+
+    // Adjust activeIndex before the splice
+    if (activeIndex > index) activeIndex--
+    else if (activeIndex === index) activeIndex = Math.max(0, index - 1)
+
     const s = slots[index]
     attention.delete(s.handle.getPtyId())
     s.titleCleanup()
     s.handle.dispose?.()
     s.slot.remove()
     slots.splice(index, 1)
-    if (splitIndex > index) splitIndex--
 
     if (slots.length === 0) {
       activeIndex = -1
+      splitGroup = null
       emptyMsg.hidden = false
+    } else if (splitGroup) {
+      if (!splitGroup.includes(activeIndex)) activeIndex = splitGroup[0]
+      applySplit()
+      slots[activeIndex]?.handle.fit?.()
+      slots[activeIndex]?.handle.focus?.()
     } else {
-      activateAgent(Math.min(index, slots.length - 1))
+      activateAgent(activeIndex)
     }
     renderSidebar()
   }
 
-  const addAgentAtSide = () => {
-    const primaryIdx = activeIndex
-    addAgent()
-    const secondaryIdx = slots.length - 1
-    if (primaryIdx < 0 || secondaryIdx === primaryIdx) return
-    // addAgent called activateAgent which cleared split — now set it up
-    activeIndex = primaryIdx
-    splitIndex = secondaryIdx
-    slots.forEach(s => s.slot.classList.remove('active', 'split-primary', 'split-secondary'))
-    slots[primaryIdx].slot.classList.add('split-primary')
-    slots[secondaryIdx].slot.classList.add('split-secondary')
-    termArea.classList.add('agents-split')
-    emptyMsg.hidden = true
+  const addAgentAtSide = (dir: 'left' | 'right' | 'top' | 'bottom', refIdx = activeIndex) => {
+    const newDir: 'h' | 'v' = (dir === 'left' || dir === 'right') ? 'h' : 'v'
+    const insertAfter = (dir === 'right' || dir === 'bottom')
+
+    // Perpendicular to current group → clear and start a new split
+    if (splitGroup && splitDir !== newDir) clearSplit()
+
+    addAgent() // internally calls activateAgent(newIdx) → clearSplit()
+    const newIdx = slots.length - 1
+    if (newIdx === refIdx) return // only 1 slot (shouldn't happen)
+
+    if (!splitGroup) {
+      splitGroup = insertAfter ? [refIdx, newIdx] : [newIdx, refIdx]
+      splitDir = newDir
+    } else {
+      const pos = splitGroup.indexOf(refIdx)
+      const insertAt = pos < 0 ? splitGroup.length : (insertAfter ? pos + 1 : pos)
+      splitGroup.splice(insertAt, 0, newIdx)
+    }
+
+    activeIndex = refIdx
+    applySplit()
+
     setTimeout(() => {
-      slots[primaryIdx].handle.fit?.()
-      slots[secondaryIdx].handle.fit?.()
-      slots[secondaryIdx].handle.focus?.()
+      splitGroup!.forEach(idx => slots[idx]?.handle.fit?.())
+      slots[newIdx]?.handle.focus?.()
     }, 80)
   }
 
   // ── Fit ───────────────────────────────────────────────────────
   const fit = () => {
-    if (splitIndex >= 0) {
-      slots[activeIndex]?.handle.fit?.()
-      slots[splitIndex]?.handle.fit?.()
+    if (splitGroup) {
+      splitGroup.forEach(idx => slots[idx]?.handle.fit?.())
     } else if (activeIndex >= 0) {
       slots[activeIndex]?.handle.fit?.()
     }

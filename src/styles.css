@@ -2236,30 +2236,32 @@ html, body, #app {
   pointer-events: auto;
 }
 
-.agents-term-area.agents-split { display: flex; }
+.agents-term-area.agents-split-h { display: flex; flex-direction: row; }
+.agents-term-area.agents-split-v { display: flex; flex-direction: column; }
 
-.agents-term-area.agents-split .agents-term-slot.split-primary,
-.agents-term-area.agents-split .agents-term-slot.split-secondary {
+.agents-term-area.agents-split-h .agents-term-slot.split-member,
+.agents-term-area.agents-split-v .agents-term-slot.split-member {
   position: relative;
   inset: auto;
   flex: 1;
-  height: 100%;
+  min-width: 0;
+  min-height: 0;
   visibility: visible;
   pointer-events: auto;
 }
 
-.agents-term-area.agents-split .agents-term-slot.split-primary {
-  border-right: 1px solid var(--border);
+.agents-term-area.agents-split-h .agents-term-slot.split-member + .agents-term-slot.split-member {
+  border-left: 1px solid var(--border);
+}
+.agents-term-area.agents-split-v .agents-term-slot.split-member + .agents-term-slot.split-member {
+  border-top: 1px solid var(--border);
 }
 
 /* Split group indicator in sidebar */
-.agents-sidebar-item.agents-sidebar-group-primary,
-.agents-sidebar-item.agents-sidebar-group-secondary {
+.agents-sidebar-item.agents-sidebar-group-member {
   border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
   padding-left: 6px;
 }
-.agents-sidebar-item.agents-sidebar-group-primary { border-radius: var(--radius) var(--radius) 0 0; margin-bottom: 0; }
-.agents-sidebar-item.agents-sidebar-group-secondary { border-radius: 0 0 var(--radius) var(--radius); }
 
 .agents-term-slot .terminal-panel {
   height: 100%;
