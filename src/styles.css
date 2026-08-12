@@ -707,23 +707,6 @@ html, body, #app {
 
 .term-profile-save:hover { color: var(--accent); border-color: var(--accent); }
 
-/* "+" button in the header of each group */
-.group-add-tab {
-  height: 100%;
-  min-width: 28px;
-  padding: 0 8px;
-  background: transparent;
-  border: none;
-  color: var(--fg-dim);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.group-add-tab:hover {
-  background: var(--surface-2);
-  color: var(--fg);
-}
 
 /* Context menu */
 .context-menu {
@@ -2217,15 +2200,6 @@ html, body, #app {
   opacity: 1;
 }
 
-/* Group header "+" (Dockview): always visible */
-.group-add-tab {
-  opacity: 1;
-  color: var(--fg-dim);
-}
-
-.group-add-tab:hover {
-  color: var(--accent);
-}
 
 /* Terminal theme button: only when hovering the panel */
 .term-theme-btn {
