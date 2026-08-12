@@ -490,6 +490,9 @@ html, body, #app {
 .workspace-view .dv-groupview > .dv-tabs-and-actions-container {
   display: none;
 }
+.workspace-view .dv-groupview:has(.dv-tab ~ .dv-tab) > .dv-tabs-and-actions-container {
+  display: flex;
+}
 
 .panel-placeholder {
   display: flex;
@@ -720,6 +723,14 @@ html, body, #app {
 .term-max-btn {
   bottom: 8px;
   right: 44px;
+}
+
+.term-add-btn {
+  bottom: 8px;
+  right: 80px;
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
 }
 
 /* Profiles section in the popover */

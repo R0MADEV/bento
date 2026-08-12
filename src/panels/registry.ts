@@ -8,6 +8,8 @@ export interface PanelContext {
   removeSelf: () => void
   // The session's project folder; new terminals start here
   projectPath?: string
+  // Opens a new panel of the same type in the same group
+  newSibling?: () => void
 }
 
 export interface PanelApi {

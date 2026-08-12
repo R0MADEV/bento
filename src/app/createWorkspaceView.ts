@@ -79,7 +79,12 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       const def = panels.get(name)
       if (!def) throw new Error(appT('panelNotRegistered', { name }))
 
-      const instance = def.create({ panelId: id, removeSelf: () => removePanel(id), projectPath: options.projectPath?.() })
+      const instance = def.create({
+        panelId: id,
+        removeSelf: () => removePanel(id),
+        projectPath: options.projectPath?.(),
+        newSibling: () => addPanel(name, { referencePanel: id, direction: 'within' }),
+      })
       instanceMap.set(id, instance)
       fits.add(instance.fit ?? (() => {}))
 

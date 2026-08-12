@@ -59,7 +59,7 @@ export interface TerminalPanelHandle {
 
 const DEFAULT_FONT_FAMILY = '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace'
 
-export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void, execCommand?: string[], store?: AgentStore): TerminalPanelHandle {
+export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void, execCommand?: string[], store?: AgentStore, newSibling?: () => void): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -498,6 +498,15 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
       },
     })
     popover.appendChild(profiles.element)
+  }
+
+  if (newSibling) {
+    const addBtn = document.createElement('button')
+    addBtn.className = 'term-theme-btn term-add-btn'
+    addBtn.title = 'Nueva terminal'
+    addBtn.textContent = '+'
+    addBtn.addEventListener('click', () => newSibling())
+    root.appendChild(addBtn)
   }
 
   root.appendChild(maxBtn)
