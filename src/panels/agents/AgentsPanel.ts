@@ -536,7 +536,13 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
     slots.push(agentSlot)
 
-    activateAgent(slots.length - 1)
+    // If a split group is active, don't disrupt it: the new agent goes to the
+    // sidebar and the user can switch to it (or split it) from there.
+    if (splitGroup) {
+      renderSidebar()
+    } else {
+      activateAgent(slots.length - 1)
+    }
   }
 
   // ── Process exited ────────────────────────────────────────────
@@ -620,6 +626,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
     activeIndex = refIdx
     applySplit()
+    renderSidebar()
 
     setTimeout(() => {
       splitGroup!.forEach(idx => slots[idx]?.handle.fit?.())
