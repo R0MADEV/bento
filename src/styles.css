@@ -2252,6 +2252,15 @@ html, body, #app {
   border-right: 1px solid var(--border);
 }
 
+/* Split group indicator in sidebar */
+.agents-sidebar-item.agents-sidebar-group-primary,
+.agents-sidebar-item.agents-sidebar-group-secondary {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  padding-left: 6px;
+}
+.agents-sidebar-item.agents-sidebar-group-primary { border-radius: var(--radius) var(--radius) 0 0; margin-bottom: 0; }
+.agents-sidebar-item.agents-sidebar-group-secondary { border-radius: 0 0 var(--radius) var(--radius); }
+
 .agents-term-slot .terminal-panel {
   height: 100%;
   width: 100%;

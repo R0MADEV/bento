@@ -309,6 +309,8 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
       const li = document.createElement('li')
       li.className = `agents-sidebar-item${isActive ? ' active' : ''}${slot.exited ? ' exited' : ''}`
+      if (splitIndex >= 0 && i === activeIndex) li.classList.add('agents-sidebar-group-primary')
+      else if (splitIndex >= 0 && i === splitIndex) li.classList.add('agents-sidebar-group-secondary')
       li.dataset.status = entry.status
       const att = attention.get(entry.id)
       if (att) li.dataset.attention = att
@@ -396,25 +398,33 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   }
 
   const activateAgent = (index: number) => {
-    clearSplit()
-    if (activeIndex >= 0 && slots[activeIndex]) {
-      slots[activeIndex].slot.classList.remove('active')
+    const isInSplitGroup = splitIndex >= 0 && (index === activeIndex || index === splitIndex)
+
+    if (!isInSplitGroup) {
+      clearSplit()
+      if (activeIndex >= 0 && slots[activeIndex]) {
+        slots[activeIndex].slot.classList.remove('active')
+      }
+      activeIndex = index
+      if (slots[index]) {
+        emptyMsg.hidden = true
+        slots[index].slot.classList.add('active')
+        slots[index].handle.fit?.()
+        slots[index].handle.focus?.()
+      }
+    } else {
+      // Clicking a split group member: keep the split, just focus that terminal
+      slots[index]?.handle.fit?.()
+      slots[index]?.handle.focus?.()
     }
-    activeIndex = index
-    if (slots[index]) {
-      emptyMsg.hidden = true
-      slots[index].slot.classList.add('active')
-      slots[index].handle.fit?.()
-      slots[index].handle.focus?.()
-    }
+
     // Viewing an agent clears its attention flag. activateAgent must not call
     // renderSidebar (it would detach nameEl mid-dblclick), so patch in place.
     const activeId = slots[index]?.handle.getPtyId()
     if (activeId) attention.delete(activeId)
     cs.list.querySelectorAll<HTMLElement>('.agents-sidebar-item').forEach((li, i) => {
-      const isActive = i === index
-      li.classList.toggle('active', isActive)
-      if (isActive) {
+      li.classList.toggle('active', i === index)
+      if (i === index) {
         li.removeAttribute('data-attention')
         li.querySelector('.agents-sidebar-badge')?.remove()
       }
@@ -524,12 +534,14 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // ── Remove agent ──────────────────────────────────────────────
   const removeAgent = (index: number) => {
     if (index < 0 || index >= slots.length) return
+    if (splitIndex >= 0 && (index === activeIndex || index === splitIndex)) clearSplit()
     const s = slots[index]
     attention.delete(s.handle.getPtyId())
     s.titleCleanup()
     s.handle.dispose?.()
     s.slot.remove()
     slots.splice(index, 1)
+    if (splitIndex > index) splitIndex--
 
     if (slots.length === 0) {
       activeIndex = -1
