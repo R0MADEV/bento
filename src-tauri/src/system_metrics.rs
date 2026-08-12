@@ -4,15 +4,47 @@ use std::sync::Mutex;
 use sysinfo::{Pid, Process, System};
 use tauri::State;
 
-pub struct SystemMetricsState(pub Mutex<System>);
+struct MetricsState {
+    system: System,
+    // PIDs in Bento's process group, rebuilt every TREE_REFRESH_EVERY calls so
+    // new terminals/agents are picked up without scanning all processes each time.
+    cached_pids: HashSet<Pid>,
+    calls_since_tree_refresh: u8,
+}
+
+const TREE_REFRESH_EVERY: u8 = 5; // full scan every ~15 s (at 3 s poll interval)
+
+pub struct SystemMetricsState(pub Mutex<MetricsState>);
 
 impl Default for SystemMetricsState {
     fn default() -> Self {
-        Self(Mutex::new(System::new()))
+        Self(Mutex::new(MetricsState {
+            system: System::new(),
+            cached_pids: HashSet::new(),
+            calls_since_tree_refresh: TREE_REFRESH_EVERY, // force scan on first call
+        }))
     }
 }
 
 fn app_processes(system: &System, root: Pid) -> HashSet<Pid> {
+    // WebKit XPC services are re-parented to launchd on macOS, so a normal
+    // parent/child walk misses most of Bento's UI memory. Resource coalitions
+    // are the kernel grouping that keeps an app and those services together.
+    #[cfg(target_os = "macos")]
+    if let Some(root_coalition) = resource_coalition_id(root) {
+        let members: HashSet<Pid> = system
+            .processes()
+            .keys()
+            .copied()
+            .filter(|pid| resource_coalition_id(*pid) == Some(root_coalition))
+            .collect();
+        if !members.is_empty() {
+            return members;
+        }
+    }
+
+    // Linux and Windows keep the terminal/agent process tree attached to the
+    // host process. This is also the safe fallback if coalition lookup fails.
     let mut result = HashSet::from([root]);
     loop {
         let before = result.len();
@@ -28,6 +60,44 @@ fn app_processes(system: &System, root: Pid) -> HashSet<Pid> {
             return result;
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn resource_coalition_id(pid: Pid) -> Option<u64> {
+    use std::ffi::c_void;
+
+    const PROC_PIDCOALITIONINFO: i32 = 20;
+    #[repr(C)]
+    struct ProcPidCoalitionInfo {
+        // RESOURCE and JETSAM coalition IDs, followed by three reserved fields.
+        coalition_id: [u64; 2],
+        reserved: [u64; 3],
+    }
+    unsafe extern "C" {
+        fn proc_pidinfo(
+            pid: i32,
+            flavor: i32,
+            arg: u64,
+            buffer: *mut c_void,
+            buffer_size: i32,
+        ) -> i32;
+    }
+
+    let mut info = ProcPidCoalitionInfo {
+        coalition_id: [0; 2],
+        reserved: [0; 3],
+    };
+    // SAFETY: info matches proc_pidcoalitioninfo's C layout and buffer size.
+    let read = unsafe {
+        proc_pidinfo(
+            pid.as_u32() as i32,
+            PROC_PIDCOALITIONINFO,
+            0,
+            (&mut info as *mut ProcPidCoalitionInfo).cast(),
+            std::mem::size_of::<ProcPidCoalitionInfo>() as i32,
+        )
+    };
+    (read == std::mem::size_of::<ProcPidCoalitionInfo>() as i32).then_some(info.coalition_id[0])
 }
 
 #[cfg(target_os = "macos")]
@@ -145,15 +215,28 @@ fn physical_memory(_pid: Pid, fallback: &Process) -> u64 {
 
 // Current physical footprint of Bento plus its WebViews, terminals and agents.
 // Each supported OS uses a non-duplicating native metric instead of adding RSS.
+// The process tree is rebuilt every TREE_REFRESH_EVERY calls; between rebuilds
+// only the known PIDs are refreshed, avoiding a full system-wide scan.
 #[tauri::command]
 pub fn app_memory_usage(state: State<'_, SystemMetricsState>) -> Result<u64, String> {
-    let mut system = state.0.lock().map_err(|e| e.to_string())?;
-    system.refresh_processes();
+    let mut ms = state.0.lock().map_err(|e| e.to_string())?;
     let root = Pid::from_u32(std::process::id());
-    let total = app_processes(&system, root)
-        .into_iter()
-        .filter_map(|pid| {
-            system
+
+    if ms.calls_since_tree_refresh >= TREE_REFRESH_EVERY || ms.cached_pids.is_empty() {
+        ms.system.refresh_processes();
+        ms.cached_pids = app_processes(&ms.system, root);
+        ms.calls_since_tree_refresh = 0;
+    } else {
+        for &pid in &ms.cached_pids {
+            ms.system.refresh_process(pid);
+        }
+        ms.calls_since_tree_refresh += 1;
+    }
+
+    let total = ms.cached_pids
+        .iter()
+        .filter_map(|&pid| {
+            ms.system
                 .process(pid)
                 .map(|process| physical_memory(pid, process))
         })
@@ -172,5 +255,20 @@ mod tests {
         system.refresh_process(pid);
         let process = system.process(pid).expect("current process");
         assert!(physical_memory(pid, process) > 0);
+    }
+
+    #[test]
+    fn tree_refresh_resets_after_threshold() {
+        let state = SystemMetricsState::default();
+        let ms = state.0.lock().unwrap();
+        assert_eq!(ms.calls_since_tree_refresh, TREE_REFRESH_EVERY);
+        assert!(ms.cached_pids.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_metric_reads_current_resource_coalition() {
+        let pid = Pid::from_u32(std::process::id());
+        assert!(resource_coalition_id(pid).is_some());
     }
 }

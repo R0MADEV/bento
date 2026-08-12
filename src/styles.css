@@ -2377,6 +2377,10 @@ html, body, #app {
   max-width: 100%;
 }
 
+.dv-content-container > * {
+  contain: layout style paint;
+}
+
 /* ── Panel launcher (inside the hover title strip) ────────────────────────────
    A horizontal toolbar of panel icons living in the top strip. It reveals with
    the strip (fade handled by the .session-bar rules above), so the panel dock
