@@ -896,6 +896,11 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
     })
 
     const menuBtn = iconBtn('more', taskT('actions'), () => {
+      // iconBtn stops propagation, so opening the row menu must explicitly
+      // count as user interaction. Otherwise a slow startup enrichment can
+      // still "restore" the saved task after an action (for example Backups)
+      // has navigated elsewhere and replace that newly opened detail.
+      selectWorktree(row, wt)
       const r = menuBtn.getBoundingClientRect()
       showContextMenu(r.right - 4, r.bottom, menuItems())
     })

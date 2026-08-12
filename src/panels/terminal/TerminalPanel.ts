@@ -59,7 +59,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
-  let localFontFamily = DEFAULT_FONT_FAMILY
+  const localFontFamily = DEFAULT_FONT_FAMILY
 
   const term = new Terminal({
     cursorBlink: true,

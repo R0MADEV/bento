@@ -487,10 +487,7 @@ html, body, #app {
 /* Launcher-driven navigation: the panel tab bar is hidden entirely so panels
    fill to the very top. Open/switch from the side launcher; close via right-click. */
 .workspace-view .dv-groupview > .dv-tabs-and-actions-container {
-  display: none;
-}
-.workspace-view .dv-groupview:has(.dv-tab ~ .dv-tab) > .dv-tabs-and-actions-container {
-  display: flex;
+  display: none !important;
 }
 
 .panel-placeholder {
