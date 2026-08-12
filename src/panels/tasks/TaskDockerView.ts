@@ -5,7 +5,7 @@ import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { isRunning, parseContainers, type Container } from '../../core/docker/containers'
 import type { Worktree } from '../../core/git/worktree'
 import { icon } from '../../ui/icons'
-import { renderContainerLogs, renderContainerTerminal } from '../docker/containerDetail'
+import { renderContainerLogs, renderContainerTerminal, type DetailLifecycle } from '../docker/containerDetail'
 import { taskT } from './i18n'
 
 export interface IsolateResult {
@@ -42,7 +42,7 @@ export interface RecipeApplyResult {
 interface TaskDockerViewOptions {
   showDetail: (...nodes: HTMLElement[]) => void
   resetDetail: () => void
-  setCleanup: (cleanup: () => void, resume?: () => void) => void
+  setLifecycle: (lifecycle: DetailLifecycle) => void
 }
 
 function iconButton(name: string, title: string, onClick: () => void): HTMLButtonElement {
@@ -79,7 +79,7 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
     body.className = 'tasks-logs-body'
     wrap.append(subHeader(shortName, goBack), body)
     options.showDetail(wrap)
-    options.setCleanup(renderContainerLogs(container, body))
+    options.setLifecycle(renderContainerLogs(container, body))
   }
 
   const showContainerTerminal = async (container: Container, shortName: string, goBack: () => void): Promise<void> => {
@@ -90,7 +90,7 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
     body.className = 'tasks-term-body'
     wrap.append(subHeader(shortName, goBack), body)
     options.showDetail(wrap)
-    options.setCleanup(await renderContainerTerminal(container, body, goBack))
+    options.setLifecycle(await renderContainerTerminal(container, body, goBack))
   }
 
   const showStackLogs = (worktree: Worktree, worktreeDirectory: string, goBack: () => void): void => {
@@ -100,14 +100,18 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
     const logsBody = document.createElement('div')
     logsBody.className = 'tasks-logs-body'
     let live = false
+    let resumeLive = false
+    let disposed = false
+    let streamGeneration = 0
     let unlisten: (() => void) | null = null
     const event = `docker-compose-logs-${worktreeDirectory}`
     const output = document.createElement('pre')
     output.className = 'docker-logs'
 
-    const stopLive = (): void => {
+    const stopLiveStream = (): void => {
       if (!live) return
       live = false
+      streamGeneration += 1
       liveButton.innerHTML = icon('play')
       liveButton.title = taskT('followLiveLogs')
       liveButton.classList.remove('active')
@@ -115,7 +119,13 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
       unlisten?.()
       unlisten = null
     }
+    const stopLive = (): void => {
+      resumeLive = false
+      stopLiveStream()
+    }
     const startLive = async (): Promise<void> => {
+      if (disposed || live) return
+      const generation = ++streamGeneration
       live = true
       liveButton.innerHTML = icon('stop')
       liveButton.title = taskT('stopFollowingLogs')
@@ -123,10 +133,12 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
       output.textContent = ''
       try {
         await invoke('docker_compose_logs_follow', { worktreePath: worktree.path, tail: 200 })
-        unlisten = await listen<string>(event, eventData => {
+        const stopListening = await listen<string>(event, eventData => {
           output.textContent += eventData.payload
           output.scrollTop = output.scrollHeight
         })
+        if (disposed || !live || generation !== streamGeneration) stopListening()
+        else unlisten = stopListening
       } catch (error) {
         output.textContent = String(error)
       }
@@ -150,7 +162,11 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
     logsBody.append(header, output)
     wrap.append(subHeader(taskT('stackLogs'), goBack), logsBody)
     options.showDetail(wrap)
-    options.setCleanup(stopLive)
+    options.setLifecycle({
+      pause: () => { resumeLive = live; stopLiveStream() },
+      resume: () => { if (resumeLive && !disposed) { resumeLive = false; void startLive() } },
+      dispose: () => { disposed = true; resumeLive = false; stopLiveStream() },
+    })
     void startLive()
   }
 
@@ -228,7 +244,7 @@ export function createTaskDockerView(options: TaskDockerViewOptions) {
     let pollInterval: ReturnType<typeof setInterval> | null = setInterval(refresh, 3000)
     const stopPoll = (): void => { if (pollInterval !== null) { clearInterval(pollInterval); pollInterval = null } }
     const resumePoll = (): void => { stopPoll(); void refresh(); pollInterval = setInterval(refresh, 3000) }
-    options.setCleanup(stopPoll, resumePoll)
+    options.setLifecycle({ pause: stopPoll, resume: resumePoll, dispose: stopPoll })
     options.showDetail(wrap)
   }
 

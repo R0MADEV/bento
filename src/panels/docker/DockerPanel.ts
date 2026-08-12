@@ -1,14 +1,15 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
-import { renderContainerLogs, renderContainerTerminal } from './containerDetail'
+import { renderContainerLogs, renderContainerTerminal, type DetailLifecycle } from './containerDetail'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { icon } from '../../ui/icons'
 
 export function createDockerPanel(filterPrefix?: string): { element: HTMLElement; dispose: () => void } {
   let containers: Container[] = []
   // Teardown for the current detail's body (live stream / exec terminal).
-  let bodyCleanup: () => void = () => {}
+  const emptyLifecycle = (): DetailLifecycle => ({ pause: () => {}, resume: () => {}, dispose: () => {} })
+  let bodyLifecycle = emptyLifecycle()
 
   const iconBtn = (name: string, title: string, onClick: () => void): HTMLButtonElement => {
     const b = document.createElement('button')
@@ -124,18 +125,18 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
 
   // ---- logs + terminal: delegated to shared containerDetail module ----
   function showLogs(body: HTMLElement, c: Container): void {
-    bodyCleanup()
-    bodyCleanup = renderContainerLogs(c, body)
+    bodyLifecycle.dispose()
+    bodyLifecycle = renderContainerLogs(c, body)
   }
 
   async function showTerminal(body: HTMLElement, c: Container, backToLogs: () => void): Promise<void> {
-    bodyCleanup()
-    bodyCleanup = await renderContainerTerminal(c, body, backToLogs)
+    bodyLifecycle.dispose()
+    bodyLifecycle = await renderContainerTerminal(c, body, backToLogs)
   }
 
   function renderDetail(name: string): void {
-    bodyCleanup()
-    bodyCleanup = () => {}
+    bodyLifecycle.dispose()
+    bodyLifecycle = emptyLifecycle()
     const c = find(name)
     if (!c) {
       detail.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: i18nT('docker.selectAContainerToViewItsDetailsAnd') }))
@@ -192,5 +193,5 @@ export function createDockerPanel(filterPrefix?: string): { element: HTMLElement
   }
 
   load()
-  return { element: root, dispose: () => bodyCleanup() }
+  return { element: root, dispose: () => bodyLifecycle.dispose() }
 }

@@ -11,6 +11,8 @@ export class HLSPlayer {
   readonly element: HTMLDivElement
   private readonly video: HTMLVideoElement
   private readonly iframe: HTMLIFrameElement
+  private iframeUrl: string | null = null
+  private iframePaused = false
   onStatus?: (status: PlayerStatus) => void
 
   constructor() {
@@ -44,6 +46,8 @@ export class HLSPlayer {
     if (isEmbedUrl(url)) {
       this.video.classList.add('hidden')
       this.iframe.classList.remove('hidden')
+      this.iframeUrl = url
+      this.iframePaused = false
       this.iframe.src = url
       this.onStatus?.('playing')
       return
@@ -89,9 +93,21 @@ export class HLSPlayer {
   pause(): void {
     this.video.pause()
     this.hls?.stopLoad()
+    if (!this.iframe.classList.contains('hidden') && this.iframe.hasAttribute('src')) {
+      // Third-party embeds cannot be paused reliably with postMessage. Unload
+      // them while hidden to stop audio, network traffic and retained memory.
+      this.iframePaused = true
+      this.iframe.removeAttribute('src')
+    }
   }
 
   resume(): void {
+    if (this.iframePaused && this.iframeUrl) {
+      this.iframePaused = false
+      this.iframe.src = this.iframeUrl
+      this.onStatus?.('playing')
+      return
+    }
     if (this.video.classList.contains('hidden') || !this.video.src) return
     this.hls?.startLoad()
     this.video.play().catch(() => {})
@@ -113,6 +129,8 @@ export class HLSPlayer {
     }
     this.video.removeAttribute('src')
     this.video.load()
+    this.iframeUrl = null
+    this.iframePaused = false
     this.iframe.removeAttribute('src')
   }
 

@@ -100,18 +100,40 @@ export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): {
 
   // Schedule the next RAM read during idle time (avoids contending with frame
   // rendering), but with a hard deadline so it still fires under sustained load.
-  let idleHandle: ReturnType<typeof setTimeout> | number | undefined
+  let timeoutHandle: number | undefined
+  let idleHandle: number | undefined
+  let disposed = false
+  const cancelScheduledRefresh = (): void => {
+    if (timeoutHandle !== undefined) {
+      window.clearTimeout(timeoutHandle)
+      timeoutHandle = undefined
+    }
+    if (idleHandle !== undefined) {
+      if (typeof cancelIdleCallback !== 'undefined') cancelIdleCallback(idleHandle)
+      idleHandle = undefined
+    }
+  }
   const scheduleRefresh = (): void => {
-    idleHandle = window.setTimeout(() => {
+    if (disposed || document.hidden) return
+    cancelScheduledRefresh()
+    timeoutHandle = window.setTimeout(() => {
+      timeoutHandle = undefined
+      if (disposed || document.hidden) return
       if (typeof requestIdleCallback !== 'undefined') {
-        idleHandle = requestIdleCallback(() => void refreshMemory().finally(scheduleRefresh), { timeout: 2000 })
+        idleHandle = requestIdleCallback(() => {
+          idleHandle = undefined
+          void refreshMemory().finally(scheduleRefresh)
+        }, { timeout: 2000 })
       } else {
         void refreshMemory().finally(scheduleRefresh)
       }
     }, 3000)
   }
 
-  const onVisibilityChange = (): void => { if (!document.hidden) void refreshMemory().finally(scheduleRefresh) }
+  const onVisibilityChange = (): void => {
+    cancelScheduledRefresh()
+    if (!document.hidden && !disposed) void refreshMemory().finally(scheduleRefresh)
+  }
   document.addEventListener('visibilitychange', onVisibilityChange)
   element.replaceChildren(agents, memory)
   render()
@@ -120,12 +142,10 @@ export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): {
   return {
     element,
     dispose: () => {
+      disposed = true
       window.removeEventListener(AGENT_DOCK_EVENT, onDock)
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      if (typeof idleHandle === 'number') {
-        clearTimeout(idleHandle)
-        if (typeof cancelIdleCallback !== 'undefined') cancelIdleCallback(idleHandle)
-      }
+      cancelScheduledRefresh()
     },
   }
 }
