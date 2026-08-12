@@ -8,8 +8,8 @@ export function terminalPanelDefinition(store: AgentStore): PanelDefinition {
     type: 'terminal',
     title: appT('panelTerminal'),
     create: (ctx) => lazyPanel(async () => {
-      const { createTerminalPanel } = await import('./TerminalPanel')
-      return createTerminalPanel(ctx.panelId, ctx.projectPath, ctx.removeSelf, undefined, store)
+      const { createTerminalHub } = await import('./terminalHub')
+      return createTerminalHub(ctx.panelId, ctx.projectPath ?? '', store)
     }),
   }
 }

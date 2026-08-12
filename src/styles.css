@@ -517,6 +517,82 @@ html, body, #app {
   background: transparent !important;
 }
 
+/* Terminal hub: tab strip + stacked terminal instances */
+.terminal-hub { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+
+.terminal-hub-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 30px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.terminal-hub-bar::-webkit-scrollbar { display: none; }
+
+.terminal-hub-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 10px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.terminal-hub-tab.active { background: var(--surface-2); color: var(--fg); }
+.terminal-hub-tab:hover:not(.active) { background: var(--surface-hover); color: var(--fg); }
+
+.terminal-hub-tab-label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+
+.terminal-hub-tab-close {
+  display: flex;
+  align-items: center;
+  padding: 1px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.4;
+  border-radius: 2px;
+}
+.terminal-hub-tab-close:hover { opacity: 1; background: var(--surface-3); }
+.terminal-hub-tab-close svg { width: 10px; height: 10px; }
+
+.terminal-hub-add {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.terminal-hub-add:hover { color: var(--fg); }
+.terminal-hub-add svg { width: 12px; height: 12px; }
+
+.terminal-hub-content { position: relative; flex: 1; min-height: 0; }
+
+.terminal-hub-instance {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.terminal-hub-instance.terminal-hub-active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
 /* Terminal: grid on the wrapper, xterm canvas sits on top */
 .terminal-panel {
   background:
