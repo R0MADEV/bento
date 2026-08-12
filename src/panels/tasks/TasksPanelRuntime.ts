@@ -36,8 +36,9 @@ import { TauriAppSettingsRepository } from '../../adapters/TauriAppSettingsRepos
 import type { AppSettings } from '../../ports/AppSettingsRepository'
 import { isRunning, parseContainers } from '../../core/docker/containers'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
+import type { DetailLifecycle } from '../docker/containerDetail'
 
-export function createTasksPanel(panelId = 'default'): { element: HTMLElement; dispose: () => void } {
+export function createTasksPanel(panelId = 'default'): { element: HTMLElement; dispose: () => void; onVisibilityChange: (visible: boolean) => void } {
   const panelStore = new TaskPanelStore(panelId)
   const settingsRepository = new TauriAppSettingsRepository()
   let appSettings: AppSettings = {}
@@ -45,6 +46,27 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   let worktrees: Worktree[] = []
   let repoPath = panelStore.repository()
   let detailCleanup: () => void = () => {}
+  let detailPause: () => void = () => {}
+  let detailResume: () => void = () => {}
+  let panelVisible = true
+  const disposeDetail = (): void => {
+    // Invalidate async work started by the outgoing detail. Stopping an
+    // interval is not enough when one of its refresh requests is already in
+    // flight: without a new generation it could finish later and replace the
+    // newly opened commit/rebase/conflict UI.
+    detailVersion += 1
+    const cleanup = detailCleanup
+    detailCleanup = () => {}
+    detailPause = () => {}
+    detailResume = () => {}
+    cleanup()
+  }
+  const setDetailLifecycle = (lifecycle: DetailLifecycle): void => {
+    detailCleanup = lifecycle.dispose
+    detailPause = lifecycle.pause
+    detailResume = lifecycle.resume
+    if (!panelVisible) detailPause()
+  }
   // Live agents hub per worktree. Kept alive across detail navigation so the
   // running agents/terminals survive switching to changes/history and back;
   // disposed only when the worktree is removed or the whole panel closes.
@@ -284,8 +306,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   }
   const dockerView = createTaskDockerView({
     showDetail,
-    resetDetail: () => { stopDiffRefresh(); detailCleanup(); detailCleanup = () => {} },
-    setCleanup: cleanup => { detailCleanup = cleanup },
+    resetDetail: () => { stopDiffRefresh(); disposeDetail() },
+    setLifecycle: setDetailLifecycle,
   })
 
   const defaultProjectKey = (repository = repoPath): string => repository.replace(/\/$/, '').split('/').pop() ?? ''
@@ -305,7 +327,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
 
   async function showTaskSettings(): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     showDetail(note(taskT('loading'), 'db-detail-loading'))
     await settingsReady
 
@@ -874,6 +896,11 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
     })
 
     const menuBtn = iconBtn('more', taskT('actions'), () => {
+      // iconBtn stops propagation, so opening the row menu must explicitly
+      // count as user interaction. Otherwise a slow startup enrichment can
+      // still "restore" the saved task after an action (for example Backups)
+      // has navigated elsewhere and replace that newly opened detail.
+      selectWorktree(row, wt)
       const r = menuBtn.getBoundingClientRect()
       showContextMenu(r.right - 4, r.bottom, menuItems())
     })
@@ -953,7 +980,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- detail: changes (GitHub-style diff + commit bar) ----
   async function showChanges(wt: Worktree): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     const requestVersion = ++detailVersion
     showDetail(note(taskT('loadingChanges'), 'db-detail-loading'))
     try {
@@ -967,7 +994,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
       showDetail(buildDiffView(raw, wt, { statusRaw: statusRaw.raw, rebaseActive }))
       // Auto-refresh: re-fetch diff every 5 s and update if content changed
       let lastSnapshot = `${statusRaw.raw}\0${raw}`
-      diffRefreshInterval = setInterval(async () => {
+      const refreshChanges = async (): Promise<void> => {
         const [newRaw, newStatus] = await Promise.all([
           invoke<string>('git_diff', { path: wt.path }).catch(() => null),
           taskGit.safeStatus(wt.path),
@@ -975,11 +1002,28 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
         if (requestVersion !== detailVersion) return
         const snapshot = `${newStatus.raw}\0${newRaw ?? ''}`
         if (newRaw !== null && snapshot !== lastSnapshot) {
+          const draft = detailPane.querySelector<HTMLInputElement>('[data-testid="tasks-commit-message"]')
+          // Replacing the entire diff also replaces the commit controls. Keep
+          // the current DOM stable while the user (or WebDriver) is editing so
+          // their text and the button they are about to activate cannot become
+          // stale underneath them. Once editing ends, the pending snapshot is
+          // intentionally retried on the next interval.
+          if (draft && (draft.value.length > 0 || document.activeElement === draft)) return
           lastSnapshot = snapshot
           showDetail(buildDiffView(newRaw, wt, { statusRaw: newStatus.raw, rebaseActive }))
         }
-      }, 5000)
-      detailCleanup = () => stopDiffRefresh()
+      }
+      const startDiffRefresh = (): void => {
+        stopDiffRefresh()
+        if (requestVersion !== detailVersion) return
+        diffRefreshInterval = setInterval(() => { void refreshChanges() }, 5000)
+      }
+      startDiffRefresh()
+      setDetailLifecycle({
+        pause: stopDiffRefresh,
+        resume: () => { void refreshChanges(); startDiffRefresh() },
+        dispose: stopDiffRefresh,
+      })
     } catch (e) { showDetail(note(String(e), 'db-detail-error')) }
   }
 
@@ -1110,7 +1154,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- detail: choose an existing commit for fixup ----
   async function showFixupPicker(wt: Worktree, files: string[] | undefined, incomingDiff: string, selectedPatch?: string): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     showDetail(note(taskT('loadingCommits'), 'db-detail-loading'))
     try {
       const worktreeBase = baseFor(wt)
@@ -1243,7 +1287,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- detail: automatic history backups ----
   async function showBackupHistory(wt: Worktree): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     showDetail(note(taskT('loadingBackups'), 'db-detail-loading'))
     try {
       showDetail(await buildBackupHistoryView({
@@ -1257,7 +1301,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
 
   function showOperationHistory(wt: Worktree): void {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     const branch = wt.branch ?? taskT('detached')
     const repository = repositoryFor(wt)
     showDetail(buildOperationHistoryView({
@@ -1275,7 +1319,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- detail: reset commits ----
   function showResetView(wt: Worktree): void {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     showDetail(buildResetView({
       worktree: wt,
       baseBranch: baseFor(wt),
@@ -1289,7 +1333,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- detail: commit log ----
   async function showCommitGraph(wt: Worktree): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     await buildGraphView({
       worktree: wt,
       baseBranch: baseFor(wt),
@@ -1302,7 +1346,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
 
   function showPrDetails(wt: Worktree, pr: PrStatus): void {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     showDetail(buildPrStatusView({
       pr, baseBranch: baseFor(wt),
       onBack: () => showChanges(wt),
@@ -1312,7 +1356,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
 
   async function showCommitLog(wt: Worktree): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     showDetail(note(taskT('loadingHistory'), 'db-detail-loading'))
     try {
       const entries = await taskGit.log(wt.path)
@@ -1333,7 +1377,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- detail: interactive rebase ----
   async function showInteractiveRebase(wt: Worktree): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     showDetail(note(taskT('loading'), 'db-detail-loading'))
     try {
       const st = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path })
@@ -1635,10 +1679,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- Inline conflict resolver ----
   function showConflictResolver(wt: Worktree, file: string, onBack: () => void): void {
     stopDiffRefresh()
+    disposeDetail()
     showDetail(buildConflictResolverView({ path: wt.path, file, onBack }))
   }
 
   function showRebasePaused(wt: Worktree, st: RebaseStatus): void {
+    disposeDetail()
     const wrap = document.createElement('div')
     wrap.className = 'tasks-rebase-paused'
 
@@ -1676,6 +1722,11 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
     const continueBtn = Object.assign(document.createElement('button'), { className: 'tasks-commit-btn', textContent: taskT('continueRebase') })
 
     let intervalId = 0
+    const stopPolling = (): void => {
+      clearInterval(intervalId)
+      intervalId = 0
+    }
+    let resumePolling: () => void
 
     editBtn.addEventListener('click', () => showChanges(wt))
     splitBtn.addEventListener('click', async () => {
@@ -1802,19 +1853,25 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
       wrap.appendChild(conflictList)
 
       // Auto-refresh conflict list in case user resolves from terminal
-      intervalId = window.setInterval(async () => {
+      const refreshConflicts = async (): Promise<void> => {
         const fresh = await invoke<RebaseStatus>('git_rebase_status', { path: wt.path }).catch(() => null)
         if (!fresh) return
-        if (!fresh.active) { clearInterval(intervalId); showChanges(wt); load(); return }
+        if (!fresh.active) { stopPolling(); showChanges(wt); load(); return }
         const freshConflicts = fresh.conflicts ?? []
         freshConflicts.forEach(f => { if (!freshConflicts.includes(f)) resolved.delete(f) })
         if (freshConflicts.length === 0) {
-          clearInterval(intervalId)
+          stopPolling()
           showRebasePaused(wt, fresh)
         } else {
           renderConflicts(freshConflicts)
         }
-      }, 4000)
+      }
+      const startPolling = (): void => {
+        stopPolling()
+        intervalId = window.setInterval(() => { void refreshConflicts() }, 4000)
+      }
+      resumePolling = () => { void refreshConflicts(); startPolling() }
+      startPolling()
 
       continueBtn.disabled = conflicts.length > 0
 
@@ -1834,11 +1891,16 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
         }).catch(() => {})
       }
       refreshDiff()
-      intervalId = window.setInterval(refreshDiff, 5000)
+      const startPolling = (): void => {
+        stopPolling()
+        intervalId = window.setInterval(refreshDiff, 5000)
+      }
+      resumePolling = () => { refreshDiff(); startPolling() }
+      startPolling()
       wrap.appendChild(diffWrap)
     }
 
-    detailCleanup = () => clearInterval(intervalId)
+    setDetailLifecycle({ pause: stopPolling, resume: resumePolling, dispose: stopPolling })
     actionsEl.append(statusEl, abortBtn, editBtn, splitBtn, continueBtn)
     wrap.appendChild(actionsEl)
     showDetail(wrap)
@@ -1847,7 +1909,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   // ---- detail: worktree terminal ----
   async function showWorktreeTerminal(wt: Worktree): Promise<void> {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     const { createAgentsPanel } = await import('../agents/AgentsPanel')
     // Reuse the live hub for this worktree if we already opened it; otherwise
     // create one scoped to the worktree (own storage, off the global dock).
@@ -1868,13 +1930,17 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
     // hub stays alive in the cache, so the agents keep running. Persist on leave
     // so they're restorable even if the tab closes without a clean dispose.
     const livePanel = panel
-    detailCleanup = () => livePanel.persist()
+    setDetailLifecycle({
+      pause: () => {},
+      resume: () => livePanel.fit(),
+      dispose: () => livePanel.persist(),
+    })
   }
 
   // ---- detail: git sync error (with conflict detection + AI explain) ----
   function showSyncError(mode: string, errorText: string, wt: Worktree): void {
     stopDiffRefresh()
-    detailCleanup(); detailCleanup = () => {}
+    disposeDetail()
     buildSyncErrorView({ mode, errorText, path: wt.path, showDetail, iconButton: iconBtn, status: path => taskGit.status(path) })
   }
 
@@ -2012,6 +2078,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
     }
     baseSelect.disabled = false
     baseRow.style.display = ''
+    const selectionVersionAtLoad = selectionVersion
     await loadTaskData({
       repoPath,
       panelStore,
@@ -2025,6 +2092,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
       setJiraConfig: value => { jiraCfg = value },
       maps: { issue: issueMap, aheadBehind: aheadBehindMap, pr: prStatusMap, backup: backupStatusMap, rebase: rebaseStatusMap, upstream: upstreamStatusMap },
       renderList,
+      shouldRestoreSelection: () => selectionVersion === selectionVersionAtLoad,
       selectRow,
       showChanges,
       showRebasePaused,
@@ -2050,8 +2118,18 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
   load()
   // Dispose all live worktree hubs when the panel/tab closes (persists each).
   const dispose = (): void => {
+    stopDiffRefresh()
+    disposeDetail()
     for (const panel of worktreeTerminals.values()) panel.dispose()
     worktreeTerminals.clear()
   }
-  return { element: root, dispose }
+  return {
+    element: root,
+    dispose,
+    onVisibilityChange: (visible: boolean) => {
+      panelVisible = visible
+      if (!visible) detailPause()
+      else detailResume()
+    },
+  }
 }

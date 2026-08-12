@@ -11,6 +11,8 @@ export class HLSPlayer {
   readonly element: HTMLDivElement
   private readonly video: HTMLVideoElement
   private readonly iframe: HTMLIFrameElement
+  private iframeUrl: string | null = null
+  private iframePaused = false
   onStatus?: (status: PlayerStatus) => void
 
   constructor() {
@@ -44,6 +46,8 @@ export class HLSPlayer {
     if (isEmbedUrl(url)) {
       this.video.classList.add('hidden')
       this.iframe.classList.remove('hidden')
+      this.iframeUrl = url
+      this.iframePaused = false
       this.iframe.src = url
       this.onStatus?.('playing')
       return
@@ -66,7 +70,7 @@ export class HLSPlayer {
       const { default: Hls } = await import('hls.js')
       const mode = choosePlaybackMode(canPlayNative, Hls.isSupported())
       if (mode !== 'hls') { this.onStatus?.('error'); return }
-      this.hls = new Hls({ lowLatencyMode: false })
+      this.hls = new Hls({ lowLatencyMode: false, maxBufferLength: 10, maxMaxBufferLength: 20 })
       this.hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) this.onStatus?.('error') })
       this.hls.loadSource(url)
       this.hls.attachMedia(this.video)
@@ -82,6 +86,42 @@ export class HLSPlayer {
     tracks.forEach((t, i) => { t.mode = i === index ? 'showing' : 'disabled' })
   }
 
+  get isInPiP(): boolean {
+    return document.pictureInPictureElement === this.video
+  }
+
+  pause(): void {
+    this.video.pause()
+    this.hls?.stopLoad()
+    if (!this.iframe.classList.contains('hidden') && this.iframe.hasAttribute('src')) {
+      // Third-party embeds cannot be paused reliably with postMessage. Unload
+      // them while hidden to stop audio, network traffic and retained memory.
+      this.iframePaused = true
+      this.iframe.removeAttribute('src')
+    }
+  }
+
+  resume(): void {
+    if (this.iframePaused && this.iframeUrl) {
+      this.iframePaused = false
+      this.iframe.src = this.iframeUrl
+      this.onStatus?.('playing')
+      return
+    }
+    if (this.video.classList.contains('hidden') || !this.video.src) return
+    this.hls?.startLoad()
+    this.video.play().catch(() => {})
+  }
+
+  async pip(): Promise<void> {
+    if (this.video.classList.contains('hidden')) throw new Error('pip-not-video')
+    if (document.pictureInPictureElement === this.video) {
+      await document.exitPictureInPicture()
+    } else {
+      await this.video.requestPictureInPicture()
+    }
+  }
+
   stop(): void {
     if (this.hls) {
       this.hls.destroy()
@@ -89,6 +129,8 @@ export class HLSPlayer {
     }
     this.video.removeAttribute('src')
     this.video.load()
+    this.iframeUrl = null
+    this.iframePaused = false
     this.iframe.removeAttribute('src')
   }
 

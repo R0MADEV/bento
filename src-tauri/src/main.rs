@@ -23,6 +23,7 @@ mod pty;
 mod review;
 mod scripts;
 mod settings;
+mod system_metrics;
 mod traffic_lights;
 mod vault;
 mod web_panel;
@@ -188,6 +189,7 @@ fn main() {
             install_menu(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 let manager = app.state::<agent::AgentManager>().inner().clone();
+                let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
                 let closing = Arc::new(AtomicBool::new(false));
                 let close_window = window.clone();
                 window.clone().on_window_event(move |event| {
@@ -197,9 +199,11 @@ fn main() {
                         }
                         api.prevent_close();
                         let manager = manager.clone();
+                        let pty_manager = pty_manager.clone();
                         let window = close_window.clone();
                         tauri::async_runtime::spawn(async move {
                             agent::cancel_all(&manager).await;
+                            pty::kill_all(&pty_manager);
                             let _ = window.close();
                         });
                     }
@@ -211,12 +215,14 @@ fn main() {
         .manage(agent::AgentManager::default())
         .manage(web_panel::WebPanelState::default())
         .manage(docker::LogStreams::default())
+        .manage(system_metrics::SystemMetricsState::default())
         .manage(vault::VaultState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             http_get,
             http_request,
             http_fetch_base64,
             app_identifier,
+            system_metrics::app_memory_usage,
             agent::start_agent,
             agent::cancel_agent,
             agent_sessions::agent_codex_clear_lock,

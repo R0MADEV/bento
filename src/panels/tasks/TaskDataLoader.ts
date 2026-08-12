@@ -28,14 +28,20 @@ export async function loadTaskData(options: {
     upstream: Map<string, UpstreamStatus>
   }
   renderList: (statuses: Map<string, number>, runningPaths: Set<string>) => void
+  shouldRestoreSelection: () => boolean
   selectRow: (row: HTMLElement) => void
   showChanges: (wt: Worktree) => void
   showRebasePaused: (wt: Worktree, status: RebaseStatus) => void
 }): Promise<void> {
-  const { repoPath, panelStore, baseSelect, filterInput, listWrap, fetchAgeEl, note, setBaseBranch, setWorktrees, setJiraConfig, maps, renderList, selectRow, showChanges, showRebasePaused } = options
+  const { repoPath, panelStore, baseSelect, filterInput, listWrap, fetchAgeEl, note, setBaseBranch, setWorktrees, setJiraConfig, maps, renderList, shouldRestoreSelection, selectRow, showChanges, showRebasePaused } = options
   baseSelect.disabled = false
   filterInput.style.display = ''
   listWrap.replaceChildren(note(taskT('loading'), 'db-detail-loading'))
+  // Capture restoration state before any asynchronous enrichment. A user may
+  // select a freshly rendered row while Docker/Jira/GitHub data is still
+  // loading; that new interaction must not be mistaken for startup recovery
+  // and rebuild the detail view underneath their input.
+  const savedPath = panelStore.selected()
   try {
     const [defaultBranch, remoteBranches] = await Promise.all([
       invoke<string>('git_default_branch', { repo: repoPath }).catch(() => 'main'),
@@ -48,6 +54,11 @@ export async function loadTaskData(options: {
     baseSelect.replaceChildren(...remoteBranches.map(branch => Object.assign(document.createElement('option'), { value: branch, textContent: taskT('baseOption', { branch }), selected: branch === baseBranch })))
     const worktrees = await taskGit.worktrees(repoPath)
     setWorktrees(worktrees)
+    // Worktree discovery is the only data required to build the task list.
+    // Render it immediately: optional integrations such as Docker, Jira and
+    // GitHub CLI can be slow (or wait for a daemon/login) on CI and Windows,
+    // but must never leave the whole panel stuck on “Loading…”.
+    renderList(new Map(worktrees.map(wt => [wt.path, 0])), new Set())
     const fetchedAt = worktrees[0] ? (await invoke<{ fetchedAt: number }>('git_fetch_info', { path: worktrees[0].path }).catch(() => ({ fetchedAt: 0 }))).fetchedAt : 0
     if (fetchedAt) {
       const ageMinutes = Math.max(0, Math.floor((Date.now() / 1000 - fetchedAt) / 60))
@@ -75,8 +86,9 @@ export async function loadTaskData(options: {
       if (allContainers.some(c => isRunning(c) && c.name.startsWith(`${dir}-`))) runningPaths.add(wt.path)
     })
     renderList(statuses, runningPaths)
-    const savedPath = panelStore.selected()
-    const selectedWt = worktrees.find(w => maps.rebase.get(w.path)?.active) ?? (savedPath ? worktrees.find(w => w.path === savedPath) : undefined)
+    const selectedWt = shouldRestoreSelection()
+      ? worktrees.find(w => maps.rebase.get(w.path)?.active) ?? (savedPath ? worktrees.find(w => w.path === savedPath) : undefined)
+      : undefined
     if (selectedWt) {
       const rows = listWrap.querySelectorAll<HTMLElement>('.tasks-row')
       const row = [...rows].find(item => item.dataset.path === selectedWt.path)

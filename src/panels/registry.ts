@@ -8,6 +8,8 @@ export interface PanelContext {
   removeSelf: () => void
   // The session's project folder; new terminals start here
   projectPath?: string
+  // Opens a new panel of the same type in the same group
+  newSibling?: () => void
 }
 
 export interface PanelApi {
@@ -23,6 +25,7 @@ export interface PanelInstance {
   dispose?: () => void
   onTitleChange?: (cb: (title: string) => void) => () => void
   onReady?: (api: PanelApi) => void
+  onVisibilityChange?: (visible: boolean) => void
   // Current working directory (terminals report it via OSC 7)
   getCwd?: () => string | undefined
 }

@@ -175,7 +175,7 @@ function extractFirstJsonObject(text: string): string | null {
   return null
 }
 
-export function createReviewPanel(sessionPath?: string): { element: HTMLElement; dispose?: () => void } {
+export function createReviewPanel(sessionPath?: string): { element: HTMLElement; dispose?: () => void; onVisibilityChange?: (visible: boolean) => void } {
   const root = document.createElement('div')
   root.className = 'review-panel'
 
@@ -188,6 +188,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let currentPrNumber: number | null = null
   let intervalId: ReturnType<typeof setInterval> | null = null
   let autoRefresh = false
+  let panelVisible = true
   let existingComments: GhComment[] = []
   let loadingBranch = ''
   let sidebarMode: SidebarMode = 'branches'
@@ -1478,7 +1479,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     autoRefresh = on
     autoBtn.classList.toggle('review-icon-btn--active', on)
     if (intervalId) { clearInterval(intervalId); intervalId = null }
-    if (on) intervalId = setInterval(() => { if (selectedBranch) loadDiff() }, 5000)
+    if (on && panelVisible) intervalId = setInterval(() => { if (selectedBranch) loadDiff() }, 5000)
   }
 
   const pickRepo = async (): Promise<void> => {
@@ -1668,6 +1669,11 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     dispose: () => {
       if (intervalId) clearInterval(intervalId)
       document.removeEventListener('keydown', handleKeydown)
+    },
+    onVisibilityChange: (visible: boolean) => {
+      panelVisible = visible
+      if (!visible && intervalId) { clearInterval(intervalId); intervalId = null }
+      else if (visible && autoRefresh && !intervalId) intervalId = setInterval(() => { if (selectedBranch) loadDiff() }, 5000)
     },
   }
 }

@@ -12,6 +12,7 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
   let disposed = false
   let titleCb: ((title: string) => void) | undefined
   let readyApi: PanelApi | undefined
+  let pendingVisibility: boolean | undefined
 
   load().then(instance => {
     if (disposed) { instance.dispose?.(); return }
@@ -19,6 +20,9 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
     element.replaceChildren(instance.element)
     if (titleCb) instance.onTitleChange?.(titleCb)
     if (readyApi) instance.onReady?.(readyApi)
+    // If the panel was hidden while its module was still loading, apply the
+    // last known visibility now so it doesn't start active while off-screen.
+    if (pendingVisibility === false) instance.onVisibilityChange?.(false)
     instance.fit?.()
   }).catch(error => {
     if (disposed) return
@@ -34,6 +38,10 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
     // Remembers the callback until the panel loads; then re-registers it.
     onTitleChange: cb => { titleCb = cb; return () => { titleCb = undefined } },
     onReady: api => { readyApi = api; inner?.onReady?.(api) },
+    onVisibilityChange: (visible) => {
+      pendingVisibility = visible
+      inner?.onVisibilityChange?.(visible)
+    },
     getCwd: () => inner?.getCwd?.(),
   }
 }

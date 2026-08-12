@@ -14,16 +14,12 @@ import { dimsChanged, type Dims } from '../../core/terminal/dims'
 import { splitAtSyncBoundary } from '../../core/terminal/syncOutput'
 import { getThemeName, onThemeChange } from './themePreference'
 import { nextTheme } from '../../core/terminal/nextTheme'
-import type { TerminalProfile } from '../../core/terminal/profiles'
 import { createActivityTracker } from '../../core/terminal/activityTracker'
 import { createAgentStatusTracker } from '../../core/terminal/agentStatusTracker'
 import type { AgentStore } from '../../core/terminal/agentStore'
 import { parseOsc7Path, toDisplayPath } from '../../core/terminal/osc7'
 import { createSearchBar } from './searchBar'
-import { createTerminalAppearanceControls } from './appearanceControls'
-import { createTerminalProfileControls } from './profileControls'
 import { askAi } from '../../ui/askAi'
-import { icon } from '../../ui/icons'
 import type { PanelApi } from '../registry'
 import 'xterm/css/xterm.css'
 
@@ -47,7 +43,7 @@ export interface TerminalPanelHandle {
   focus: () => void
   dispose: () => void
   onTitleChange: (cb: (title: string) => void) => () => void
-  onReady: (api: PanelApi) => void
+  onReady?: (api: PanelApi) => void
   getCwd: () => string | undefined
   sendInput: (text: string) => void
   onInput: (cb: (line: string) => void) => () => void
@@ -63,7 +59,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
-  let localFontFamily = DEFAULT_FONT_FAMILY
+  const localFontFamily = DEFAULT_FONT_FAMILY
 
   const term = new Terminal({
     cursorBlink: true,
@@ -80,7 +76,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     // Opaque background: allowTransparency makes the renderer clear-to-transparent
     // and repaint each frame, which flickers on animated fullscreen TUIs.
     allowTransparency: false,
-    scrollback: 10000,
+    scrollback: 2000,
     theme: getTheme(getThemeName()),
   })
 
@@ -131,34 +127,6 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     applyLocalTheme(localTheme)
   }
 
-  const applyCustomBackground = (bg: string) => {
-    followGlobal = false
-    const base = getTheme(localTheme)
-    const custom = { ...base, background: bg, cursorAccent: bg }
-    term.options.theme = custom
-    applyBackground(bg)
-  }
-
-  const appearance = createTerminalAppearanceControls({
-    themeName: localTheme,
-    onThemeSelected: name => {
-      followGlobal = false
-      localTheme = name
-      applyLocalTheme(name)
-    },
-    onCustomBackground: applyCustomBackground,
-    onShellChanged: shell => {
-      restartShell(shell)
-    },
-    onFontChanged: font => {
-      localFontFamily = font.trim() || DEFAULT_FONT_FAMILY
-      term.options.fontFamily = localFontFamily
-      fit()
-    },
-  })
-  const { popover, themeButton: themeBtn, shellSelect, fontInput } = appearance
-  root.append(popover, themeBtn)
-  root.addEventListener('click', () => popover.classList.add('hidden'))
 
   const fitAddon = new FitAddon()
   const searchAddon = new SearchAddon()
@@ -203,12 +171,6 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
       .catch(err => term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`))
   }
 
-  const restartShell = (shellPath: string): void => {
-    invoke('pty_kill', { id }).catch(() => {})
-    term.reset()
-    spawnShell(shellPath)
-    popover.classList.add('hidden')
-  }
 
   spawnShell('auto')
 
@@ -466,41 +428,6 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     return () => { titleCallback = undefined; d1.dispose(); d2.dispose() }
   }
 
-  const maxBtn = document.createElement('button')
-  maxBtn.className = 'term-theme-btn term-max-btn'
-  maxBtn.title = i18nT('terminal.maximizeRestore')
-  maxBtn.innerHTML = icon('expand')
-
-  const onReady = (panelApi: PanelApi) => {
-    maxBtn.addEventListener('click', () => {
-      if (panelApi.isMaximized()) panelApi.exitMaximized()
-      else panelApi.maximize()
-    })
-
-    const profiles = createTerminalProfileControls({
-      getSettings: () => ({
-        shell: shellSelect.value,
-        theme: localTheme,
-        fontSize: term.options.fontSize ?? BASE_FONT_SIZE,
-        fontFamily: localFontFamily !== DEFAULT_FONT_FAMILY ? localFontFamily : undefined,
-      }),
-      onSelect: (profile: TerminalProfile) => {
-        followGlobal = false
-        localTheme = profile.theme
-        applyLocalTheme(profile.theme)
-        setFontSize(profile.fontSize)
-        if (profile.fontFamily) {
-          localFontFamily = profile.fontFamily
-          fontInput.value = profile.fontFamily
-          term.options.fontFamily = profile.fontFamily
-        }
-        restartShell(profile.shell)
-      },
-    })
-    popover.appendChild(profiles.element)
-  }
-
-  root.appendChild(maxBtn)
 
   // Run a command here: focus and write it + Enter. If the shell is still
   // starting up, queue it (early writes get discarded) and flush when ready.
@@ -511,7 +438,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   }
 
   return {
-    element: root, fit, focus: () => term.focus(), dispose, onTitleChange, onReady,
+    element: root, fit, focus: () => term.focus(), dispose, onTitleChange,
     getCwd: () => lastCwd || undefined, sendInput, onInput, onBell,
     getSnapshot: () => { try { return serializeAddon.serialize({ scrollback: 500 }) } catch { return '' } },
     // A malformed/huge restored snapshot must not throw — that would drop the

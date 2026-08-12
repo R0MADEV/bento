@@ -7,6 +7,14 @@ import { createTerminalPanel } from '../terminal/TerminalPanel'
 import { icon } from '../../ui/icons'
 import type { Container } from '../../core/docker/containers'
 
+export interface DetailLifecycle {
+  pause: () => void
+  resume: () => void
+  dispose: () => void
+}
+
+const noOp = (): void => {}
+
 function btn(name: string, title: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button')
   b.className = 'docker-action'
@@ -16,12 +24,16 @@ function btn(name: string, title: string, onClick: () => void): HTMLButtonElemen
   return b
 }
 
-// Renders logs for a container into `target`. Returns a cleanup (stops live stream).
-export function renderContainerLogs(c: Container, target: HTMLElement): () => void {
+// Renders logs for a container into `target`. Live streaming can be paused while
+// its panel is hidden without confusing that temporary pause with disposal.
+export function renderContainerLogs(c: Container, target: HTMLElement): DetailLifecycle {
   const pre = document.createElement('pre')
   pre.className = 'docker-logs'
   let rawLogs = '', errorsOnly = false, live = false
   let unlisten: (() => void) | null = null
+  let resumeLive = false
+  let disposed = false
+  let streamGeneration = 0
 
   const applyStatic = (): void => {
     pre.textContent = errorsOnly
@@ -41,20 +53,29 @@ export function renderContainerLogs(c: Container, target: HTMLElement): () => vo
     pre.textContent += text
     pre.scrollTop = pre.scrollHeight
   }
-  const stopLive = (): void => {
+  const stopLiveStream = (): void => {
     if (!live) return
     live = false
+    streamGeneration += 1
     liveBtn.innerHTML = icon('play'); liveBtn.title = i18nT('docker.followLiveLogs'); liveBtn.classList.remove('active')
     invoke('docker_logs_stop', { id: c.name }).catch(() => {})
     unlisten?.(); unlisten = null
   }
+  const stopLive = (): void => {
+    resumeLive = false
+    stopLiveStream()
+  }
   const startLive = async (): Promise<void> => {
+    if (disposed || live) return
+    const generation = ++streamGeneration
     live = true
     liveBtn.innerHTML = icon('stop'); liveBtn.title = i18nT('docker.stopFollowing'); liveBtn.classList.add('active')
     rawLogs = ''; pre.textContent = ''
     try {
       await invoke('docker_logs_follow', { id: c.name, tail: 200 })
-      unlisten = await listen<string>(`docker-logs-${c.name}`, e => onChunk(e.payload))
+      const stopListening = await listen<string>(`docker-logs-${c.name}`, e => onChunk(e.payload))
+      if (disposed || !live || generation !== streamGeneration) stopListening()
+      else unlisten = stopListening
     } catch (e) { pre.textContent = String(e) }
   }
 
@@ -82,15 +103,30 @@ export function renderContainerLogs(c: Container, target: HTMLElement): () => vo
 
   target.replaceChildren(head, pre)
   loadStatic()
-  return stopLive
+  return {
+    pause: () => {
+      resumeLive = live
+      stopLiveStream()
+    },
+    resume: () => {
+      if (!resumeLive || disposed) return
+      resumeLive = false
+      void startLive()
+    },
+    dispose: () => {
+      disposed = true
+      resumeLive = false
+      stopLiveStream()
+    },
+  }
 }
 
-// Renders a docker exec terminal into `target`. Returns a cleanup (disposes terminal).
-export async function renderContainerTerminal(c: Container, target: HTMLElement, onBack?: () => void): Promise<() => void> {
+// Interactive terminals deliberately stay alive while their panel is hidden.
+export async function renderContainerTerminal(c: Container, target: HTMLElement, onBack?: () => void): Promise<DetailLifecycle> {
   const argv = await invoke<string[]>('docker_exec_argv', { container: c.name }).catch(() => null)
   if (!argv) {
     target.replaceChildren(Object.assign(document.createElement('div'), { className: 'docker-detail-hint', textContent: i18nT('docker.couldNotOpenTheTerminal') }))
-    return () => {}
+    return { pause: noOp, resume: noOp, dispose: noOp }
   }
   const term = createTerminalPanel('', '', onBack, argv)
   const wrap = document.createElement('div')
@@ -98,5 +134,5 @@ export async function renderContainerTerminal(c: Container, target: HTMLElement,
   wrap.appendChild(term.element)
   target.replaceChildren(wrap)
   requestAnimationFrame(() => term.fit())
-  return () => term.dispose()
+  return { pause: noOp, resume: () => term.fit(), dispose: () => term.dispose() }
 }

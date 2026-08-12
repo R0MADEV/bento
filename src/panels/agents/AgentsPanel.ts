@@ -524,11 +524,10 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     renderSidebar()
   }
 
+
   // ── Fit ───────────────────────────────────────────────────────
   const fit = () => {
-    if (activeIndex >= 0 && slots[activeIndex]) {
-      slots[activeIndex].handle.fit?.()
-    }
+    if (activeIndex >= 0) slots[activeIndex]?.handle.fit?.()
   }
 
   // Save agents synchronously if the page is torn down (reload/close) before a

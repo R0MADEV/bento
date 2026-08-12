@@ -2,14 +2,10 @@ import { createDockview, type DockviewApi, type AddPanelOptions } from 'dockview
 import type { PanelRegistry } from '../panels/registry'
 import { lowestAvailableNumber } from '../core/terminal/lowestAvailableNumber'
 import { cycleTheme } from '../panels/terminal/themePreference'
-import { showContextMenu } from '../ui/contextMenu'
-import { furthestEdgeIndex, type MoveDirection } from '../core/workspace/edge'
 import { icon } from '../ui/icons'
 import { isMac, shortcutLabel } from '../ui/platform'
 import { currentPanelIndex } from '../core/workspace/currentPanel'
 import { appT } from '../core/i18n'
-
-export type SplitDirection = 'within' | 'left' | 'right' | 'above' | 'below'
 
 export interface WorkspaceView {
   element: HTMLElement
@@ -66,24 +62,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     api.addPanel({ id: `${type}-${n}`, component: type, title: `${def.title} ${n}`, position })
   }
 
-  const splitFrom = (refId: string, direction: SplitDirection): void =>
-    addPanel(typeOf(refId), { referencePanel: refId, direction })
-
-  // Move a panel to the edge of the layout (alternative to dragging, which the
-  // macOS WebView doesn't support for HTML5 drag-and-drop). moveTo needs a
-  // target group: we pick the group at the requested edge (pure logic in core/edge).
-  const edgeOf = { right: 'right', left: 'left', above: 'top', below: 'bottom' } as const
-  const movePanel = (id: string, direction: MoveDirection): void => {
-    const panel = api.getPanel(id)
-    if (!panel) return
-    const groups = api.groups
-    const i = furthestEdgeIndex(groups.map(g => g.element.getBoundingClientRect()), direction)
-    const target = groups[i]
-    const movingIntoOwnLoneGroup = target === panel.group && target.panels.length === 1
-    if (movingIntoOwnLoneGroup) return
-    panel.api.moveTo({ group: target, position: edgeOf[direction] })
-  }
-
   const addInActiveGroup = (type: string): void =>
     addPanel(type, api.activeGroup ? { referenceGroup: api.activeGroup, direction: 'within' } : undefined)
 
@@ -101,13 +79,15 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       const def = panels.get(name)
       if (!def) throw new Error(appT('panelNotRegistered', { name }))
 
-      const instance = def.create({ panelId: id, removeSelf: () => removePanel(id), projectPath: options.projectPath?.() })
+      const instance = def.create({
+        panelId: id,
+        removeSelf: () => removePanel(id),
+        projectPath: options.projectPath?.(),
+        newSibling: () => addPanel(name, { referencePanel: id, direction: 'within' }),
+      })
       instanceMap.set(id, instance)
       fits.add(instance.fit ?? (() => {}))
 
-      // The tab bar (with its × close) is hidden, so wrap each panel and overlay a
-      // hover close button in the corner — reliable across win/mac/linux (macOS's
-      // WKWebView swallows the right-click menu). Kept alongside the context menu.
       const wrapper = document.createElement('div')
       wrapper.className = 'panel-wrapper'
       wrapper.appendChild(instance.element)
@@ -121,30 +101,16 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
       closeBtn.addEventListener('click', () => removePanel(id))
       wrapper.appendChild(closeBtn)
 
-      // Context menu: close, split, move (HTML5 drag doesn't work in WKWebView)
-      wrapper.addEventListener('contextmenu', e => {
-        e.preventDefault()
-        showContextMenu(e.clientX, e.clientY, [
-          { label: appT('closePanel'), onClick: () => removePanel(id) },
-          { label: appT('moveRight'), onClick: () => movePanel(id, 'right') },
-          { label: appT('moveLeft'), onClick: () => movePanel(id, 'left') },
-          { label: appT('moveUp'), onClick: () => movePanel(id, 'above') },
-          { label: appT('moveDown'), onClick: () => movePanel(id, 'below') },
-          { label: appT('splitRight'), onClick: () => splitFrom(id, 'right') },
-          { label: appT('splitLeft'), onClick: () => splitFrom(id, 'left') },
-          { label: appT('splitUp'), onClick: () => splitFrom(id, 'above') },
-          { label: appT('splitDown'), onClick: () => splitFrom(id, 'below') },
-          { label: appT('newTab', { name: def.title }), onClick: () => splitFrom(id, 'within') },
-        ])
-      })
-
       return {
         element: wrapper,
         init: params => {
           if (instance.fit) {
             params.api.onDidDimensionsChange(() => instance.fit!())
-            params.api.onDidVisibilityChange(({ isVisible }) => { if (isVisible) instance.fit!() })
           }
+          params.api.onDidVisibilityChange(({ isVisible }) => {
+            if (isVisible && instance.fit) instance.fit()
+            instance.onVisibilityChange?.(isVisible)
+          })
           instance.onTitleChange?.(title => params.api.setTitle(title))
           instance.onReady?.({
             maximize: () => params.api.maximize(),
@@ -159,21 +125,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
           fitAll()
         },
       }
-    },
-    createRightHeaderActionComponent: () => {
-      const btn = document.createElement('button')
-      btn.className = 'group-add-tab'
-      btn.textContent = '+'
-      btn.title = appT('addPanel')
-      const onClick = () => {
-        const rect = btn.getBoundingClientRect()
-        showContextMenu(rect.right, rect.bottom, panels.list().map(d => ({
-          label: d.title,
-          onClick: () => addInActiveGroup(d.type),
-        })), { align: 'right' })
-      }
-      btn.addEventListener('click', onClick)
-      return { element: btn, init: () => {}, dispose: () => btn.removeEventListener('click', onClick) }
     },
   })
 
@@ -266,9 +217,6 @@ export function createWorkspaceView(panels: PanelRegistry, options: WorkspaceOpt
     if (e.key === 't') {
       e.preventDefault()
       addInActiveGroup('terminal')
-    } else if (e.key === 'd' && active) {
-      e.preventDefault()
-      splitFrom(active.id, e.shiftKey ? 'below' : 'right')
     } else if (e.key === 'j') {
       // The focused terminal cycles its local theme; outside it, the global one.
       const inTerminal = active ? typeOf(active.id) === 'terminal' : false
