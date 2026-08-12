@@ -2236,6 +2236,22 @@ html, body, #app {
   pointer-events: auto;
 }
 
+.agents-term-area.agents-split { display: flex; }
+
+.agents-term-area.agents-split .agents-term-slot.split-primary,
+.agents-term-area.agents-split .agents-term-slot.split-secondary {
+  position: relative;
+  inset: auto;
+  flex: 1;
+  height: 100%;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.agents-term-area.agents-split .agents-term-slot.split-primary {
+  border-right: 1px solid var(--border);
+}
+
 .agents-term-slot .terminal-panel {
   height: 100%;
   width: 100%;

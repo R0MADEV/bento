@@ -90,6 +90,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   const store = createAgentStore()
   const slots: AgentSlot[] = []
   let activeIndex = -1
+  let splitIndex = -1
   let agentCounter = 0
   let isEditing = false
   let initialized = false
@@ -233,7 +234,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   termArea.addEventListener('contextmenu', e => {
     e.preventDefault()
     showContextMenu(e.clientX, e.clientY, [
-      { label: i18nT('agents.newAgent'), onClick: () => addAgent() },
+      { label: i18nT('agents.newAgent'), onClick: () => addAgentAtSide() },
     ])
   })
 
@@ -387,7 +388,15 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // ── Activate agent by index ────────────────────────────────────
   // Does NOT call renderSidebar — only patches the CSS active class so that
   // the existing nameEl DOM nodes stay connected (required for dblclick → rename).
+  const clearSplit = () => {
+    if (splitIndex < 0) return
+    splitIndex = -1
+    termArea.classList.remove('agents-split')
+    slots.forEach(s => s.slot.classList.remove('split-primary', 'split-secondary'))
+  }
+
   const activateAgent = (index: number) => {
+    clearSplit()
     if (activeIndex >= 0 && slots[activeIndex]) {
       slots[activeIndex].slot.classList.remove('active')
     }
@@ -531,10 +540,29 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     renderSidebar()
   }
 
+  const addAgentAtSide = () => {
+    const primaryIdx = activeIndex
+    addAgent()
+    const secondaryIdx = slots.length - 1
+    if (primaryIdx < 0 || secondaryIdx === primaryIdx) return
+    // addAgent called activateAgent which cleared split — now set it up
+    activeIndex = primaryIdx
+    splitIndex = secondaryIdx
+    slots.forEach(s => s.slot.classList.remove('active', 'split-primary', 'split-secondary'))
+    slots[primaryIdx].slot.classList.add('split-primary')
+    slots[secondaryIdx].slot.classList.add('split-secondary')
+    termArea.classList.add('agents-split')
+    emptyMsg.hidden = true
+    setTimeout(() => { slots[primaryIdx].handle.fit?.(); slots[secondaryIdx].handle.fit?.() }, 50)
+  }
+
   // ── Fit ───────────────────────────────────────────────────────
   const fit = () => {
-    if (activeIndex >= 0 && slots[activeIndex]) {
-      slots[activeIndex].handle.fit?.()
+    if (splitIndex >= 0) {
+      slots[activeIndex]?.handle.fit?.()
+      slots[splitIndex]?.handle.fit?.()
+    } else if (activeIndex >= 0) {
+      slots[activeIndex]?.handle.fit?.()
     }
   }
 
