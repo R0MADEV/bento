@@ -6,6 +6,7 @@ import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/Termi
 import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
 import { emitAgentDock, savedAgentDockEntries, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
+import { showContextMenu } from '../../ui/contextMenu'
 
 const MAX_AGENTS = 20
 
@@ -229,6 +230,12 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // ── Terminal area ──────────────────────────────────────────────
   const termArea = document.createElement('div')
   termArea.className = 'agents-term-area'
+  termArea.addEventListener('contextmenu', e => {
+    e.preventDefault()
+    showContextMenu(e.clientX, e.clientY, [
+      { label: i18nT('agents.newAgent'), onClick: () => addAgent() },
+    ])
+  })
 
   const emptyMsg = document.createElement('div')
   emptyMsg.className = 'agents-hub-empty'
