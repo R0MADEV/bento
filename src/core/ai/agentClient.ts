@@ -60,13 +60,9 @@ export interface ReviewSessionContext {
   sessionCommit?: string
 }
 
-// A persisted review session is reusable only when it belongs to the same agent
-// and the same commit; otherwise the review must start a fresh agent session.
-export function resolvePersistedSessionId(ctx: ReviewSessionContext | undefined, agent: AgentType): string | null {
+// Review sessions are keyed by branch: if one exists, always resume it.
+export function resolvePersistedSessionId(ctx: ReviewSessionContext | undefined): string | null {
   if (!ctx?.branch) return null
-  const sameAgent = ctx.sessionAgent === agent
-  const sameCommit = ctx.sessionCommit === ctx.commit
-  if (!sameAgent || !sameCommit) return null
   return ctx.sessionId ?? null
 }
 

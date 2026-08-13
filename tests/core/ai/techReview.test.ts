@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildReviewPrompt, createContextProvider, extractFirstJsonObject, formatReviewResponse, validateReviewResponse, type ReviewResponse } from '../../../src/core/ai/techReview'
+import { buildMultiAgentReviewMarkdown, buildReviewChainPrompt, buildReviewDoubtSummary, buildReviewPrompt, buildReviewVerificationPrompt, createContextProvider, extractFirstJsonObject, formatReviewResponse, summarizeReviewRun, validateReviewResponse, type ReviewResponse } from '../../../src/core/ai/techReview'
 
 describe('Tech Review', () => {
   it('builds a prompt with the diff and relevant context', () => {
@@ -110,6 +110,121 @@ describe('Tech Review', () => {
     expect(md).toContain('**HIGH** `src/a.ts:10` — Bug')
     expect(md).toContain('why')
     expect(md).toContain('→ fix it')
+  })
+
+  it('summarizes consensus across multiple agent reviews', () => {
+    const md = buildMultiAgentReviewMarkdown([
+      {
+        label: 'Claude',
+        response: {
+          verdict: 'needs_review',
+          summary: 'One issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'Codex',
+        response: {
+          verdict: 'needs_review',
+          summary: 'Same issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why too', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'OpenCode',
+        error: 'Failed to respond',
+      },
+    ])
+
+    expect(md).toContain('### Consensus')
+    expect(md).toContain('[2/2]')
+    expect(md).toContain('Claude, Codex')
+    expect(md).toContain('### OpenCode')
+    expect(md).toContain('Failed to respond')
+  })
+
+  it('summarizes a review run compactly', () => {
+    const summary = summarizeReviewRun({
+      label: 'Claude',
+      response: {
+        verdict: 'needs_review',
+        summary: 'One issue.',
+        findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+        contextSources: ['direct'],
+      },
+    })
+
+    expect(summary).toContain('Claude: needs_review')
+    expect(summary).toContain('- HIGH src/a.ts:10 — Bug')
+  })
+
+  it('detects doubts from mismatched verdicts or isolated high severity findings', () => {
+    const doubts = buildReviewDoubtSummary([
+      {
+        label: 'Claude',
+        response: {
+          verdict: 'pass',
+          summary: 'ok',
+          findings: [],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'Codex',
+        response: {
+          verdict: 'fail',
+          summary: 'bad',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+    ])
+
+    expect(doubts).toContain('Verdict mismatch')
+    expect(doubts).toContain('Isolated high')
+  })
+
+  it('builds chained prompts from previous agent findings', () => {
+    const prompt = buildReviewChainPrompt({
+      stage: 3,
+      basePrompt: 'BASE PROMPT',
+      previousRuns: [{
+        label: 'Claude',
+        response: {
+          verdict: 'needs_review',
+          summary: 'One issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      }],
+    })
+
+    expect(prompt).toContain('BASE PROMPT')
+    expect(prompt).toContain('tercer especialista')
+    expect(prompt).toContain('Claude: needs_review')
+    expect(prompt).toContain('Bug')
+  })
+
+  it('builds a focused verification prompt when doubts exist', () => {
+    const prompt = buildReviewVerificationPrompt({
+      basePrompt: 'BASE PROMPT',
+      doubtSummary: '- Verdict mismatch: pass, fail',
+      previousRuns: [{
+        label: 'Claude',
+        response: {
+          verdict: 'pass',
+          summary: 'ok',
+          findings: [],
+          contextSources: ['direct'],
+        },
+      }],
+    })
+
+    expect(prompt).toContain('verificador focalizado')
+    expect(prompt).toContain('Verdict mismatch')
+    expect(prompt).toContain('Claude: pass')
   })
 
   it('omits the line suffix when a finding has no line', () => {

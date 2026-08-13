@@ -8,14 +8,23 @@ import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { getUiZoom, toLayoutPixels } from '../../ui/zoom'
 import { redact, startAgent } from '../../core/ai/agentClient'
-import { agentLabel } from '../../core/ai/config'
-import { buildReviewPrompt, createContextProvider, extractFirstJsonObject, formatReviewResponse, validateReviewResponse, type ReviewResponse } from '../../core/ai/techReview'
+import { agentLabel, type AgentType } from '../../core/ai/config'
+import { buildReviewPrompt, buildReviewChainPrompt, buildMultiAgentReviewMarkdown, buildReviewDoubtSummary, buildReviewVerificationPrompt, createContextProvider, extractFirstJsonObject, validateReviewResponse, type MultiAgentReviewRun } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey } from '../../core/ai/chatHistory'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
+import { t as i18nT } from '../../i18n'
 
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
+
+export function resolveReviewFollowUpSessionId(reviewRuns: MultiAgentReviewRun[], reviewAgentCount: number): string | null {
+  return reviewRuns
+    .slice(0, reviewAgentCount)
+    .reverse()
+    .find(run => run.sessionId)
+    ?.sessionId ?? null
+}
 
 interface GhComment {
   id: number
@@ -224,6 +233,10 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const viewedCounterEl = Object.assign(document.createElement('span'), { className: 'review-viewed-counter hidden' })
 
   const REVIEW_AGENT_KEY = 'bento.review.agent'
+  const REVIEW_COMPARE_AGENTS_KEY = 'bento.review.compare-agents'
+  const REVIEW_SECONDARY_AGENT_KEY = 'bento.review.agent.secondary'
+  const REVIEW_TERTIARY_AGENT_KEY = 'bento.review.agent.tertiary'
+  const REVIEW_AGENT_TYPES: AgentType[] = ['claude', 'opencode', 'codex']
   const reviewAgentSelect = document.createElement('select')
   reviewAgentSelect.className = 'review-agent-select'
   ;(['claude', 'opencode', 'codex'] as const).forEach(val => {
@@ -232,7 +245,101 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     }))
   })
   reviewAgentSelect.value = localStorage.getItem(REVIEW_AGENT_KEY) ?? 'claude'
-  reviewAgentSelect.addEventListener('change', () => localStorage.setItem(REVIEW_AGENT_KEY, reviewAgentSelect.value))
+  const reviewCompareAgentsToggle = Object.assign(document.createElement('input'), {
+    type: 'checkbox',
+    className: 'review-agent-toggle-input',
+  })
+  reviewCompareAgentsToggle.checked = localStorage.getItem(REVIEW_COMPARE_AGENTS_KEY) === '1'
+  reviewCompareAgentsToggle.dataset.testid = 'review-compare-agents-toggle'
+  const reviewCompareAgentsLabel = document.createElement('label')
+  reviewCompareAgentsLabel.className = 'review-agent-toggle'
+  reviewCompareAgentsLabel.append(reviewCompareAgentsToggle, Object.assign(document.createElement('span'), {
+    textContent: i18nT('common.reviewCompareAgents'),
+  }))
+
+  const mkOptionalAgentSelect = (value: string | null, testid: string): HTMLSelectElement => {
+    const select = document.createElement('select')
+    select.className = 'review-agent-select review-agent-select--optional'
+    select.dataset.testid = testid
+    select.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: i18nT('common.reviewAgentNone') }))
+    REVIEW_AGENT_TYPES.forEach(agent => {
+      select.appendChild(Object.assign(document.createElement('option'), { value: agent, textContent: agentLabel(agent) }))
+    })
+    select.value = value && REVIEW_AGENT_TYPES.includes(value as AgentType) ? value : ''
+    return select
+  }
+
+  const reviewSecondaryAgentSelect = mkOptionalAgentSelect(localStorage.getItem(REVIEW_SECONDARY_AGENT_KEY), 'review-secondary-agent')
+  const reviewTertiaryAgentSelect = mkOptionalAgentSelect(localStorage.getItem(REVIEW_TERTIARY_AGENT_KEY), 'review-tertiary-agent')
+  const reviewSecondaryRow = document.createElement('div')
+  reviewSecondaryRow.className = 'review-agent-extra hidden'
+  reviewSecondaryRow.append(Object.assign(document.createElement('span'), { className: 'review-agent-extra-label', textContent: i18nT('common.reviewAgentSecondary') }), reviewSecondaryAgentSelect)
+  const reviewTertiaryRow = document.createElement('div')
+  reviewTertiaryRow.className = 'review-agent-extra hidden'
+  reviewTertiaryRow.append(Object.assign(document.createElement('span'), { className: 'review-agent-extra-label', textContent: i18nT('common.reviewAgentTertiary') }), reviewTertiaryAgentSelect)
+
+  const reviewAgentBadge = document.createElement('span')
+  reviewAgentBadge.className = 'review-agent-badge'
+  reviewAgentBadge.dataset.testid = 'review-agent-badge'
+
+  const selectedReviewAgents = (): AgentType[] => {
+    const selected: AgentType[] = [reviewAgentSelect.value as AgentType]
+    if (!reviewCompareAgentsToggle.checked) return selected
+    const extras = [reviewSecondaryAgentSelect.value, reviewTertiaryAgentSelect.value]
+      .filter((value): value is AgentType => REVIEW_AGENT_TYPES.includes(value as AgentType))
+    return [...new Set([...selected, ...extras])]
+  }
+
+  const syncReviewAgentOptionState = (): void => {
+    const values = selectedReviewAgents()
+    const selectedValues = new Set(values)
+    const syncSelect = (select: HTMLSelectElement): void => {
+      Array.from(select.options).forEach(option => {
+        if (!option.value) return
+        option.disabled = selectedValues.has(option.value as AgentType) && select.value !== option.value
+      })
+    }
+    syncSelect(reviewAgentSelect)
+    syncSelect(reviewSecondaryAgentSelect)
+    syncSelect(reviewTertiaryAgentSelect)
+  }
+
+  const normalizeReviewAgents = (): void => {
+    if (!reviewCompareAgentsToggle.checked) return
+    const primary = reviewAgentSelect.value as AgentType
+    if (!reviewSecondaryAgentSelect.value || reviewSecondaryAgentSelect.value === primary) {
+      reviewSecondaryAgentSelect.value = REVIEW_AGENT_TYPES.find(agent => agent !== primary) ?? ''
+    }
+    const secondary = reviewSecondaryAgentSelect.value as AgentType | ''
+    if (!reviewTertiaryAgentSelect.value) return
+    const blocked = new Set<AgentType>([primary, ...(secondary ? [secondary] : [])])
+    if (blocked.has(reviewTertiaryAgentSelect.value as AgentType)) {
+      reviewTertiaryAgentSelect.value = REVIEW_AGENT_TYPES.find(agent => !blocked.has(agent)) ?? ''
+    }
+  }
+
+  const syncReviewAgentUi = (): void => {
+    reviewSecondaryRow.classList.toggle('hidden', !reviewCompareAgentsToggle.checked)
+    reviewTertiaryRow.classList.toggle('hidden', !reviewCompareAgentsToggle.checked)
+    normalizeReviewAgents()
+    syncReviewAgentOptionState()
+    localStorage.setItem(REVIEW_AGENT_KEY, reviewAgentSelect.value)
+    localStorage.setItem(REVIEW_COMPARE_AGENTS_KEY, reviewCompareAgentsToggle.checked ? '1' : '0')
+    if (reviewSecondaryAgentSelect.value) localStorage.setItem(REVIEW_SECONDARY_AGENT_KEY, reviewSecondaryAgentSelect.value)
+    else localStorage.removeItem(REVIEW_SECONDARY_AGENT_KEY)
+    if (reviewTertiaryAgentSelect.value) localStorage.setItem(REVIEW_TERTIARY_AGENT_KEY, reviewTertiaryAgentSelect.value)
+    else localStorage.removeItem(REVIEW_TERTIARY_AGENT_KEY)
+    const agents = selectedReviewAgents().map(agentLabel)
+    reviewAgentBadge.textContent = agents.length === 1
+      ? i18nT('common.reviewAgentFixed', { agent: agents[0] })
+      : i18nT('common.reviewAgentsFixed', { agents: agents.join(' + ') })
+  }
+
+  reviewCompareAgentsToggle.addEventListener('change', syncReviewAgentUi)
+  reviewAgentSelect.addEventListener('change', syncReviewAgentUi)
+  reviewSecondaryAgentSelect.addEventListener('change', syncReviewAgentUi)
+  reviewTertiaryAgentSelect.addEventListener('change', syncReviewAgentUi)
+  syncReviewAgentUi()
 
   // ── Body: collapsible sidebar (all controls + lists) + free detail ──────────
   const body = document.createElement('div')
@@ -250,7 +357,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
 
   // Header actions: open repo · refresh · auto-refresh · AI review.
-  cs.actions.append(openBtn, refreshBtn, autoBtn, aiReviewBtn)
+  cs.actions.append(openBtn, refreshBtn, autoBtn, aiReviewBtn, reviewAgentBadge)
 
   // Controls: base branch input + review agent selector.
   const controls = document.createElement('div')
@@ -258,7 +365,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const baseRow = document.createElement('div')
   baseRow.className = 'review-base-row'
   baseRow.append(baseLabel, branchWrap)
-  controls.append(baseRow, reviewAgentSelect)
+  controls.append(baseRow, reviewAgentSelect, reviewCompareAgentsLabel, reviewSecondaryRow, reviewTertiaryRow)
 
   const sidebarTabs = document.createElement('div')
   sidebarTabs.className = 'review-sidebar-tabs'
@@ -313,8 +420,27 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   commentActionsRow.append(commentBtn, approveBtn, requestChangesBtn, commentStatus)
   commentBar.append(prMetaEl, prBodyEl, discussionEl, commentInput, commentActionsRow)
 
+  const reviewDrawer = document.createElement('aside')
+  reviewDrawer.className = 'review-drawer hidden'
+  const reviewDrawerHeader = document.createElement('div')
+  reviewDrawerHeader.className = 'review-drawer-header'
+  const reviewDrawerTitle = document.createElement('span')
+  reviewDrawerTitle.className = 'review-drawer-title'
+  reviewDrawerTitle.textContent = reviewT('title')
+  const reviewDrawerMeta = document.createElement('span')
+  reviewDrawerMeta.className = 'review-drawer-meta'
+  const reviewDrawerActions = document.createElement('div')
+  reviewDrawerActions.className = 'review-drawer-actions'
+  const reviewDrawerCloseBtn = Object.assign(document.createElement('button'), { className: 'review-drawer-btn', textContent: i18nT('common.close') })
+  reviewDrawerActions.append(reviewDrawerCloseBtn)
+  reviewDrawerHeader.append(reviewDrawerTitle, reviewDrawerMeta, reviewDrawerActions)
+  const reviewDrawerBody = document.createElement('div')
+  reviewDrawerBody.className = 'review-drawer-body'
+  reviewDrawer.append(reviewDrawerHeader, reviewDrawerBody)
+
   detail.append(diffSearchInput, filterBar, diffView, commentBar)
   body.append(cs.element, cs.resizer, detail)
+  root.append(body, reviewDrawer)
 
   // ── Empty state ───────────────────────────────────────────────────────────
   const emptyState = document.createElement('div')
@@ -327,7 +453,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   )
 
   // Body is always visible — empty state shows inside diffView, never hides the panel
-  root.append(body)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const showNoRepo = (): void => { diffView.replaceChildren(emptyState) }
@@ -343,6 +468,18 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       el.textContent = reviewT('commentSent')
     }
   }
+
+  const showReviewDrawer = (): void => {
+    reviewDrawer.classList.remove('hidden')
+    reviewDrawer.classList.add('visible')
+  }
+
+  const hideReviewDrawer = (): void => {
+    reviewDrawer.classList.remove('visible')
+    reviewDrawer.classList.add('hidden')
+  }
+
+  reviewDrawerCloseBtn.addEventListener('click', hideReviewDrawer)
 
   const showCommentStatus = (text: string, isError = false): void => {
     commentStatus.textContent = text
@@ -1489,16 +1626,26 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const showReviewError = (message: string): void => {
       console.error('[AI Review]', message)
       const error = Object.assign(document.createElement('div'), { className: 'review-error', textContent: message })
+      if (reviewDrawer.classList.contains('visible')) {
+        reviewDrawerBody.replaceChildren(error)
+        error.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        return
+      }
       diffView.prepend(error)
       error.scrollIntoView({ block: 'start', behavior: 'smooth' })
     }
     if (!repoPath) { showReviewError('Open a repository first'); return }
     if (!selectedBranch) { showReviewError('Select a branch first'); return }
     if (!lastFiles.length) { showReviewError('There are no changes to review'); return }
+    const reviewAgents = selectedReviewAgents()
+    if (reviewCompareAgentsToggle.checked && reviewAgents.length < 2) {
+      showReviewError(i18nT('common.reviewSelectAnotherAgent'))
+      return
+    }
     const reviewRepoPath = repoPath
     const reviewBranch = selectedBranch
     const reviewBaseBranch = baseBranch
-    const reviewAgent = reviewAgentSelect.value as 'claude' | 'opencode' | 'codex'
+    const reviewAgent = reviewAgents.at(-1) ?? reviewAgents[0]
     const reviewConversationKey = techReviewConversationKey(reviewRepoPath, reviewBranch)
     const reviewProjectName = reviewRepoPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? reviewRepoPath
     const MAX_DIFF_CHARS = 18_000
@@ -1511,10 +1658,8 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const reviewDiff = `${prLine}\nBase: ${reviewBaseBranch} <- ${reviewBranch}\n${descSection}\n${diff}`
     const reviewFiles = lastFiles.map(file => ({ path: file.file, content: file.chunk }))
     const reviewChangedFiles = reviewFiles.map(file => file.path)
-    let prompt: string
     aiReviewBtn.disabled = true
     aiReviewBtn.title = 'Reviewing...'
-    let output = ''
     const reviewEvidence: string[] = []
 
     // Progress box visible desde el principio
@@ -1524,31 +1669,49 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     progressHeader.className = 'review-ai-progress-header'
     const progressStatus = Object.assign(document.createElement('span'), { className: 'review-ai-progress-status', textContent: 'Preparing review…' })
     const progressMeta = Object.assign(document.createElement('span'), { className: 'review-ai-progress-meta' })
-    progressHeader.append(progressStatus, progressMeta)
+    const stopReviewBtn = Object.assign(document.createElement('button'), {
+      className: 'review-ai-stop-btn',
+      textContent: 'Stop',
+      disabled: true,
+    })
+    progressHeader.append(progressStatus, progressMeta, stopReviewBtn)
     const progressStream = Object.assign(document.createElement('pre'), { className: 'review-ai-progress-stream' })
     progressBox.append(progressHeader, progressStream)
-    diffView.prepend(progressBox)
+    reviewDrawerMeta.textContent = ''
+    reviewDrawerBody.replaceChildren(progressBox)
+    showReviewDrawer()
     progressBox.scrollIntoView({ block: 'start', behavior: 'smooth' })
 
     const startedAt = Date.now()
     const timer = setInterval(() => {
       const secs = Math.floor((Date.now() - startedAt) / 1000)
-      const chars = output.length
+      const chars = progressStream.textContent?.length ?? 0
       progressMeta.textContent = chars ? `${chars} chars · ${secs}s` : `${secs}s`
     }, 500)
+    let activeReviewHandle: ReturnType<typeof startAgent> | null = null
+    let reviewStopped = false
+    let resolveActiveRun!: () => void
+    let activeRunFinished = Promise.resolve()
+    stopReviewBtn.addEventListener('click', async () => {
+      if (!activeReviewHandle || reviewStopped) return
+      reviewStopped = true
+      stopReviewBtn.disabled = true
+      progressStatus.textContent = 'Stopping review…'
+      resolveActiveRun?.()
+      await activeReviewHandle.cancel().catch(() => {})
+    })
 
-    const showResult = (result: ReviewResponse, reviewCommit: string, sessionId: string | null): void => {
-      progressBox.remove()
-      const content = [
-        `## Revisión: ${reviewBranch}`,
-        `Base: \`${reviewBaseBranch}\` · Commit: \`${reviewCommit.slice(0, 7)}\``,
-        formatReviewResponse(result),
-      ].join('\n')
+    const showResult = (content: string, reviewCommit: string, sessionId: string | null): void => {
+      reviewDrawerMeta.textContent = `${reviewBranch} · ${reviewCommit.slice(0, 7)}`
+      reviewDrawerBody.replaceChildren(Object.assign(document.createElement('div'), {
+        className: 'review-drawer-result',
+        innerHTML: renderMarkdown(content),
+      }))
+      showReviewDrawer()
       askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, reviewAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, sessionId ?? undefined, reviewEvidence)
     }
     let worktree = ''
     let managedWorktree = false
-    let handle: ReturnType<typeof startAgent> | undefined
     try {
       progressStatus.textContent = 'Creating isolated worktree…'
       const branchContext = await invoke<{ path: string; commit: string; managed: boolean }>('review_branch_context_prepare', {
@@ -1564,7 +1727,11 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         lexis: async () => {
           const content = await invoke<string>('review_lexis_context', {
             path: worktree,
-            question: `Find relevant callers, definitions and tests for: ${reviewChangedFiles.join(', ')}`,
+            question: [
+              `Build a compact review bundle for: ${reviewChangedFiles.join(', ')}`,
+              'Return impact, callers, definitions, tests, risks and likely blast radius.',
+              'Prefer structured evidence over prose.',
+            ].join(' '),
           })
           if (!content) throw new Error('Lexis returned no context')
           return [{ path: '<lexis>', content, reason: 'reference' as const }]
@@ -1572,7 +1739,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         direct: async () => reviewFiles.map(file => ({ ...file, reason: 'changed' as const })),
       })
       const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewDiff, changedFiles: reviewChangedFiles })
-      prompt = buildReviewPrompt({
+      const basePrompt = buildReviewPrompt({
         diff: reviewDiff,
         files: reviewFiles,
         contextSources: context.sources,
@@ -1580,45 +1747,100 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       })
       const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath: worktree })
       if (snapshotBeforeAgent !== snapshotBefore) throw new Error('Repository changed while preparing the review')
-      const label = agentLabel(reviewAgent)
-      progressStatus.textContent = `${label} is reviewing…`
-      let finishResult!: () => void
-      const resultFinished = new Promise<void>(resolve => { finishResult = resolve })
-      handle = startAgent(
-        { agent: reviewAgent, message: prompt, history: [], projectPath: worktree, review: true },
-        chunk => {
-          output += chunk
-          progressStream.textContent = output.length > 1200 ? '…' + output.slice(-1200) : output
-        },
-        sessionId => {
-          void (async () => {
-            try {
-              const json = extractFirstJsonObject(output)
-              if (!json) throw new Error('No JSON object found in response')
-              const result = validateReviewResponse(JSON.parse(json))
-              await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: worktree, relative: finding.file })))
-              showResult(result, branchContext.commit, sessionId)
-            } catch (error) { progressBox.remove(); showReviewError(`Invalid AI review: ${String(error)}`) }
-            finally { finishResult() }
-          })()
-        },
-        message => { progressBox.remove(); showReviewError(message); finishResult() },
-        tool => {
-          const safeTool = redact(tool).slice(0, 1_000)
-          if (!reviewEvidence.includes(safeTool)) reviewEvidence.push(safeTool)
-          progressStatus.textContent = `${label}: ${safeTool}`
-        },
-      )
-      await handle.ready
-      await handle.completed
-      await resultFinished
+      const reviewRuns: MultiAgentReviewRun[] = []
+      const runReviewAgent = async (agent: AgentType, index: number, prompt: string): Promise<MultiAgentReviewRun> => {
+        const label = agentLabel(agent)
+        let output = ''
+        const run: MultiAgentReviewRun = { label }
+        const stageLabel = index === 0 ? 'Orchestrator' : index === 1 ? 'Impact specialist' : index === 2 ? 'Correctness specialist' : 'Verification round'
+        progressStatus.textContent = `${label} is reviewing (${index + 1}/${reviewAgents.length}) · ${stageLabel}…`
+        progressStream.textContent = ''
+        activeRunFinished = new Promise<void>(resolve => { resolveActiveRun = resolve })
+        activeReviewHandle = startAgent(
+          { agent, message: prompt, history: [], projectPath: worktree, review: true },
+          chunk => {
+            output += chunk
+            progressStream.textContent = output.length > 1200 ? '…' + output.slice(-1200) : output
+          },
+          sessionId => {
+            run.sessionId = sessionId
+            resolveActiveRun?.()
+          },
+          message => {
+            run.error = message
+            resolveActiveRun?.()
+          },
+          tool => {
+            const safeTool = redact(tool).slice(0, 1_000)
+            if (!reviewEvidence.includes(safeTool)) reviewEvidence.push(safeTool)
+            progressStatus.textContent = `${label}: ${safeTool}`
+          },
+        )
+        try {
+          stopReviewBtn.disabled = false
+          await activeReviewHandle.ready
+          await activeReviewHandle.completed
+          await activeRunFinished
+          if (!run.error) {
+            const json = extractFirstJsonObject(output)
+            if (!json) throw new Error('No JSON object found in response')
+            const result = validateReviewResponse(JSON.parse(json))
+            await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: worktree, relative: finding.file })))
+            run.response = result
+          }
+        } catch (error) {
+          run.error = error instanceof Error ? error.message : String(error)
+        } finally {
+          activeReviewHandle?.unlisten()
+          activeReviewHandle = null
+          stopReviewBtn.disabled = true
+        }
+        return run
+      }
+
+      for (const [index, agent] of reviewAgents.entries()) {
+        if (reviewStopped) break
+        const prompt = index === 0
+          ? basePrompt
+          : buildReviewChainPrompt({
+            stage: index === 1 ? 2 : 3,
+            basePrompt,
+            previousRuns: reviewRuns,
+          })
+        reviewRuns.push(await runReviewAgent(agent, index, prompt))
+      }
+
+      const doubtSummary = buildReviewDoubtSummary(reviewRuns)
+      if (!reviewStopped && doubtSummary) {
+        const verifierAgent = reviewAgents.at(-1) ?? reviewAgents[0]
+        const verificationPrompt = buildReviewVerificationPrompt({
+          basePrompt,
+          previousRuns: reviewRuns,
+          doubtSummary,
+        })
+        reviewRuns.push(await runReviewAgent(verifierAgent, reviewRuns.length, verificationPrompt))
+      }
+
+      if (reviewStopped) throw new Error('Review stopped')
+      const successfulRuns = reviewRuns.filter(run => run.response)
+      if (!successfulRuns.length) throw new Error('No valid review responses')
+
       const snapshotAfter = await invoke<string>('review_snapshot', { repoPath: worktree })
+      const content = [
+        `## Revisión: ${reviewBranch}`,
+        `Base: \`${reviewBaseBranch}\` · Commit: \`${branchContext.commit.slice(0, 7)}\``,
+        reviewCompareAgentsToggle.checked
+          ? `Agents: ${reviewRuns.map(run => run.label).join(' + ')}`
+          : `Agent: ${reviewRuns[0]?.label ?? reviewAgent}`,
+        buildMultiAgentReviewMarkdown(reviewRuns),
+      ].join('\n')
+      const followUpSessionId = resolveReviewFollowUpSessionId(reviewRuns, reviewAgents.length)
+      showResult(content, branchContext.commit, followUpSessionId)
       if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
-    } catch (error) { progressBox.remove(); showReviewError(String(error)) }
+    } catch (error) { reviewDrawerBody.replaceChildren(); showReviewDrawer(); showReviewError(String(error)) }
     finally {
       clearInterval(timer)
-      progressBox.remove()  // no-op si ya fue quitado por showResult/onError
-      handle?.unlisten()
+      if (!reviewStopped) reviewDrawerMeta.textContent = reviewDrawerMeta.textContent || reviewT('title')
       if (managedWorktree) {
         await invoke('review_branch_context_release', {
           repoPath: reviewRepoPath,

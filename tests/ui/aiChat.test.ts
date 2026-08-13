@@ -93,6 +93,7 @@ describe('AI chat agent follow-ups', () => {
     const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
     const root = createAiChat(memoryRepo)
     document.body.appendChild(root)
+    expect(root.querySelector('[data-testid="ai-mode-badge"]')?.textContent).toBe('Chat mode')
     window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
       text: '',
       projectPath: '/tmp/review-project',
@@ -107,6 +108,9 @@ describe('AI chat agent follow-ups', () => {
     } }))
 
     await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Initial review'), { timeout: 3_000 })
+    expect(root.querySelector<HTMLSelectElement>('.ai-agent-select')?.disabled).toBe(true)
+    expect(root.querySelector<HTMLElement>('[data-testid="ai-review-agent"]')?.textContent).toBe('Fixed agent: Claude')
+    expect(root.querySelector('[data-testid="ai-mode-badge"]')?.textContent).toBe('Agent mode')
     const input = root.querySelector<HTMLTextAreaElement>('.ai-input')!
     input.value = 'Explain the first finding'
     root.querySelector<HTMLButtonElement>('.ai-send')!.click()
@@ -186,6 +190,9 @@ describe('AI chat agent follow-ups', () => {
     const root = createAiChat(memoryRepo)
     document.body.appendChild(root)
     await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Persisted review'))
+    expect(root.querySelector<HTMLSelectElement>('.ai-agent-select')?.disabled).toBe(true)
+    expect(root.querySelector<HTMLElement>('[data-testid="ai-review-agent"]')?.textContent).toBe('Fixed agent: Codex')
+    expect(root.querySelector('[data-testid="ai-mode-badge"]')?.textContent).toBe('Agent mode')
 
     const input = root.querySelector<HTMLTextAreaElement>('.ai-input')!
     input.value = 'Continue this review'
@@ -387,7 +394,8 @@ describe('AI chat agent follow-ups', () => {
       const latest = JSON.parse(saves.at(-1)?.[1]?.content as string)
       const context = latest.contexts['tech-review:/work/repo:origin/feat/review']
       expect(context.commit).toBe('2222222222222222222222222222222222222222')
-      expect(context.sessionId).toBeUndefined()
+      expect(context.sessionId).toBe('old-session')
+      expect(context.sessionCommit).toBe('2222222222222222222222222222222222222222')
       expect(context.evidence).toEqual([])
     })
     root.remove()

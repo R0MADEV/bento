@@ -516,6 +516,16 @@
     "updateReviewedBranchQuestion": "{branch} avanzó de {old} a {next}. ¿Actualizar esta conversación al nuevo commit?",
     "reviewBranchUpdated": "Contexto de review actualizado: `{branch}` pasó de `{old}` a `{next}`. La siguiente pregunta iniciará una sesión nueva del agente sobre el commit actualizado.",
     "reviewBranchReady": "Contexto de review preparado: `{branch}` en `{commit}`.",
+    "reviewCompareAgents": "Comparar agentes",
+    "aiModeChat": "Modo chat",
+    "aiModeAgent": "Modo agente",
+    "reviewAgentLocked": "Esta revisión ya está ligada a un agente",
+    "reviewAgentFixed": "Agente fijo: {agent}",
+    "reviewAgentsFixed": "Agentes fijos: {agents}",
+    "reviewAgentNone": "Ninguno",
+    "reviewAgentSecondary": "Secundario",
+    "reviewAgentTertiary": "Terciario",
+    "reviewSelectAnotherAgent": "Selecciona al menos dos agentes distintos para una revisión comparada.",
     "parameters": "Parámetros",
     "collection": "Colección",
     "issues": "Incidencias",
@@ -898,7 +908,9 @@
       "editorOnly": "Solo editor",
       "previewOnly": "Solo vista previa",
       "splitSideBySide": "Dividir: al lado",
-      "splitTopBottom": "Dividir: abajo"
+      "splitTopBottom": "Dividir: abajo",
+      "saveFailed": "Sin guardar",
+      "saveFailedHint": "No se pudo escribir esta nota en disco. Tus últimos cambios no están guardados."
     },
     "scripts": {
       "noScripts": "Sin scripts",

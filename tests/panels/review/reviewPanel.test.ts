@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
-import { createReviewPanel } from '../../../src/panels/review/ReviewPanel'
+import { createReviewPanel, resolveReviewFollowUpSessionId } from '../../../src/panels/review/ReviewPanel'
 
 function setup() {
   vi.stubGlobal('localStorage', makeLocalStorage())
@@ -40,6 +40,12 @@ describe('ReviewPanel', () => {
     expect(element.querySelector('.review-detail')).not.toBeNull()
   })
 
+  it('starts with the right review drawer hidden', () => {
+    setup()
+    const { element } = createReviewPanel()
+    expect(element.querySelector('.review-drawer')?.classList.contains('hidden')).toBe(true)
+  })
+
   it('comment bar hidden until PR is loaded', () => {
     setup()
     const { element } = createReviewPanel()
@@ -50,5 +56,30 @@ describe('ReviewPanel', () => {
     setup()
     const { element } = createReviewPanel()
     expect(element.querySelector('.review-branch-search')).not.toBeNull()
+  })
+
+  it('shows the fixed review agent badge', () => {
+    setup()
+    const { element } = createReviewPanel()
+    expect(element.querySelector('[data-testid="review-agent-badge"]')?.textContent).toBe('Fixed agent: Claude')
+  })
+
+  it('shows comparison agent controls when enabled', () => {
+    setup()
+    const { element } = createReviewPanel()
+    const toggle = element.querySelector<HTMLInputElement>('[data-testid="review-compare-agents-toggle"]')!
+    toggle.checked = true
+    toggle.dispatchEvent(new Event('change'))
+
+    expect(element.querySelector('[data-testid="review-secondary-agent"]')?.classList.contains('hidden')).toBe(false)
+    expect(element.querySelector('[data-testid="review-agent-badge"]')?.textContent).toContain('Fixed agents:')
+  })
+
+  it('keeps follow-up sessions attached to the last real review agent', () => {
+    expect(resolveReviewFollowUpSessionId([
+      { label: 'Orchestrator', sessionId: 's1' },
+      { label: 'Synthesis', sessionId: 's2' },
+      { label: 'Verification', sessionId: 'verifier-session' },
+    ], 2)).toBe('s2')
   })
 })

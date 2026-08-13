@@ -516,6 +516,16 @@
     "updateReviewedBranchQuestion": "{branch} advanced from {old} to {next}. Update this conversation to the new commit?",
     "reviewBranchUpdated": "Review context updated: `{branch}` moved from `{old}` to `{next}`. The next question will start a fresh agent session on the new commit.",
     "reviewBranchReady": "Review context ready: `{branch}` at `{commit}`.",
+    "reviewCompareAgents": "Compare agents",
+    "aiModeChat": "Chat mode",
+    "aiModeAgent": "Agent mode",
+    "reviewAgentLocked": "This review is already tied to an agent",
+    "reviewAgentFixed": "Fixed agent: {agent}",
+    "reviewAgentsFixed": "Fixed agents: {agents}",
+    "reviewAgentNone": "None",
+    "reviewAgentSecondary": "Secondary",
+    "reviewAgentTertiary": "Tertiary",
+    "reviewSelectAnotherAgent": "Select at least two different agents for a comparison review.",
     "parameters": "Parameters",
     "collection": "Collection",
     "issues": "Issues",
@@ -898,7 +908,9 @@
       "editorOnly": "Editor only",
       "previewOnly": "Preview only",
       "splitSideBySide": "Split side by side",
-      "splitTopBottom": "Split top and bottom"
+      "splitTopBottom": "Split top and bottom",
+      "saveFailed": "Not saved",
+      "saveFailedHint": "Could not write this note to disk. Your latest changes are not saved."
     },
     "scripts": {
       "noScripts": "No scripts",

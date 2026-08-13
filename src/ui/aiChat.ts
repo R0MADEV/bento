@@ -91,6 +91,13 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   ;[['claude', 'Claude Code'], ['opencode', 'OpenCode'], ['codex', 'Codex'], ['custom', 'Custom CLI']].forEach(([value, label]) => {
     agentSelect.appendChild(Object.assign(document.createElement('option'), { value, textContent: label }))
   })
+  const reviewAgentBadge = document.createElement('span')
+  reviewAgentBadge.className = 'ai-review-agent hidden'
+  reviewAgentBadge.dataset.testid = 'ai-review-agent'
+
+  const modeBadge = document.createElement('span')
+  modeBadge.className = 'ai-mode-badge'
+  modeBadge.dataset.testid = 'ai-mode-badge'
 
   const modelSelect = document.createElement('input')
   modelSelect.className = 'ai-model'
@@ -120,7 +127,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   closeBtn.title = i18nT('common.close')
   closeBtn.innerHTML = icon('x')
 
-  header.append(historySelect, historyRefreshBtn, providerSelect, agentSelect, modelSelect, modelList, expandBtn, settingsBtn, clearBtn, closeBtn)
+  header.append(historySelect, historyRefreshBtn, providerSelect, modeBadge, agentSelect, reviewAgentBadge, modelSelect, modelList, expandBtn, settingsBtn, clearBtn, closeBtn)
 
   const clampPosition = (): void => {
     const zoom = getUiZoom()
@@ -290,6 +297,19 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     const project = context?.projectPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop()
     return project || key
   }
+  const syncAgentSelectionState = (): void => {
+    const context = historyState.contexts[activeConversationKey]
+    const locked = Boolean(context?.branch)
+    agentSelect.disabled = locked
+    agentSelect.title = locked ? i18nT('common.reviewAgentLocked') : ''
+    modeBadge.textContent = cfg.providerId === AGENT_PROVIDER_ID
+      ? i18nT('common.aiModeAgent')
+      : i18nT('common.aiModeChat')
+    reviewAgentBadge.classList.toggle('hidden', !locked)
+    reviewAgentBadge.textContent = locked
+      ? i18nT('common.reviewAgentFixed', { agent: agentLabel(toAgentType(agentSelect.value)) })
+      : ''
+  }
   const refreshHistorySelect = (): void => {
     historySelect.replaceChildren(...Object.keys(historyState.conversations).map(key => Object.assign(document.createElement('option'), {
       value: key,
@@ -299,6 +319,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     historyRefreshBtn.classList.toggle('hidden', !historyState.contexts[activeConversationKey]?.branch)
     historyRefreshBtn.classList.remove('ai-branch-stale')
     historyRefreshBtn.title = i18nT('common.updateReviewedBranch')
+    syncAgentSelectionState()
   }
   const persistHistory = (): void => {
     historyState.activeConversation = activeConversationKey
@@ -388,9 +409,9 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
         })
         managedBranchContext ||= updated.managed
         context.commit = updated.commit
-        delete context.sessionId
-        delete context.sessionAgent
-        delete context.sessionCommit
+        if (context.sessionId) {
+          context.sessionCommit = updated.commit
+        }
         context.evidence = []
         historyRefreshBtn.classList.remove('ai-branch-stale')
         historyRefreshBtn.title = i18nT('common.updateReviewedBranch')
@@ -648,7 +669,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       }
     }
     const sessionContext = `${agent}\0${projectPath}\0${conversationContext?.commit ?? ''}`
-    const persistedSessionId = resolvePersistedSessionId(conversationContext, agent)
+    const persistedSessionId = resolvePersistedSessionId(conversationContext)
     const agentMessage = buildReviewMessage(expandInput(text), conversationContext?.evidence, Boolean(persistedSessionId))
     let awaitingFirstChunk = true
     const handle = startAgent({
@@ -860,6 +881,9 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); toggleOpen() }
     if (e.key === 'Escape' && !modal.classList.contains('hidden')) close()
   })
+
+  applyConfigToUi()
+  syncAgentSelectionState()
 
   // Context from other panels: opens the chat with the text preloaded (or sends it).
   let askEventQueue = Promise.resolve()
