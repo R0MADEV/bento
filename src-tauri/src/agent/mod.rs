@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -157,9 +158,18 @@ pub async fn start_agent(
             .processes
             .insert(request_id.to_string(), ProcessHandle { cancel_tx, done_rx });
     }
+    let review_worktree = if args.review && crate::review::is_managed_review_worktree(&root) {
+        crate::review::set_review_worktree_writable(&root, false)?;
+        Some(root.clone())
+    } else {
+        None
+    };
     let child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
+            if let Some(path) = review_worktree.as_ref() {
+                let _ = crate::review::set_review_worktree_writable(path, true);
+            }
             state
                 .state
                 .lock()
@@ -176,6 +186,9 @@ pub async fn start_agent(
     let timeout = if args.review { REVIEW_TIMEOUT } else { AGENT_TIMEOUT };
     tokio::spawn(async move {
         run_agent(window, id.clone(), agent, child, cancel_rx, timeout).await;
+        if let Some(path) = review_worktree.as_ref() {
+            let _ = crate::review::set_review_worktree_writable(path, true);
+        }
         if let Some(path) = cleanup_path {
             let _ = crate::review::release_managed_context_path(&path);
         }
@@ -288,6 +301,10 @@ fn build_agent_invocation(
                 args.push("--session".into());
                 args.push(session_id.into());
             }
+            if review {
+                args.push("--agent".into());
+                args.push("plan".into());
+            }
             Ok(AgentInvocation { program: "opencode", args })
         }
         "codex" => {
@@ -328,14 +345,24 @@ fn build_prompt(message: &str, history: &[Message]) -> String {
     prompt
 }
 
-fn resolve_executable(executable: &str) -> Option<std::path::PathBuf> {
+fn resolve_executable(executable: &str) -> Option<PathBuf> {
     let path = Path::new(executable);
     if path.is_absolute() {
         return is_executable(path).then(|| path.to_path_buf());
     }
-    std::env::split_paths(&std::env::var("PATH").unwrap_or_default())
+    let mut candidates: Vec<PathBuf> = std::env::split_paths(&std::env::var("PATH").unwrap_or_default())
         .map(|dir| dir.join(executable))
-        .find(|candidate| is_executable(candidate))
+        .collect();
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.extend([
+            PathBuf::from(&home).join(".local/bin").join(executable),
+            PathBuf::from(&home).join("bin").join(executable),
+            PathBuf::from(&home).join(".opencode/bin").join(executable),
+            PathBuf::from("/opt/homebrew/bin").join(executable),
+            PathBuf::from("/usr/local/bin").join(executable),
+        ]);
+    }
+    candidates.into_iter().find(|candidate| is_executable(candidate))
 }
 
 #[cfg(unix)]

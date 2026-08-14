@@ -84,6 +84,7 @@
     "baseBranch": "Base:",
     "currentBranch": "en {branch}",
     "noBranchChanges": "Sin cambios vs {base}",
+    "mergedNoBranchChanges": "La PR mergeada ya no tiene cambios vs {base}",
     "selectBranch": "Selecciona una rama a la izquierda para revisar",
     "commentPlaceholder": "Deja un comentario de revisión en el PR…",
     "sendComment": "Enviar comentario",
@@ -97,6 +98,7 @@
     "branches": "Ramas",
     "pullRequests": "PRs",
     "noPrs": "Sin PRs abiertos",
+    "noMatchingPrs": "No hay PRs que coincidan",
     "reviewedCount": "{done}/{total} revisados",
     "copyPath": "Copiar ruta",
     "openInEditor": "Abrir en editor",
@@ -105,6 +107,8 @@
     "editComment": "Editar",
     "deleteComment": "Eliminar",
     "replyComment": "Responder",
+    "agentModeHintSingle": "Modo de un solo agente. Activa comparar para añadir más pasadas.",
+    "agentModeHintCombined": "Modo combinado. Puedes repetir el mismo agente en varios huecos.",
     "deleteConfirm": "¿Eliminar este comentario?",
     "searchDiff": "Buscar archivos…",
     "treeView": "Vista árbol",
@@ -910,7 +914,9 @@
       "splitSideBySide": "Dividir: al lado",
       "splitTopBottom": "Dividir: abajo",
       "saveFailed": "Sin guardar",
-      "saveFailedHint": "No se pudo escribir esta nota en disco. Tus últimos cambios no están guardados."
+      "saveFailedHint": "No se pudo escribir esta nota en disco. Tus últimos cambios no están guardados.",
+      "deleteFailed": "Error al borrar",
+      "deleteFailedHint": "No se pudo borrar esta nota. La nota se restauró."
     },
     "scripts": {
       "noScripts": "Sin scripts",

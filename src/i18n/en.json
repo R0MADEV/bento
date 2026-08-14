@@ -84,6 +84,7 @@
     "baseBranch": "Base:",
     "currentBranch": "on {branch}",
     "noBranchChanges": "No changes vs {base}",
+    "mergedNoBranchChanges": "Merged PR has no remaining changes vs {base}",
     "selectBranch": "Select a branch on the left to review",
     "commentPlaceholder": "Leave a review comment on the PR…",
     "sendComment": "Send comment",
@@ -97,6 +98,7 @@
     "branches": "Branches",
     "pullRequests": "PRs",
     "noPrs": "No open PRs",
+    "noMatchingPrs": "No matching PRs",
     "reviewedCount": "{done}/{total} reviewed",
     "copyPath": "Copy path",
     "openInEditor": "Open in editor",
@@ -105,6 +107,8 @@
     "editComment": "Edit",
     "deleteComment": "Delete",
     "replyComment": "Reply",
+    "agentModeHintSingle": "Single agent mode. Enable compare to add more passes.",
+    "agentModeHintCombined": "Compare mode. You can repeat the same agent in multiple slots.",
     "deleteConfirm": "Delete this comment?",
     "searchDiff": "Search files…",
     "treeView": "Tree view",
@@ -910,7 +914,9 @@
       "splitSideBySide": "Split side by side",
       "splitTopBottom": "Split top and bottom",
       "saveFailed": "Not saved",
-      "saveFailedHint": "Could not write this note to disk. Your latest changes are not saved."
+      "saveFailedHint": "Could not write this note to disk. Your latest changes are not saved.",
+      "deleteFailed": "Delete failed",
+      "deleteFailedHint": "Could not delete this note. The note was restored."
     },
     "scripts": {
       "noScripts": "No scripts",

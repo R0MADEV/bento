@@ -29,12 +29,18 @@ fn claude_command_without_session_or_review() {
 }
 
 #[test]
-fn opencode_command_passes_dir_prompt_and_session() {
+fn opencode_command_passes_dir_prompt_session_and_review_mode() {
     let inv = build_agent_invocation("opencode", "P", Path::new("/repo"), Some("s"), false).unwrap();
     assert_eq!(inv.program, "opencode");
     assert_eq!(
         args_of(&inv),
         vec!["run", "--format", "json", "--dir", "/repo", "P", "--session", "s"]
+    );
+
+    let review_inv = build_agent_invocation("opencode", "P", Path::new("/repo"), Some("s"), true).unwrap();
+    assert_eq!(
+        args_of(&review_inv),
+        vec!["run", "--format", "json", "--dir", "/repo", "P", "--session", "s", "--agent", "plan"]
     );
 }
 

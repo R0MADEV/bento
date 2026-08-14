@@ -18,12 +18,80 @@ import { t as i18nT } from '../../i18n'
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
 
-export function resolveReviewFollowUpSessionId(reviewRuns: MultiAgentReviewRun[], reviewAgentCount: number): string | null {
-  return reviewRuns
+type ReviewChangeFile = ReturnType<typeof parseDiffFiles>[0] & { state: 'A' | 'D' | 'M' }
+
+export function resolveReviewFollowUpSession(reviewRuns: MultiAgentReviewRun[], reviewAgentCount: number): { sessionId: string | null; sessionAgent: AgentType | null } {
+  const run = reviewRuns
     .slice(0, reviewAgentCount)
     .reverse()
     .find(run => run.sessionId)
-    ?.sessionId ?? null
+  return {
+    sessionId: run?.sessionId ?? null,
+    sessionAgent: run?.agent ?? null,
+  }
+}
+
+export function buildReviewFileManifest(files: ReviewChangeFile[]): string {
+  return files.map(file => `${file.state} ${file.file} (+${file.additions}/-${file.deletions})`).join('\n')
+}
+
+export function buildReviewFileBatches(files: ReviewChangeFile[], maxBatchChars = 12_000): ReviewChangeFile[][] {
+  if (!files.length) return []
+  const batches: ReviewChangeFile[][] = []
+  let batch: ReviewChangeFile[] = []
+  let chars = 0
+  files.forEach(file => {
+    const nextChars = chars + file.chunk.length
+    if (batch.length && nextChars > maxBatchChars) {
+      batches.push(batch)
+      batch = []
+      chars = 0
+    }
+    batch.push(file)
+    chars += file.chunk.length
+  })
+  if (batch.length) batches.push(batch)
+  return batches
+}
+
+export function describeReviewPrState(state?: string | null, mergedAt?: string | null): { text: string; cls: string; title: string } | null {
+  const normalized = (state ?? '').toUpperCase()
+  const map: Record<string, { text: string; cls: string }> = {
+    OPEN: { text: 'Open', cls: 'review-pr-state--open' },
+    DRAFT: { text: 'Draft', cls: 'review-pr-state--draft' },
+    MERGED: { text: 'Merged', cls: 'review-pr-state--merged' },
+    CLOSED: { text: 'Closed', cls: 'review-pr-state--closed' },
+  }
+  const badge = map[normalized]
+  if (!badge) return null
+  return {
+    text: badge.text,
+    cls: badge.cls,
+    title: mergedAt ? `Merged at ${new Date(mergedAt).toLocaleString()}` : normalized,
+  }
+}
+
+export function describeReviewNoBranchChanges(state?: string | null, baseBranch = ''): string {
+  if ((state ?? '').toUpperCase() === 'MERGED') {
+    return reviewT('mergedNoBranchChanges', { base: baseBranch })
+  }
+  return reviewT('noBranchChanges', { base: baseBranch })
+}
+
+export function filterReviewPrs(prs: readonly GhPr[], query: string): GhPr[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return [...prs]
+  return prs.filter(pr => {
+    const fields = [
+      String(pr.number),
+      pr.title,
+      pr.author.login,
+      pr.headRefName,
+      pr.baseRefName,
+      pr.state ?? '',
+    ]
+    return fields.some(value => value.toLowerCase().includes(q))
+  })
 }
 
 interface GhComment {
@@ -43,6 +111,8 @@ interface GhPr {
   headRefName: string
   baseRefName: string
   author: { login: string }
+  state?: 'OPEN' | 'CLOSED' | 'MERGED' | string
+  mergedAt?: string | null
 }
 
 type SidebarMode = 'branches' | 'prs'
@@ -199,6 +269,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let prInfoSeq = 0
   let currentPrTitle = ''
   let currentPrBody = ''
+  let currentPrState: string | null = null
 
   // ── Controls (mounted inside the collapsible sidebar below) ─────────────────
   const baseLabel = Object.assign(document.createElement('span'), { className: 'review-base-label', textContent: reviewT('baseBranch') })
@@ -256,6 +327,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   reviewCompareAgentsLabel.append(reviewCompareAgentsToggle, Object.assign(document.createElement('span'), {
     textContent: i18nT('common.reviewCompareAgents'),
   }))
+  const reviewAgentHint = Object.assign(document.createElement('div'), { className: 'review-agent-hint' })
 
   const mkOptionalAgentSelect = (value: string | null, testid: string): HTMLSelectElement => {
     const select = document.createElement('select')
@@ -287,35 +359,21 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     if (!reviewCompareAgentsToggle.checked) return selected
     const extras = [reviewSecondaryAgentSelect.value, reviewTertiaryAgentSelect.value]
       .filter((value): value is AgentType => REVIEW_AGENT_TYPES.includes(value as AgentType))
-    return [...new Set([...selected, ...extras])]
+    return [...selected, ...extras]
   }
 
   const syncReviewAgentOptionState = (): void => {
-    const values = selectedReviewAgents()
-    const selectedValues = new Set(values)
-    const syncSelect = (select: HTMLSelectElement): void => {
-      Array.from(select.options).forEach(option => {
-        if (!option.value) return
-        option.disabled = selectedValues.has(option.value as AgentType) && select.value !== option.value
-      })
-    }
-    syncSelect(reviewAgentSelect)
-    syncSelect(reviewSecondaryAgentSelect)
-    syncSelect(reviewTertiaryAgentSelect)
+    // Repeated agents are allowed: the compare UI is only a configuration of
+    // how many runs to launch, not a uniqueness constraint.
   }
 
   const normalizeReviewAgents = (): void => {
     if (!reviewCompareAgentsToggle.checked) return
     const primary = reviewAgentSelect.value as AgentType
-    if (!reviewSecondaryAgentSelect.value || reviewSecondaryAgentSelect.value === primary) {
-      reviewSecondaryAgentSelect.value = REVIEW_AGENT_TYPES.find(agent => agent !== primary) ?? ''
+    if (!reviewSecondaryAgentSelect.value) {
+      reviewSecondaryAgentSelect.value = primary
     }
-    const secondary = reviewSecondaryAgentSelect.value as AgentType | ''
-    if (!reviewTertiaryAgentSelect.value) return
-    const blocked = new Set<AgentType>([primary, ...(secondary ? [secondary] : [])])
-    if (blocked.has(reviewTertiaryAgentSelect.value as AgentType)) {
-      reviewTertiaryAgentSelect.value = REVIEW_AGENT_TYPES.find(agent => !blocked.has(agent)) ?? ''
-    }
+    if (!reviewTertiaryAgentSelect.value) reviewTertiaryAgentSelect.value = primary
   }
 
   const syncReviewAgentUi = (): void => {
@@ -333,6 +391,9 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     reviewAgentBadge.textContent = agents.length === 1
       ? i18nT('common.reviewAgentFixed', { agent: agents[0] })
       : i18nT('common.reviewAgentsFixed', { agents: agents.join(' + ') })
+    reviewAgentHint.textContent = reviewCompareAgentsToggle.checked
+      ? reviewT('agentModeHintCombined')
+      : reviewT('agentModeHintSingle')
   }
 
   reviewCompareAgentsToggle.addEventListener('change', syncReviewAgentUi)
@@ -354,7 +415,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     container: body,
   })
   // Fixed controls/tabs on top, scrolling branch/PR list below.
-  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column' })
+  Object.assign(cs.list.style, { overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: '0' })
 
   // Header actions: open repo · refresh · auto-refresh · AI review.
   cs.actions.append(openBtn, refreshBtn, autoBtn, aiReviewBtn, reviewAgentBadge)
@@ -365,7 +426,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const baseRow = document.createElement('div')
   baseRow.className = 'review-base-row'
   baseRow.append(baseLabel, branchWrap)
-  controls.append(baseRow, reviewAgentSelect, reviewCompareAgentsLabel, reviewSecondaryRow, reviewTertiaryRow)
+  controls.append(baseRow, reviewAgentSelect, reviewCompareAgentsLabel, reviewAgentHint, reviewSecondaryRow, reviewTertiaryRow)
 
   const sidebarTabs = document.createElement('div')
   sidebarTabs.className = 'review-sidebar-tabs'
@@ -732,21 +793,37 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       return item
     }))
   }
-  branchSearch.addEventListener('input', renderBranchList)
+  branchSearch.addEventListener('input', () => {
+    if (sidebarMode === 'prs') { renderPrList(); return }
+    renderBranchList()
+  })
 
   // ── Sidebar: PR list ──────────────────────────────────────────────────────
   const renderPrList = (): void => {
+    const visiblePrs = filterReviewPrs(openPrs, branchSearch.value)
     if (!openPrs.length) {
       prList.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-pr-list-empty', textContent: reviewT('noPrs') }))
       return
     }
-    prList.replaceChildren(...openPrs.map(pr => {
+    if (!visiblePrs.length) {
+      prList.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-pr-list-empty', textContent: reviewT('noMatchingPrs') }))
+      return
+    }
+    prList.replaceChildren(...visiblePrs.map(pr => {
       const item = document.createElement('div')
       item.className = `review-pr-item${currentPrNumber === pr.number ? ' review-pr-item--active' : ''}`
       item.append(
         Object.assign(document.createElement('div'), { className: 'review-pr-item-title', textContent: `#${pr.number} ${pr.title}` }),
         Object.assign(document.createElement('div'), { className: 'review-pr-item-author', textContent: pr.author.login }),
       )
+      const stateBadge = describeReviewPrState(pr.state, pr.mergedAt)
+      if (stateBadge) {
+        item.append(Object.assign(document.createElement('span'), {
+          className: `review-pr-item-state ${stateBadge.cls}`,
+          textContent: stateBadge.text,
+          title: stateBadge.title,
+        }))
+      }
       item.addEventListener('click', () => {
         const branch = allBranches.find(b => b.endsWith('/' + pr.headRefName)) ?? ('origin/' + pr.headRefName)
         // Auto-set base branch from PR's base
@@ -774,7 +851,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     prsTab.classList.toggle('review-tab--active', mode === 'prs')
     branchList.classList.toggle('hidden', mode === 'prs')
     prList.classList.toggle('hidden', mode === 'branches')
-    branchSearch.classList.toggle('hidden', mode === 'prs')
     if (mode === 'prs') { renderPrList(); if (!openPrs.length) loadPrList() }
   }
   branchesTab.addEventListener('click', () => setSidebarMode('branches'))
@@ -1388,12 +1464,16 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     fileTypeFilter = 'all'
     diffView.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-loading', textContent: reviewT('loading') }))
     try {
-      const raw = selectedBranch === activeLocalBranch
+      let raw = selectedBranch === activeLocalBranch
         ? await diffGit.reviewWorktreeDiff(repoPath, baseBranch)
         : await invoke<string>('git_ref_diff', { path: repoPath, base: baseBranch, target: selectedBranch })
+      if (!raw.trim() && currentPrState === 'MERGED' && currentPrNumber !== null) {
+        const prDiff = await invoke<string>('gh_pr_diff_number', { path: repoPath, prNumber: currentPrNumber }).catch(() => '')
+        if (prDiff.trim()) raw = prDiff
+      }
       if (!raw.trim()) {
         totalFiles = 0; lastFiles = []; updateViewedCounter()
-        diffView.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-no-changes', textContent: reviewT('noBranchChanges', { base: baseBranch }) }))
+        diffView.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-no-changes', textContent: describeReviewNoBranchChanges(currentPrState, baseBranch) }))
         return
       }
       lastFiles = parseDiffFiles(raw).map(f => ({ ...f, state: getFileState(f.chunk) }))
@@ -1416,7 +1496,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     lastStatusRollup = []
     try {
       const pr = await invoke<{
-        number: number; title: string; url: string; body: string
+        number: number; title: string; url: string; body: string; state?: string; mergedAt?: string | null
         statusCheckRollup: Array<{ name?: string; workflowName?: string; conclusion?: string | null; state?: string; context?: string; targetUrl?: string }>
         reviewDecision: string | null
       } | null>('gh_pr_view_branch', { path: repoPath, branch: ghBranch(selectedBranch) })
@@ -1425,10 +1505,20 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         currentPrNumber = pr.number
         currentPrTitle = pr.title
         currentPrBody = pr.body ?? ''
+        currentPrState = pr.state ?? null
         lastStatusRollup = pr.statusCheckRollup ?? []
         const link = Object.assign(document.createElement('a'), { className: 'review-pr-link', textContent: `PR #${pr.number}: ${pr.title}`, href: '#' })
         link.addEventListener('click', e => { e.preventDefault(); openUrl(pr.url).catch(() => {}) })
         prMetaEl.append(link)
+
+        const stateBadge = describeReviewPrState(pr.state, pr.mergedAt)
+        if (stateBadge) {
+          prMetaEl.append(Object.assign(document.createElement('span'), {
+            className: `review-pr-state ${stateBadge.cls}`,
+            textContent: stateBadge.text,
+            title: stateBadge.title,
+          }))
+        }
 
         const ci = computeCiStatus(lastStatusRollup)
         if (ci !== 'none') {
@@ -1494,7 +1584,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
         if (sidebarMode === 'prs') renderPrList()
       }
-    } catch { /* no PR */ }
+    } catch { currentPrState = null }
   }
 
   const prIdentifier = (): string => currentPrNumber !== null ? String(currentPrNumber) : ghBranch(selectedBranch)
@@ -1648,16 +1738,13 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const reviewAgent = reviewAgents.at(-1) ?? reviewAgents[0]
     const reviewConversationKey = techReviewConversationKey(reviewRepoPath, reviewBranch)
     const reviewProjectName = reviewRepoPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? reviewRepoPath
-    const MAX_DIFF_CHARS = 18_000
-    const rawDiff = lastFiles.map(f => f.chunk).join('\n')
-    const diff = rawDiff.length > MAX_DIFF_CHARS
-      ? rawDiff.slice(0, MAX_DIFF_CHARS) + `\n\n[diff truncated — ${lastFiles.length} files total]`
-      : rawDiff
     const prLine = currentPrNumber ? `PR #${currentPrNumber}: ${currentPrTitle}` : `Branch: ${reviewBranch}`
     const descSection = currentPrBody.trim() ? `\nDescription:\n${currentPrBody.trim()}\n` : ''
-    const reviewDiff = `${prLine}\nBase: ${reviewBaseBranch} <- ${reviewBranch}\n${descSection}\n${diff}`
-    const reviewFiles = lastFiles.map(file => ({ path: file.file, content: file.chunk }))
-    const reviewChangedFiles = reviewFiles.map(file => file.path)
+    const reviewFileManifest = buildReviewFileManifest(lastFiles)
+    const reviewOverview = `${prLine}\nBase: ${reviewBaseBranch} <- ${reviewBranch}\n${descSection}Files:\n${reviewFileManifest}\n\nReview the files in the current batch first. If a file is not included below, read it directly from the worktree before deciding.`
+    const reviewFileBatches = buildReviewFileBatches(lastFiles)
+    const deletedFiles = lastFiles.filter(file => file.state === 'D').map(file => file.file)
+    const reviewChangedFiles = lastFiles.map(file => file.file)
     aiReviewBtn.disabled = true
     aiReviewBtn.title = 'Reviewing...'
     const reviewEvidence: string[] = []
@@ -1701,14 +1788,15 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       await activeReviewHandle.cancel().catch(() => {})
     })
 
-    const showResult = (content: string, reviewCommit: string, sessionId: string | null): void => {
+    const showResult = (content: string, reviewCommit: string, followUpSession: { sessionId: string | null; sessionAgent: AgentType | null }): void => {
       reviewDrawerMeta.textContent = `${reviewBranch} · ${reviewCommit.slice(0, 7)}`
       reviewDrawerBody.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'review-drawer-result',
         innerHTML: renderMarkdown(content),
       }))
       showReviewDrawer()
-      askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, reviewAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, sessionId ?? undefined, reviewEvidence)
+      const followUpAgent = followUpSession.sessionAgent ?? reviewAgent
+      askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, followUpAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, followUpSession.sessionId ?? undefined, followUpSession.sessionAgent ?? undefined, reviewEvidence)
     }
     let worktree = ''
     let managedWorktree = false
@@ -1736,24 +1824,34 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           if (!content) throw new Error('Lexis returned no context')
           return [{ path: '<lexis>', content, reason: 'reference' as const }]
         },
-        direct: async () => reviewFiles.map(file => ({ ...file, reason: 'changed' as const })),
+        direct: async () => lastFiles.map(file => ({ path: file.file, content: file.chunk, reason: 'changed' as const })),
       })
-      const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewDiff, changedFiles: reviewChangedFiles })
-      const basePrompt = buildReviewPrompt({
-        diff: reviewDiff,
-        files: reviewFiles,
+      const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewOverview, changedFiles: reviewChangedFiles })
+      const sharedPrompt = buildReviewPrompt({
+        diff: reviewOverview,
+        files: [],
         contextSources: context.sources,
         lexisContext: context.snippets.filter(snippet => snippet.reason !== 'changed').map(snippet => `${snippet.path}\n${snippet.content}`).join('\n\n'),
       })
       const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath: worktree })
       if (snapshotBeforeAgent !== snapshotBefore) throw new Error('Repository changed while preparing the review')
       const reviewRuns: MultiAgentReviewRun[] = []
-      const runReviewAgent = async (agent: AgentType, index: number, prompt: string): Promise<MultiAgentReviewRun> => {
+      const batchTotal = reviewFileBatches.length || 1
+      const runReviewAgent = async (agent: AgentType, index: number, prompt: string, kind: 'batch' | 'verification' = 'batch'): Promise<MultiAgentReviewRun> => {
         const label = agentLabel(agent)
         let output = ''
-        const run: MultiAgentReviewRun = { label }
-        const stageLabel = index === 0 ? 'Orchestrator' : index === 1 ? 'Impact specialist' : index === 2 ? 'Correctness specialist' : 'Verification round'
-        progressStatus.textContent = `${label} is reviewing (${index + 1}/${reviewAgents.length}) · ${stageLabel}…`
+        const run: MultiAgentReviewRun = { label, agent }
+        const stageLabel = kind === 'verification'
+          ? 'Verification round'
+          : index === 0
+            ? 'Orchestrator'
+            : index === 1
+              ? 'Impact specialist'
+              : index === 2
+                ? 'Correctness specialist'
+                : `Batch ${index + 1}`
+        const totalStages = kind === 'verification' ? batchTotal + 1 : batchTotal
+        progressStatus.textContent = `${label} is reviewing (${index + 1}/${totalStages}) · ${stageLabel}…`
         progressStream.textContent = ''
         activeRunFinished = new Promise<void>(resolve => { resolveActiveRun = resolve })
         activeReviewHandle = startAgent(
@@ -1785,7 +1883,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
             const json = extractFirstJsonObject(output)
             if (!json) throw new Error('No JSON object found in response')
             const result = validateReviewResponse(JSON.parse(json))
-            await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: worktree, relative: finding.file })))
+            await Promise.all(result.findings.map(finding => invoke('review_validate_finding_path', { repoPath: worktree, relative: finding.file, deletedFiles })))
             run.response = result
           }
         } catch (error) {
@@ -1798,27 +1896,57 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
         return run
       }
 
-      for (const [index, agent] of reviewAgents.entries()) {
+      const sourceBatches = reviewFileBatches.length ? reviewFileBatches : [lastFiles]
+      for (const [agentIndex, agent] of reviewAgents.entries()) {
         if (reviewStopped) break
-        const prompt = index === 0
-          ? basePrompt
-          : buildReviewChainPrompt({
-            stage: index === 1 ? 2 : 3,
-            basePrompt,
-            previousRuns: reviewRuns,
+        const agentRuns: MultiAgentReviewRun[] = []
+        for (const [batchIndex, batch] of sourceBatches.entries()) {
+          if (reviewStopped) break
+          const batchManifest = buildReviewFileManifest(batch)
+          const batchFileBudget = Math.max(500, Math.floor(8_000 / Math.max(batch.length, 1)))
+          const batchFiles = batch.map(file => ({
+            path: file.file,
+            content: file.chunk.length > batchFileBudget
+              ? `${file.chunk.slice(0, batchFileBudget)}\n[truncated; read the file in the worktree for the rest]`
+              : file.chunk,
+          }))
+          const batchPrompt = buildReviewPrompt({
+            diff: `${reviewOverview}\n\nBatch ${batchIndex + 1}/${batchTotal}\nIncluded files:\n${batchManifest}\n\nFiles not included in this batch must be read from the worktree. Review every batch before concluding.`,
+            files: batchFiles,
+            contextSources: context.sources,
+            lexisContext: context.snippets.filter(snippet => snippet.reason !== 'changed').map(snippet => `${snippet.path}\n${snippet.content}`).join('\n\n'),
           })
-        reviewRuns.push(await runReviewAgent(agent, index, prompt))
+          const prompt = batchIndex === 0
+            ? batchPrompt
+            : buildReviewChainPrompt({
+              stage: batchIndex === 1 ? 2 : 3,
+              basePrompt: batchPrompt,
+              previousRuns: agentRuns,
+            })
+          agentRuns.push(await runReviewAgent(agent, batchIndex + (agentIndex * batchTotal), prompt))
+        }
+        if (!agentRuns.length) continue
+        if (agentRuns.length > 1) {
+          const synthesisPrompt = buildReviewChainPrompt({
+            stage: 3,
+            basePrompt: sharedPrompt,
+            previousRuns: agentRuns,
+          })
+          reviewRuns.push(await runReviewAgent(agent, batchTotal, synthesisPrompt, 'verification'))
+          continue
+        }
+        reviewRuns.push(agentRuns[0])
       }
 
       const doubtSummary = buildReviewDoubtSummary(reviewRuns)
       if (!reviewStopped && doubtSummary) {
         const verifierAgent = reviewAgents.at(-1) ?? reviewAgents[0]
         const verificationPrompt = buildReviewVerificationPrompt({
-          basePrompt,
+          basePrompt: sharedPrompt,
           previousRuns: reviewRuns,
           doubtSummary,
         })
-        reviewRuns.push(await runReviewAgent(verifierAgent, reviewRuns.length, verificationPrompt))
+        reviewRuns.push(await runReviewAgent(verifierAgent, reviewRuns.length, verificationPrompt, 'verification'))
       }
 
       if (reviewStopped) throw new Error('Review stopped')
@@ -1834,22 +1962,19 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
           : `Agent: ${reviewRuns[0]?.label ?? reviewAgent}`,
         buildMultiAgentReviewMarkdown(reviewRuns),
       ].join('\n')
-      const followUpSessionId = resolveReviewFollowUpSessionId(reviewRuns, reviewAgents.length)
-      showResult(content, branchContext.commit, followUpSessionId)
+      const followUpSession = resolveReviewFollowUpSession(reviewRuns, reviewRuns.length)
+      showResult(content, branchContext.commit, followUpSession)
       if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
     } catch (error) { reviewDrawerBody.replaceChildren(); showReviewDrawer(); showReviewError(String(error)) }
-    finally {
-      clearInterval(timer)
-      if (!reviewStopped) reviewDrawerMeta.textContent = reviewDrawerMeta.textContent || reviewT('title')
-      if (managedWorktree) {
-        await invoke('review_branch_context_release', {
-          repoPath: reviewRepoPath,
-          reference: reviewBranch,
-        }).catch(error => showReviewError(String(error)))
+      finally {
+        clearInterval(timer)
+        if (!reviewStopped) reviewDrawerMeta.textContent = reviewDrawerMeta.textContent || reviewT('title')
+        if (managedWorktree) {
+          await invoke('review_branch_context_release', { path: worktree }).catch(error => showReviewError(String(error)))
+        }
+        aiReviewBtn.disabled = false
+        aiReviewBtn.title = 'AI Review'
       }
-      aiReviewBtn.disabled = false
-      aiReviewBtn.title = 'AI Review'
-    }
   })
 
   // ── Init ──────────────────────────────────────────────────────────────────

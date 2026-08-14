@@ -31,10 +31,61 @@ interface ReviewBranchContextResult { path: string; commit: string; latestCommit
 // In a Tech Review conversation the resumed agent keeps replying with the review
 // JSON schema. Render it as Markdown; return null (keep raw text) if it's not one.
 function reviewResponseMarkdown(raw: string): string | null {
-  const json = extractFirstJsonObject(raw)
-  if (!json) return null
-  try { return formatReviewResponse(validateReviewResponse(JSON.parse(json))) }
-  catch { return null }
+  const parsed = parseReviewLikeJson(raw)
+  if (!parsed) return null
+  try { return formatReviewResponse(validateReviewResponse(parsed)) }
+  catch {
+    const loose = parsed as Record<string, unknown>
+    const verdict = typeof loose.verdict === 'string' ? loose.verdict : 'needs_review'
+    const summary = typeof loose.summary === 'string' ? loose.summary : 'Review response'
+    const findings = Array.isArray(loose.findings)
+      ? loose.findings.flatMap((item): Array<{ severity: string; file: string; line: number | null; title: string; explanation: string; recommendation: string }> => {
+        if (!item || typeof item !== 'object') return []
+        const finding = item as Record<string, unknown>
+        if (typeof finding.file !== 'string' || typeof finding.title !== 'string' || typeof finding.explanation !== 'string' || typeof finding.recommendation !== 'string') return []
+        return [{
+          severity: typeof finding.severity === 'string' ? finding.severity : 'medium',
+          file: finding.file,
+          line: typeof finding.line === 'number' ? finding.line : null,
+          title: finding.title,
+          explanation: finding.explanation,
+          recommendation: finding.recommendation,
+        }]
+      })
+      : []
+    return renderLooseReviewResponse(verdict, summary, findings)
+  }
+}
+
+function parseReviewLikeJson(raw: string): unknown | null {
+  const cleaned = raw.replace(/```(?:json)?/gi, '').trim()
+  const candidates = [extractFirstJsonObject(cleaned), cleaned]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try {
+      const parsed = JSON.parse(candidate) as unknown
+      if (parsed && typeof parsed === 'object') return parsed
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function renderLooseReviewResponse(verdict: string, summary: string, findings: Array<{ severity: string; file: string; line: number | null; title: string; explanation: string; recommendation: string }>): string {
+  const icon = verdict === 'pass' ? '✅' : verdict === 'fail' ? '❌' : '⚠️'
+  const lines = [`${icon} **${verdict}** — ${summary}`]
+  if (findings.length) {
+    lines.push('')
+    findings.forEach(finding => {
+      const location = finding.line ? `${finding.file}:${finding.line}` : finding.file
+      lines.push(`**${finding.severity.toUpperCase()}** \`${location}\` — ${finding.title}`)
+      lines.push(finding.explanation)
+      lines.push(`→ ${finding.recommendation}`)
+      lines.push('')
+    })
+  }
+  return lines.join('\n').trim()
 }
 
 // Floating AI chat widget (OpenAI-compatible endpoint). Button in the
@@ -332,6 +383,12 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       .then(() => undefined)
       .catch(() => {})
   }
+  const clearConversationWorktreePath = (key: string): void => {
+    const context = historyState.contexts[key]
+    if (!context?.worktreePath) return
+    delete context.worktreePath
+    persistHistory()
+  }
   const switchConversation = (key: string): void => {
     if (!key || key === activeConversationKey) return
     persistHistory()
@@ -382,6 +439,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       if (!context?.branch) return
       beginBusy()
       let managedBranchContext = false
+      let managedBranchContextPath: string | null = null
       try {
         if (context.commit) {
           const checked = await invoke<ReviewBranchContextResult>('review_branch_context_check', {
@@ -390,6 +448,11 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
             commit: context.commit,
           })
           managedBranchContext ||= checked.managed
+          managedBranchContextPath = checked.managed ? checked.path : managedBranchContextPath
+          if (checked.managed) {
+            context.worktreePath = checked.path
+            persistHistory()
+          }
           if (!checked.stale) {
             messages.push({ role: 'assistant', content: i18nT('common.reviewBranchUpToDate', { branch: context.branch }) })
             renderThread()
@@ -408,10 +471,15 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
           reference: context.branch,
         })
         managedBranchContext ||= updated.managed
-        context.commit = updated.commit
-        if (context.sessionId) {
-          context.sessionCommit = updated.commit
+        managedBranchContextPath = updated.managed ? updated.path : managedBranchContextPath
+        if (updated.managed) {
+          context.worktreePath = updated.path
+          persistHistory()
         }
+        context.commit = updated.commit
+        context.sessionId = undefined
+        context.sessionAgent = undefined
+        context.sessionCommit = undefined
         context.evidence = []
         historyRefreshBtn.classList.remove('ai-branch-stale')
         historyRefreshBtn.title = i18nT('common.updateReviewedBranch')
@@ -430,11 +498,11 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
         renderThread()
         persistHistory()
       } finally {
-        if (managedBranchContext) {
+        if (managedBranchContext && managedBranchContextPath) {
           await invoke('review_branch_context_release', {
-            repoPath: context.projectPath,
-            reference: context.branch,
+            path: managedBranchContextPath,
           }).catch(() => {})
+          clearConversationWorktreePath(activeConversationKey)
         }
         endBusy()
       }
@@ -556,15 +624,18 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
   const renderThread = (): void => {
     thread.innerHTML = ''
     messages.forEach(m => {
-      const row = document.createElement('div')
-      row.className = `ai-msg ai-msg-${m.role}`
-      row.classList.toggle('ai-msg-pending', m === pendingAssistant)
-      // The assistant is rendered as Markdown (renderMarkdown escapes the HTML first,
-      // so it's safe). The user's message goes as plain text.
-      if (m.role === 'assistant') row.innerHTML = renderMarkdown(m.content)
-      else row.textContent = m.content
-      thread.appendChild(row)
-    })
+        const row = document.createElement('div')
+        row.className = `ai-msg ai-msg-${m.role}`
+        row.classList.toggle('ai-msg-pending', m === pendingAssistant)
+        // The assistant is rendered as Markdown (renderMarkdown escapes the HTML first,
+        // so it's safe). The user's message goes as plain text.
+        if (m.role === 'assistant') {
+          const rendered = reviewResponseMarkdown(m.content) ?? m.content
+          row.innerHTML = renderMarkdown(rendered)
+        }
+        else row.textContent = m.content
+        thread.appendChild(row)
+      })
     decorateRunButtons()
     thread.scrollTop = thread.scrollHeight
   }
@@ -626,6 +697,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
   async function sendToAgent(text: string): Promise<void> {
     const conversationContext = historyState.contexts[activeConversationKey]
+    const conversationKey = activeConversationKey
     const sourceProjectPath = conversationContext?.projectPath ?? getActiveProjectPath()
     if (!sourceProjectPath) {
       settings.classList.remove('hidden')
@@ -643,6 +715,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     persistHistory()
     beginBusy()
     let managedBranchContext = false
+    let managedBranchContextPath: string | null = null
     let projectPath = sourceProjectPath
     if (conversationContext?.branch) {
       try {
@@ -653,6 +726,11 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
         })
         projectPath = branchContext.path
         managedBranchContext = branchContext.managed
+        managedBranchContextPath = branchContext.managed ? branchContext.path : managedBranchContextPath
+        if (branchContext.managed) {
+          conversationContext.worktreePath = branchContext.path
+          persistHistory()
+        }
         conversationContext.commit = branchContext.commit
         historyRefreshBtn.classList.toggle('ai-branch-stale', branchContext.stale)
         historyRefreshBtn.title = branchContext.stale
@@ -669,7 +747,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       }
     }
     const sessionContext = `${agent}\0${projectPath}\0${conversationContext?.commit ?? ''}`
-    const persistedSessionId = resolvePersistedSessionId(conversationContext)
+    const persistedSessionId = resolvePersistedSessionId(conversationContext, agent, conversationContext?.commit ?? '')
     const agentMessage = buildReviewMessage(expandInput(text), conversationContext?.evidence, Boolean(persistedSessionId))
     let awaitingFirstChunk = true
     const handle = startAgent({
@@ -718,16 +796,14 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     finally {
       pendingAssistant = null
       handle.unlisten()
-      if (managedBranchContext && conversationContext?.branch) {
+      if (managedBranchContext && managedBranchContextPath) {
         await invoke('review_branch_context_release', {
-          repoPath: conversationContext.projectPath,
-          reference: conversationContext.branch,
+          path: managedBranchContextPath,
         }).catch(() => {})
+        clearConversationWorktreePath(conversationKey)
       }
-      if (conversationContext?.branch) {
-        const formatted = reviewResponseMarkdown(assistant.content)
-        if (formatted) assistant.content = formatted
-      }
+      const formatted = reviewResponseMarkdown(assistant.content)
+      if (formatted) assistant.content = formatted
       renderThread()
       persistHistory()
       endBusy()
@@ -865,10 +941,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       persistHistory()
       renderThread()
       if (deletedContext?.branch) {
-        void invoke('review_branch_context_release', {
-          repoPath: deletedContext.projectPath,
-          reference: deletedContext.branch,
-        }).catch(() => {})
+        void invoke('review_branch_context_release', { path: deletedContext.worktreePath ?? deletedContext.projectPath }).catch(() => {})
       }
       return
     }
@@ -907,7 +980,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
           branch: detail.conversationBranch,
           commit: detail.conversationCommit,
           sessionId: detail.conversationSessionId,
-          sessionAgent: detail.conversationSessionId ? agentType : undefined,
+          sessionAgent: detail.conversationSessionId ? toAgentType(detail.conversationSessionAgent ?? agentType) : undefined,
           sessionCommit: detail.conversationSessionId ? detail.conversationCommit : undefined,
           evidence: (detail.conversationEvidence ?? []).map(item => redact(item).slice(0, 1_000)).slice(-100),
         }

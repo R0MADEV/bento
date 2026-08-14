@@ -137,6 +137,7 @@ describe('AI chat agent follow-ups', () => {
         sessionAgent: 'claude',
         sessionCommit: '1111111111111111111111111111111111111111',
         evidence: ['Read: src/review.ts', 'Grep: createReview'],
+        worktreePath: '/managed/feat/review',
       })
     })
 
@@ -150,6 +151,7 @@ describe('AI chat agent follow-ups', () => {
         sessionAgent: 'claude',
         sessionCommit: '1111111111111111111111111111111111111111',
       })
+      expect(latest.contexts['tech-review:/tmp/review-project:feat/review']).not.toHaveProperty('worktreePath')
     })
     expect(root.querySelector<HTMLButtonElement>('.ai-send')?.disabled).toBe(false)
     expect(mocks.startAgent.mock.calls[0][0]).toMatchObject({
@@ -159,8 +161,99 @@ describe('AI chat agent follow-ups', () => {
       sessionId: 'initial-review-session',
     })
     expect(mocks.invoke).toHaveBeenCalledWith('review_branch_context_release', {
-      repoPath: '/tmp/review-project',
-      reference: 'feat/review',
+      path: '/managed/feat/review',
+    })
+    root.remove()
+  })
+
+  it('renders persisted review JSON as markdown in the chat thread', async () => {
+    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
+    const root = createAiChat(memoryRepo)
+    document.body.appendChild(root)
+    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
+      text: '',
+      projectPath: '/tmp/review-project',
+      agentType: 'claude',
+      conversationKey: 'tech-review:/tmp/review-project:feat/render',
+      conversationTitle: 'review-project · feat/render',
+      conversationBranch: 'feat/render',
+      conversationCommit: '1111111111111111111111111111111111111111',
+      conversationSessionId: 'review-session',
+      conversationSessionAgent: 'claude',
+      inject: { role: 'assistant', content: JSON.stringify({ verdict: 'pass', summary: 'All good.', findings: [], contextSources: ['direct'] }) },
+    } }))
+
+    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('All good.'))
+    expect(root.querySelector('.ai-thread')?.innerHTML).not.toContain('"verdict"')
+    root.remove()
+  })
+
+  it('renders review JSON as markdown even without a branch context', async () => {
+    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
+    const root = createAiChat(memoryRepo)
+    document.body.appendChild(root)
+    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
+      text: '',
+      projectPath: '/tmp/review-project',
+      agentType: 'claude',
+      conversationKey: 'tech-review:/tmp/review-project:plain-review',
+      conversationTitle: 'review-project · plain-review',
+      conversationCommit: '1111111111111111111111111111111111111111',
+      inject: { role: 'assistant', content: JSON.stringify({ verdict: 'needs_review', summary: 'Needs work.', findings: [], contextSources: ['direct'] }) },
+    } }))
+
+    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Needs work.'))
+    expect(root.querySelector('.ai-thread')?.innerHTML).not.toContain('"verdict"')
+    root.remove()
+  })
+
+  it('renders invalid strict review JSON as markdown fallback', async () => {
+    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
+    const root = createAiChat(memoryRepo)
+    document.body.appendChild(root)
+    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
+      text: '',
+      projectPath: '/tmp/review-project',
+      agentType: 'claude',
+      conversationKey: 'tech-review:/tmp/review-project:fail-review',
+      conversationTitle: 'review-project · fail-review',
+      conversationBranch: 'fail-review',
+      conversationCommit: '1111111111111111111111111111111111111111',
+      inject: { role: 'assistant', content: JSON.stringify({ verdict: 'fail', summary: 'Needs review.', findings: [{ severity: 'medium', file: 'src/a.ts', line: 1, title: 'T', explanation: 'E', recommendation: 'R' }], contextSources: ['direct'] }) },
+    } }))
+
+    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Needs review.'))
+    expect(root.querySelector('.ai-thread')?.innerHTML).not.toContain('"findings"')
+    root.remove()
+  })
+
+  it('does not resume a review session with a different agent', async () => {
+    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
+    const root = createAiChat(memoryRepo)
+    document.body.appendChild(root)
+    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
+      text: '',
+      projectPath: '/tmp/review-project',
+      agentType: 'codex',
+      conversationKey: 'tech-review:/tmp/review-project:feat/review',
+      conversationTitle: 'review-project · feat/review',
+      conversationBranch: 'feat/review',
+      conversationCommit: '1111111111111111111111111111111111111111',
+      conversationSessionId: 'claude-session',
+      conversationSessionAgent: 'claude',
+      inject: { role: 'assistant', content: 'Initial review' },
+    } }))
+
+    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Initial review'), { timeout: 3_000 })
+    const input = root.querySelector<HTMLTextAreaElement>('.ai-input')!
+    input.value = 'Continue with this review'
+    root.querySelector<HTMLButtonElement>('.ai-send')!.click()
+
+    await vi.waitFor(() => expect(mocks.startAgent).toHaveBeenCalledOnce())
+    expect(mocks.startAgent.mock.calls[0][0]).toMatchObject({
+      agent: 'codex',
+      sessionId: null,
+      review: true,
     })
     root.remove()
   })
@@ -237,8 +330,7 @@ describe('AI chat agent follow-ups', () => {
     expect(root.querySelector('.ai-thread')?.textContent).toContain('agent failed')
     expect(mocks.startAgent.mock.calls[0][0]).toMatchObject({ cleanupProjectPath: true })
     expect(mocks.invoke).toHaveBeenCalledWith('review_branch_context_release', {
-      repoPath: '/tmp/review-project',
-      reference: 'origin/feat/failure',
+      path: '/managed/origin/feat/failure',
     })
     root.remove()
   })
@@ -293,6 +385,7 @@ describe('AI chat agent follow-ups', () => {
     expect(mocks.startAgent.mock.calls[1][0]).toMatchObject({ sessionId: 'session-1' })
     mocks.finish()
     await vi.waitFor(() => expect(root.classList.contains('busy')).toBe(false))
+    expect(mocks.invoke.mock.calls.some(([command, args]) => command === 'review_branch_context_release' && (args as { path?: string }).path === '/managed/feat/one')).toBe(true)
     root.remove()
   })
 
@@ -341,10 +434,7 @@ describe('AI chat agent follow-ups', () => {
       expect(latest.conversations['tech-review:/work/repo:feat/one']).toBeUndefined()
       expect(latest.conversations['tech-review:/work/repo:feat/two']).toHaveLength(1)
     })
-    expect(mocks.invoke).toHaveBeenCalledWith('review_branch_context_release', {
-      repoPath: '/work/repo',
-      reference: 'feat/one',
-    })
+    expect(mocks.invoke.mock.calls.some(([command, args]) => command === 'review_branch_context_release' && (args as { path?: string }).path === '/work/repo')).toBe(true)
     root.remove()
   })
 
@@ -386,16 +476,16 @@ describe('AI chat agent follow-ups', () => {
       reference: 'origin/feat/review',
     })
     expect(mocks.invoke).toHaveBeenCalledWith('review_branch_context_release', {
-      repoPath: '/work/repo',
-      reference: 'origin/feat/review',
+      path: '/managed/origin/feat/review',
     })
     await vi.waitFor(() => {
       const saves = mocks.invoke.mock.calls.filter(([command]) => command === 'chat_history_save')
       const latest = JSON.parse(saves.at(-1)?.[1]?.content as string)
       const context = latest.contexts['tech-review:/work/repo:origin/feat/review']
       expect(context.commit).toBe('2222222222222222222222222222222222222222')
-      expect(context.sessionId).toBe('old-session')
-      expect(context.sessionCommit).toBe('2222222222222222222222222222222222222222')
+      expect(context.sessionId).toBeUndefined()
+      expect(context.sessionAgent).toBeUndefined()
+      expect(context.sessionCommit).toBeUndefined()
       expect(context.evidence).toEqual([])
     })
     root.remove()

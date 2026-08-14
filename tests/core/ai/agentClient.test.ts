@@ -19,11 +19,15 @@ import { startAgent } from '../../../src/core/ai/agentClient'
 describe('review session helpers', () => {
   const ctx = { branch: 'feat/x', commit: 'abc', sessionId: 's1', sessionAgent: 'claude', sessionCommit: 'abc' }
 
-  it('reuses the persisted session for the review branch', () => {
-    expect(resolvePersistedSessionId(ctx)).toBe('s1')
+  it('reuses the persisted session only for the same agent', () => {
+    expect(resolvePersistedSessionId(ctx, 'claude', 'abc')).toBe('s1')
+    expect(resolvePersistedSessionId(ctx, 'codex', 'abc')).toBeNull()
+  })
+  it('returns null when the commit changed', () => {
+    expect(resolvePersistedSessionId({ ...ctx, sessionCommit: 'def' }, 'claude', 'abc')).toBeNull()
   })
   it('returns null outside a review conversation', () => {
-    expect(resolvePersistedSessionId({ commit: 'abc' })).toBeNull()
+    expect(resolvePersistedSessionId({ commit: 'abc' }, 'claude', 'abc')).toBeNull()
   })
 
   it('appends evidence to the message only on a fresh review session', () => {

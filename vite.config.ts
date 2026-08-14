@@ -9,6 +9,9 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5280,
     strictPort: true,
+    watch: {
+      ignored: ['**/src-tauri/target/**'],
+    },
   },
   test: {
     include: ['tests/**/*.test.ts'],

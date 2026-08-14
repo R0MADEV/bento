@@ -60,9 +60,11 @@ export interface ReviewSessionContext {
   sessionCommit?: string
 }
 
-// Review sessions are keyed by branch: if one exists, always resume it.
-export function resolvePersistedSessionId(ctx: ReviewSessionContext | undefined): string | null {
-  if (!ctx?.branch) return null
+// Review sessions are keyed by branch, agent and commit: only resume when all match.
+export function resolvePersistedSessionId(ctx: ReviewSessionContext | undefined, agent: AgentType, currentCommit: string): string | null {
+  if (!ctx?.branch || !currentCommit) return null
+  if (ctx.sessionAgent !== agent) return null
+  if (ctx.sessionCommit !== currentCommit) return null
   return ctx.sessionId ?? null
 }
 

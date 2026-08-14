@@ -50,6 +50,16 @@ export function createNotesPanel() {
   const titleInput = document.createElement('input')
   titleInput.className = 'notes-title'
   titleInput.placeholder = i18nT('common.title')
+  // Notes autosave silently; this only appears when a write to disk fails, so the
+  // user knows their edits are NOT persisted instead of losing them unaware.
+  const saveStatus = document.createElement('span')
+  saveStatus.className = 'notes-save-status hidden'
+  saveStatus.textContent = i18nT('notes.saveFailed')
+  saveStatus.title = i18nT('notes.saveFailedHint')
+  const deleteStatus = document.createElement('span')
+  deleteStatus.className = 'notes-save-status notes-delete-status hidden'
+  deleteStatus.textContent = i18nT('notes.deleteFailed')
+  deleteStatus.title = i18nT('notes.deleteFailedHint')
   const layoutBtn = document.createElement('button')
   layoutBtn.className = 'notes-toggle'
   layoutBtn.title = i18nT('common.view')
@@ -64,7 +74,7 @@ export function createNotesPanel() {
     const title = titleInput.value.trim()
     askAi(`Contexto — nota${title ? ` "${title}"` : ''}:\n\n${content}\n\n`)
   })
-  header.append(titleInput)
+  header.append(titleInput, saveStatus, deleteStatus)
   // View toggle + Ask-AI act on the open note → live in the sidebar header.
   cs.actions.append(layoutBtn, askAiBtn)
   const metaRow = document.createElement('div')
@@ -98,10 +108,63 @@ export function createNotesPanel() {
 
   let entries: Entry[] = []
   let selectedName: string | null = null
-  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let commitTimer: ReturnType<typeof setTimeout> | undefined
+  const writeGenerations = new Map<string, number>()
+  const writeQueues = new Map<string, Promise<void>>()
+  const pendingWriteContents = new Map<string, string>()
+  const deletedNotes = new Set<string>()
+  const saveErrorNotes = new Set<string>()
+  const deleteErrorNotes = new Set<string>()
   let undoState: UndoState = initUndo('')
   let viewMode = (localStorage.getItem(VIEW_KEY) as ViewMode | null) ?? 'edit'
+
+  // Persists a note, surfacing failures instead of dropping them: a failed write
+  // reveals the "not saved" marker, a successful one clears it. Never rejects.
+  const syncSaveStatus = (): void => {
+    if (!selectedName) {
+      saveStatus.classList.add('hidden')
+      return
+    }
+    saveStatus.classList.toggle('hidden', !saveErrorNotes.has(selectedName))
+  }
+
+  const syncDeleteStatus = (): void => {
+    if (!selectedName) {
+      deleteStatus.classList.add('hidden')
+      return
+    }
+    deleteStatus.classList.toggle('hidden', !deleteErrorNotes.has(selectedName))
+  }
+
+  const writeNote = (name: string, content: string): Promise<void> => {
+    if (deletedNotes.has(name)) return Promise.resolve()
+    pendingWriteContents.set(name, content)
+    const previous = writeQueues.get(name) ?? Promise.resolve()
+    const next = previous.catch(() => {}).then(async () => {
+      if (deletedNotes.has(name)) return
+      const nextContent = pendingWriteContents.get(name)
+      if (nextContent === undefined) return
+      pendingWriteContents.delete(name)
+      const generation = (writeGenerations.get(name) ?? 0) + 1
+      writeGenerations.set(name, generation)
+      try {
+        await invoke('notes_write', { name, content: nextContent })
+        if (writeGenerations.get(name) !== generation) return
+        saveErrorNotes.delete(name)
+        if (selectedName === name) syncSaveStatus()
+      } catch {
+        if (writeGenerations.get(name) !== generation) return
+        saveErrorNotes.add(name)
+        if (selectedName === name) syncSaveStatus()
+      }
+    })
+    writeQueues.set(name, next)
+    next.finally(() => {
+      if (writeQueues.get(name) === next) writeQueues.delete(name)
+    })
+    return next
+  }
 
   const previewVisible = (): boolean => viewMode !== 'edit'
 
@@ -177,12 +240,14 @@ export function createNotesPanel() {
 
   const fillEditor = (): void => {
     const e = entries.find(x => x.name === selectedName)
-    metaFields.forEach(el => { el.disabled = !e })
+    metaFields.forEach(el => { el.disabled = !e || deletedNotes.has(selectedName ?? '') })
     titleInput.value = e?.note.title ?? ''
     categoryInput.value = e?.note.category ?? ''
     tagsInput.value = e?.note.tags.join(', ') ?? ''
     setBody(e?.note.body ?? '', !!e)
     applyPreview()
+    syncSaveStatus()
+    syncDeleteStatus()
   }
 
   const select = (name: string): void => {
@@ -207,9 +272,13 @@ export function createNotesPanel() {
     const note = currentNote()
     const e = entries.find(x => x.name === selectedName)
     if (e) e.note = note
-    if (saveTimer) clearTimeout(saveTimer)
     const name = selectedName
-    saveTimer = setTimeout(() => { invoke('notes_write', { name, content: serializeNote(note) }).catch(() => {}) }, 300)
+    const existingTimer = saveTimers.get(name)
+    if (existingTimer) clearTimeout(existingTimer)
+    saveTimers.set(name, setTimeout(() => {
+      saveTimers.delete(name)
+      void writeNote(name, serializeNote(note))
+    }, 300))
   }
 
   const refreshUi = (): void => {
@@ -279,18 +348,47 @@ export function createNotesPanel() {
   }
 
   const removeNote = (name: string): void => {
-    invoke('notes_delete', { name }).catch(() => {})
-    entries = entries.filter(e => e.name !== name)
-    if (selectedName === name) selectedName = entries[0]?.name ?? null
+    if (deletedNotes.has(name)) return
+    const index = entries.findIndex(e => e.name === name)
+    const removed = entries[index]
+    if (!removed) return
+    deletedNotes.add(name)
+    deleteErrorNotes.delete(name)
     fillEditor()
-    renderList()
+    const previous = writeQueues.get(name) ?? Promise.resolve()
+    const deleteNoteNow: Promise<void> = previous.catch(() => {}).then(async () => {
+      await invoke('notes_delete', { name })
+      entries = entries.filter(e => e.name !== name)
+      pendingWriteContents.delete(name)
+      saveErrorNotes.delete(name)
+      const timer = saveTimers.get(name)
+      if (timer) clearTimeout(timer)
+      saveTimers.delete(name)
+      if (selectedName === name) selectedName = entries[0]?.name ?? null
+      fillEditor()
+      renderList()
+    }).catch(() => {
+      deletedNotes.delete(name)
+      deleteErrorNotes.add(name)
+      if (!entries.some(e => e.name === name)) entries = [...entries.slice(0, index), removed, ...entries.slice(index)]
+      if (selectedName !== name) selectedName = name
+      const pendingContent = pendingWriteContents.get(name) ?? serializeNote(removed.note)
+      fillEditor()
+      renderList()
+      void writeNote(name, pendingContent)
+    }).finally(() => {
+      if (writeQueues.get(name) === deleteNoteNow) writeQueues.delete(name)
+      writeGenerations.delete(name)
+      deletedNotes.delete(name)
+    })
+    writeQueues.set(name, deleteNoteNow)
   }
 
   addBtn.addEventListener('click', () => {
     const name = `${Date.now().toString(36)}.md`
     const note: ParsedNote = { title: '', category: '', tags: [], body: '' }
     entries = [{ name, note }, ...entries]
-    invoke('notes_write', { name, content: serializeNote(note) }).catch(() => {})
+    void writeNote(name, serializeNote(note))
     select(name)
     titleInput.focus()
   })
@@ -313,9 +411,14 @@ export function createNotesPanel() {
     element: root,
     focus: () => body.focus(),
     dispose: () => {
-      if (saveTimer) clearTimeout(saveTimer)
+      const pendingNames = [...saveTimers.keys()]
+      saveTimers.forEach(timer => clearTimeout(timer))
+      saveTimers.clear()
       if (commitTimer) clearTimeout(commitTimer)
-      if (selectedName) invoke('notes_write', { name: selectedName, content: serializeNote(currentNote()) }).catch(() => {})
+      pendingNames.forEach(name => {
+        const entry = entries.find(e => e.name === name)
+        if (entry) void writeNote(name, serializeNote(entry.note))
+      })
     },
   }
 }

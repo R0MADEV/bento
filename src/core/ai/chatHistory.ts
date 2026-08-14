@@ -18,6 +18,7 @@ export interface ChatConversationContext {
   title?: string
   branch?: string
   commit?: string
+  worktreePath?: string
   sessionId?: string
   sessionAgent?: 'claude' | 'opencode' | 'codex' | 'custom'
   sessionCommit?: string
@@ -71,6 +72,7 @@ export function parseChatHistory(raw: string): ChatHistoryState {
         && (value.title === undefined || (typeof value.title === 'string' && value.title.length <= 500))
         && (value.branch === undefined || (typeof value.branch === 'string' && value.branch.length <= 2_000))
         && (value.commit === undefined || (typeof value.commit === 'string' && /^[0-9a-f]{40,64}$/i.test(value.commit)))
+        && (value.worktreePath === undefined || (typeof value.worktreePath === 'string' && value.worktreePath.length <= 2_000))
         && (value.sessionId === undefined || (typeof value.sessionId === 'string' && /^[A-Za-z0-9._:-]{1,500}$/.test(value.sessionId)))
         && (value.sessionAgent === undefined || ['claude', 'opencode', 'codex', 'custom'].includes(String(value.sessionAgent)))
         && (value.sessionCommit === undefined || (typeof value.sessionCommit === 'string' && /^[0-9a-f]{40,64}$/i.test(value.sessionCommit)))

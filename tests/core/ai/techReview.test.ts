@@ -27,7 +27,7 @@ describe('Tech Review', () => {
     expect(() => validateReviewResponse({
       verdict: 'pass',
       summary: 'Looks good',
-      findings: [{ severity: 'high', file: 'src/a.ts', line: 1, title: 'Bug', explanation: 'x', recommendation: 'y' }],
+      findings: [{ severity: 'high', file: 'src/a.ts', line: 1, fingerprint: 'bug', title: 'Bug', explanation: 'x', recommendation: 'y' }],
       contextSources: ['direct'],
     })).toThrow()
   })
@@ -36,8 +36,35 @@ describe('Tech Review', () => {
     expect(() => validateReviewResponse({
       verdict: 'fail',
       summary: 'Needs attention',
-      findings: [{ severity: 'medium', file: 'src/a.ts', line: null, title: 'Improve', explanation: 'x', recommendation: 'y' }],
+      findings: [{ severity: 'medium', file: 'src/a.ts', line: null, fingerprint: 'improve', title: 'Improve', explanation: 'x', recommendation: 'y' }],
       contextSources: ['lexis', 'direct'],
+    })).toThrow()
+  })
+
+  it('rejects high severity findings unless the verdict fails', () => {
+    expect(() => validateReviewResponse({
+      verdict: 'needs_review',
+      summary: 'Needs attention',
+      findings: [{ severity: 'high', file: 'src/a.ts', line: 1, fingerprint: 'bug', title: 'Bug', explanation: 'x', recommendation: 'y' }],
+      contextSources: ['direct'],
+    })).toThrow('High-severity findings require a failing verdict')
+  })
+
+  it('rejects critical severity findings unless the verdict fails', () => {
+    expect(() => validateReviewResponse({
+      verdict: 'needs_review',
+      summary: 'Needs attention',
+      findings: [{ severity: 'critical', file: 'src/a.ts', line: 1, fingerprint: 'critical-bug', title: 'Bug', explanation: 'x', recommendation: 'y' }],
+      contextSources: ['direct'],
+    })).toThrow('High-severity findings require a failing verdict')
+  })
+
+  it('rejects findings without a fingerprint', () => {
+    expect(() => validateReviewResponse({
+      verdict: 'needs_review',
+      summary: 'Needs attention',
+      findings: [{ severity: 'low', file: 'src/a.ts', line: 1, title: 'Improve', explanation: 'x', recommendation: 'y' }],
+      contextSources: ['direct'],
     })).toThrow()
   })
 
@@ -48,7 +75,7 @@ describe('Tech Review', () => {
   it('rejects absolute file paths in findings', () => {
     expect(() => validateReviewResponse({
       verdict: 'needs_review', summary: 'x',
-      findings: [{ severity: 'low', file: '/etc/passwd', line: null, title: 'x', explanation: 'x', recommendation: 'x' }],
+      findings: [{ severity: 'low', file: '/etc/passwd', line: null, fingerprint: 'path', title: 'x', explanation: 'x', recommendation: 'x' }],
       contextSources: ['direct'],
     })).toThrow()
   })
@@ -56,7 +83,7 @@ describe('Tech Review', () => {
   it('rejects path traversal in finding file', () => {
     expect(() => validateReviewResponse({
       verdict: 'needs_review', summary: 'x',
-      findings: [{ severity: 'low', file: '../secret.ts', line: null, title: 'x', explanation: 'x', recommendation: 'x' }],
+      findings: [{ severity: 'low', file: '../secret.ts', line: null, fingerprint: 'path', title: 'x', explanation: 'x', recommendation: 'x' }],
       contextSources: ['direct'],
     })).toThrow()
   })
@@ -64,7 +91,7 @@ describe('Tech Review', () => {
   it('rejects null bytes in finding file path', () => {
     expect(() => validateReviewResponse({
       verdict: 'needs_review', summary: 'x',
-      findings: [{ severity: 'low', file: 'src/a\0b.ts', line: null, title: 'x', explanation: 'x', recommendation: 'x' }],
+      findings: [{ severity: 'low', file: 'src/a\0b.ts', line: null, fingerprint: 'path', title: 'x', explanation: 'x', recommendation: 'x' }],
       contextSources: ['direct'],
     })).toThrow()
   })
@@ -72,7 +99,7 @@ describe('Tech Review', () => {
   it('rejects negative line numbers', () => {
     expect(() => validateReviewResponse({
       verdict: 'needs_review', summary: 'x',
-      findings: [{ severity: 'low', file: 'src/a.ts', line: -1, title: 'x', explanation: 'x', recommendation: 'x' }],
+      findings: [{ severity: 'low', file: 'src/a.ts', line: -1, fingerprint: 'line', title: 'x', explanation: 'x', recommendation: 'x' }],
       contextSources: ['direct'],
     })).toThrow()
   })
@@ -80,13 +107,13 @@ describe('Tech Review', () => {
   it('rejects zero as line number', () => {
     expect(() => validateReviewResponse({
       verdict: 'needs_review', summary: 'x',
-      findings: [{ severity: 'low', file: 'src/a.ts', line: 0, title: 'x', explanation: 'x', recommendation: 'x' }],
+      findings: [{ severity: 'low', file: 'src/a.ts', line: 0, fingerprint: 'line', title: 'x', explanation: 'x', recommendation: 'x' }],
       contextSources: ['direct'],
     })).toThrow()
   })
 
   it('rejects more than 50 findings', () => {
-    const f = { severity: 'low' as const, file: 'src/a.ts', line: 1, title: 'x', explanation: 'x', recommendation: 'x' }
+    const f = { severity: 'low' as const, file: 'src/a.ts', line: 1, fingerprint: 'x', title: 'x', explanation: 'x', recommendation: 'x' }
     expect(() => validateReviewResponse({
       verdict: 'needs_review', summary: 'x',
       findings: Array(51).fill(f),
@@ -103,7 +130,7 @@ describe('Tech Review', () => {
     const md = formatReviewResponse({
       verdict: 'fail',
       summary: 'One issue.',
-      findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+      findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'bug', title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
       contextSources: ['direct'],
     })
     expect(md).toContain('❌ **fail** — One issue.')
@@ -116,24 +143,27 @@ describe('Tech Review', () => {
     const md = buildMultiAgentReviewMarkdown([
       {
         label: 'Claude',
+        agent: 'claude',
         response: {
           verdict: 'needs_review',
           summary: 'One issue.',
-          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'cache-race-write', title: 'Race condition in cache write', explanation: 'why', recommendation: 'fix it' }],
           contextSources: ['direct'],
         },
       },
       {
         label: 'Codex',
+        agent: 'codex',
         response: {
           verdict: 'needs_review',
           summary: 'Same issue.',
-          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why too', recommendation: 'fix it' }],
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 12, fingerprint: 'cache-race-write', title: 'Cache write can race', explanation: 'why too', recommendation: 'fix it' }],
           contextSources: ['direct'],
         },
       },
       {
         label: 'OpenCode',
+        agent: 'opencode',
         error: 'Failed to respond',
       },
     ])
@@ -145,13 +175,139 @@ describe('Tech Review', () => {
     expect(md).toContain('Failed to respond')
   })
 
+  it('counts consensus by unique agent labels', () => {
+    const md = buildMultiAgentReviewMarkdown([
+      {
+        label: 'Claude',
+        agent: 'claude',
+        response: {
+          verdict: 'needs_review',
+          summary: 'One issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'cache-race-write', title: 'Race condition in cache write', explanation: 'why', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'Codex',
+        agent: 'codex',
+        response: {
+          verdict: 'needs_review',
+          summary: 'Same issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 12, fingerprint: 'cache-race-write', title: 'Cache write can race', explanation: 'why too', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'Codex',
+        agent: 'codex',
+        response: {
+          verdict: 'needs_review',
+          summary: 'Verifier repeat.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 12, fingerprint: 'cache-race-write', title: 'Cache write can race', explanation: 'why too', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+    ])
+
+    expect(md).toContain('[2/2]')
+    expect(md).not.toContain('[2/3]')
+  })
+
+  it('groups the same fingerprint even when titles and nearby lines differ', () => {
+    const md = buildMultiAgentReviewMarkdown([
+      {
+        label: 'Claude',
+        agent: 'claude',
+        response: {
+          verdict: 'needs_review',
+          summary: 'One issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'cache-race-write', title: 'Race condition in cache write', explanation: 'why', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'Codex',
+        agent: 'codex',
+        response: {
+          verdict: 'needs_review',
+          summary: 'Same issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 12, fingerprint: 'cache-race-write', title: 'Cache write can race', explanation: 'why too', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+    ])
+
+    expect(md).toContain('[2/2]')
+    expect(md).toContain('Race condition in cache write')
+    expect(md).toContain('Claude, Codex')
+  })
+
+  it('does not merge the same fingerprint across different files', () => {
+    const md = buildMultiAgentReviewMarkdown([
+      {
+        label: 'Claude',
+        agent: 'claude',
+        response: {
+          verdict: 'needs_review',
+          summary: 'One issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'cache-race-write', title: 'A', explanation: 'why', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'Codex',
+        agent: 'codex',
+        response: {
+          verdict: 'needs_review',
+          summary: 'Different file.',
+          findings: [{ severity: 'high', file: 'src/b.ts', line: 10, fingerprint: 'cache-race-write', title: 'B', explanation: 'why too', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+    ])
+
+    expect(md).toContain('No repeated findings across agents.')
+  })
+
+  it('does not double-count findings from the same agent', () => {
+    const md = buildMultiAgentReviewMarkdown([
+      {
+        label: 'Claude',
+        agent: 'claude',
+        response: {
+          verdict: 'needs_review',
+          summary: 'One issue.',
+          findings: [
+            { severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'cache-race-write', title: 'A', explanation: 'why', recommendation: 'fix it' },
+            { severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'cache-race-write', title: 'A again', explanation: 'why', recommendation: 'fix it' },
+          ],
+          contextSources: ['direct'],
+        },
+      },
+      {
+        label: 'Codex',
+        agent: 'codex',
+        response: {
+          verdict: 'needs_review',
+          summary: 'Same issue.',
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 12, fingerprint: 'cache-race-write', title: 'B', explanation: 'why too', recommendation: 'fix it' }],
+          contextSources: ['direct'],
+        },
+      },
+    ])
+
+    expect(md).toContain('[2/2]')
+    expect(md).not.toContain('[2/1]')
+  })
+
   it('summarizes a review run compactly', () => {
     const summary = summarizeReviewRun({
       label: 'Claude',
+      agent: 'claude',
       response: {
         verdict: 'needs_review',
         summary: 'One issue.',
-        findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'bug', title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
         contextSources: ['direct'],
       },
     })
@@ -164,6 +320,7 @@ describe('Tech Review', () => {
     const doubts = buildReviewDoubtSummary([
       {
         label: 'Claude',
+        agent: 'claude',
         response: {
           verdict: 'pass',
           summary: 'ok',
@@ -173,10 +330,11 @@ describe('Tech Review', () => {
       },
       {
         label: 'Codex',
+        agent: 'codex',
         response: {
           verdict: 'fail',
           summary: 'bad',
-          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'bug', title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
           contextSources: ['direct'],
         },
       },
@@ -189,30 +347,59 @@ describe('Tech Review', () => {
   it('builds chained prompts from previous agent findings', () => {
     const prompt = buildReviewChainPrompt({
       stage: 3,
-      basePrompt: 'BASE PROMPT',
+      basePrompt: 'BASE PROMPT '.repeat(4000),
       previousRuns: [{
         label: 'Claude',
+        agent: 'claude',
         response: {
           verdict: 'needs_review',
           summary: 'One issue.',
-          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
+          findings: [{ severity: 'high', file: 'src/a.ts', line: 10, fingerprint: 'bug', title: 'Bug', explanation: 'why', recommendation: 'fix it' }],
           contextSources: ['direct'],
         },
       }],
     })
 
+    expect(prompt.slice(0, 28000)).toContain('tercer especialista')
+    expect(prompt.slice(0, 28000)).toContain('<previous_results>')
     expect(prompt).toContain('BASE PROMPT')
-    expect(prompt).toContain('tercer especialista')
-    expect(prompt).toContain('Claude: needs_review')
-    expect(prompt).toContain('Bug')
+    expect(prompt).toContain('"verdict": "needs_review"')
+    expect(prompt).toContain('"title": "Bug"')
+    expect(prompt).not.toContain('"explanation"')
+  })
+
+  it('keeps a later high severity finding in the chained prompt', () => {
+    const prompt = buildReviewChainPrompt({
+      stage: 2,
+      basePrompt: 'BASE',
+      previousRuns: [{
+        label: 'Claude',
+        agent: 'claude',
+        response: {
+          verdict: 'fail',
+          summary: 'Many issues.',
+          findings: [
+            { severity: 'low', file: 'src/a.ts', line: 1, fingerprint: 'a', title: 'A', explanation: 'x', recommendation: 'y' },
+            { severity: 'medium', file: 'src/b.ts', line: 2, fingerprint: 'b', title: 'B', explanation: 'x', recommendation: 'y' },
+            { severity: 'low', file: 'src/c.ts', line: 3, fingerprint: 'c', title: 'C', explanation: 'x', recommendation: 'y' },
+            { severity: 'high', file: 'src/d.ts', line: 4, fingerprint: 'd', title: 'D', explanation: 'x', recommendation: 'y' },
+          ],
+          contextSources: ['direct'],
+        },
+      }],
+    })
+
+    expect(prompt).toContain('"fingerprint": "d"')
+    expect(prompt).toContain('"severity": "high"')
   })
 
   it('builds a focused verification prompt when doubts exist', () => {
     const prompt = buildReviewVerificationPrompt({
-      basePrompt: 'BASE PROMPT',
+      basePrompt: 'BASE PROMPT '.repeat(4000),
       doubtSummary: '- Verdict mismatch: pass, fail',
       previousRuns: [{
         label: 'Claude',
+        agent: 'claude',
         response: {
           verdict: 'pass',
           summary: 'ok',
@@ -222,16 +409,17 @@ describe('Tech Review', () => {
       }],
     })
 
-    expect(prompt).toContain('verificador focalizado')
+    expect(prompt.slice(0, 28000)).toContain('verificador focalizado')
+    expect(prompt.slice(0, 28000)).toContain('<previous_results>')
     expect(prompt).toContain('Verdict mismatch')
-    expect(prompt).toContain('Claude: pass')
+    expect(prompt).toContain('"verdict": "pass"')
   })
 
   it('omits the line suffix when a finding has no line', () => {
     const md = formatReviewResponse({
       verdict: 'needs_review',
       summary: 'Check.',
-      findings: [{ severity: 'low', file: 'src/a.ts', line: null, title: 'x', explanation: 'y', recommendation: 'z' }],
+      findings: [{ severity: 'low', file: 'src/a.ts', line: null, fingerprint: 'x', title: 'x', explanation: 'y', recommendation: 'z' }],
       contextSources: ['direct'],
     })
     expect(md).toContain('⚠️ **needs_review** — Check.')

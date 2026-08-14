@@ -1,4 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
 use tokio::process::Command as AsyncCommand;
+use uuid::Uuid;
 static BRANCH_CONTEXT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(serde::Serialize)]
@@ -60,43 +61,150 @@ fn common_git_dir(repo: &Path) -> Result<PathBuf, String> {
     path.canonicalize().map_err(|error| error.to_string())
 }
 
-fn worktree_for_local_branch(repo: &Path, reference: &str, commit: &str) -> Option<PathBuf> {
-    let expected_branch = format!("refs/heads/{reference}");
-    let raw = git_output(repo, &["worktree", "list", "--porcelain"]).ok()?;
-    raw.split("\n\n").find_map(|record| {
-        let mut path = None;
-        let mut head = None;
-        let mut branch = None;
-        for line in record.lines() {
-            if let Some(value) = line.strip_prefix("worktree ") {
-                path = Some(PathBuf::from(value));
-            } else if let Some(value) = line.strip_prefix("HEAD ") {
-                head = Some(value);
-            } else if let Some(value) = line.strip_prefix("branch ") {
-                branch = Some(value);
-            }
-        }
-        (head == Some(commit) && branch == Some(expected_branch.as_str()))
-            .then_some(path)
-            .flatten()
-    })
-}
-
 fn managed_context_path(repo: &Path, reference: &str) -> Result<PathBuf, String> {
     let mut hasher = DefaultHasher::new();
     common_git_dir(repo)?.hash(&mut hasher);
     reference.hash(&mut hasher);
-    Ok(std::env::temp_dir().join(format!("bento-review-context-{:016x}", hasher.finish())))
+    Ok(std::env::temp_dir().join(format!("bento-review-context-{:016x}-{}", hasher.finish(), Uuid::new_v4())))
 }
 
 #[cfg(unix)]
-fn set_managed_writable(path: &Path, writable: bool) {
+pub(crate) fn set_review_worktree_writable(path: &Path, writable: bool) -> Result<(), String> {
     let mode = if writable { "u+w" } else { "a-w" };
-    let _ = Command::new("chmod").args(["-R", mode]).arg(path).status();
+    let status = Command::new("chmod")
+        .args(["-R", mode])
+        .arg(path)
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() { Ok(()) } else { Err(format!("chmod failed for {}", path.display())) }
 }
 
 #[cfg(not(unix))]
-fn set_managed_writable(_path: &Path, _writable: bool) {}
+pub(crate) fn set_review_worktree_writable(_path: &Path, _writable: bool) -> Result<(), String> { Ok(()) }
+
+pub(crate) fn is_managed_review_worktree(path: &Path) -> bool {
+    path.parent() == Some(std::env::temp_dir().as_path())
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("bento-review-context-"))
+}
+
+fn normalize_review_path(relative: &str) -> Result<String, String> {
+    if relative.starts_with('/') || relative.contains('\0') || relative.contains('\\') {
+        return Err("finding path must be relative".into());
+    }
+    let mut parts = Vec::new();
+    for segment in relative.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            if parts.pop().is_none() {
+                return Err("finding path escapes repository".into());
+            }
+        } else {
+            parts.push(segment);
+        }
+    }
+    if parts.is_empty() {
+        return Err("finding path must point to a file".into());
+    }
+    Ok(parts.join("/"))
+}
+
+fn validate_finding_path(repo_root: &Path, relative: &str, allowed_deleted: &HashSet<String>) -> Result<(), String> {
+    let normalized = normalize_review_path(relative)?;
+    let candidate = repo_root.join(&normalized);
+    let root = repo_root.canonicalize().map_err(|e| e.to_string())?;
+    if let Ok(resolved) = candidate.canonicalize() {
+        if resolved.starts_with(&root) && resolved.is_file() {
+            return Ok(());
+        }
+    }
+    if allowed_deleted.contains(&normalized) {
+        return Ok(());
+    }
+    Err("finding path must reference an existing file or deleted path".into())
+}
+
+fn remove_review_worktree_entry(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())
+    } else {
+        fs::remove_file(path).map_err(|error| error.to_string())
+    }
+}
+
+fn copy_review_worktree_entry(source: &Path, destination: &Path) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::copy(source, destination).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn sync_review_worktree_snapshot(source: &Path, destination: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .current_dir(source)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let bytes = output.stdout;
+    let mut index = 0;
+    while index < bytes.len() {
+        if index + 3 > bytes.len() || bytes[index + 2] != b' ' {
+            return Err("unexpected review worktree status format".into());
+        }
+        let x = bytes[index];
+        let y = bytes[index + 1];
+        index += 3;
+
+        let path_end = bytes[index..]
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or("unexpected review worktree status format")?
+            + index;
+        let source_path = String::from_utf8(bytes[index..path_end].to_vec()).map_err(|error| error.to_string())?;
+        index = path_end + 1;
+
+        let target_path = if x == b'R' || x == b'C' {
+            let new_end = bytes[index..]
+                .iter()
+                .position(|byte| *byte == 0)
+                .ok_or("unexpected review worktree status format")?
+                + index;
+            let new_path = String::from_utf8(bytes[index..new_end].to_vec()).map_err(|error| error.to_string())?;
+            index = new_end + 1;
+            if x == b'R' {
+                let old_target = destination.join(&source_path);
+                remove_review_worktree_entry(&old_target)?;
+            }
+            new_path
+        } else {
+            source_path
+        };
+
+        if x == b'D' || y == b'D' {
+            remove_review_worktree_entry(&destination.join(&target_path))?;
+            continue;
+        }
+
+        let source_entry = source.join(&target_path);
+        let destination_entry = destination.join(&target_path);
+        copy_review_worktree_entry(&source_entry, &destination_entry)?;
+    }
+
+    Ok(())
+}
 
 fn prepare_branch_context(
     repo_path: &str,
@@ -123,34 +231,12 @@ fn prepare_branch_context(
         None => latest_commit.clone(),
     };
     let stale = commit != latest_commit;
-
-    if let Some(path) = worktree_for_local_branch(&repo, reference, &commit) {
-        return Ok(ReviewBranchContext {
-            path: path.to_string_lossy().to_string(),
-            commit,
-            latest_commit,
-            managed: false,
-            stale,
-        });
-    }
-
     let path = managed_context_path(&repo, reference)?;
     let path_text = path.to_string_lossy().to_string();
-    if path.exists() {
-        let existing_commit = git_output(&path, &["rev-parse", "HEAD"])
-            .map(|value| value.trim().to_string())
-            .map_err(|_| "managed review worktree is invalid")?;
-        if existing_commit != commit {
-            set_managed_writable(&path, true);
-            let result = git_output(&path, &["checkout", "--detach", &commit]);
-            set_managed_writable(&path, false);
-            result?;
-        }
-    } else {
-        let _ = git_output(&repo, &["worktree", "prune"]);
-        git_output(&repo, &["worktree", "add", "--detach", &path_text, &commit])?;
-        set_managed_writable(&path, false);
-    }
+    let _ = git_output(&repo, &["worktree", "prune"]);
+    git_output(&repo, &["worktree", "add", "--detach", &path_text, &commit])?;
+    sync_review_worktree_snapshot(&repo, &path)?;
+    set_review_worktree_writable(&path, false)?;
     Ok(ReviewBranchContext {
         path: path_text,
         commit,
@@ -198,40 +284,15 @@ pub async fn review_branch_context_check(
 
 #[tauri::command]
 pub async fn review_branch_context_release(
-    repo_path: String,
-    reference: String,
+    path: String,
 ) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || release_branch_context(&repo_path, &reference))
+    tokio::task::spawn_blocking(move || release_managed_context_path(&PathBuf::from(path)))
         .await
         .map_err(|error| error.to_string())?
 }
 
-fn release_branch_context(repo_path: &str, reference: &str) -> Result<(), String> {
-    let repo = PathBuf::from(repo_path)
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    let _guard = BRANCH_CONTEXT_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .map_err(|_| "review branch context state poisoned")?;
-    let path = managed_context_path(&repo, reference)?;
-    if !path.exists() {
-        let _ = git_output(&repo, &["worktree", "prune"]);
-        return Ok(());
-    }
-    let path_text = path.to_string_lossy().to_string();
-    set_managed_writable(&path, true);
-    git_output(&repo, &["worktree", "remove", "--force", &path_text])?;
-    Ok(())
-}
-
 pub(crate) fn release_managed_context_path(path: &Path) -> Result<(), String> {
-    let valid_path = path.parent() == Some(std::env::temp_dir().as_path())
-        && path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("bento-review-context-"));
-    if !valid_path {
+    if !is_managed_review_worktree(path) {
         return Err("invalid managed review worktree path".into());
     }
     if !path.exists() {
@@ -246,7 +307,7 @@ pub(crate) fn release_managed_context_path(path: &Path) -> Result<(), String> {
     }
     let common_dir = common_git_dir(path)?;
     let path_text = path.to_string_lossy().to_string();
-    set_managed_writable(path, true);
+    set_review_worktree_writable(path, true)?;
     let output = Command::new("git")
         .arg(format!("--git-dir={}", common_dir.to_string_lossy()))
         .args(["worktree", "remove", "--force", &path_text])
@@ -263,53 +324,28 @@ pub(crate) fn release_managed_context_path(path: &Path) -> Result<(), String> {
 pub async fn review_validate_finding_path(
     repo_path: String,
     relative: String,
+    deleted_files: Vec<String>,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
+        let allowed_deleted = deleted_files.into_iter().filter_map(|path| normalize_review_path(&path).ok()).collect::<HashSet<_>>();
         validate_finding_path(
             &PathBuf::from(repo_path)
                 .canonicalize()
                 .map_err(|e| e.to_string())?,
             &relative,
+            &allowed_deleted,
         )
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-fn validate_finding_path(repo_root: &Path, relative: &str) -> Result<(), String> {
-    if relative.starts_with('/') || relative.contains('\0') || relative.contains('\\') {
-        return Err("finding path must be relative".into());
-    }
-    let mut parts = Vec::new();
-    for segment in relative.split('/') {
-        if segment.is_empty() || segment == "." {
-            continue;
-        }
-        if segment == ".." {
-            if parts.pop().is_none() {
-                return Err("finding path escapes repository".into());
-            }
-        } else {
-            parts.push(segment);
-        }
-    }
-    let candidate = repo_root.join(parts.join("/"));
-    if candidate.exists() {
-        let root = repo_root.canonicalize().map_err(|e| e.to_string())?;
-        let resolved = candidate.canonicalize().map_err(|e| e.to_string())?;
-        if !resolved.starts_with(root) {
-            return Err("finding path escapes repository".into());
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        prepare_branch_context, release_branch_context, release_managed_context_path,
-        validate_finding_path,
+        prepare_branch_context, release_managed_context_path, validate_finding_path,
     };
+    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use uuid::Uuid;
@@ -343,21 +379,53 @@ mod tests {
 
     #[test]
     fn rejects_traversal_and_absolute_paths() {
-        assert!(validate_finding_path(Path::new("/tmp/repo"), "../secret").is_err());
-        assert!(validate_finding_path(Path::new("/tmp/repo"), "/secret").is_err());
+        let repo = test_repo();
+        let allowed_deleted = HashSet::new();
+        assert!(validate_finding_path(&repo, "../secret", &allowed_deleted).is_err());
+        assert!(validate_finding_path(&repo, "/secret", &allowed_deleted).is_err());
+        assert!(validate_finding_path(&repo, "", &allowed_deleted).is_err());
+        assert!(validate_finding_path(&repo, ".", &allowed_deleted).is_err());
+        assert!(validate_finding_path(&repo, "src/no-existe.ts", &allowed_deleted).is_err());
+        std::fs::remove_dir_all(repo).unwrap();
     }
 
     #[test]
-    fn reuses_an_existing_worktree_for_the_selected_local_branch() {
+    fn accepts_existing_files_only() {
         let repo = test_repo();
-        let context = prepare_branch_context(repo.to_str().unwrap(), "main", None, false).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src").join("file.ts"), "ok").unwrap();
+        let allowed_deleted = HashSet::new();
+        assert!(validate_finding_path(&repo, "src/file.ts", &allowed_deleted).is_ok());
+        assert!(validate_finding_path(&repo, "src", &allowed_deleted).is_err());
+        std::fs::remove_dir_all(repo).unwrap();
+    }
 
-        assert!(!context.managed);
-        assert_eq!(
-            PathBuf::from(context.path).canonicalize().unwrap(),
-            repo.canonicalize().unwrap()
-        );
-        assert_eq!(context.commit, git(&repo, &["rev-parse", "HEAD"]));
+    #[test]
+    fn accepts_deleted_files_when_allowed() {
+        let repo = test_repo();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src").join("deleted.ts"), "gone").unwrap();
+        std::fs::remove_file(repo.join("src").join("deleted.ts")).unwrap();
+        let allowed_deleted = HashSet::from(["src/deleted.ts".to_string()]);
+        assert!(validate_finding_path(&repo, "src/deleted.ts", &allowed_deleted).is_ok());
+        assert!(validate_finding_path(&repo, "src/fake.ts", &allowed_deleted).is_err());
+        std::fs::remove_dir_all(repo).unwrap();
+    }
+
+    #[test]
+    fn creates_unique_worktrees_for_the_same_branch() {
+        let repo = test_repo();
+        let first = prepare_branch_context(repo.to_str().unwrap(), "main", None, false).unwrap();
+        let second = prepare_branch_context(repo.to_str().unwrap(), "main", None, false).unwrap();
+
+        assert!(first.managed);
+        assert!(second.managed);
+        assert_ne!(first.path, second.path);
+        assert!(Path::new(&first.path).exists());
+        assert!(Path::new(&second.path).exists());
+        assert_eq!(first.commit, git(&repo, &["rev-parse", "HEAD"]));
+        release_managed_context_path(Path::new(&first.path)).unwrap();
+        release_managed_context_path(Path::new(&second.path)).unwrap();
         std::fs::remove_dir_all(repo).unwrap();
     }
 
@@ -400,6 +468,8 @@ mod tests {
             git(Path::new(&updated.path), &["rev-parse", "HEAD"]),
             latest_commit
         );
+        release_managed_context_path(Path::new(&first.path)).unwrap();
+        release_managed_context_path(Path::new(&pinned.path)).unwrap();
         release_managed_context_path(Path::new(&updated.path)).unwrap();
         assert!(!Path::new(&updated.path).exists());
         assert!(release_managed_context_path(&repo).is_err());
@@ -460,8 +530,27 @@ mod tests {
             first.commit
         );
 
-        release_branch_context(reviewer.to_str().unwrap(), "origin/review").unwrap();
+        release_managed_context_path(Path::new(&first.path)).unwrap();
+        release_managed_context_path(Path::new(&checked.path)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mirrors_local_uncommitted_changes_into_the_review_worktree() {
+        let repo = test_repo();
+        std::fs::write(repo.join("file.txt"), "updated\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "untracked\n").unwrap();
+        std::fs::write(repo.join("removed.txt"), "gone\n").unwrap();
+        git(&repo, &["add", "removed.txt"]);
+        git(&repo, &["commit", "-m", "add removed target"]);
+        std::fs::remove_file(repo.join("removed.txt")).unwrap();
+
+        let context = prepare_branch_context(repo.to_str().unwrap(), "main", None, false).unwrap();
+        assert_eq!(std::fs::read_to_string(Path::new(&context.path).join("file.txt")).unwrap(), "updated\n");
+        assert_eq!(std::fs::read_to_string(Path::new(&context.path).join("new.txt")).unwrap(), "untracked\n");
+        assert!(!Path::new(&context.path).join("removed.txt").exists());
+        release_managed_context_path(Path::new(&context.path)).unwrap();
+        std::fs::remove_dir_all(repo).unwrap();
     }
 }
 

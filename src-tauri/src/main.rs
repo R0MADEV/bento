@@ -355,6 +355,7 @@ fn main() {
             git::git_ref_diff,
             git::git_rev_parse,
             git::gh_pr_view_branch,
+            git::gh_pr_diff_number,
             git::gh_pr_comment,
             git::gh_pr_inline_comment,
             git::gh_pr_list_open,

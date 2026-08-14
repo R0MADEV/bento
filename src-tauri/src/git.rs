@@ -303,6 +303,42 @@ fn current_branch(path: &str) -> Result<String, String> {
     Ok(branch)
 }
 
+fn resolve_commit_reference(repo: &str, reference: &str) -> Result<String, String> {
+    if !is_safe_branch(reference) {
+        return Err(format!("unsafe reference: {reference}"));
+    }
+    let resolve = |repo: &str, reference: &str| {
+        let candidates = [
+            format!("refs/heads/{reference}"),
+            format!("refs/remotes/{reference}"),
+            reference.to_string(),
+        ];
+        for candidate in candidates {
+            if let Ok(value) = git_output(repo, &["rev-parse", "--verify", &format!("{candidate}^{{commit}}")]) {
+                return Ok(value.trim().to_string());
+            }
+        }
+        Err(format!("unknown reference: {reference}"))
+    };
+
+    if let Ok(commit) = resolve(repo, reference) {
+        return Ok(commit);
+    }
+
+    let _ = git_output(repo, &["fetch", "--all", "--prune"]);
+    if let Ok(commit) = resolve(repo, reference) {
+        return Ok(commit);
+    }
+
+    Err(format!("unknown reference: {reference}"))
+}
+
+fn diff_between_refs(repo: &str, base: &str, target: &str) -> Result<String, String> {
+    let base_commit = resolve_commit_reference(repo, base)?;
+    let target_commit = resolve_commit_reference(repo, target)?;
+    git_output(repo, &["diff", &format!("{base_commit}...{target_commit}")])
+}
+
 #[tauri::command]
 pub async fn git_current_branch(path: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || current_branch(&path))
@@ -1079,13 +1115,13 @@ pub async fn git_ref_diff(path: String, base: String, target: String) -> Result<
         if !is_git_repo(&path) {
             return Err("not a git repository".into());
         }
-        git_output(&path, &["diff", &format!("{base}...{target}")])
+        diff_between_refs(&path, &base, &target)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-// Returns basic PR info (number, title, url) for any branch via gh CLI.
+// Returns PR info for any branch via gh CLI.
 #[tauri::command]
 pub async fn gh_pr_view_branch(
     path: String,
@@ -1102,7 +1138,7 @@ pub async fn gh_pr_view_branch(
                 "view",
                 &branch,
                 "--json",
-                "number,title,url,body,statusCheckRollup,reviewDecision",
+                "number,title,url,body,state,mergedAt,statusCheckRollup,reviewDecision",
             ])
             .output();
         let Ok(out) = out else {
@@ -1114,6 +1150,28 @@ pub async fn gh_pr_view_branch(
         serde_json::from_slice::<serde_json::Value>(&out.stdout)
             .map(Some)
             .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn gh_pr_diff_number(
+    path: String,
+    pr_number: i64,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = Command::new("gh")
+            .current_dir(&path)
+            .args(["pr", "diff", &pr_number.to_string(), "--color=never"])
+            .output();
+        let Ok(out) = out else {
+            return Ok(String::new());
+        };
+        if !out.status.success() {
+            return Ok(String::new());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2475,6 +2533,19 @@ mod tests {
         assert!(diff.contains("+working"), "{diff}");
         assert!(diff.contains("diff --git a/new.txt b/new.txt"), "{diff}");
         assert!(diff.contains("+untracked"), "{diff}");
+    }
+
+    #[test]
+    fn diff_between_refs_resolves_commit_ids_before_diffing() {
+        let repo = repo("ref-diff");
+        commit_file(&repo.0, "base\n", "base");
+        run(&repo.0, &["branch", "origin/base"]);
+        run(&repo.0, &["checkout", "-qb", "origin/feature"]);
+        commit_file(&repo.0, "feature\n", "feature");
+
+        let diff = diff_between_refs(repo.0.to_str().unwrap(), "origin/base", "origin/feature").unwrap();
+        assert!(diff.contains("diff --git a/file.txt b/file.txt"), "{diff}");
+        assert!(diff.contains("+feature"), "{diff}");
     }
 
     #[test]
