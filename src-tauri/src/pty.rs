@@ -262,9 +262,10 @@ pub struct RemoteStatus {
 #[tauri::command]
 pub async fn remote_start(
     port: Option<u16>,
+    token: Option<String>,
     state: tauri::State<'_, Arc<PtyManager>>,
 ) -> Result<RemoteStatus, String> {
-    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879) })).await?;
+    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879), "token": token })).await?;
     Ok(RemoteStatus {
         running: data.get("running").and_then(Value::as_bool).unwrap_or(true),
         url:   data.get("url").and_then(Value::as_str).map(String::from),
