@@ -130,31 +130,22 @@ export function createPhonePanel(): { element: HTMLElement } {
     await render({ running: false })
   }
 
-  toggleInput.onchange = async () => {
-    clearError()
-    toggleInput.disabled = true
-    try {
-      if (toggleInput.checked) {
-        await startServer()
-      } else {
-        await stopServer()
-      }
-    } catch (e) {
-      showError(`Error: ${String(e)}`)
-      toggleInput.checked = !toggleInput.checked
-    } finally {
-      toggleInput.disabled = false
-    }
-  }
-
   // ── Mount: sync state with daemon, retry until connected ──────────────────
   const RETRY_DELAYS = [300, 600, 1200, 2000, 3000]
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let userInteracted = false
+
+  const cancelRetries = (): void => {
+    if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null }
+  }
 
   const init = async (attempt = 0): Promise<void> => {
+    if (userInteracted) return
     toggleText.textContent = 'Comprobando…'
     toggleInput.disabled = true
     try {
       const s = await invoke<RemoteStatus>('remote_status')
+      if (userInteracted) return
       toggleInput.disabled = false
       if (s.running) {
         await render(s)
@@ -164,12 +155,34 @@ export function createPhonePanel(): { element: HTMLElement } {
         toggleText.textContent = 'Activar servidor WiFi'
       }
     } catch {
+      if (userInteracted) return
       if (attempt < RETRY_DELAYS.length) {
-        setTimeout(() => void init(attempt + 1), RETRY_DELAYS[attempt])
+        retryTimer = setTimeout(() => void init(attempt + 1), RETRY_DELAYS[attempt])
       } else {
         toggleInput.disabled = false
         toggleText.textContent = 'Activar servidor WiFi'
       }
+    }
+  }
+
+  toggleInput.onchange = async () => {
+    userInteracted = true
+    cancelRetries()
+    clearError()
+    toggleInput.disabled = true
+    toggleText.textContent = toggleInput.checked ? 'Activando…' : 'Desactivando…'
+    try {
+      if (toggleInput.checked) {
+        await startServer()
+      } else {
+        await stopServer()
+      }
+    } catch (e) {
+      showError(`Error: ${String(e)}`)
+      toggleInput.checked = !toggleInput.checked
+      toggleText.textContent = toggleInput.checked ? 'Servidor activo' : 'Activar servidor WiFi'
+    } finally {
+      toggleInput.disabled = false
     }
   }
 
