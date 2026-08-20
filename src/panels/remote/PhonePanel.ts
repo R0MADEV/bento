@@ -18,7 +18,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   // ── Header ────────────────────────────────────────────────────────────────
   const header = document.createElement('div')
   header.className = 'phone-header'
-  header.innerHTML = icon('wifi') + '<span>Control desde el móvil</span>'
+  header.innerHTML = icon('phone') + '<span>Control desde el móvil</span>'
   root.append(header)
 
   // ── Body ──────────────────────────────────────────────────────────────────
@@ -78,16 +78,28 @@ export function createPhonePanel(): { element: HTMLElement } {
   activeSection.append(urlRow, qrImg, warn)
   body.append(activeSection)
 
+  // ── Error message ─────────────────────────────────────────────────────────
+  const errorEl = document.createElement('p')
+  errorEl.className = 'phone-error hidden'
+  body.append(errorEl)
+
   // ── Desc (always visible) ─────────────────────────────────────────────────
   const desc = document.createElement('p')
   desc.className = 'phone-desc'
   desc.textContent = 'Tu Mac actúa como servidor. El móvil se conecta directamente por WiFi sin instalar ninguna app.'
   body.append(desc)
 
+  const showError = (msg: string): void => {
+    errorEl.textContent = msg
+    errorEl.classList.remove('hidden')
+  }
+  const clearError = (): void => errorEl.classList.add('hidden')
+
   // ── Render ────────────────────────────────────────────────────────────────
   const render = async (s: RemoteStatus): Promise<void> => {
     toggleInput.checked = s.running
     portInput.disabled = s.running
+    toggleText.textContent = s.running ? 'Servidor activo' : 'Activar servidor WiFi'
     if (s.running && s.url) {
       urlCode.textContent = s.url
       try {
@@ -100,14 +112,24 @@ export function createPhonePanel(): { element: HTMLElement } {
   }
 
   toggleInput.onchange = async () => {
+    clearError()
     const port = parseInt(portInput.value) || 7879
     localStorage.setItem(PORT_KEY, String(port))
-    if (toggleInput.checked) {
-      const s = await invoke<RemoteStatus>('remote_start', { port })
-      await render(s)
-    } else {
-      await invoke('remote_stop')
-      await render({ running: false })
+    toggleInput.disabled = true
+    try {
+      if (toggleInput.checked) {
+        const s = await invoke<RemoteStatus>('remote_start', { port })
+        await render(s)
+      } else {
+        await invoke('remote_stop')
+        await render({ running: false })
+      }
+    } catch (e) {
+      showError(`Error: ${String(e)}`)
+      // Revert checkbox to reflect actual state
+      toggleInput.checked = !toggleInput.checked
+    } finally {
+      toggleInput.disabled = false
     }
   }
 

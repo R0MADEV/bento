@@ -4760,3 +4760,4 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .phone-qr { width: 220px; height: 220px; border-radius: 8px; border: 1px solid var(--border); align-self: center; }
 .phone-warn { font-size: 11px; color: var(--gold); }
 .phone-desc { font-size: 11px; color: var(--fg-dim); line-height: 1.5; }
+.phone-error { font-size: 11px; color: #f7768e; padding: 6px 10px; background: color-mix(in srgb, #f7768e 10%, transparent); border-radius: 6px; border: 1px solid color-mix(in srgb, #f7768e 30%, transparent); }
