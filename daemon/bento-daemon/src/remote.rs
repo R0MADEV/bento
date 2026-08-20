@@ -17,7 +17,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -33,7 +33,12 @@ pub struct RemoteInfo {
 struct ActiveRemote {
     info: RemoteInfo,
     handle: JoinHandle<()>,
-    shutdown: oneshot::Sender<()>,
+}
+
+impl Drop for ActiveRemote {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
 }
 
 /// Shared handle to the optional phone HTTP server. Clone-cheap (Arc inside).
@@ -73,26 +78,19 @@ impl RemoteControl {
             .route("/ws/:id", get(ws_handler))
             .with_state(state);
 
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let log_addr = bind_addr.clone();
         let handle = tokio::spawn(async move {
             eprintln!("bento-daemon phone server on http://{log_addr}");
-            let _ = axum::serve(listener, app)
-                .with_graceful_shutdown(async { shutdown_rx.await.ok(); })
-                .await;
-            eprintln!("bento-daemon phone server stopped");
+            let _ = axum::serve(listener, app).await;
         });
 
-        *self.0.lock().unwrap() = Some(ActiveRemote { info: info.clone(), handle, shutdown: shutdown_tx });
+        *self.0.lock().unwrap() = Some(ActiveRemote { info: info.clone(), handle });
         Ok(info)
     }
 
     pub fn stop(&self) {
-        if let Some(active) = self.0.lock().unwrap().take() {
-            // Graceful shutdown: closes existing WebSocket connections too.
-            let _ = active.shutdown.send(());
-            active.handle.abort();
-        }
+        // Drop aborts the handle immediately, freeing the port.
+        *self.0.lock().unwrap() = None;
     }
 
     pub fn status(&self) -> RemoteInfo {
