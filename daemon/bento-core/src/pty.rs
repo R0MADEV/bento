@@ -42,6 +42,8 @@ struct Instance {
     master: Box<dyn portable_pty::MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     tx: broadcast::Sender<PtyEvent>,
+    // Recent output, replayed to a client that (re)attaches so it isn't blank.
+    scrollback: Arc<Mutex<Vec<u8>>>,
     title: String,
     cwd: String,
 }
@@ -56,6 +58,8 @@ pub struct PtyManager {
 // Bounded so a slow subscriber can't grow memory without limit; a lagging
 // subscriber loses the oldest output (RecvError::Lagged) rather than blocking.
 const OUTPUT_BUFFER: usize = 2048;
+// Recent output kept per terminal so a reattaching client sees context.
+const SCROLLBACK_CAP: usize = 256 * 1024;
 
 impl PtyManager {
     pub fn new() -> Self {
@@ -63,8 +67,14 @@ impl PtyManager {
     }
 
     /// Open a PTY, spawn its process, and start streaming its output to
-    /// subscribers. Returns the new terminal id.
+    /// subscribers. Returns the terminal id. If `opts.id` names a terminal that
+    /// is already open, it is returned as-is (reattach) without spawning again.
     pub fn open(&self, opts: OpenOptions) -> Result<String, String> {
+        if let Some(id) = opts.id.as_deref().filter(|id| !id.is_empty()) {
+            if self.instances.lock().unwrap().contains_key(id) {
+                return Ok(id.to_string());
+            }
+        }
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
         let pair = native_pty_system()
@@ -118,30 +128,38 @@ impl PtyManager {
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
-        let id = match opts.id {
-            Some(id) if !id.is_empty() => {
-                if self.instances.lock().unwrap().contains_key(&id) {
-                    return Err(format!("terminal id already in use: {id}"));
-                }
-                id
-            }
-            _ => format!("pty-{}", self.counter.fetch_add(1, Ordering::SeqCst) + 1),
-        };
+        let id = opts
+            .id
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| format!("pty-{}", self.counter.fetch_add(1, Ordering::SeqCst) + 1));
         let (tx, _rx) = broadcast::channel(OUTPUT_BUFFER);
+        let scrollback = Arc::new(Mutex::new(Vec::<u8>::new()));
         let cwd = start_dir.unwrap_or_default();
         let title = opts.title.unwrap_or_else(|| id.clone());
 
-        self.instances.lock().unwrap().insert(
-            id.clone(),
-            Instance {
-                writer,
-                master: pair.master,
-                child,
-                tx: tx.clone(),
-                title,
-                cwd,
-            },
-        );
+        {
+            let mut guard = self.instances.lock().unwrap();
+            if guard.contains_key(&id) {
+                // Lost a race with a concurrent open of the same id: keep the first.
+                drop(guard);
+                let mut child = child;
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(id);
+            }
+            guard.insert(
+                id.clone(),
+                Instance {
+                    writer,
+                    master: pair.master,
+                    child,
+                    tx: tx.clone(),
+                    scrollback: scrollback.clone(),
+                    title,
+                    cwd,
+                },
+            );
+        }
 
         // Blocking read loop on its own thread; forwards output to subscribers.
         let manager = self.clone();
@@ -156,6 +174,7 @@ impl PtyManager {
                         pending.extend_from_slice(&buf[..n]);
                         let text = drain_utf8(&mut pending);
                         if !text.is_empty() {
+                            push_scrollback(&scrollback, text.as_bytes());
                             let _ = tx.send(PtyEvent::Output(text));
                         }
                     }
@@ -166,6 +185,15 @@ impl PtyManager {
         });
 
         Ok(id)
+    }
+
+    /// Recent output for a terminal, so a (re)attaching client can be primed.
+    pub fn scrollback(&self, id: &str) -> Option<String> {
+        self.instances
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|instance| String::from_utf8_lossy(&instance.scrollback.lock().unwrap()).into_owned())
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
@@ -334,6 +362,15 @@ fn terminate_process_tree(root: u32) {
     }
 }
 
+fn push_scrollback(buffer: &Arc<Mutex<Vec<u8>>>, data: &[u8]) {
+    let mut guard = buffer.lock().unwrap();
+    guard.extend_from_slice(data);
+    let overflow = guard.len().saturating_sub(SCROLLBACK_CAP);
+    if overflow > 0 {
+        guard.drain(0..overflow);
+    }
+}
+
 /// Drains as much valid UTF-8 as possible from `pending`, keeping any incomplete
 /// trailing multi-byte sequence for the next read (PTY reads can split a glyph
 /// across the buffer boundary).
@@ -390,6 +427,40 @@ mod tests {
             }
         }
         assert!(got.contains("hello"), "unexpected output: {got:?}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reopening_an_id_reattaches_and_keeps_scrollback() {
+        let manager = PtyManager::new();
+        let id = manager
+            .open(OpenOptions {
+                id: Some("term-1".into()),
+                command: Some(vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "printf marker; sleep 5".into(),
+                ]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(id, "term-1");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        // Reopening the same id returns the SAME terminal (no second process).
+        let again = manager
+            .open(OpenOptions {
+                id: Some("term-1".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(again, "term-1");
+        assert_eq!(manager.list().len(), 1);
+
+        // Scrollback carries the earlier output so a reattaching client isn't blank.
+        let scrollback = manager.scrollback("term-1").unwrap();
+        assert!(scrollback.contains("marker"), "scrollback: {scrollback:?}");
+        manager.close("term-1").unwrap();
     }
 
     #[cfg(unix)]

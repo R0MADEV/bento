@@ -139,6 +139,12 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
         "terminal.subscribe" => match &req.pty_id {
             Some(id) => match manager.subscribe(id) {
                 Some(mut rx) => {
+                    // Prime the client with recent output so a reattach isn't blank.
+                    if let Some(scrollback) = manager.scrollback(id) {
+                        if !scrollback.is_empty() {
+                            send(json!({ "event": "terminal.output", "pty_id": id, "data": scrollback }).to_string());
+                        }
+                    }
                     send(ok(&req.id, json!({ "subscribed": id })));
                     let out = out.clone();
                     let pty_id = id.clone();
