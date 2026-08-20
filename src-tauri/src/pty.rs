@@ -3,24 +3,34 @@
 //! client: it forwards the pty_* commands to the daemon over a single localhost
 //! connection and re-emits the daemon's output as the `pty-output-<id>` /
 //! `pty-exit-<id>` events the frontend already listens on.
+//!
+//! `terminal.open` is request/response so `pty_spawn` learns whether it reattached
+//! to an existing terminal — the caller must then not replay a launch command.
 
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 pub struct PtyManager {
     addr: String,
-    tx: Mutex<Option<mpsc::UnboundedSender<String>>>,
+    tx: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    counter: AtomicU64,
 }
 
 impl Default for PtyManager {
     fn default() -> Self {
         Self {
             addr: std::env::var("BENTO_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:7877".into()),
-            tx: Mutex::new(None),
+            tx: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            counter: AtomicU64::new(0),
         }
     }
 }
@@ -32,7 +42,7 @@ impl PtyManager {
         if TcpStream::connect(&self.addr).await.is_err() {
             spawn_daemon();
             for _ in 0..40 {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 if TcpStream::connect(&self.addr).await.is_ok() {
                     break;
                 }
@@ -56,34 +66,42 @@ impl PtyManager {
             }
         });
 
-        // Reader task: turn daemon events into the Tauri events the UI expects.
+        // Reader task: events become Tauri events; responses resolve pending requests.
+        let pending = self.pending.clone();
         tauri::async_runtime::spawn(async move {
             let mut lines = BufReader::new(read_half).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 let Ok(value) = serde_json::from_str::<Value>(&line) else {
                     continue;
                 };
-                match value.get("event").and_then(Value::as_str) {
-                    Some("terminal.output") => {
-                        if let (Some(id), Some(data)) = (
-                            value.get("pty_id").and_then(Value::as_str),
-                            value.get("data").and_then(Value::as_str),
-                        ) {
-                            let _ = app.emit(&format!("pty-output-{id}"), data.to_string());
+                if let Some(event) = value.get("event").and_then(Value::as_str) {
+                    match event {
+                        "terminal.output" => {
+                            if let (Some(id), Some(data)) = (
+                                value.get("pty_id").and_then(Value::as_str),
+                                value.get("data").and_then(Value::as_str),
+                            ) {
+                                let _ = app.emit(&format!("pty-output-{id}"), data.to_string());
+                            }
                         }
-                    }
-                    Some("terminal.exit") => {
-                        if let Some(id) = value.get("pty_id").and_then(Value::as_str) {
-                            let _ = app.emit(&format!("pty-exit-{id}"), ());
+                        "terminal.exit" => {
+                            if let Some(id) = value.get("pty_id").and_then(Value::as_str) {
+                                let _ = app.emit(&format!("pty-exit-{id}"), ());
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
+                } else if let Some(id) = value.get("id").and_then(Value::as_str) {
+                    if let Some(sender) = pending.lock().unwrap().remove(id) {
+                        let _ = sender.send(value);
+                    }
                 }
             }
         });
         Ok(())
     }
 
+    /// Fire a command with no reply (write/resize/close/subscribe).
     fn send(&self, line: String) -> Result<(), String> {
         self.tx
             .lock()
@@ -92,6 +110,32 @@ impl PtyManager {
             .ok_or("bento-daemon not connected (is it running?)")?
             .send(line)
             .map_err(|_| "bento-daemon disconnected".to_string())
+    }
+
+    /// Send a command and await its `data` reply (used by terminal.open).
+    async fn request(&self, mut command: Value) -> Result<Value, String> {
+        let id = format!("r{}", self.counter.fetch_add(1, Ordering::SeqCst));
+        command["id"] = json!(id);
+        let (send, recv) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id.clone(), send);
+        self.send(command.to_string())?;
+        match tokio::time::timeout(Duration::from_secs(5), recv).await {
+            Ok(Ok(value)) => {
+                if value.get("ok").and_then(Value::as_bool) == Some(true) {
+                    Ok(value.get("data").cloned().unwrap_or(Value::Null))
+                } else {
+                    Err(value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("daemon error")
+                        .to_string())
+                }
+            }
+            _ => {
+                self.pending.lock().unwrap().remove(&id);
+                Err("bento-daemon did not respond".into())
+            }
+        }
     }
 }
 
@@ -141,8 +185,10 @@ fn daemon_binary() -> Option<std::path::PathBuf> {
     candidate.exists().then_some(candidate)
 }
 
+/// Open (or reattach to) a terminal. Returns `true` when it reattached to a
+/// still-running terminal — the frontend must then not replay its launch command.
 #[tauri::command]
-pub fn pty_spawn(
+pub async fn pty_spawn(
     id: String,
     // Kept for API compatibility; the daemon resolves $SHELL like the app did.
     #[allow(unused_variables)] shell: String,
@@ -150,12 +196,14 @@ pub fn pty_spawn(
     cols: u16,
     cwd: Option<String>,
     command: Option<Vec<String>>,
-    state: tauri::State<Arc<PtyManager>>,
-    agent_socket: tauri::State<Arc<crate::agent_socket::AgentSocket>>,
-) -> Result<(), String> {
+    state: tauri::State<'_, Arc<PtyManager>>,
+    agent_socket: tauri::State<'_, Arc<crate::agent_socket::AgentSocket>>,
+) -> Result<bool, String> {
+    let socket_path = agent_socket.socket_path.clone();
+    let manager = state.inner().clone();
     let env = json!({
         "HERDR_ENV": "1",
-        "HERDR_SOCKET_PATH": agent_socket.socket_path,
+        "HERDR_SOCKET_PATH": socket_path,
         "HERDR_PANE_ID": id,
     });
     let open = json!({
@@ -167,8 +215,10 @@ pub fn pty_spawn(
         "cols": cols,
         "env": env,
     });
-    state.send(open.to_string())?;
-    state.send(json!({ "cmd": "terminal.subscribe", "pty_id": id }).to_string())
+    let data = manager.request(open).await?;
+    let reattached = data.get("reattached").and_then(Value::as_bool).unwrap_or(false);
+    manager.send(json!({ "cmd": "terminal.subscribe", "pty_id": id }).to_string())?;
+    Ok(reattached)
 }
 
 #[tauri::command]
