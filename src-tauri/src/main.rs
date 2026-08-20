@@ -185,6 +185,16 @@ fn main() {
     builder
         .setup(|app| {
             app.manage(agent_socket::start(app.handle()));
+            // Terminals live in the bento-daemon; connect and forward its output.
+            {
+                let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = pty_manager.connect(handle).await {
+                        eprintln!("bento: bento-daemon not reachable ({error}); start it to use terminals");
+                    }
+                });
+            }
             #[cfg(target_os = "macos")]
             install_menu(app)?;
             if let Some(window) = app.get_webview_window("main") {

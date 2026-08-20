@@ -21,6 +21,8 @@ struct Request {
     #[serde(default)]
     command: Option<Vec<String>>,
     #[serde(default)]
+    env: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
     data: Option<String>,
     #[serde(default)]
     rows: Option<u16>,
@@ -98,9 +100,12 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
         }
         "terminal.open" => {
             let opts = OpenOptions {
+                // For open, pty_id (when present) is the desired id to assign.
+                id: req.pty_id.clone(),
                 shell: req.shell.clone(),
                 command: req.command.clone(),
                 cwd: req.cwd.clone(),
+                env: req.env.clone().map(|m| m.into_iter().collect()).unwrap_or_default(),
                 rows: req.rows.unwrap_or(0),
                 cols: req.cols.unwrap_or(0),
                 ..Default::default()

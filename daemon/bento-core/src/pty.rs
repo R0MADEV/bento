@@ -10,6 +10,9 @@ use tokio::sync::broadcast;
 /// the user's login shell (or `shell`) is started interactively.
 #[derive(Default, Clone)]
 pub struct OpenOptions {
+    /// Caller-provided id. When set it is used verbatim (so the Tauri app and the
+    /// CLI can address the same terminal by the same id); otherwise one is generated.
+    pub id: Option<String>,
     pub shell: Option<String>,
     pub command: Option<Vec<String>>,
     pub cwd: Option<String>,
@@ -101,6 +104,10 @@ impl PtyManager {
         let start_dir = opts
             .cwd
             .clone()
+            .map(|d| match d.strip_prefix("~/") {
+                Some(rest) => dirs_home().map(|home| format!("{home}/{rest}")).unwrap_or(d),
+                None => d,
+            })
             .filter(|d| !d.is_empty() && std::path::Path::new(d).is_dir())
             .or_else(dirs_home);
         if let Some(dir) = start_dir.as_ref() {
@@ -111,7 +118,15 @@ impl PtyManager {
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
 
-        let id = format!("pty-{}", self.counter.fetch_add(1, Ordering::SeqCst) + 1);
+        let id = match opts.id {
+            Some(id) if !id.is_empty() => {
+                if self.instances.lock().unwrap().contains_key(&id) {
+                    return Err(format!("terminal id already in use: {id}"));
+                }
+                id
+            }
+            _ => format!("pty-{}", self.counter.fetch_add(1, Ordering::SeqCst) + 1),
+        };
         let (tx, _rx) = broadcast::channel(OUTPUT_BUFFER);
         let cwd = start_dir.unwrap_or_default();
         let title = opts.title.unwrap_or_else(|| id.clone());
