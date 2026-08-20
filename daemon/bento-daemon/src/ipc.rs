@@ -111,7 +111,9 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
                 ..Default::default()
             };
             match manager.open(opts) {
-                Ok(id) => send(ok(&req.id, json!({ "pty_id": id }))),
+                Ok((id, reattached)) => {
+                    send(ok(&req.id, json!({ "pty_id": id, "reattached": reattached })))
+                }
                 Err(error) => send(fail(&req.id, error)),
             }
         }

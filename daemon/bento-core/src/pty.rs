@@ -67,12 +67,13 @@ impl PtyManager {
     }
 
     /// Open a PTY, spawn its process, and start streaming its output to
-    /// subscribers. Returns the terminal id. If `opts.id` names a terminal that
-    /// is already open, it is returned as-is (reattach) without spawning again.
-    pub fn open(&self, opts: OpenOptions) -> Result<String, String> {
+    /// subscribers. Returns `(id, reattached)`: if `opts.id` names a terminal that
+    /// is already open it is returned as-is (`reattached = true`) without spawning
+    /// again — the caller must then NOT replay a launch command onto it.
+    pub fn open(&self, opts: OpenOptions) -> Result<(String, bool), String> {
         if let Some(id) = opts.id.as_deref().filter(|id| !id.is_empty()) {
             if self.instances.lock().unwrap().contains_key(id) {
-                return Ok(id.to_string());
+                return Ok((id.to_string(), true));
             }
         }
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
@@ -145,7 +146,7 @@ impl PtyManager {
                 let mut child = child;
                 let _ = child.kill();
                 let _ = child.wait();
-                return Ok(id);
+                return Ok((id, true));
             }
             guard.insert(
                 id.clone(),
@@ -184,7 +185,7 @@ impl PtyManager {
             let _ = tx.send(PtyEvent::Exit(code));
         });
 
-        Ok(id)
+        Ok((id, false))
     }
 
     /// Recent output for a terminal, so a (re)attaching client can be primed.
@@ -405,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn open_streams_output_then_exits() {
         let manager = PtyManager::new();
-        let id = manager
+        let (id, _) = manager
             .open(OpenOptions {
                 // Sleep first so subscribe() runs before any output is produced.
                 command: Some(vec![
@@ -433,7 +434,7 @@ mod tests {
     #[tokio::test]
     async fn reopening_an_id_reattaches_and_keeps_scrollback() {
         let manager = PtyManager::new();
-        let id = manager
+        let (id, reattached) = manager
             .open(OpenOptions {
                 id: Some("term-1".into()),
                 command: Some(vec![
@@ -445,16 +446,18 @@ mod tests {
             })
             .unwrap();
         assert_eq!(id, "term-1");
+        assert!(!reattached, "first open is a fresh terminal");
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
         // Reopening the same id returns the SAME terminal (no second process).
-        let again = manager
+        let (again, reattached) = manager
             .open(OpenOptions {
                 id: Some("term-1".into()),
                 ..Default::default()
             })
             .unwrap();
         assert_eq!(again, "term-1");
+        assert!(reattached, "second open reattaches");
         assert_eq!(manager.list().len(), 1);
 
         // Scrollback carries the earlier output so a reattaching client isn't blank.
@@ -467,7 +470,7 @@ mod tests {
     #[tokio::test]
     async fn lists_and_closes_terminals() {
         let manager = PtyManager::new();
-        let id = manager
+        let (id, _) = manager
             .open(OpenOptions {
                 command: Some(vec!["/bin/sh".into(), "-c".into(), "sleep 5".into()]),
                 ..Default::default()
