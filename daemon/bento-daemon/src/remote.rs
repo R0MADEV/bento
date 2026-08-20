@@ -302,7 +302,7 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q='?token='+encodeURIComponent(token);
-let ws,term,fit,ro;
+let ws,term,fit,ro,reconnTimer,reconnDelay,activeId,activeTitle,leaving=false;
 
 function s(d){if(ws&&ws.readyState===1)ws.send(d)}
 
@@ -340,12 +340,29 @@ function sendResize(){
     ws.send(JSON.stringify({type:'resize',rows:term.rows,cols:term.cols}));
 }
 
+function connect(id){
+  if(leaving)return;
+  const dot=document.getElementById('dot');
+  ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws/'+id+q);
+  ws.onopen=()=>{dot.className='';reconnDelay=1000;sendResize()};
+  ws.onmessage=e=>term&&term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
+  ws.onclose=()=>{
+    if(leaving)return;
+    dot.className='off';
+    term&&term.write('\r\n\x1b[33m[reconectando en '+(reconnDelay/1000)+'s…]\x1b[0m\r\n');
+    reconnTimer=setTimeout(()=>connect(id),reconnDelay);
+    reconnDelay=Math.min(reconnDelay*2,16000);
+  };
+}
+
 function attach(id,title){
+  leaving=false;
+  activeId=id;activeTitle=title;
+  reconnDelay=1000;
   document.getElementById('list').style.display='none';
   document.getElementById('view').classList.add('on');
   document.getElementById('ttitle').textContent=title;
-  const dot=document.getElementById('dot');
-  dot.className='off';
+  document.getElementById('dot').className='off';
 
   const con=document.getElementById('tcon');
   con.innerHTML='';
@@ -354,18 +371,16 @@ function attach(id,title){
   term.loadAddon(fit);
   term.open(con);
   fit.fit();
-
-  ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws/'+id+q);
-  ws.onopen=()=>{dot.className='';sendResize()};
-  ws.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
-  ws.onclose=()=>{dot.className='off';term.write('\r\n\x1b[31m[desconectado — recarga para reconectar]\x1b[0m\r\n')};
   term.onData(d=>s(d));
 
   ro=new ResizeObserver(()=>{if(fit){fit.fit();sendResize()}});
   ro.observe(con);
+  connect(id);
 }
 
 function goBack(){
+  leaving=true;
+  clearTimeout(reconnTimer);
   if(ro){ro.disconnect();ro=null}
   if(ws){ws.close();ws=null}
   if(term){term.dispose();term=null}

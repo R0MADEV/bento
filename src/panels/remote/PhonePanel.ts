@@ -9,7 +9,8 @@ interface RemoteStatus {
   addr?: string
 }
 
-const PORT_KEY = 'bento.remote.port'
+const PORT_KEY   = 'bento.remote.port'
+const ACTIVE_KEY = 'bento.remote.active'
 
 export function createPhonePanel(): { element: HTMLElement } {
   const root = document.createElement('div')
@@ -50,7 +51,7 @@ export function createPhonePanel(): { element: HTMLElement } {
 
   body.append(toggleLabel, portRow)
 
-  // ── Active section (shown only when running) ───────────────────────────────
+  // ── Active section ────────────────────────────────────────────────────────
   const activeSection = document.createElement('div')
   activeSection.className = 'phone-active hidden'
 
@@ -78,12 +79,12 @@ export function createPhonePanel(): { element: HTMLElement } {
   activeSection.append(urlRow, qrImg, warn)
   body.append(activeSection)
 
-  // ── Error message ─────────────────────────────────────────────────────────
+  // ── Error ─────────────────────────────────────────────────────────────────
   const errorEl = document.createElement('p')
   errorEl.className = 'phone-error hidden'
   body.append(errorEl)
 
-  // ── Desc (always visible) ─────────────────────────────────────────────────
+  // ── Desc ──────────────────────────────────────────────────────────────────
   const desc = document.createElement('p')
   desc.className = 'phone-desc'
   desc.textContent = 'Tu Mac actúa como servidor. El móvil se conecta directamente por WiFi sin instalar ninguna app.'
@@ -111,30 +112,51 @@ export function createPhonePanel(): { element: HTMLElement } {
     }
   }
 
-  toggleInput.onchange = async () => {
-    clearError()
+  const startServer = async (): Promise<void> => {
     const port = parseInt(portInput.value) || 7879
     localStorage.setItem(PORT_KEY, String(port))
+    localStorage.setItem(ACTIVE_KEY, 'true')
+    const s = await invoke<RemoteStatus>('remote_start', { port })
+    await render(s)
+  }
+
+  const stopServer = async (): Promise<void> => {
+    localStorage.setItem(ACTIVE_KEY, 'false')
+    await invoke('remote_stop')
+    await render({ running: false })
+  }
+
+  toggleInput.onchange = async () => {
+    clearError()
     toggleInput.disabled = true
     try {
       if (toggleInput.checked) {
-        const s = await invoke<RemoteStatus>('remote_start', { port })
-        await render(s)
+        await startServer()
       } else {
-        await invoke('remote_stop')
-        await render({ running: false })
+        await stopServer()
       }
     } catch (e) {
       showError(`Error: ${String(e)}`)
-      // Revert checkbox to reflect actual state
       toggleInput.checked = !toggleInput.checked
     } finally {
       toggleInput.disabled = false
     }
   }
 
-  // Load current status on mount
-  invoke<RemoteStatus>('remote_status').then(render).catch(() => {})
+  // ── Mount: sync state, auto-restart if it was active before ───────────────
+  const init = async (): Promise<void> => {
+    try {
+      const s = await invoke<RemoteStatus>('remote_status')
+      if (s.running) {
+        await render(s)
+      } else if (localStorage.getItem(ACTIVE_KEY) === 'true') {
+        // Was active last session — restart automatically
+        await startServer()
+      }
+    } catch { /* daemon not ready yet, leave toggle off */ }
+  }
+
+  void init()
 
   return { element: root }
 }
