@@ -16,6 +16,7 @@ import { tasksPanelDefinition } from './panels/tasks/definition'
 import { memoryPanelDefinition } from './panels/memory/definition'
 import { diffPanelDefinition } from './panels/diff/definition'
 import { reviewPanelDefinition } from './panels/review/definition'
+import { remotePanelDefinition } from './panels/remote/definition'
 import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
@@ -87,6 +88,7 @@ panels.register(tasksPanelDefinition)
 panels.register(memoryPanelDefinition(memoryRepo))
 panels.register(diffPanelDefinition)
 panels.register(reviewPanelDefinition)
+panels.register(remotePanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))

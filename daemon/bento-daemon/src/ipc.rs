@@ -1,3 +1,4 @@
+use crate::remote::RemoteControl;
 use bento_core::{OpenOptions, PtyEvent, PtyManager};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -5,8 +6,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
-/// A request line from a client. `cmd` selects the action; the rest are optional
-/// per-command fields (line-delimited JSON, one object per line).
 #[derive(Deserialize)]
 struct Request {
     #[serde(default)]
@@ -28,25 +27,28 @@ struct Request {
     rows: Option<u16>,
     #[serde(default)]
     cols: Option<u16>,
+    #[serde(default)]
+    port: Option<u16>,
+    #[serde(default)]
+    token: Option<String>,
 }
 
-pub async fn serve(addr: &str, manager: PtyManager) -> std::io::Result<()> {
+pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     eprintln!("bento-daemon listening on {addr}");
     loop {
         let (socket, _) = listener.accept().await?;
         let manager = manager.clone();
+        let remote = remote.clone();
         tokio::spawn(async move {
-            let _ = handle_conn(socket, manager).await;
+            let _ = handle_conn(socket, manager, remote).await;
         });
     }
 }
 
-async fn handle_conn(socket: TcpStream, manager: PtyManager) -> std::io::Result<()> {
+async fn handle_conn(socket: TcpStream, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
     let (read_half, mut write_half) = socket.into_split();
 
-    // Both request replies and subscription pushes funnel through this channel
-    // so a single task owns the socket writer (no interleaving/torn lines).
     let (out, mut out_rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
         while let Some(line) = out_rx.recv().await {
@@ -64,7 +66,7 @@ async fn handle_conn(socket: TcpStream, manager: PtyManager) -> std::io::Result<
             continue;
         }
         match serde_json::from_str::<Request>(&line) {
-            Ok(request) => dispatch(request, &manager, &out),
+            Ok(request) => dispatch(request, &manager, &remote, &out),
             Err(error) => {
                 let _ = out.send(json!({"ok": false, "error": format!("bad request: {error}")}).to_string());
             }
@@ -84,12 +86,11 @@ fn fail(id: &Option<String>, message: String) -> String {
     json!({ "id": id, "ok": false, "error": message }).to_string()
 }
 
-fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<String>) {
-    let send = |line: String| {
-        let _ = out.send(line);
-    };
+fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>) {
+    let send = |line: String| { let _ = out.send(line); };
     match req.cmd.as_str() {
         "daemon.status" => send(ok(&req.id, json!({ "terminals": manager.list().len() }))),
+
         "terminals.list" => {
             let list: Vec<Value> = manager
                 .list()
@@ -98,9 +99,9 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
                 .collect();
             send(ok(&req.id, json!(list)));
         }
+
         "terminal.open" => {
             let opts = OpenOptions {
-                // For open, pty_id (when present) is the desired id to assign.
                 id: req.pty_id.clone(),
                 shell: req.shell.clone(),
                 command: req.command.clone(),
@@ -111,12 +112,11 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
                 ..Default::default()
             };
             match manager.open(opts) {
-                Ok((id, reattached)) => {
-                    send(ok(&req.id, json!({ "pty_id": id, "reattached": reattached })))
-                }
+                Ok((id, reattached)) => send(ok(&req.id, json!({ "pty_id": id, "reattached": reattached }))),
                 Err(error) => send(fail(&req.id, error)),
             }
         }
+
         "terminal.write" => match (&req.pty_id, &req.data) {
             (Some(id), Some(data)) => match manager.write(id, data) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
@@ -124,6 +124,7 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
             },
             _ => send(fail(&req.id, "pty_id and data required".into())),
         },
+
         "terminal.resize" => match &req.pty_id {
             Some(id) => match manager.resize(id, req.rows.unwrap_or(24), req.cols.unwrap_or(80)) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
@@ -131,6 +132,7 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
             },
             None => send(fail(&req.id, "pty_id required".into())),
         },
+
         "terminal.close" => match &req.pty_id {
             Some(id) => match manager.close(id) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
@@ -138,10 +140,10 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
             },
             None => send(fail(&req.id, "pty_id required".into())),
         },
+
         "terminal.subscribe" => match &req.pty_id {
             Some(id) => match manager.subscribe(id) {
                 Some(mut rx) => {
-                    // Prime the client with recent output so a reattach isn't blank.
                     if let Some(scrollback) = manager.scrollback(id) {
                         if !scrollback.is_empty() {
                             send(json!({ "event": "terminal.output", "pty_id": id, "data": scrollback }).to_string());
@@ -155,18 +157,16 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
                             match rx.recv().await {
                                 Ok(PtyEvent::Output(text)) => {
                                     let _ = out.send(
-                                        json!({ "event": "terminal.output", "pty_id": pty_id, "data": text })
-                                            .to_string(),
+                                        json!({ "event": "terminal.output", "pty_id": pty_id, "data": text }).to_string(),
                                     );
                                 }
                                 Ok(PtyEvent::Exit(code)) => {
                                     let _ = out.send(
-                                        json!({ "event": "terminal.exit", "pty_id": pty_id, "code": code })
-                                            .to_string(),
+                                        json!({ "event": "terminal.exit", "pty_id": pty_id, "code": code }).to_string(),
                                     );
                                     break;
                                 }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => break,
                                 Err(_) => break,
                             }
                         }
@@ -176,6 +176,25 @@ fn dispatch(req: Request, manager: &PtyManager, out: &mpsc::UnboundedSender<Stri
             },
             None => send(fail(&req.id, "pty_id required".into())),
         },
+
+        "remote.start" => {
+            let port = req.port.unwrap_or(7879);
+            match remote.start(manager.clone(), port, req.token.clone()) {
+                Ok(info) => send(ok(&req.id, serde_json::to_value(&info).unwrap_or(Value::Null))),
+                Err(e) => send(fail(&req.id, e)),
+            }
+        }
+
+        "remote.stop" => {
+            remote.stop();
+            send(ok(&req.id, json!({ "running": false })));
+        }
+
+        "remote.status" => {
+            let info = remote.status();
+            send(ok(&req.id, serde_json::to_value(&info).unwrap_or(Value::Null)));
+        }
+
         other => send(fail(&req.id, format!("unknown command: {other}"))),
     }
 }

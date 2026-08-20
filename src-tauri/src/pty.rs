@@ -244,3 +244,41 @@ pub fn pty_resize(
 pub fn pty_kill(id: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
     state.send(json!({ "cmd": "terminal.close", "pty_id": id }).to_string())
 }
+
+#[derive(serde::Serialize)]
+pub struct RemoteStatus {
+    pub running: bool,
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub addr: Option<String>,
+}
+
+#[tauri::command]
+pub async fn remote_start(
+    port: Option<u16>,
+    state: tauri::State<'_, Arc<PtyManager>>,
+) -> Result<RemoteStatus, String> {
+    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879) })).await?;
+    Ok(RemoteStatus {
+        running: data.get("running").and_then(Value::as_bool).unwrap_or(true),
+        url:   data.get("url").and_then(Value::as_str).map(String::from),
+        token: data.get("token").and_then(Value::as_str).map(String::from),
+        addr:  data.get("addr").and_then(Value::as_str).map(String::from),
+    })
+}
+
+#[tauri::command]
+pub async fn remote_stop(state: tauri::State<'_, Arc<PtyManager>>) -> Result<(), String> {
+    state.request(json!({ "cmd": "remote.stop" })).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn remote_status(state: tauri::State<'_, Arc<PtyManager>>) -> Result<RemoteStatus, String> {
+    let data = state.request(json!({ "cmd": "remote.status" })).await?;
+    Ok(RemoteStatus {
+        running: data.get("running").and_then(Value::as_bool).unwrap_or(false),
+        url:   data.get("url").and_then(Value::as_str).map(String::from),
+        token: data.get("token").and_then(Value::as_str).map(String::from),
+        addr:  data.get("addr").and_then(Value::as_str).map(String::from),
+    })
+}

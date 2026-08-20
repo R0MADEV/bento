@@ -1,7 +1,6 @@
-//! Phone remote: an HTTP + WebSocket server that lets a browser (your phone)
-//! attach to the daemon's terminals over the LAN. Token-gated. Opt-in — only
-//! started when BENTO_REMOTE_ADDR is set. Because this exposes terminal control
-//! to the network, every route requires the exact token.
+//! Phone remote: token-gated HTTP + WebSocket server that lets a browser (your
+//! phone) attach to the daemon's terminals. Opt-in — only started when the
+//! caller explicitly calls `RemoteControl::start`.
 
 use axum::{
     extract::{
@@ -15,10 +14,109 @@ use axum::{
 };
 use bento_core::{PtyEvent, PtyManager};
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
+
+// ── Public types ─────────────────────────────────────────────────────────────
+
+#[derive(Clone, Serialize)]
+pub struct RemoteInfo {
+    pub running: bool,
+    pub addr: String,
+    pub token: String,
+    pub url: String,
+}
+
+struct ActiveRemote {
+    info: RemoteInfo,
+    handle: JoinHandle<()>,
+}
+
+impl Drop for ActiveRemote {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+/// Shared handle to the optional phone HTTP server. Clone-cheap (Arc inside).
+#[derive(Clone, Default)]
+pub struct RemoteControl(Arc<Mutex<Option<ActiveRemote>>>);
+
+impl RemoteControl {
+    /// Start the server on `0.0.0.0:<port>`. If already running, returns
+    /// the existing info without restarting.
+    pub fn start(&self, manager: PtyManager, port: u16, token: Option<String>) -> Result<RemoteInfo, String> {
+        let mut guard = self.0.lock().unwrap();
+        if let Some(active) = &*guard {
+            return Ok(active.info.clone());
+        }
+        let token = token.unwrap_or_else(generate_token);
+        let ip = local_ip();
+        let bind_addr = format!("0.0.0.0:{port}");
+        let url = format!("http://{}:{}/?token={}", ip, port, token);
+        let info = RemoteInfo {
+            running: true,
+            addr: format!("{}:{}", ip, port),
+            token: token.clone(),
+            url,
+        };
+
+        let std_listener = std::net::TcpListener::bind(&bind_addr).map_err(|e| e.to_string())?;
+        std_listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+        let listener = tokio::net::TcpListener::from_std(std_listener).map_err(|e| e.to_string())?;
+
+        let state = Arc::new(RemoteState { manager, token });
+        let app = Router::new()
+            .route("/", get(index))
+            .route("/api/terminals", get(terminals))
+            .route("/ws/:id", get(ws_handler))
+            .with_state(state);
+
+        let log_addr = bind_addr.clone();
+        let handle = tokio::spawn(async move {
+            eprintln!("bento-daemon phone server on http://{log_addr}");
+            let _ = axum::serve(listener, app).await;
+        });
+
+        *guard = Some(ActiveRemote { info: info.clone(), handle });
+        Ok(info)
+    }
+
+    pub fn stop(&self) {
+        *self.0.lock().unwrap() = None; // Drop aborts the JoinHandle
+    }
+
+    pub fn status(&self) -> RemoteInfo {
+        match &*self.0.lock().unwrap() {
+            Some(a) => a.info.clone(),
+            None => RemoteInfo { running: false, addr: String::new(), token: String::new(), url: String::new() },
+        }
+    }
+}
+
+// ── Token generation ─────────────────────────────────────────────────────────
+
+pub fn generate_token() -> String {
+    let mut bytes = [0u8; 16];
+    let _ = getrandom::getrandom(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ── LAN IP detection (no extra crates) ───────────────────────────────────────
+
+fn local_ip() -> String {
+    use std::net::UdpSocket;
+    // Connecting a UDP socket doesn't send packets; it just picks a route.
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| { s.connect("8.8.8.8:80")?; s.local_addr() })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+// ── Internal HTTP server ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct RemoteState {
@@ -33,25 +131,6 @@ struct Auth {
 
 fn authorized(state: &RemoteState, auth: &Auth) -> bool {
     !state.token.is_empty() && auth.token.as_deref() == Some(state.token.as_str())
-}
-
-/// 16 random bytes as hex — the token the phone must present.
-pub fn generate_token() -> String {
-    let mut bytes = [0u8; 16];
-    let _ = getrandom::getrandom(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-pub async fn serve(addr: &str, manager: PtyManager, token: String) -> std::io::Result<()> {
-    let state = Arc::new(RemoteState { manager, token });
-    let app = Router::new()
-        .route("/", get(index))
-        .route("/api/terminals", get(terminals))
-        .route("/ws/:id", get(ws_handler))
-        .with_state(state);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    eprintln!("bento-daemon phone server on http://{addr}");
-    axum::serve(listener, app).await
 }
 
 async fn index(State(state): State<Arc<RemoteState>>, Query(auth): Query<Auth>) -> impl IntoResponse {
@@ -90,14 +169,10 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| bridge(socket, manager, id))
 }
 
-/// Pump terminal output → WebSocket and WebSocket input → terminal.
 async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
-    let Some(mut rx) = manager.subscribe(&id) else {
-        return;
-    };
+    let Some(mut rx) = manager.subscribe(&id) else { return };
     let (mut sender, mut receiver) = socket.split();
 
-    // Prime with recent output so the phone isn't blank.
     if let Some(scrollback) = manager.scrollback(&id) {
         if !scrollback.is_empty() && sender.send(Message::Text(scrollback)).await.is_err() {
             return;
@@ -108,9 +183,7 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
         loop {
             match rx.recv().await {
                 Ok(PtyEvent::Output(text)) => {
-                    if sender.send(Message::Text(text)).await.is_err() {
-                        break;
-                    }
+                    if sender.send(Message::Text(text)).await.is_err() { break; }
                 }
                 Ok(PtyEvent::Exit(_)) => break,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -121,13 +194,9 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
 
     while let Some(Ok(message)) = receiver.next().await {
         match message {
-            Message::Text(text) => {
-                let _ = manager.write(&id, &text);
-            }
+            Message::Text(text) => { let _ = manager.write(&id, &text); }
             Message::Binary(bytes) => {
-                if let Ok(text) = std::str::from_utf8(&bytes) {
-                    let _ = manager.write(&id, text);
-                }
+                if let Ok(text) = std::str::from_utf8(&bytes) { let _ = manager.write(&id, text); }
             }
             Message::Close(_) => break,
             _ => {}
@@ -153,7 +222,7 @@ button{display:block;width:100%;text-align:left;margin:6px 0;padding:14px;backgr
 </style></head><body>
 <div id="list"></div>
 <div id="view"><div id="term"></div>
-<div id="bar"><button onclick="location.reload()">↩</button><input id="in" placeholder="escribe y Enter" autocapitalize="off" autocorrect="off"><button onclick="send('')">^C</button></div></div>
+<div id="bar"><button onclick="location.reload()">↩</button><input id="in" placeholder="escribe y Enter" autocapitalize="off" autocorrect="off"><button onclick="send('')">^C</button></div></div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q='?token='+encodeURIComponent(token);

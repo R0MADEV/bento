@@ -54,6 +54,8 @@ const ICONS: Record<string, string> = {
   kanban: '<path d="M6 3v12"/><path d="M18 9v12"/><rect width="4" height="6" x="4" y="7" rx="1"/><rect width="4" height="6" x="16" y="3" rx="1"/>',
   review: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m8 15 2 2 5-5"/>',
   diff: '<path d="M5 3v18"/><path d="M19 3v18"/><path d="M9 8h6"/><path d="M12 5v6"/><path d="M9 16h6"/>',
+  wifi: '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/>',
+  phone: '<rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/>',
 }
 
 export function icon(name: string): string {
