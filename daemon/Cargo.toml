@@ -1,0 +1,6 @@
+# Isolated workspace for the Bento daemon system (bento-core / bento-daemon /
+# bento-cli). Kept separate from src-tauri so the existing Tauri build is
+# untouched during Phase 1. Phase 2 wires the Tauri app to bento-core.
+[workspace]
+resolver = "2"
+members = ["bento-core", "bento-daemon", "bento-cli"]
