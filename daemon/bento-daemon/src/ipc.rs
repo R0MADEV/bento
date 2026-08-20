@@ -179,10 +179,17 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
 
         "remote.start" => {
             let port = req.port.unwrap_or(7879);
-            match remote.start(manager.clone(), port, req.token.clone()) {
-                Ok(info) => send(ok(&req.id, serde_json::to_value(&info).unwrap_or(Value::Null))),
-                Err(e) => send(fail(&req.id, e)),
-            }
+            let remote = remote.clone();
+            let manager = manager.clone();
+            let token = req.token.clone();
+            let out = out.clone();
+            let id = req.id.clone();
+            tokio::spawn(async move {
+                match remote.start(manager, port, token).await {
+                    Ok(info) => { let _ = out.send(ok(&id, serde_json::to_value(&info).unwrap_or(Value::Null))); }
+                    Err(e) => { let _ = out.send(fail(&id, e)); }
+                }
+            });
         }
 
         "remote.stop" => {

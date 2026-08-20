@@ -48,10 +48,12 @@ pub struct RemoteControl(Arc<Mutex<Option<ActiveRemote>>>);
 impl RemoteControl {
     /// Start the server on `0.0.0.0:<port>`. If already running, returns
     /// the existing info without restarting.
-    pub fn start(&self, manager: PtyManager, port: u16, token: Option<String>) -> Result<RemoteInfo, String> {
-        let mut guard = self.0.lock().unwrap();
-        if let Some(active) = &*guard {
-            return Ok(active.info.clone());
+    pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>) -> Result<RemoteInfo, String> {
+        {
+            let guard = self.0.lock().unwrap();
+            if let Some(active) = &*guard {
+                return Ok(active.info.clone());
+            }
         }
         let token = token.unwrap_or_else(generate_token);
         let ip = local_ip();
@@ -64,9 +66,10 @@ impl RemoteControl {
             url,
         };
 
-        let std_listener = std::net::TcpListener::bind(&bind_addr).map_err(|e| e.to_string())?;
-        std_listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-        let listener = tokio::net::TcpListener::from_std(std_listener).map_err(|e| e.to_string())?;
+        // Use async bind so tokio registers the socket correctly.
+        let listener = tokio::net::TcpListener::bind(&bind_addr)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let state = Arc::new(RemoteState { manager, token });
         let app = Router::new()
@@ -81,7 +84,7 @@ impl RemoteControl {
             let _ = axum::serve(listener, app).await;
         });
 
-        *guard = Some(ActiveRemote { info: info.clone(), handle });
+        *self.0.lock().unwrap() = Some(ActiveRemote { info: info.clone(), handle });
         Ok(info)
     }
 

@@ -11,6 +11,7 @@ interface RemoteStatus {
 
 const PORT_KEY   = 'bento.remote.port'
 const ACTIVE_KEY = 'bento.remote.active'
+const TOKEN_KEY  = 'bento.remote.token'
 
 export function createPhonePanel(): { element: HTMLElement } {
   const root = document.createElement('div')
@@ -116,7 +117,10 @@ export function createPhonePanel(): { element: HTMLElement } {
     const port = parseInt(portInput.value) || 7879
     localStorage.setItem(PORT_KEY, String(port))
     localStorage.setItem(ACTIVE_KEY, 'true')
-    const s = await invoke<RemoteStatus>('remote_start', { port })
+    // Reuse the saved token so the QR never changes between sessions
+    const savedToken = localStorage.getItem(TOKEN_KEY) ?? undefined
+    const s = await invoke<RemoteStatus>('remote_start', { port, token: savedToken })
+    if (s.token) localStorage.setItem(TOKEN_KEY, s.token)
     await render(s)
   }
 
