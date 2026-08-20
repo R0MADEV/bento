@@ -147,17 +147,30 @@ export function createPhonePanel(): { element: HTMLElement } {
     }
   }
 
-  // ── Mount: sync state, auto-restart if it was active before ───────────────
-  const init = async (): Promise<void> => {
+  // ── Mount: sync state with daemon, retry until connected ──────────────────
+  const RETRY_DELAYS = [300, 600, 1200, 2000, 3000]
+
+  const init = async (attempt = 0): Promise<void> => {
+    toggleText.textContent = 'Comprobando…'
+    toggleInput.disabled = true
     try {
       const s = await invoke<RemoteStatus>('remote_status')
+      toggleInput.disabled = false
       if (s.running) {
         await render(s)
       } else if (localStorage.getItem(ACTIVE_KEY) === 'true') {
-        // Was active last session — restart automatically
         await startServer()
+      } else {
+        toggleText.textContent = 'Activar servidor WiFi'
       }
-    } catch { /* daemon not ready yet, leave toggle off */ }
+    } catch {
+      if (attempt < RETRY_DELAYS.length) {
+        setTimeout(() => void init(attempt + 1), RETRY_DELAYS[attempt])
+      } else {
+        toggleInput.disabled = false
+        toggleText.textContent = 'Activar servidor WiFi'
+      }
+    }
   }
 
   void init()
