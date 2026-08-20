@@ -194,7 +194,20 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
 
     while let Some(Ok(message)) = receiver.next().await {
         match message {
-            Message::Text(text) => { let _ = manager.write(&id, &text); }
+            Message::Text(text) => {
+                // Control message: {"type":"resize","rows":N,"cols":N}
+                if let Ok(ctrl) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if ctrl.get("type").and_then(serde_json::Value::as_str) == Some("resize") {
+                        let rows = ctrl.get("rows").and_then(serde_json::Value::as_u64).unwrap_or(24) as u16;
+                        let cols = ctrl.get("cols").and_then(serde_json::Value::as_u64).unwrap_or(80) as u16;
+                        let _ = manager.resize(&id, rows, cols);
+                    } else {
+                        let _ = manager.write(&id, &text);
+                    }
+                } else {
+                    let _ = manager.write(&id, &text);
+                }
+            }
             Message::Binary(bytes) => {
                 if let Ok(text) = std::str::from_utf8(&bytes) { let _ = manager.write(&id, text); }
             }
@@ -205,51 +218,163 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
     outgoing.abort();
 }
 
-const MOBILE_HTML: &str = r#"<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+const MOBILE_HTML: &str = r#"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <title>Bento</title>
 <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
 <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <style>
-body{margin:0;background:#0d0d0d;color:#eee;font-family:system-ui,-apple-system,sans-serif}
-#list{padding:12px}#list h3{margin:6px 4px}
-button{display:block;width:100%;text-align:left;margin:6px 0;padding:14px;background:#1c1c1c;color:#eee;border:1px solid #333;border-radius:10px;font-size:15px}
-#view{display:none;height:100vh;flex-direction:column}#term{flex:1;min-height:0;padding:4px}
-#bar{display:flex;gap:6px;padding:6px;background:#000}
-#bar input{flex:1;padding:12px;background:#1c1c1c;color:#eee;border:1px solid #333;border-radius:8px;font-size:16px}
-#bar button{width:auto;margin:0;padding:12px 14px}
-.err{padding:16px;color:#f88}
-</style></head><body>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{--bg:#0d0d0d;--s:#161616;--s2:#1e1e1e;--b:#2a2a2a;--a:#a78bfa;--fg:#e2e8f8;--dim:#555}
+html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden;touch-action:none}
+
+/* ── List ─────────────────────────────── */
+#list{height:100dvh;overflow-y:auto;padding:16px;touch-action:pan-y}
+.list-head{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;padding:0 2px}
+.tb{display:flex;align-items:center;gap:12px;width:100%;padding:15px 16px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);text-align:left;margin-bottom:10px;cursor:pointer;transition:background .1s}
+.tb:active{background:var(--s2)}
+.tb-ico{font-size:22px;flex-shrink:0}
+.tb-info{flex:1;min-width:0}
+.tb-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-cwd{font-size:11px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-arrow{color:var(--dim);font-size:18px;flex-shrink:0}
+.empty{padding:40px 16px;text-align:center;color:var(--dim);font-size:14px;line-height:1.6}
+.err-msg{color:#f7768e}
+
+/* ── Terminal view ────────────────────── */
+#view{display:none;flex-direction:column;height:100dvh}
+#view.on{display:flex}
+
+#topbar{display:flex;align-items:center;gap:10px;padding:0 12px;height:48px;background:var(--s);border-bottom:1px solid var(--b);flex-shrink:0}
+#back{background:none;border:none;color:var(--a);font-size:26px;padding:4px 6px;cursor:pointer;line-height:1}
+#ttitle{flex:1;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dot{width:8px;height:8px;border-radius:50%;background:#73daca;flex-shrink:0;transition:background .3s}
+#dot.off{background:#f7768e}
+
+#tcon{flex:1;min-height:0;background:#000;overflow:hidden}
+#tcon .xterm,#tcon .xterm-viewport,#tcon .xterm-screen{height:100%!important}
+
+#keys{display:flex;gap:5px;padding:6px 8px;background:var(--s);border-top:1px solid var(--b);overflow-x:auto;flex-shrink:0;scrollbar-width:none}
+#keys::-webkit-scrollbar{display:none}
+.k{flex-shrink:0;padding:7px 12px;background:var(--bg);border:1px solid var(--b);border-radius:8px;color:var(--fg);font-size:13px;font-family:monospace;cursor:pointer}
+.k:active{background:var(--s2);border-color:var(--a)}
+
+#inputbar{display:flex;gap:8px;padding:8px 10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0}
+#inp{flex:1;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:16px;outline:none;-webkit-appearance:none;caret-color:var(--a)}
+#inp:focus{border-color:var(--a)}
+#sendbtn{padding:11px 18px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-weight:700;font-size:16px;cursor:pointer}
+#sendbtn:active{opacity:.8}
+</style>
+</head>
+<body>
 <div id="list"></div>
-<div id="view"><div id="term"></div>
-<div id="bar"><button onclick="location.reload()">↩</button><input id="in" placeholder="escribe y Enter" autocapitalize="off" autocorrect="off"><button onclick="send('')">^C</button></div></div>
+<div id="view">
+  <div id="topbar">
+    <button id="back" onclick="goBack()">‹</button>
+    <span id="ttitle">Terminal</span>
+    <div id="dot" class="off"></div>
+  </div>
+  <div id="tcon"></div>
+  <div id="keys">
+    <button class="k" onclick="s('\x1b')">Esc</button>
+    <button class="k" onclick="s('\t')">Tab</button>
+    <button class="k" onclick="s('\x1b[A')">↑</button>
+    <button class="k" onclick="s('\x1b[B')">↓</button>
+    <button class="k" onclick="s('\x1b[C')">→</button>
+    <button class="k" onclick="s('\x1b[D')">←</button>
+    <button class="k" onclick="s('\x03')">^C</button>
+    <button class="k" onclick="s('\x04')">^D</button>
+    <button class="k" onclick="s('\x0c')">^L</button>
+    <button class="k" onclick="s('\x1b[H')">Home</button>
+    <button class="k" onclick="s('\x1b[F')">End</button>
+  </div>
+  <div id="inputbar">
+    <input id="inp" type="text" placeholder="Escribe…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+    <button id="sendbtn" onclick="sendInp()">↵</button>
+  </div>
+</div>
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q='?token='+encodeURIComponent(token);
-let ws,term;
-function send(d){if(ws&&ws.readyState===1)ws.send(d)}
+let ws,term,fit,ro;
+
+function s(d){if(ws&&ws.readyState===1)ws.send(d)}
+
+function sendInp(){
+  const inp=document.getElementById('inp');
+  s(inp.value+'\r');
+  inp.value='';
+  inp.focus();
+}
+
+document.getElementById('inp').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();sendInp()}
+});
+
 async function load(){
-  const l=document.getElementById('list');
+  const el=document.getElementById('list');
   try{
     const r=await fetch('/api/terminals'+q);
-    if(!r.ok){l.innerHTML='<div class=err>Token inválido o daemon sin sesión.</div>';return}
+    if(!r.ok){el.innerHTML='<div class="empty err-msg">Token inválido.</div>';return}
     const ts=await r.json();
-    l.innerHTML='<h3>Terminales</h3>';
-    if(!ts.length)l.innerHTML+='<div class=err>No hay terminales abiertos.</div>';
-    ts.forEach(t=>{const b=document.createElement('button');b.textContent=(t.title||t.id)+'  ·  '+(t.cwd||'');b.onclick=()=>attach(t.id);l.appendChild(b)});
-  }catch(e){l.innerHTML='<div class=err>No se pudo conectar.</div>'}
+    if(!ts.length){el.innerHTML='<div class="empty">No hay terminales abiertos.<br>Abre un agente o terminal en Bento.</div>';return}
+    el.innerHTML='<div class="list-head">Terminales activos</div>';
+    ts.forEach(t=>{
+      const b=document.createElement('button');
+      b.className='tb';
+      b.innerHTML='<span class="tb-ico">⬛</span><div class="tb-info"><div class="tb-name">'+(t.title||t.id)+'</div><div class="tb-cwd">'+(t.cwd||'')+'</div></div><span class="tb-arrow">›</span>';
+      b.onclick=()=>attach(t.id,t.title||t.id);
+      el.appendChild(b);
+    });
+  }catch(e){el.innerHTML='<div class="empty err-msg">No se pudo conectar al daemon.</div>'}
 }
-function attach(id){
+
+function sendResize(){
+  if(ws&&ws.readyState===1&&term)
+    ws.send(JSON.stringify({type:'resize',rows:term.rows,cols:term.cols}));
+}
+
+function attach(id,title){
   document.getElementById('list').style.display='none';
-  const v=document.getElementById('view');v.style.display='flex';
-  term=new Terminal({fontSize:12,convertEol:false,cursorBlink:true});
-  term.open(document.getElementById('term'));
+  document.getElementById('view').classList.add('on');
+  document.getElementById('ttitle').textContent=title;
+  const dot=document.getElementById('dot');
+  dot.className='off';
+
+  const con=document.getElementById('tcon');
+  con.innerHTML='';
+  term=new Terminal({fontSize:13,fontFamily:'Menlo,Monaco,"Cascadia Code",monospace',theme:{background:'#000000',foreground:'#e2e8f8',cursor:'#a78bfa',selectionBackground:'#3a3a5c'},convertEol:false,cursorBlink:true,scrollback:2000});
+  fit=new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(con);
+  fit.fit();
+
   ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws/'+id+q);
-  ws.onmessage=e=>term.write(e.data);
-  ws.onclose=()=>term.write('\r\n[desconectado]\r\n');
-  term.onData(d=>send(d));
-  const inp=document.getElementById('in');
-  inp.onkeydown=e=>{if(e.key==='Enter'){send(inp.value+'\r');inp.value='';e.preventDefault()}};
+  ws.onopen=()=>{dot.className='';sendResize()};
+  ws.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
+  ws.onclose=()=>{dot.className='off';term.write('\r\n\x1b[31m[desconectado — recarga para reconectar]\x1b[0m\r\n')};
+  term.onData(d=>s(d));
+
+  ro=new ResizeObserver(()=>{if(fit){fit.fit();sendResize()}});
+  ro.observe(con);
 }
+
+function goBack(){
+  if(ro){ro.disconnect();ro=null}
+  if(ws){ws.close();ws=null}
+  if(term){term.dispose();term=null}
+  document.getElementById('view').classList.remove('on');
+  document.getElementById('list').style.display='';
+  load();
+}
+
 load();
-</script></body></html>"#;
+</script>
+</body>
+</html>"#;
