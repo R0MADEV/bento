@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
   })
   const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'chat_history_load') return loadedHistory
+    if (command === 'agent_claude_session_exists' || command === 'agent_codex_session_exists') return true
     if (command === 'review_branch_context_prepare') {
       return {
         path: `/managed/${args?.reference}`,
@@ -76,9 +77,22 @@ vi.mock('../../src/core/ai/agentClient', async (importOriginal) => ({
   redact: (value: string) => value,
 }))
 
-import { createAiChat } from '../../src/ui/aiChat'
+import { createAiChat, isCapacityError } from '../../src/ui/aiChat'
 import { AI_ASK_EVENT } from '../../src/ui/askAi'
 import type { MemoryRepository } from '../../src/ports/MemoryRepository'
+
+describe('isCapacityError', () => {
+  it('flags token / rate / usage limits so we can switch agents', () => {
+    for (const message of ['rate limit exceeded', 'usage limit reached', '429 Too Many Requests', 'model overloaded', 'quota exceeded', 'prompt is too long', 'maximum context length exceeded']) {
+      expect(isCapacityError(message)).toBe(true)
+    }
+  })
+  it('does not flag unrelated failures', () => {
+    for (const message of ['agent timeout', 'executable not found', 'No conversation found', '']) {
+      expect(isCapacityError(message)).toBe(false)
+    }
+  })
+})
 
 describe('AI chat agent follow-ups', () => {
   beforeEach(() => {
@@ -163,67 +177,6 @@ describe('AI chat agent follow-ups', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('review_branch_context_release', {
       path: '/managed/feat/review',
     })
-    root.remove()
-  })
-
-  it('renders persisted review JSON as markdown in the chat thread', async () => {
-    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
-    const root = createAiChat(memoryRepo)
-    document.body.appendChild(root)
-    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
-      text: '',
-      projectPath: '/tmp/review-project',
-      agentType: 'claude',
-      conversationKey: 'tech-review:/tmp/review-project:feat/render',
-      conversationTitle: 'review-project · feat/render',
-      conversationBranch: 'feat/render',
-      conversationCommit: '1111111111111111111111111111111111111111',
-      conversationSessionId: 'review-session',
-      conversationSessionAgent: 'claude',
-      inject: { role: 'assistant', content: JSON.stringify({ verdict: 'pass', summary: 'All good.', findings: [], contextSources: ['direct'] }) },
-    } }))
-
-    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('All good.'))
-    expect(root.querySelector('.ai-thread')?.innerHTML).not.toContain('"verdict"')
-    root.remove()
-  })
-
-  it('renders review JSON as markdown even without a branch context', async () => {
-    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
-    const root = createAiChat(memoryRepo)
-    document.body.appendChild(root)
-    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
-      text: '',
-      projectPath: '/tmp/review-project',
-      agentType: 'claude',
-      conversationKey: 'tech-review:/tmp/review-project:plain-review',
-      conversationTitle: 'review-project · plain-review',
-      conversationCommit: '1111111111111111111111111111111111111111',
-      inject: { role: 'assistant', content: JSON.stringify({ verdict: 'needs_review', summary: 'Needs work.', findings: [], contextSources: ['direct'] }) },
-    } }))
-
-    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Needs work.'))
-    expect(root.querySelector('.ai-thread')?.innerHTML).not.toContain('"verdict"')
-    root.remove()
-  })
-
-  it('renders invalid strict review JSON as markdown fallback', async () => {
-    const memoryRepo = { list: vi.fn(async () => []) } as unknown as MemoryRepository
-    const root = createAiChat(memoryRepo)
-    document.body.appendChild(root)
-    window.dispatchEvent(new CustomEvent(AI_ASK_EVENT, { detail: {
-      text: '',
-      projectPath: '/tmp/review-project',
-      agentType: 'claude',
-      conversationKey: 'tech-review:/tmp/review-project:fail-review',
-      conversationTitle: 'review-project · fail-review',
-      conversationBranch: 'fail-review',
-      conversationCommit: '1111111111111111111111111111111111111111',
-      inject: { role: 'assistant', content: JSON.stringify({ verdict: 'fail', summary: 'Needs review.', findings: [{ severity: 'medium', file: 'src/a.ts', line: 1, title: 'T', explanation: 'E', recommendation: 'R' }], contextSources: ['direct'] }) },
-    } }))
-
-    await vi.waitFor(() => expect(root.querySelector('.ai-thread')?.textContent).toContain('Needs review.'))
-    expect(root.querySelector('.ai-thread')?.innerHTML).not.toContain('"findings"')
     root.remove()
   })
 

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { createAgentStore } from '../../core/terminal/agentStore'
 import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
 import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
-import { emitAgentDock, savedAgentDockEntries, type AgentAttention } from '../../core/terminal/agentDockState'
+import { emitAgentDock, AGENT_ACTIVATE_EVENT, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 const MAX_AGENTS = 20
@@ -112,15 +112,21 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
   const publishDock = (): void => {
     if (!publishToDock) return
-    const entries = store.getAll().map((entry, index) => ({
-      id: entry.id,
-      name: slots[index]?.customName ?? entry.title,
-      cwd: entry.title,
-      cmd: slots[index]?.cmd,
-      status: entry.status,
-      attention: attention.get(entry.id),
-      active: index === activeIndex,
-    }))
+    const entries = store.getAll().flatMap((entry, index) => {
+      const slot = slots[index]
+      // Only advertise live agents: an exited (✕) pane stays in the sidebar for
+      // resume but must not inflate the dock's agent count.
+      if (!slot || slot.exited) return []
+      return [{
+        id: entry.id,
+        name: slot.customName ?? entry.title,
+        cwd: entry.title,
+        cmd: slot.cmd,
+        status: entry.status,
+        attention: attention.get(entry.id),
+        active: index === activeIndex,
+      }]
+    })
     emitAgentDock(entries)
   }
 
@@ -535,9 +541,18 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   const onBeforeUnload = () => persistNow()
   window.addEventListener('beforeunload', onBeforeUnload)
 
+  // Dock chip click → focus that exact agent here (see agentStatusBar). Only the
+  // dock-publishing (global) panel listens; worktree panels aren't in the dock.
+  const onActivateRequest = (e: Event): void => {
+    const index = slots.findIndex(s => s.handle.getPtyId() === (e as CustomEvent<string>).detail)
+    if (index >= 0) activateAgent(index)
+  }
+  if (publishToDock) window.addEventListener(AGENT_ACTIVATE_EVENT, onActivateRequest)
+
   // ── Dispose ───────────────────────────────────────────────────
   const dispose = () => {
     window.removeEventListener('beforeunload', onBeforeUnload)
+    if (publishToDock) window.removeEventListener(AGENT_ACTIVATE_EVENT, onActivateRequest)
     persistNow()
     disposed = true   // block any late persist from clobbering the saved list
     for (const s of slots) {
@@ -545,7 +560,9 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       s.handle.dispose?.()
     }
     slots.length = 0
-    if (publishToDock) emitAgentDock(savedAgentDockEntries())
+    // No agents are live once disposed — clear the dock (don't re-seed from
+    // persisted sessions, which would show closed agents).
+    if (publishToDock) emitAgentDock([])
   }
 
   // Restore previously open agents, or start with one fresh agent. Metadata comes

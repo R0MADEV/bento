@@ -1,9 +1,10 @@
-import { AGENT_DOCK_EVENT, savedAgentDockEntries, type AgentDockEntry } from '../core/terminal/agentDockState'
+import { AGENT_DOCK_EVENT, type AgentDockEntry } from '../core/terminal/agentDockState'
 import { appT } from '../core/i18n'
 import { invoke } from '@tauri-apps/api/core'
 
 interface AgentStatusBarOptions {
-  onOpenAgents: () => void
+  // id = the pty id of the clicked agent, so the caller can focus that exact one.
+  onOpenAgents: (id?: string) => void
 }
 
 // CLI → display name mapping kept here so it doesn't couple to AgentsPanel.
@@ -35,7 +36,10 @@ export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): {
   element.className = 'agent-status-bar'
   element.setAttribute('role', 'status')
 
-  let entries = savedAgentDockEntries()
+  // Start empty and only show agents the live panel actually reports (via the
+  // dock event). Seeding from persisted sessions used to surface closed/other
+  // agents, so the bar showed more agents than were really open.
+  let entries: AgentDockEntry[] = []
 
   const agents = document.createElement('div')
   agents.className = 'agent-status-list'
@@ -56,7 +60,7 @@ export function createAgentStatusBar({ onOpenAgents }: AgentStatusBarOptions): {
       button.className = `agent-status-chip${entry.active ? ' active' : ''}`
       button.dataset.status = entry.attention ? 'blocked' : entry.status
       button.title = [entry.name, entry.cwd].filter(Boolean).join('\n')
-      button.addEventListener('click', onOpenAgents)
+      button.addEventListener('click', () => onOpenAgents(entry.id))
 
       const dot = document.createElement('span')
       dot.className = 'agent-status-dot'

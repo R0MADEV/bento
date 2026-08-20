@@ -25,7 +25,9 @@ mod opencode;
 mod tests;
 
 const AGENT_TIMEOUT: Duration = Duration::from_secs(120);
-const REVIEW_TIMEOUT: Duration = Duration::from_secs(300);
+// A review is now one full-change analysis per agent (it reads files via tools),
+// so a single call legitimately needs longer than the old 5-minute cap.
+const REVIEW_TIMEOUT: Duration = Duration::from_secs(1200);
 const MAX_OUTPUT: usize = 4 * 1024 * 1024;
 const MAX_STDERR: usize = 64 * 1024;
 const MAX_LINE: usize = 512 * 1024;

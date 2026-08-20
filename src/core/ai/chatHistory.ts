@@ -92,3 +92,9 @@ export function techReviewConversationKey(projectPath: string, branch: string): 
   const normalizedPath = projectPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
   return `tech-review:${normalizedPath}:${branch.trim() || 'branch'}`
 }
+
+// localStorage key for the last saved review document of a branch, so a crash or
+// reload never loses the findings.
+export function techReviewCheckpointKey(projectPath: string, branch: string): string {
+  return `${techReviewConversationKey(projectPath, branch)}:checkpoint`
+}

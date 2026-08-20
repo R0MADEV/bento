@@ -10,6 +10,7 @@ import { isMac } from '../ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import { createPanelLauncher } from '../ui/panelLauncher'
 import { createAgentStatusBar } from '../ui/agentStatusBar'
+import { emitAgentActivate } from '../core/terminal/agentDockState'
 import { createHomeView } from './createHomeView'
 import { loadProfiles } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/decorationsPreference'
@@ -79,7 +80,14 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   // The launcher lives inside the hover strip (first child; window controls sit
   // to its right), so it costs no persistent space and reveals with the strip.
   bar.prepend(launcher.element)
-  const agentStatusBar = createAgentStatusBar({ onOpenAgents: () => openPanel('terminal') })
+  const agentStatusBar = createAgentStatusBar({
+    onOpenAgents: (id) => {
+      openPanel('terminal')
+      // Focus the exact clicked agent (the panel is already mounted whenever a
+      // chip exists, so it's listening for this).
+      if (id) emitAgentActivate(id)
+    },
+  })
 
   // Center home, shown only when the workspace has no panels.
   const home = createHomeView({

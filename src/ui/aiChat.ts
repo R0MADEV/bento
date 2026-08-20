@@ -3,7 +3,7 @@ import { icon } from './icons'
 import { AI_PROVIDERS, providerById, AGENT_PROVIDER_ID } from '../core/ai/providers'
 import {
   loadConfig, saveConfig, buildChatBody, agentLabel, toAgentType,
-  type AiConfig, type ChatMessage,
+  type AiConfig, type ChatMessage, type AgentType,
 } from '../core/ai/config'
 import { getAiKey, setAiKey, vaultStatus, type VaultStatus } from './aiKeys'
 import { splitLines, deltaFromLine, isDoneLine } from '../core/ai/sseStream'
@@ -16,7 +16,6 @@ import type { MemoryRepository } from '../ports/MemoryRepository'
 import { getActiveProjectPath, setActiveProjectPath } from './activeProject'
 import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
 import { redact, startAgent, resolvePersistedSessionId, buildReviewMessage } from '../core/ai/agentClient'
-import { extractFirstJsonObject, formatReviewResponse, validateReviewResponse } from '../core/ai/techReview'
 import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory, serializeChatHistory } from '../core/ai/chatHistory'
 import { getUiZoom, toLayoutPixels } from './zoom'
 
@@ -28,65 +27,24 @@ interface ApiToolCall { id: string; function: { name: string; arguments: string 
 interface ApiMessage { role: string; content?: string | null; tool_calls?: ApiToolCall[]; tool_call_id?: string }
 interface ReviewBranchContextResult { path: string; commit: string; latestCommit: string; managed: boolean; stale: boolean }
 
-// In a Tech Review conversation the resumed agent keeps replying with the review
-// JSON schema. Render it as Markdown; return null (keep raw text) if it's not one.
-function reviewResponseMarkdown(raw: string): string | null {
-  const parsed = parseReviewLikeJson(raw)
-  if (!parsed) return null
-  try { return formatReviewResponse(validateReviewResponse(parsed)) }
-  catch {
-    const loose = parsed as Record<string, unknown>
-    const verdict = typeof loose.verdict === 'string' ? loose.verdict : 'needs_review'
-    const summary = typeof loose.summary === 'string' ? loose.summary : 'Review response'
-    const findings = Array.isArray(loose.findings)
-      ? loose.findings.flatMap((item): Array<{ severity: string; file: string; line: number | null; title: string; explanation: string; recommendation: string }> => {
-        if (!item || typeof item !== 'object') return []
-        const finding = item as Record<string, unknown>
-        if (typeof finding.file !== 'string' || typeof finding.title !== 'string' || typeof finding.explanation !== 'string' || typeof finding.recommendation !== 'string') return []
-        return [{
-          severity: typeof finding.severity === 'string' ? finding.severity : 'medium',
-          file: finding.file,
-          line: typeof finding.line === 'number' ? finding.line : null,
-          title: finding.title,
-          explanation: finding.explanation,
-          recommendation: finding.recommendation,
-        }]
-      })
-      : []
-    return renderLooseReviewResponse(verdict, summary, findings)
-  }
+// Resuming a review/chat session that no longer exists makes the agent CLI exit
+// with a bare error. Verify it first (as the Agents panel does); return null to
+// run fresh — the review report stays in the chat history, so context survives.
+async function verifyResumableSession(agent: AgentType, cwd: string, sessionId: string): Promise<string | null> {
+  if (agent === 'claude') return (await invoke<boolean>('agent_claude_session_exists', { cwd, sessionId }).catch(() => false)) ? sessionId : null
+  if (agent === 'codex') return (await invoke<boolean>('agent_codex_session_exists', { sessionId }).catch(() => false)) ? sessionId : null
+  return sessionId
 }
 
-function parseReviewLikeJson(raw: string): unknown | null {
-  const cleaned = raw.replace(/```(?:json)?/gi, '').trim()
-  const candidates = [extractFirstJsonObject(cleaned), cleaned]
-  for (const candidate of candidates) {
-    if (!candidate) continue
-    try {
-      const parsed = JSON.parse(candidate) as unknown
-      if (parsed && typeof parsed === 'object') return parsed
-    } catch {
-      continue
-    }
-  }
-  return null
+// A token/rate/usage limit means THIS agent can't continue — worth switching to a
+// different agent rather than retrying the same one.
+export function isCapacityError(message: string): boolean {
+  return /rate.?limit|too many requests|\b429\b|overloaded|\b529\b|usage limit|quota|out of tokens|token limit|context (?:length|window)|maximum context|prompt is too long|too long/i.test(message)
 }
 
-function renderLooseReviewResponse(verdict: string, summary: string, findings: Array<{ severity: string; file: string; line: number | null; title: string; explanation: string; recommendation: string }>): string {
-  const icon = verdict === 'pass' ? '✅' : verdict === 'fail' ? '❌' : '⚠️'
-  const lines = [`${icon} **${verdict}** — ${summary}`]
-  if (findings.length) {
-    lines.push('')
-    findings.forEach(finding => {
-      const location = finding.line ? `${finding.file}:${finding.line}` : finding.file
-      lines.push(`**${finding.severity.toUpperCase()}** \`${location}\` — ${finding.title}`)
-      lines.push(finding.explanation)
-      lines.push(`→ ${finding.recommendation}`)
-      lines.push('')
-    })
-  }
-  return lines.join('\n').trim()
-}
+// Order to fall over through when an agent runs out of capacity (custom excluded:
+// it needs an explicit executable). The transcript carries the context across.
+const FAILOVER_AGENTS: AgentType[] = ['claude', 'codex', 'opencode']
 
 // Floating AI chat widget (OpenAI-compatible endpoint). Button in the
 // corner; opening it shows a modal with the thread, provider/model selector and settings.
@@ -630,8 +588,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
         // The assistant is rendered as Markdown (renderMarkdown escapes the HTML first,
         // so it's safe). The user's message goes as plain text.
         if (m.role === 'assistant') {
-          const rendered = reviewResponseMarkdown(m.content) ?? m.content
-          row.innerHTML = renderMarkdown(rendered)
+          row.innerHTML = renderMarkdown(m.content)
         }
         else row.textContent = m.content
         thread.appendChild(row)
@@ -747,63 +704,94 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       }
     }
     const sessionContext = `${agent}\0${projectPath}\0${conversationContext?.commit ?? ''}`
-    const persistedSessionId = resolvePersistedSessionId(conversationContext, agent, conversationContext?.commit ?? '')
-    const agentMessage = buildReviewMessage(expandInput(text), conversationContext?.evidence, Boolean(persistedSessionId))
+    const rawSessionId = conversationContext?.branch
+      ? resolvePersistedSessionId(conversationContext, agent, conversationContext?.commit ?? '')
+      : (agentSessionContext === sessionContext ? agentSessionId : null)
+    // Run fresh if the session can't be resumed (else the agent exits with a bare
+    // error). The review report is already in the history, so context is kept.
+    const resumeSessionId = rawSessionId ? await verifyResumableSession(agent, projectPath, rawSessionId) : null
+    // Always carry the review report as context, even in a long chat: the agent
+    // only sees a recent window, so keep the first assistant message (the report)
+    // pinned at the front when the conversation has grown past it.
+    const buildFollowUpHistory = (): ChatMessage[] => {
+      const full = messages.slice(0, -1)
+      if (!conversationContext?.branch || full.length <= 20) return full
+      const report = full.find(m => m.role === 'assistant')
+      const recent = full.slice(-19)
+      return report && !recent.includes(report) ? [report, ...recent] : full.slice(-20)
+    }
     let awaitingFirstChunk = true
-    const handle = startAgent({
-      agent,
-      message: agentMessage,
-      history: messages.slice(0, -1),
-      projectPath,
-      sessionId: conversationContext?.branch
-        ? persistedSessionId
-        : agentSessionContext === sessionContext ? agentSessionId : null,
-      customExecutable: agentExecutableInput.value.trim() || undefined,
-      customArgs: agentArgsInput.value.trim() ? agentArgsInput.value.trim().split(/\s+/) : undefined,
-      review: Boolean(conversationContext?.branch),
-      cleanupProjectPath: managedBranchContext,
-    }, chunk => {
-      if (awaitingFirstChunk) { assistant.content = ''; awaitingFirstChunk = false; pendingAssistant = null }
-      assistant.content += chunk
-      renderThread()
-      persistHistory()
-    }, sessionId => {
-      if (conversationContext?.branch) {
-        conversationContext.sessionId = sessionId ?? undefined
-        conversationContext.sessionAgent = sessionId ? agent : undefined
-        conversationContext.sessionCommit = sessionId ? conversationContext.commit : undefined
-      } else {
-        agentSessionId = sessionId
-        agentSessionContext = sessionContext
-      }
-      if (awaitingFirstChunk) assistant.content = i18nT('common.emptyModelResponse')
-      pendingAssistant = null
-      renderThread()
-    }, error => {
-      assistant.content = `⚠️ ${error}`
-      pendingAssistant = null
-      renderThread()
-    }, tool => {
-      const safeTool = redact(tool).slice(0, 1_000)
-      if (conversationContext?.branch && !conversationContext.evidence?.includes(safeTool)) {
-        conversationContext.evidence = [...(conversationContext.evidence ?? []), safeTool].slice(-100)
+    const runAttempt = async (attemptAgent: AgentType, resumeId: string | null): Promise<string | null> => {
+      awaitingFirstChunk = true
+      const attemptLabel = agentLabel(attemptAgent)
+      let attemptError: string | null = null
+      const handle = startAgent({
+        agent: attemptAgent,
+        message: buildReviewMessage(expandInput(text), conversationContext?.evidence, Boolean(resumeId)),
+        history: buildFollowUpHistory(),
+        projectPath,
+        sessionId: resumeId,
+        customExecutable: agentExecutableInput.value.trim() || undefined,
+        customArgs: agentArgsInput.value.trim() ? agentArgsInput.value.trim().split(/\s+/) : undefined,
+        review: Boolean(conversationContext?.branch),
+        cleanupProjectPath: managedBranchContext,
+      }, chunk => {
+        if (awaitingFirstChunk) { assistant.content = ''; awaitingFirstChunk = false; pendingAssistant = null }
+        assistant.content += chunk
+        renderThread()
         persistHistory()
+      }, sessionId => {
+        if (conversationContext?.branch) {
+          conversationContext.sessionId = sessionId ?? undefined
+          conversationContext.sessionAgent = sessionId ? attemptAgent : undefined
+          conversationContext.sessionCommit = sessionId ? conversationContext.commit : undefined
+        } else {
+          agentSessionId = sessionId
+          agentSessionContext = sessionContext
+        }
+        if (awaitingFirstChunk) assistant.content = i18nT('common.emptyModelResponse')
+        pendingAssistant = null
+        renderThread()
+      }, error => {
+        attemptError = error
+      }, tool => {
+        const safeTool = redact(tool).slice(0, 1_000)
+        if (conversationContext?.branch && !conversationContext.evidence?.includes(safeTool)) {
+          conversationContext.evidence = [...(conversationContext.evidence ?? []), safeTool].slice(-100)
+          persistHistory()
+        }
+        if (awaitingFirstChunk) { assistant.content = `${attemptLabel}: ${safeTool}`; renderThread() }
+      })
+      try { await handle.ready; await handle.completed }
+      catch (error) { attemptError = error instanceof Error ? error.message : String(error) }
+      finally { handle.unlisten() }
+      return attemptError
+    }
+
+    try {
+      // 1) resume the last agent's session; 2) if that fails, same agent fresh;
+      // 3) if it hit a token/rate limit, continue with another agent — the transcript
+      // (incl. the review report) travels as context, so no session transfer is needed.
+      let runError = await runAttempt(agent, resumeSessionId)
+      if (runError && resumeSessionId) runError = await runAttempt(agent, null)
+      if (runError && isCapacityError(runError)) {
+        for (const fallback of FAILOVER_AGENTS) {
+          if (fallback === agent) continue
+          assistant.content = i18nT('common.agentWorking', { agent: agentLabel(fallback) })
+          renderThread()
+          runError = await runAttempt(fallback, null)
+          if (!runError) { if (conversationContext?.branch) agentSelect.value = fallback; break }
+        }
       }
-      if (awaitingFirstChunk) { assistant.content = `${label}: ${safeTool}`; renderThread() }
-    })
-    try { await handle.ready; await handle.completed }
-    catch (error) { assistant.content = `⚠️ ${error instanceof Error ? error.message : String(error)}`; renderThread() }
-    finally {
+      if (runError) { assistant.content = `⚠️ ${runError}`; renderThread() }
+    } finally {
       pendingAssistant = null
-      handle.unlisten()
       if (managedBranchContext && managedBranchContextPath) {
         await invoke('review_branch_context_release', {
           path: managedBranchContextPath,
         }).catch(() => {})
         clearConversationWorktreePath(conversationKey)
       }
-      const formatted = reviewResponseMarkdown(assistant.content)
-      if (formatted) assistant.content = formatted
       renderThread()
       persistHistory()
       endBusy()

@@ -4486,13 +4486,20 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
 .review-drawer-result { font-size: 11px; line-height: 1.55; color: var(--fg); }
 .review-ai-progress { margin: 8px 10px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--surface); }
-.review-ai-progress-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.review-ai-progress-status { font-size: 11px; color: var(--fg); display: flex; align-items: center; gap: 8px; }
+.review-ai-progress-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.review-ai-progress-status { flex: 1; min-width: 0; font-size: 11px; color: var(--fg); display: flex; align-items: center; gap: 8px; overflow: hidden; }
 .review-ai-progress-status::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: review-pulse 1.2s ease-in-out infinite; }
-.review-ai-progress-meta { font-size: 10px; color: var(--fg-dim); font-family: var(--mono); }
+.review-ai-progress-meta { flex: none; white-space: nowrap; font-size: 10px; color: var(--fg-dim); font-family: var(--mono); }
 .review-ai-stop-btn { flex: none; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--fg); font-size: 10px; padding: 3px 8px; cursor: pointer; }
 .review-ai-stop-btn:disabled { opacity: 0.5; cursor: default; }
-.review-ai-progress-stream { font-size: 10px; font-family: var(--mono); color: var(--fg-dim); max-height: 200px; overflow-y: auto; margin: 0; white-space: pre-wrap; word-break: break-all; border-top: 1px solid var(--border); padding-top: 8px; }
+.review-ai-progress-stream { font-size: 10px; font-family: var(--mono); color: var(--fg-dim); max-height: 45vh; overflow-y: auto; margin: 0; white-space: pre-wrap; word-break: break-all; border-top: 1px solid var(--border); padding-top: 8px; }
+.review-ai-progress-stream.collapsed { display: none; }
+.review-ai-toggle-btn { flex: none; }
+.review-context-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 10px; }
+.review-context-label { font-size: 11px; color: var(--fg); }
+.review-context-input { min-height: 90px; resize: vertical; font-size: 11px; font-family: var(--mono); color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.review-context-actions { display: flex; justify-content: flex-end; }
+.review-context-run { border: 1px solid var(--accent); border-radius: 999px; background: var(--accent); color: var(--bg, #fff); font-size: 11px; padding: 5px 14px; cursor: pointer; }
 @keyframes review-pulse { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
 .review-ai-result { margin: 8px 10px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
 .review-ai-result--pass { border-color: #73daca; }

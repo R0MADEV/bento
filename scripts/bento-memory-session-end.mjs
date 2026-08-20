@@ -20,10 +20,24 @@ import { defaultMemoryDbPath, sqliteBinary } from './lib/memoryPaths.mjs'
 
 if (process.env.BENTO_MEMORY_FINALIZER === '1') process.exit(0)
 
+// Safety net: this hook must never outlive its work. If anything hangs (a stdin
+// that never closes, a stuck sqlite or summarizer child) force-exit, so we don't
+// leak long-lived node processes (this previously piled up hundreds of zombies).
+// .unref() so it never keeps the process alive when the work finishes early.
+setTimeout(() => process.exit(0), Number(process.env.BENTO_MEMORY_HOOK_TIMEOUT_MS) || 300_000).unref()
+
 const payload = await new Promise(resolve => {
   let input = ''
+  let settled = false
+  const finish = () => {
+    if (settled) return
+    settled = true
+    try { resolve(JSON.parse(input)) } catch { resolve({}) }
+  }
   process.stdin.on('data', chunk => { input += chunk })
-  process.stdin.on('end', () => { try { resolve(JSON.parse(input)) } catch { resolve({}) } })
+  process.stdin.on('end', finish)
+  // stdin may never close in some launch paths — don't block forever waiting on it.
+  setTimeout(finish, Number(process.env.BENTO_MEMORY_STDIN_TIMEOUT_MS) || 15_000).unref()
 })
 const agent = process.argv[2]
 const transcriptPath = String(payload.transcript_path || payload.transcriptPath || '')
