@@ -22,6 +22,8 @@ pub struct PtyManager {
     tx: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
     counter: AtomicU64,
+    /// Stored so `ensure_connected` can reconnect without needing an AppHandle parameter.
+    app: Arc<Mutex<Option<AppHandle>>>,
 }
 
 impl Default for PtyManager {
@@ -31,14 +33,18 @@ impl Default for PtyManager {
             tx: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(HashMap::new())),
             counter: AtomicU64::new(0),
+            app: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 impl PtyManager {
     /// Connect to the daemon and start forwarding its output to the frontend.
-    /// Starts the daemon automatically if it isn't running yet. Call once at startup.
+    /// Starts the daemon automatically if it isn't running yet.
+    /// Safe to call again after a disconnect — replaces the old connection.
     pub async fn connect(&self, app: AppHandle) -> Result<(), String> {
+        *self.app.lock().unwrap() = Some(app.clone());
+
         if TcpStream::connect(&self.addr).await.is_err() {
             spawn_daemon();
             for _ in 0..40 {
@@ -55,7 +61,6 @@ impl PtyManager {
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         *self.tx.lock().unwrap() = Some(tx);
 
-        // Single writer task: serialises every outgoing command onto the socket.
         tauri::async_runtime::spawn(async move {
             while let Some(line) = rx.recv().await {
                 if write_half.write_all(line.as_bytes()).await.is_err()
@@ -66,8 +71,8 @@ impl PtyManager {
             }
         });
 
-        // Reader task: events become Tauri events; responses resolve pending requests.
         let pending = self.pending.clone();
+        let tx_slot = self.tx.clone();
         tauri::async_runtime::spawn(async move {
             let mut lines = BufReader::new(read_half).lines();
             while let Ok(Some(line)) = lines.next_line().await {
@@ -97,23 +102,44 @@ impl PtyManager {
                     }
                 }
             }
+            // Daemon disconnected — clear tx so the next request auto-reconnects.
+            *tx_slot.lock().unwrap() = None;
         });
+        Ok(())
+    }
+
+    /// Reconnect to the daemon if the connection is gone. No-op when already connected.
+    async fn ensure_connected(&self) -> Result<(), String> {
+        if self.tx.lock().unwrap().is_none() {
+            let app = self
+                .app
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| "bento-daemon not initialized".to_string())?;
+            self.connect(app).await?;
+        }
         Ok(())
     }
 
     /// Fire a command with no reply (write/resize/close/subscribe).
     fn send(&self, line: String) -> Result<(), String> {
-        self.tx
+        let result = self
+            .tx
             .lock()
             .unwrap()
             .as_ref()
             .ok_or("bento-daemon not connected (is it running?)")?
-            .send(line)
-            .map_err(|_| "bento-daemon disconnected".to_string())
+            .send(line);
+        if result.is_err() {
+            *self.tx.lock().unwrap() = None;
+        }
+        result.map_err(|_| "bento-daemon disconnected".to_string())
     }
 
-    /// Send a command and await its `data` reply (used by terminal.open).
+    /// Send a command and await its reply. Auto-reconnects if the daemon died.
     async fn request(&self, mut command: Value) -> Result<Value, String> {
+        self.ensure_connected().await?;
         let id = format!("r{}", self.counter.fetch_add(1, Ordering::SeqCst));
         command["id"] = json!(id);
         let (send, recv) = oneshot::channel();
@@ -139,27 +165,19 @@ impl PtyManager {
     }
 }
 
-/// Terminals live in the daemon, so app shutdown no longer kills them — they keep
-/// running and can be reattached from the CLI, the phone, or a reopened app.
+/// Terminals live in the daemon, so app shutdown no longer kills them.
 pub fn kill_all(_manager: &PtyManager) {}
 
-/// Launch the daemon as a detached process (it outlives the app, so terminals
-/// survive closing it). Best-effort: if the binary can't be found, connect()
-/// simply reports the daemon isn't reachable.
+/// Launch the daemon as a detached process (it outlives the app).
 fn spawn_daemon() {
     if let Some(binary) = daemon_binary() {
         let _ = std::process::Command::new(binary).spawn();
     }
 }
 
-/// Locate the bento-daemon binary: an explicit override, bundled next to the app
-/// (production), or the dev workspace target (debug/release).
+/// Locate the bento-daemon binary: explicit override → bundled → dev workspace.
 fn daemon_binary() -> Option<std::path::PathBuf> {
-    let name = if cfg!(windows) {
-        "bento-daemon.exe"
-    } else {
-        "bento-daemon"
-    };
+    let name = if cfg!(windows) { "bento-daemon.exe" } else { "bento-daemon" };
     if let Ok(explicit) = std::env::var("BENTO_DAEMON_BIN") {
         let path = std::path::PathBuf::from(explicit);
         if path.exists() {
@@ -172,7 +190,7 @@ fn daemon_binary() -> Option<std::path::PathBuf> {
     if bundled.exists() {
         return Some(bundled);
     }
-    // Dev layout: <repo>/src-tauri/target/<profile>/  ->  <repo>/daemon/target/<profile>/
+    // Dev layout: <repo>/src-tauri/target/<profile>/ → <repo>/daemon/target/<profile>/
     let profile = dir.file_name()?.to_string_lossy().into_owned();
     let candidate = dir
         .parent()? // .../src-tauri/target
@@ -185,12 +203,9 @@ fn daemon_binary() -> Option<std::path::PathBuf> {
     candidate.exists().then_some(candidate)
 }
 
-/// Open (or reattach to) a terminal. Returns `true` when it reattached to a
-/// still-running terminal — the frontend must then not replay its launch command.
 #[tauri::command]
 pub async fn pty_spawn(
     id: String,
-    // Kept for API compatibility; the daemon resolves $SHELL like the app did.
     #[allow(unused_variables)] shell: String,
     rows: u16,
     cols: u16,
@@ -222,21 +237,12 @@ pub async fn pty_spawn(
 }
 
 #[tauri::command]
-pub fn pty_write(
-    id: String,
-    data: String,
-    state: tauri::State<Arc<PtyManager>>,
-) -> Result<(), String> {
+pub fn pty_write(id: String, data: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
     state.send(json!({ "cmd": "terminal.write", "pty_id": id, "data": data }).to_string())
 }
 
 #[tauri::command]
-pub fn pty_resize(
-    id: String,
-    rows: u16,
-    cols: u16,
-    state: tauri::State<Arc<PtyManager>>,
-) -> Result<(), String> {
+pub fn pty_resize(id: String, rows: u16, cols: u16, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
     state.send(json!({ "cmd": "terminal.resize", "pty_id": id, "rows": rows, "cols": cols }).to_string())
 }
 
