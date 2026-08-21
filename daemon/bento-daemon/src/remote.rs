@@ -52,9 +52,13 @@ impl RemoteControl {
         {
             let guard = self.0.lock().unwrap();
             if let Some(active) = &*guard {
-                return Ok(active.info.clone());
+                if !active.handle.is_finished() {
+                    return Ok(active.info.clone());
+                }
+                // Task died unexpectedly — fall through to restart
             }
         }
+        *self.0.lock().unwrap() = None; // Clear stale state before restarting
         let token = token.unwrap_or_else(generate_token);
         let ip = local_ip();
         let bind_addr = format!("0.0.0.0:{port}");
@@ -94,10 +98,15 @@ impl RemoteControl {
     }
 
     pub fn status(&self) -> RemoteInfo {
-        match &*self.0.lock().unwrap() {
-            Some(a) => a.info.clone(),
-            None => RemoteInfo { running: false, addr: String::new(), token: String::new(), url: String::new() },
+        let mut guard = self.0.lock().unwrap();
+        if let Some(active) = &*guard {
+            if !active.handle.is_finished() {
+                return active.info.clone();
+            }
+            // Task died — clear stale state so next start() restarts it
         }
+        *guard = None;
+        RemoteInfo { running: false, addr: String::new(), token: String::new(), url: String::new() }
     }
 }
 
