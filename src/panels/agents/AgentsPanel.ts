@@ -631,9 +631,19 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // this panel doesn't. Runs periodically so mobile-spawned shells appear here.
   const adoptDaemonTerminals = async () => {
     if (!initialized) return
-    const knownIds = new Set(slots.map(s => s.ptyId))
     try {
       const list = await invoke<Array<{ id: string; title: string; cwd: string }>>('pty_list')
+      const daemonIds = new Set(list.map(t => t.id))
+
+      // Remove mobile slots that the daemon no longer has (killed from mobile)
+      for (let i = slots.length - 1; i >= 0; i--) {
+        if (slots[i].ptyId.startsWith('pty-mobile-') && !daemonIds.has(slots[i].ptyId)) {
+          removeAgent(i)
+        }
+      }
+
+      // Adopt new terminals not yet tracked
+      const knownIds = new Set(slots.map(s => s.ptyId))
       for (const t of list) {
         if (!knownIds.has(t.id)) {
           addAgent(t.title || 'Mobile shell', t.cwd || projectPath, undefined, undefined, undefined, t.id)
