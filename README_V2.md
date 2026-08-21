@@ -59,13 +59,15 @@ La v2 elimina ese baile.
 
 ---
 
-## Fase D — Comandos de agentes en el CLI
-> Objetivo: lanzar/listar agentes desde `bento`, no solo terminales crudos.
+## ✅ Fase D — Comandos de agentes en el CLI
+> Completada. Agentes lanzables desde el terminal sin abrir la app.
 
-- [ ] **D.1** `bento agent run claude --cwd <path> --message "..."`
-- [ ] **D.2** `bento agent list`
-- [ ] **D.3** `bento agent attach <id>`
-- [ ] Reusar la lógica de `src-tauri/src/agent/mod.rs` movida/compartida vía `bento-core`.
+- [x] **D.1** `bento agent run <agent> [--cwd <path>] [--message "..."] [--attach]`
+  - `claude` sin message → interactivo; con `--message` → `claude -p "<msg>"`
+  - `codex` con `--message` → `codex -a full-auto -q "<msg>"`
+  - `--attach` → se engancha al terminal tras lanzar
+- [x] **D.2** `bento agent list` — lista terminales activos (reutiliza `terminals.list`)
+- [x] **D.3** `bento agent attach <id>` — se engancha a un agente por id
 
 ---
 
