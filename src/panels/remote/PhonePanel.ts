@@ -135,8 +135,10 @@ export function createPhonePanel(): { element: HTMLElement } {
     if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null }
   }
 
-  // On panel open: the server should already be running (auto-started in main.ts).
-  // Retry until the daemon is reachable, then start the server if it isn't already up.
+  // On panel open: poll status until the daemon is reachable.
+  // Auto-start is handled exclusively in main.ts — init() never starts the server
+  // to avoid a race where two remote_start calls are in-flight and the second one
+  // restarts the server after the user has already stopped it.
   const init = async (attempt = 0): Promise<void> => {
     if (userInteracted) return
     toggleText.textContent = 'Comprobando…'
@@ -145,11 +147,7 @@ export function createPhonePanel(): { element: HTMLElement } {
       const s = await invoke<RemoteStatus>('remote_status')
       if (userInteracted) return
       toggleInput.disabled = false
-      if (s.running) {
-        await render(s)
-      } else {
-        await startServer()
-      }
+      await render(s)
     } catch {
       if (userInteracted) return
       if (attempt < RETRY_DELAYS.length) {
