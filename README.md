@@ -37,7 +37,7 @@ Runs natively on **macOS, Linux, and Windows**.
 | **HTTP** | REST client. Methods, headers, body (JSON, form, raw), saved collections. Imports OpenAPI / Swagger specs as a browsable collection. |
 | **TV** | IPTV player with HLS.js. M3U channel list (iptv-org), favourites, YouTube/Twitch embeds. |
 | **Web** | Embedded browser (native WebView). Bookmarks and history per project. |
-| **Phone Remote** | Control any terminal from your phone over Wi-Fi. Toggle a token-gated HTTP server, scan the QR code on your phone — full xterm.js with arrow keys, reconnect and resize. |
+| **Phone Remote** | Control any terminal from your phone over Wi-Fi or Tailscale. Toggle a token-gated HTTP server, scan the QR code on your phone — full xterm.js with arrow keys, reconnect and resize. Optional Tailscale mode for remote access outside your local network. |
 
 ---
 
@@ -87,6 +87,25 @@ bento attach <id>            # attach stdin/stdout to a terminal
 ```
 
 `bento daemon install` writes a launchd plist on macOS or a systemd user service on Linux so the daemon starts at login — independent of the Bento app.
+
+---
+
+## Phone Remote
+
+The Phone Remote panel lets you control any open terminal from your phone browser — no app install required.
+
+**Local network (Wi-Fi)**
+1. Open the Phone Remote panel in Bento
+2. Toggle **Activar servidor WiFi** — the server binds to your LAN IP
+3. Scan the QR code with your phone (must be on the same Wi-Fi)
+
+**Remote access via Tailscale**
+1. Install Tailscale on your Mac: `brew install --cask tailscale`
+2. Install [Tailscale](https://tailscale.com/download) on your phone and sign in to the same account
+3. In Bento, toggle **Usar Tailscale (fuera de casa)** — the server binds to your `100.x.x.x` Tailscale IP
+4. Scan the QR code from anywhere with an internet connection
+
+> The two modes are mutually exclusive at the TCP bind level. LAN mode only accepts connections from your local network; Tailscale mode only accepts connections through the Tailscale VPN.
 
 ---
 
