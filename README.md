@@ -100,7 +100,16 @@ The Phone Remote panel lets you control any open terminal from your phone browse
 3. Scan the QR code with your phone (must be on the same Wi-Fi)
 
 **Remote access via Tailscale**
-1. Install Tailscale on your Mac: `brew install --cask tailscale`
+
+Works on macOS, Linux and Windows. Install Tailscale on your desktop:
+
+| Platform | Command |
+|----------|---------|
+| macOS | `brew install --cask tailscale` |
+| Linux | `curl -fsSL https://tailscale.com/install.sh \| sh` |
+| Windows | Download from [tailscale.com/download](https://tailscale.com/download) |
+
+1. Sign in to Tailscale on your desktop
 2. Install [Tailscale](https://tailscale.com/download) on your phone and sign in to the same account
 3. In Bento, toggle **Usar Tailscale (fuera de casa)** — the server binds to your `100.x.x.x` Tailscale IP
 4. Scan the QR code from anywhere with an internet connection
