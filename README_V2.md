@@ -69,9 +69,9 @@ La v2 elimina ese baile.
 ## Fase E — Remoto fuera de casa (Tailscale)
 > Objetivo: conectar desde datos móviles, no solo la WiFi local.
 
-- [ ] **E.1** Detectar IP de Tailscale (`100.x.x.x`) si está instalado.
-- [ ] **E.2** Opción en ajustes: "Escuchar en Tailscale" en vez de la IP LAN.
-- [ ] **E.3** Nunca exponer el puerto directo a internet — Tailscale es el único camino remoto soportado.
+- [x] **E.1** Detectar IP de Tailscale (`100.x.x.x`) si está instalado.
+- [x] **E.2** Opción en ajustes: "Escuchar en Tailscale" en vez de la IP LAN.
+- [x] **E.3** Nunca exponer el puerto directo a internet — Tailscale es el único camino remoto soportado.
 
 ---
 
