@@ -3,12 +3,13 @@
 //! caller explicitly calls `RemoteControl::start`.
 
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    http::StatusCode,
-    response::{Html, IntoResponse, Json},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Json, Response},
     routing::{delete, get, post},
     Router,
 };
@@ -117,6 +118,8 @@ impl RemoteControl {
             .route("/api/terminals", get(terminals))
             .route("/api/terminals", post(new_terminal))
             .route("/api/terminals/:id", delete(kill_terminal))
+            .route("/api/projects", get(projects_handler))
+            .route("/api/review", get(review_handler))
             .route("/ws/:id", get(ws_handler))
             .with_state(state);
 
@@ -378,6 +381,186 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
     outgoing.abort();
 }
 
+// ── /api/projects ─────────────────────────────────────────────────────────────
+
+async fn projects_handler(
+    State(state): State<Arc<RemoteState>>,
+    Query(auth): Query<Auth>,
+) -> impl IntoResponse {
+    if !authorized(&state, &auth) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let mut seen = std::collections::HashSet::new();
+    let list: Vec<_> = state
+        .manager
+        .list()
+        .into_iter()
+        .filter(|info| !info.cwd.is_empty())
+        .filter(|info| seen.insert(info.cwd.clone()))
+        .map(|info| {
+            let branch = git_branch(&info.cwd);
+            json!({ "cwd": info.cwd, "branch": branch })
+        })
+        .collect();
+    Json(list).into_response()
+}
+
+// ── /api/review (SSE) ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ReviewQuery {
+    token: Option<String>,
+    cwd: Option<String>,
+    base: Option<String>,
+}
+
+async fn review_handler(
+    State(state): State<Arc<RemoteState>>,
+    Query(q): Query<ReviewQuery>,
+) -> Response {
+    let auth = Auth { token: q.token };
+    if !authorized(&state, &auth) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let cwd = match q.cwd {
+        Some(c) if !c.is_empty() => c,
+        _ => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
+    };
+    let base = q.base.unwrap_or_else(|| "main".into());
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
+    tokio::spawn(async move {
+        run_review(cwd, base, tx).await;
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
+        .map(|chunk| -> Result<axum::body::Bytes, std::convert::Infallible> {
+            Ok(axum::body::Bytes::from(format!("data: {}\n\n", chunk)))
+        });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header("X-Accel-Buffering", "no")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+async fn run_review(cwd: String, base: String, tx: tokio::sync::mpsc::Sender<String>) {
+    let send = |msg: String| {
+        let tx = tx.clone();
+        async move { let _ = tx.send(msg).await; }
+    };
+
+    let diff_out = match tokio::process::Command::new("git")
+        .args(["-C", &cwd, "diff", &format!("{}...HEAD", base)])
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Ok(o) => {
+            send(format!("[ERROR] git diff falló: {}", String::from_utf8_lossy(&o.stderr).trim())).await;
+            return;
+        }
+        Err(e) => { send(format!("[ERROR] no se pudo ejecutar git: {e}")).await; return; }
+    };
+
+    if diff_out.trim().is_empty() {
+        send("[ERROR] No hay cambios respecto a la rama base.".into()).await;
+        return;
+    }
+
+    let prompt = build_review_prompt(&cwd, &base, &diff_out);
+
+    let mut child = match tokio::process::Command::new("claude")
+        .args(["-p", &prompt, "--output-format", "stream-json", "--allowedTools", "Read,Glob,Grep"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => { send(format!("[ERROR] claude no encontrado: {e}")).await; return; }
+    };
+
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => { send("[ERROR] no se pudo leer stdout de claude".into()).await; return; }
+    };
+
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let mut lines = BufReader::new(stdout).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        // stream-json format: extract text from message content blocks
+        if let Some(content) = val.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) {
+            for block in content {
+                if block.get("type").and_then(serde_json::Value::as_str) == Some("text") {
+                    if let Some(text) = block.get("text").and_then(serde_json::Value::as_str) {
+                        if !text.is_empty() {
+                            send(text.to_string()).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = child.wait().await;
+    send("[DONE]".into()).await;
+}
+
+fn build_review_prompt(cwd: &str, base: &str, diff: &str) -> String {
+    let project = std::path::Path::new(cwd)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| cwd.to_string());
+
+    format!(
+        r#"Eres un revisor de código experto. Analiza el siguiente diff de git para el proyecto "{project}" (cambios desde la rama "{base}") y produce un informe de revisión técnica completo en español.
+
+Evalúa TODOS los aspectos siguientes. Para cada uno, escribe un encabezado de nivel 2 (##) y lista los hallazgos con viñetas. Si no hay problemas en algún aspecto, escribe "Sin problemas detectados." en lugar de omitirlo.
+
+## Corrección y lógica
+Busca errores de lógica, condiciones incorrectas, casos borde no manejados, valores nulos sin comprobar, índices fuera de rango, desbordamientos, conversiones de tipo incorrectas.
+
+## Seguridad
+Busca inyección SQL/NoSQL/shell, XSS, CSRF, autenticación o autorización incorrecta, exposición de datos sensibles, secretos en código, deserialización insegura, path traversal, dependencias vulnerables.
+
+## Cambios que rompen compatibilidad
+Identifica cambios en APIs públicas, contratos de serialización, esquemas de base de datos, eventos o mensajes IPC, que puedan romper llamadores existentes.
+
+## Rendimiento
+Busca consultas N+1, asignaciones innecesarias en bucles críticos, bloqueos en el hilo principal, uso excesivo de memoria, operaciones de I/O bloqueantes en contextos async.
+
+## Manejo de errores
+Comprueba que los errores se propagan o registran correctamente, que no se silencian con unwrap/expect sin justificación, que los recursos se liberan aunque falle la operación.
+
+## Concurrencia
+Detecta condiciones de carrera, deadlocks potenciales, variables compartidas sin protección, uso incorrecto de primitivas de sincronización.
+
+## Calidad del código
+Señala duplicación evitable, abstracciones mal nombradas, funciones que hacen demasiado, código muerto, comentarios engañosos.
+
+## Cobertura de tests
+Indica qué lógica nueva carece de tests, qué casos borde deberían cubrirse, y si los tests existentes siguen siendo válidos tras los cambios.
+
+---
+
+DIFF:
+```diff
+{diff}
+```
+
+Escribe el informe directamente, sin preámbulo. Empieza con:
+
+## Corrección y lógica"#,
+        project = project,
+        base = base,
+        diff = diff,
+    )
+}
+
 const MOBILE_HTML: &str = r#"<!doctype html>
 <html>
 <head>
@@ -391,11 +574,15 @@ const MOBILE_HTML: &str = r#"<!doctype html>
 <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-:root{--bg:#0d0d0d;--s:#161616;--s2:#1e1e1e;--b:#2a2a2a;--a:#a78bfa;--fg:#e2e8f8;--dim:#555}
+:root{--bg:#0d0d0d;--s:#161616;--s2:#1e1e1e;--b:#2a2a2a;--a:#a78bfa;--ag:#73daca;--re:#f7768e;--fg:#e2e8f8;--dim:#555}
 html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden;touch-action:none}
 
-/* ── List ─────────────────────────────── */
-#list{height:100dvh;overflow-y:auto;padding:16px 16px 80px;touch-action:pan-y}
+/* ── Tab bar ──────────────────────────── */
+#tabbar{display:flex;height:44px;background:var(--s);border-bottom:1px solid var(--b);flex-shrink:0}
+.tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:600;color:var(--dim);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+.tab.active{color:var(--a);border-bottom-color:var(--a)}
+
+/* ── Shared list styles ───────────────── */
 .list-head{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;padding:0 2px}
 .tb{display:flex;align-items:center;gap:12px;width:100%;padding:15px 16px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);text-align:left;margin-bottom:10px;cursor:pointer;transition:background .1s}
 .tb:active{background:var(--s2)}
@@ -405,40 +592,82 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
 .tb-cwd{font-size:11px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tb-arrow{color:var(--dim);font-size:18px;flex-shrink:0}
 .empty{padding:40px 16px;text-align:center;color:var(--dim);font-size:14px;line-height:1.6}
-.err-msg{color:#f7768e}
+.err-msg{color:var(--re)}
+
+/* ── Terminals tab ────────────────────── */
+#page-terminals{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#list{flex:1;overflow-y:auto;padding:16px 16px 80px;touch-action:pan-y}
+#newbtn{position:fixed;bottom:20px;left:16px;right:16px;padding:14px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);font-size:15px;font-weight:600;cursor:pointer;text-align:center;z-index:10}
+#newbtn:active{opacity:.7}
 
 /* ── Terminal view ────────────────────── */
 #view{display:none;flex-direction:column;height:100dvh}
 #view.on{display:flex}
-
 #topbar{display:flex;align-items:center;gap:10px;padding:0 12px;height:48px;background:var(--s);border-bottom:1px solid var(--b);flex-shrink:0}
 #back{background:none;border:none;color:var(--a);font-size:26px;padding:4px 6px;cursor:pointer;line-height:1}
 #ttitle{flex:1;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#dot{width:8px;height:8px;border-radius:50%;background:#73daca;flex-shrink:0;transition:background .3s}
-#dot.off{background:#f7768e}
+#dot{width:8px;height:8px;border-radius:50%;background:var(--ag);flex-shrink:0;transition:background .3s}
+#dot.off{background:var(--re)}
 #killbtn{background:none;border:none;color:var(--dim);font-size:20px;padding:4px 6px;cursor:pointer;line-height:1;flex-shrink:0}
-#killbtn:active{color:#f7768e}
-
+#killbtn:active{color:var(--re)}
 #tcon{flex:1;min-height:0;background:#000;overflow:hidden}
 #tcon .xterm,#tcon .xterm-viewport,#tcon .xterm-screen{height:100%!important}
-
 #keys{display:flex;gap:5px;padding:6px 8px;background:var(--s);border-top:1px solid var(--b);overflow-x:auto;flex-shrink:0;scrollbar-width:none}
 #keys::-webkit-scrollbar{display:none}
 .k{flex-shrink:0;padding:7px 12px;background:var(--bg);border:1px solid var(--b);border-radius:8px;color:var(--fg);font-size:13px;font-family:monospace;cursor:pointer}
 .k:active{background:var(--s2);border-color:var(--a)}
-
 #inputbar{display:flex;gap:8px;padding:8px 10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0}
 #inp{flex:1;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:16px;outline:none;-webkit-appearance:none;caret-color:var(--a)}
 #inp:focus{border-color:var(--a)}
 #sendbtn{padding:11px 18px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-weight:700;font-size:16px;cursor:pointer}
 #sendbtn:active{opacity:.8}
-#newbtn{position:fixed;bottom:20px;left:16px;right:16px;padding:14px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);font-size:15px;font-weight:600;cursor:pointer;text-align:center;z-index:10}
-#newbtn:active{opacity:.7}
+
+/* ── Review tab ───────────────────────── */
+#page-review{display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#page-review.active{display:flex}
+#rv-form{padding:16px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid var(--b);flex-shrink:0}
+.rv-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:4px}
+#rv-project{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:15px;outline:none;-webkit-appearance:none}
+#rv-project:focus{border-color:var(--a)}
+#rv-base{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:15px;outline:none;-webkit-appearance:none;caret-color:var(--a)}
+#rv-base:focus{border-color:var(--a)}
+#rv-start{width:100%;padding:14px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+#rv-start:active{opacity:.8}
+#rv-start:disabled{opacity:.4;cursor:default}
+#rv-output{flex:1;overflow-y:auto;padding:16px;touch-action:pan-y}
+#rv-output.empty-state{display:flex;align-items:center;justify-content:center}
+.rv-placeholder{text-align:center;color:var(--dim);font-size:14px;line-height:1.7}
+/* Markdown render */
+.rv-md h2{font-size:16px;font-weight:700;color:var(--a);margin:20px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--b)}
+.rv-md h2:first-child{margin-top:0}
+.rv-md h3{font-size:14px;font-weight:600;color:var(--fg);margin:14px 0 6px}
+.rv-md p{font-size:14px;line-height:1.65;margin-bottom:10px;color:var(--fg)}
+.rv-md ul,.rv-md ol{padding-left:20px;margin-bottom:10px}
+.rv-md li{font-size:14px;line-height:1.6;color:var(--fg);margin-bottom:4px}
+.rv-md code{font-family:Menlo,Monaco,monospace;font-size:12px;background:var(--s2);border:1px solid var(--b);padding:1px 5px;border-radius:4px;color:var(--ag)}
+.rv-md pre{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:12px;overflow-x:auto;margin-bottom:12px}
+.rv-md pre code{background:none;border:none;padding:0;color:var(--fg);font-size:12px}
+.rv-md strong{font-weight:700;color:var(--fg)}
+.rv-md em{font-style:italic;color:var(--dim)}
+.rv-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.3);border-top-color:#07070f;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
-<body>
-<div id="list"></div>
-<button id="newbtn" onclick="newTerminal()">+ Nueva terminal</button>
+<body style="display:flex;flex-direction:column;height:100dvh">
+
+<!-- Tab bar -->
+<div id="tabbar">
+  <button class="tab active" onclick="switchTab('terminals')">⬛ Terminales</button>
+  <button class="tab" onclick="switchTab('review')">🔍 Review</button>
+</div>
+
+<!-- Terminals page -->
+<div id="page-terminals" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+  <div id="list" style="flex:1;overflow-y:auto;padding:16px 16px 80px;touch-action:pan-y"></div>
+  <button id="newbtn" onclick="newTerminal()">+ Nueva terminal</button>
+</div>
+
+<!-- Terminal view (fullscreen, hides tabs) -->
 <div id="view">
   <div id="topbar">
     <button id="back" onclick="goBack()">‹</button>
@@ -465,10 +694,49 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
     <button id="sendbtn" onclick="sendInp()">↵</button>
   </div>
 </div>
+
+<!-- Review page -->
+<div id="page-review" style="display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+  <div id="rv-form">
+    <div>
+      <div class="rv-label">Proyecto</div>
+      <select id="rv-project"><option value="">Cargando…</option></select>
+    </div>
+    <div>
+      <div class="rv-label">Rama base</div>
+      <input id="rv-base" type="text" value="main" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+    </div>
+    <button id="rv-start" onclick="startReview()">Iniciar revisión</button>
+  </div>
+  <div id="rv-output" class="empty-state">
+    <div class="rv-placeholder">Elige un proyecto y una rama base<br>para iniciar la revisión.</div>
+  </div>
+</div>
+
 <script>
 const token=new URLSearchParams(location.search).get('token')||'';
 const q='?token='+encodeURIComponent(token);
 let ws,term,fit,ro,reconnTimer,reconnDelay,activeId,activeTitle,leaving=false;
+let reviewSse=null;
+
+// ── Tab switching ──────────────────────────────────────────────────────────────
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===(name==='review'?1:0)));
+  const pt=document.getElementById('page-terminals');
+  const pr=document.getElementById('page-review');
+  if(name==='review'){
+    pt.style.display='none';
+    pr.style.display='flex';
+    loadProjects();
+  } else {
+    pr.style.display='none';
+    pt.style.display='flex';
+    load();
+  }
+}
+
+// ── Terminals ─────────────────────────────────────────────────────────────────
 
 function s(d){if(ws&&ws.readyState===1)ws.send(d)}
 
@@ -537,9 +805,9 @@ function attach(id,title){
   leaving=false;
   activeId=id;activeTitle=title;
   reconnDelay=1000;
-  document.getElementById('list').style.display='none';
-  document.getElementById('newbtn').style.display='none';
-  document.getElementById('view').classList.add('on');
+  document.getElementById('page-terminals').style.display='none';
+  document.getElementById('tabbar').style.display='none';
+  document.getElementById('view').style.display='flex';
   document.getElementById('ttitle').textContent=title;
   document.getElementById('dot').className='off';
 
@@ -563,10 +831,11 @@ function goBack(){
   if(ro){ro.disconnect();ro=null}
   if(ws){ws.close();ws=null}
   if(term){term.dispose();term=null}
-  document.getElementById('view').classList.remove('on');
-  document.getElementById('list').style.display='';
+  document.getElementById('view').style.display='none';
+  document.getElementById('tabbar').style.display='flex';
+  document.getElementById('page-terminals').style.display='flex';
   const nb=document.getElementById('newbtn');
-  nb.style.display='';nb.textContent='+ Nueva terminal';nb.disabled=false;
+  nb.textContent='+ Nueva terminal';nb.disabled=false;
   load();
 }
 
@@ -591,8 +860,91 @@ async function newTerminal(){
   }catch(e){btn.textContent='+ Nueva terminal';btn.disabled=false}
 }
 
+// ── Review ─────────────────────────────────────────────────────────────────────
+
+async function loadProjects(){
+  const sel=document.getElementById('rv-project');
+  try{
+    const r=await fetch('/api/projects'+q);
+    if(!r.ok){sel.innerHTML='<option value="">Sin proyectos</option>';return}
+    const ps=await r.json();
+    if(!ps.length){sel.innerHTML='<option value="">No hay terminales con cwd</option>';return}
+    sel.innerHTML=ps.map(p=>`<option value="${esc(p.cwd)}">${esc(p.cwd)}${p.branch?' (⎇ '+esc(p.branch)+')':''}</option>`).join('');
+  }catch(_){sel.innerHTML='<option value="">Error al cargar</option>'}
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+function mdToHtml(text){
+  // Fenced code blocks first
+  text=text.replace(/```[\w]*\n([\s\S]*?)```/g,(_,c)=>'<pre><code>'+esc(c.trim())+'</code></pre>');
+  // Inline code
+  text=text.replace(/`([^`]+)`/g,(_,c)=>'<code>'+esc(c)+'</code>');
+  // Headings
+  text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
+  text=text.replace(/^## (.+)$/gm,'<h2>$1</h2>');
+  text=text.replace(/^# (.+)$/gm,'<h2>$1</h2>');
+  // Bold/italic
+  text=text.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  text=text.replace(/\*(.+?)\*/g,'<em>$1</em>');
+  // Unordered lists
+  text=text.replace(/^[-*] (.+)$/gm,'<li>$1</li>');
+  text=text.replace(/(<li>.*<\/li>\n?)+/g,'<ul>$&</ul>');
+  // Paragraphs (lines not inside blocks)
+  text=text.replace(/^(?!<[hup]|<\/|<li)(.+)$/gm,'<p>$1</p>');
+  // Blank lines
+  text=text.replace(/\n{2,}/g,'');
+  return text;
+}
+
+function startReview(){
+  const cwd=document.getElementById('rv-project').value;
+  const base=document.getElementById('rv-base').value.trim()||'main';
+  if(!cwd)return;
+
+  if(reviewSse){reviewSse.close();reviewSse=null}
+
+  const out=document.getElementById('rv-output');
+  const btn=document.getElementById('rv-start');
+  out.className='rv-md';
+  out.innerHTML='';
+  btn.disabled=true;
+  btn.innerHTML='<span class="rv-spinner"></span> Analizando…';
+
+  let buf='';
+  const url='/api/review'+q+'&cwd='+encodeURIComponent(cwd)+'&base='+encodeURIComponent(base);
+  reviewSse=new EventSource(url);
+
+  reviewSse.onmessage=e=>{
+    const data=e.data;
+    if(data==='[DONE]'){
+      reviewSse.close();reviewSse=null;
+      btn.disabled=false;btn.innerHTML='Iniciar revisión';
+      return;
+    }
+    if(data.startsWith('[ERROR]')){
+      out.innerHTML='<p class="err-msg">'+esc(data.slice(7).trim())+'</p>';
+      reviewSse.close();reviewSse=null;
+      btn.disabled=false;btn.innerHTML='Iniciar revisión';
+      return;
+    }
+    buf+=data;
+    out.innerHTML=mdToHtml(buf);
+    out.scrollTop=out.scrollHeight;
+  };
+  reviewSse.onerror=()=>{
+    reviewSse.close();reviewSse=null;
+    btn.disabled=false;btn.innerHTML='Iniciar revisión';
+    if(!buf)out.innerHTML='<p class="err-msg">Error de conexión.</p>';
+  };
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
 load();
-setInterval(()=>{ if(document.getElementById('list').style.display!=='none') load(); },3000);
+setInterval(()=>{
+  const pt=document.getElementById('page-terminals');
+  if(pt.style.display!=='none')load();
+},3000);
 </script>
 </body>
 </html>"#;
@@ -600,6 +952,8 @@ setInterval(()=>{ if(document.getElementById('list').style.display!=='none') loa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── resolve_bind_ip ───────────────────────────────────────────────────────
 
     #[test]
     fn lan_mode_binds_to_lan_ip_only() {
@@ -620,5 +974,57 @@ mod tests {
         let r = resolve_bind_ip(true, None, "192.168.1.10".into());
         assert_eq!(r.bind_host, "192.168.1.10");
         assert_eq!(r.display_ip, "192.168.1.10");
+    }
+
+    // ── build_review_prompt ───────────────────────────────────────────────────
+
+    #[test]
+    fn prompt_contains_project_name_from_cwd() {
+        let p = build_review_prompt("/home/user/mi-proyecto", "main", "diff content");
+        assert!(p.contains("mi-proyecto"), "debe incluir el nombre del proyecto");
+    }
+
+    #[test]
+    fn prompt_contains_base_branch() {
+        let p = build_review_prompt("/repo", "develop", "diff content");
+        assert!(p.contains("develop"), "debe mencionar la rama base");
+    }
+
+    #[test]
+    fn prompt_embeds_diff() {
+        let diff = "--- a/foo.rs\n+++ b/foo.rs\n@@ -1 +1 @@\n-old\n+new";
+        let p = build_review_prompt("/repo", "main", diff);
+        assert!(p.contains(diff), "debe incrustar el diff completo");
+    }
+
+    #[test]
+    fn prompt_covers_all_eight_sections() {
+        let p = build_review_prompt("/repo", "main", "x");
+        let sections = [
+            "Corrección y lógica",
+            "Seguridad",
+            "Cambios que rompen compatibilidad",
+            "Rendimiento",
+            "Manejo de errores",
+            "Concurrencia",
+            "Calidad del código",
+            "Cobertura de tests",
+        ];
+        for s in &sections {
+            assert!(p.contains(s), "falta sección: {s}");
+        }
+    }
+
+    #[test]
+    fn prompt_uses_project_basename_not_full_path() {
+        let p = build_review_prompt("/home/user/deep/path/proyecto", "main", "x");
+        assert!(p.contains("proyecto"));
+        assert!(!p.contains("/home/user/deep/path/proyecto"), "no debe aparecer la ruta completa");
+    }
+
+    #[test]
+    fn prompt_ends_with_first_section_instruction() {
+        let p = build_review_prompt("/repo", "main", "x");
+        assert!(p.trim_end().ends_with("## Corrección y lógica"), "debe terminar instruyendo con el primer encabezado");
     }
 }
