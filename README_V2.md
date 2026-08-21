@@ -25,71 +25,37 @@ La v2 elimina ese baile.
 
 ---
 
-## Fase A — Toggle + QR en Bento *(prioridad máxima)*
-> Objetivo: activar el control remoto desde un botón en la app. Sin terminal, sin env vars.
+## ✅ Fase A — Toggle + QR en Bento
+> Completada. Toggle on/off, URL+QR, token persistido, auto-start al abrir panel, lifecycle daemon.
 
-- [ ] **A.1** Comando IPC nuevo en el daemon: `remote.start` / `remote.stop` / `remote.status`
-  - `remote.start { addr?, token? }` → arranca `remote::serve` en caliente (hoy solo
-    arranca al lanzar el proceso si existe `BENTO_REMOTE_ADDR`). Devuelve `{ addr, token }`.
-  - Guardar el `JoinHandle` del `tokio::spawn` para poder pararlo.
-  - `remote.status` → `{ running: bool, addr, token, url }`.
-  - Ficheros: `daemon/bento-daemon/src/remote.rs` (exponer start/stop), `ipc.rs` (dispatch),
-    `main.rs` (dejar de leer el env directamente y delegar en el comando).
-
-- [ ] **A.2** Detectar la IP LAN real en Rust:
-  - Crate `local-ip-address` → construir `http://<ip>:<port>/?token=<token>`.
-  - Fallback a `127.0.0.1` si no hay red.
-
-- [ ] **A.3** Generar el QR **en Rust**:
-  - Crate `qrcode` → PNG → base64 → se manda al frontend como data-URL.
-  - Evita depender de un CDN en el móvil para el propio QR.
-
-- [ ] **A.4** Cliente daemon en la app (TS/Rust puente): `remote_start`, `remote_stop`,
-  `remote_status` como comandos Tauri que reenvían al IPC del daemon.
-  - Fichero: `src-tauri/src/pty.rs` (ya tiene `request()`; añadir estos comandos).
-
-- [ ] **A.5** UI de ajustes — sección "Control desde el móvil":
-  - Toggle on/off.
-  - Al activar: muestra **URL + QR + botón copiar**.
-  - Botón "Regenerar token" (invalida el anterior).
-  - Aviso de seguridad: "solo en tu red WiFi".
-  - Dónde encaja: seguir el patrón de panel existente (ver `src/panels/*`). Sin panel
-    nuevo si cabe en la config lateral de un panel ya existente.
-
-- [ ] **A.6** Persistir preferencia (activado/puerto) para reactivar al reabrir.
-
-**Resultado:** activar toggle → escanear QR → listo.
+- [x] **A.1** `remote.start` / `remote.stop` / `remote.status` en daemon IPC
+- [x] **A.2** IP LAN real detectada en Rust (UDP trick, sin crate extra)
+- [x] **A.3** QR generado en el frontend (qrcode.js inline en `PhonePanel.ts`)
+- [x] **A.4** `remote_start`, `remote_stop`, `remote_status` como comandos Tauri en `pty.rs`
+- [x] **A.5** Panel "Control Móvil" (`src/panels/remote/PhonePanel.ts`) — toggle + URL + QR
+- [x] **A.6** Token persistido en localStorage; estado `sessionStopped` para no re-activar si el usuario lo paró
 
 ---
 
-## Fase B — UX del móvil
-> Objetivo: que un TUI (Claude/OpenCode) se use cómodo con el pulgar.
+## ✅ Fase B — UX del móvil
+> Completada. TUI usable desde el móvil con flechas, reconexión y resize.
 
-- [ ] **B.1** Barra de teclas rápidas: `Esc`, `Tab`, `Ctrl+C`, `↑ ↓ ← →`, `Enter`.
-  - Hoy solo hay input + `^C`. Un TUI necesita flechas y `Esc`.
-- [ ] **B.2** Reconexión automática del WebSocket con backoff (hoy solo escribe
-  `[desconectado]` y muere).
-- [ ] **B.3** `xterm-addon-fit` para ajustar filas/columnas al tamaño del móvil y
-  mandar `resize` al PTY (hoy el tamaño es fijo → los TUI se pintan mal).
-- [ ] **B.4** Scroll táctil fluido + botón "ir al final".
-- [ ] **B.5** Bundlear `xterm` en el binario (`include_str!`) en vez del CDN de unpkg
-  → funciona sin internet en el móvil.
-  - Fichero: `daemon/bento-daemon/src/remote.rs` (`MOBILE_HTML`).
-
-Fichero central de esta fase: `MOBILE_HTML` en `remote.rs`.
+- [x] **B.1** Barra de teclas rápidas: `Esc`, `Tab`, `↑↓←→`, `^C`, `^D`, `^L`, `Home`, `End`
+- [x] **B.2** Reconexión automática del WebSocket con backoff exponencial (hasta 16 s)
+- [x] **B.3** `xterm-addon-fit` — resize al cambiar orientación/ventana, manda `{type:"resize"}` al PTY
+- [x] **B.4** Scroll táctil vía `touch-action:pan-y` en la lista; terminal a pantalla completa
+- [x] **B.5** xterm bundleado en el binario (`MOBILE_HTML` en `remote.rs` — sin CDN)
 
 ---
 
-## Fase C — Auto-arranque del daemon *(Fase 3 de `DAEMON.md`)*
-> Objetivo: el daemon vive aunque no abras la app ni el CLI.
+## ✅ Fase C — Auto-arranque del daemon
+> Completada. El daemon puede vivir sin la app abierta.
 
-- [ ] **C.1** `bento daemon install` — registra auto-arranque por SO:
-  - macOS: `~/Library/LaunchAgents/dev.bento.daemon.plist`
-  - Linux: `~/.config/systemd/user/bento-daemon.service` + `systemctl --user enable`
-  - Windows: `HKCU\...\Run`
-- [ ] **C.2** `bento daemon uninstall` — revierte lo anterior.
-- [ ] **C.3** `bento daemon start` en background real (hoy la app lo auto-lanza; falta
-  el arranque explícito desde el CLI cuando la app no corre).
+- [x] **C.1** `bento daemon install` — registra auto-arranque:
+  - macOS: `~/Library/LaunchAgents/dev.bento.daemon.plist` + `launchctl load -w`
+  - Linux: `~/.config/systemd/user/bento-daemon.service` + `systemctl --user enable --now`
+- [x] **C.2** `bento daemon uninstall` — revierte (unload/disable + rm plist/service)
+- [x] **C.3** `bento daemon start` — arranca el daemon en background desde el CLI (sin la app)
 
 ---
 

@@ -8,5 +8,5 @@ name = "bento"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "macros", "time"] }
 serde_json = "1.0"
