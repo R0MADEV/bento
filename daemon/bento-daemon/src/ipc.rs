@@ -35,6 +35,8 @@ struct Request {
     use_tailscale: Option<bool>,
     #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    herdr_socket: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -194,10 +196,11 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             let manager = manager.clone();
             let token = req.token.clone();
             let use_tailscale = req.use_tailscale.unwrap_or(false);
+            let herdr_socket = req.herdr_socket.clone();
             let out = out.clone();
             let id = req.id.clone();
             tokio::spawn(async move {
-                match remote.start(manager, port, token, use_tailscale).await {
+                match remote.start(manager, port, token, use_tailscale, herdr_socket).await {
                     Ok(info) => { let _ = out.send(ok(&id, serde_json::to_value(&info).unwrap_or(Value::Null))); }
                     Err(e) => { let _ = out.send(fail(&id, e)); }
                 }

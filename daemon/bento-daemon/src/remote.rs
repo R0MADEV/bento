@@ -9,7 +9,7 @@ use axum::{
     },
     http::StatusCode,
     response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use bento_core::{PtyEvent, PtyManager};
@@ -75,7 +75,7 @@ impl Default for RemoteControl {
 impl RemoteControl {
     /// Start the server on `0.0.0.0:<port>`. If already running, returns
     /// the existing info without restarting.
-    pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>, use_tailscale: bool) -> Result<RemoteInfo, String> {
+    pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>, use_tailscale: bool, herdr_socket: Option<String>) -> Result<RemoteInfo, String> {
         // Fast path: server is already healthy.
         {
             let guard = self.0.active.lock().unwrap();
@@ -111,11 +111,12 @@ impl RemoteControl {
             return Ok(RemoteInfo { running: false, addr: String::new(), token: String::new(), url: String::new() });
         }
 
-        let state = Arc::new(RemoteState { manager, token });
+        let state = Arc::new(RemoteState { manager, token, herdr_socket });
         let app = Router::new()
             .route("/", get(index))
             .route("/api/terminals", get(terminals))
             .route("/api/terminals", post(new_terminal))
+            .route("/api/terminals/:id", delete(kill_terminal))
             .route("/ws/:id", get(ws_handler))
             .with_state(state);
 
@@ -206,6 +207,7 @@ pub fn tailscale_ip() -> Option<String> {
 struct RemoteState {
     manager: PtyManager,
     token: String,
+    herdr_socket: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -224,6 +226,19 @@ async fn index(State(state): State<Arc<RemoteState>>, Query(auth): Query<Auth>) 
     Html(MOBILE_HTML).into_response()
 }
 
+fn git_branch(cwd: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !b.is_empty() && b != "HEAD" { Some(b) } else { None }
+    } else {
+        None
+    }
+}
+
 async fn terminals(
     State(state): State<Arc<RemoteState>>,
     Query(auth): Query<Auth>,
@@ -235,9 +250,26 @@ async fn terminals(
         .manager
         .list()
         .into_iter()
-        .map(|info| json!({ "id": info.id, "title": info.title, "cwd": info.cwd }))
+        .map(|info| {
+            let branch = if info.cwd.is_empty() { None } else { git_branch(&info.cwd) };
+            json!({ "id": info.id, "title": info.title, "cwd": info.cwd, "branch": branch })
+        })
         .collect();
     Json(list).into_response()
+}
+
+async fn kill_terminal(
+    State(state): State<Arc<RemoteState>>,
+    Path(id): Path<String>,
+    Query(auth): Query<Auth>,
+) -> impl IntoResponse {
+    if !authorized(&state, &auth) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    match state.manager.close(&id) {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn new_terminal(
@@ -250,12 +282,19 @@ async fn new_terminal(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     let id = format!("pty-mobile-{}", uuid_v4());
+    let mut env = vec![];
+    if let Some(socket) = &state.herdr_socket {
+        env.push(("HERDR_ENV".into(), "1".into()));
+        env.push(("HERDR_SOCKET_PATH".into(), socket.clone()));
+        env.push(("HERDR_PANE_ID".into(), id.clone()));
+    }
     let opts = bento_core::OpenOptions {
         id: Some(id.clone()),
         shell: Some(shell),
         cwd: Some(home),
         rows: 24,
         cols: 80,
+        env,
         ..Default::default()
     };
     match state.manager.open(opts) {
@@ -374,6 +413,8 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
 #ttitle{flex:1;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #dot{width:8px;height:8px;border-radius:50%;background:#73daca;flex-shrink:0;transition:background .3s}
 #dot.off{background:#f7768e}
+#killbtn{background:none;border:none;color:var(--dim);font-size:20px;padding:4px 6px;cursor:pointer;line-height:1;flex-shrink:0}
+#killbtn:active{color:#f7768e}
 
 #tcon{flex:1;min-height:0;background:#000;overflow:hidden}
 #tcon .xterm,#tcon .xterm-viewport,#tcon .xterm-screen{height:100%!important}
@@ -400,6 +441,7 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
     <button id="back" onclick="goBack()">‹</button>
     <span id="ttitle">Terminal</span>
     <div id="dot" class="off"></div>
+    <button id="killbtn" onclick="killTerminal()" title="Cerrar terminal">✕</button>
   </div>
   <div id="tcon"></div>
   <div id="keys">
@@ -449,7 +491,8 @@ async function load(){
     ts.forEach(t=>{
       const b=document.createElement('button');
       b.className='tb';
-      b.innerHTML='<span class="tb-ico">⬛</span><div class="tb-info"><div class="tb-name">'+(t.title||t.id)+'</div><div class="tb-cwd">'+(t.cwd||'')+'</div></div><span class="tb-arrow">›</span>';
+      const sub=(t.branch?'⎇ '+t.branch+(t.cwd?' · '+t.cwd:''):t.cwd||'');
+      b.innerHTML='<span class="tb-ico">⬛</span><div class="tb-info"><div class="tb-name">'+(t.title||t.id)+'</div><div class="tb-cwd">'+sub+'</div></div><span class="tb-arrow">›</span>';
       b.onclick=()=>attach(t.id,t.title||t.id);
       el.appendChild(b);
     });
@@ -524,6 +567,14 @@ function goBack(){
   document.getElementById('list').style.display='';
   document.getElementById('newbtn').style.display='';
   load();
+}
+
+async function killTerminal(){
+  if(!activeId)return;
+  const ok=confirm('¿Cerrar "'+activeTitle+'"?');
+  if(!ok)return;
+  try{ await fetch('/api/terminals/'+encodeURIComponent(activeId)+q,{method:'DELETE'}) }catch(_){}
+  goBack();
 }
 
 async function newTerminal(){
