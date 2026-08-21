@@ -194,7 +194,10 @@ pub fn kill_all(_manager: &PtyManager) {}
 
 /// Kill any running bento-daemon process.
 fn kill_existing_daemon() {
+    #[cfg(unix)]
     let _ = std::process::Command::new("pkill").args(["-f", "bento-daemon"]).output();
+    #[cfg(windows)]
+    let _ = std::process::Command::new("taskkill").args(["/F", "/IM", "bento-daemon.exe"]).output();
 }
 
 /// Launch the daemon and return the child handle so we can kill it on shutdown.
