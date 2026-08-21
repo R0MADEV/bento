@@ -59,15 +59,10 @@ La v2 elimina ese baile.
 
 ---
 
-## ✅ Fase D — Comandos de agentes en el CLI
-> Completada. Agentes lanzables desde el terminal sin abrir la app.
-
-- [x] **D.1** `bento agent run <agent> [--cwd <path>] [--message "..."] [--attach]`
-  - `claude` sin message → interactivo; con `--message` → `claude -p "<msg>"`
-  - `codex` con `--message` → `codex -a full-auto -q "<msg>"`
-  - `--attach` → se engancha al terminal tras lanzar
-- [x] **D.2** `bento agent list` — lista terminales activos (reutiliza `terminals.list`)
-- [x] **D.3** `bento agent attach <id>` — se engancha a un agente por id
+## ~~Fase D — Comandos de agentes en el CLI~~ *(descartada)*
+> Solo tiene sentido si el daemon vive independiente de la app (con `daemon install`).
+> El caso de uso real es activar el control móvil desde Bento (desktop o CLI), no lanzar agentes desde el CLI.
+> Implementada pero no forma parte del flujo normal.
 
 ---
 

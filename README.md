@@ -84,11 +84,6 @@ bento daemon uninstall       # remove the login service
 bento terminals              # list open terminals
 bento open [--cwd <dir>]     # open a new terminal
 bento attach <id>            # attach stdin/stdout to a terminal
-
-bento agent run claude [--cwd <dir>] [--message "..."] [--attach]
-bento agent run codex  [--cwd <dir>] [--message "..."]
-bento agent list             # list running agent terminals
-bento agent attach <id>      # attach to a running agent
 ```
 
 `bento daemon install` writes a launchd plist on macOS or a systemd user service on Linux so the daemon starts at login — independent of the Bento app.
