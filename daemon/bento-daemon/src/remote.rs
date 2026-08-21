@@ -268,6 +268,10 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
                 Ok(PtyEvent::Output(text)) => {
                     if sender.send(Message::Text(text)).await.is_err() { break; }
                 }
+                Ok(PtyEvent::TitleChanged(title)) => {
+                    let msg = format!("{{\"type\":\"title\",\"value\":{}}}", serde_json::json!(title));
+                    if sender.send(Message::Text(msg)).await.is_err() { break; }
+                }
                 Ok(PtyEvent::Exit(_)) => break,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => break,
@@ -428,7 +432,21 @@ function connect(id){
   const dot=document.getElementById('dot');
   ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws/'+id+q);
   ws.onopen=()=>{dot.className='';reconnDelay=1000;sendResize()};
-  ws.onmessage=e=>term&&term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
+  ws.onmessage=e=>{
+    if(typeof e.data==='string'){
+      try{
+        const msg=JSON.parse(e.data);
+        if(msg.type==='title'){
+          activeTitle=msg.value;
+          document.getElementById('ttitle').textContent=msg.value;
+          return;
+        }
+      }catch(_){}
+      term&&term.write(e.data);
+    }else{
+      term&&term.write(new Uint8Array(e.data));
+    }
+  };
   ws.onclose=()=>{
     if(leaving)return;
     dot.className='off';
@@ -473,6 +491,7 @@ function goBack(){
 }
 
 load();
+setInterval(()=>{ if(document.getElementById('list').style.display!=='none') load(); },3000);
 </script>
 </body>
 </html>"#;

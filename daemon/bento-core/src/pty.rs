@@ -27,6 +27,7 @@ pub struct OpenOptions {
 pub enum PtyEvent {
     Output(String),
     Exit(Option<i32>),
+    TitleChanged(String),
 }
 
 /// Public metadata about an open terminal.
@@ -71,8 +72,17 @@ impl PtyManager {
     /// is already open it is returned as-is (`reattached = true`) without spawning
     /// again — the caller must then NOT replay a launch command onto it.
     pub fn set_title(&self, id: &str, title: &str) {
-        if let Some(instance) = self.instances.lock().unwrap().get_mut(id) {
-            instance.title = title.to_string();
+        let tx = {
+            let mut guard = self.instances.lock().unwrap();
+            if let Some(instance) = guard.get_mut(id) {
+                instance.title = title.to_string();
+                Some(instance.tx.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(tx) = tx {
+            let _ = tx.send(PtyEvent::TitleChanged(title.to_string()));
         }
     }
 

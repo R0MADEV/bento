@@ -170,6 +170,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                                         json!({ "event": "terminal.output", "pty_id": pty_id, "data": text }).to_string(),
                                     );
                                 }
+                                Ok(PtyEvent::TitleChanged(_)) => {}
                                 Ok(PtyEvent::Exit(code)) => {
                                     let _ = out.send(
                                         json!({ "event": "terminal.exit", "pty_id": pty_id, "code": code }).to_string(),
