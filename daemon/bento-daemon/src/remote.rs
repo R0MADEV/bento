@@ -9,7 +9,7 @@ use axum::{
     },
     http::StatusCode,
     response::{Html, IntoResponse, Json},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use bento_core::{PtyEvent, PtyManager};
@@ -115,6 +115,7 @@ impl RemoteControl {
         let app = Router::new()
             .route("/", get(index))
             .route("/api/terminals", get(terminals))
+            .route("/api/terminals", post(new_terminal))
             .route("/ws/:id", get(ws_handler))
             .with_state(state);
 
@@ -239,6 +240,36 @@ async fn terminals(
     Json(list).into_response()
 }
 
+async fn new_terminal(
+    State(state): State<Arc<RemoteState>>,
+    Query(auth): Query<Auth>,
+) -> impl IntoResponse {
+    if !authorized(&state, &auth) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+    let id = format!("pty-mobile-{}", uuid_v4());
+    let opts = bento_core::OpenOptions {
+        id: Some(id.clone()),
+        shell: Some(shell),
+        cwd: Some(home),
+        rows: 24,
+        cols: 80,
+        ..Default::default()
+    };
+    match state.manager.open(opts) {
+        Ok((id, _)) => Json(json!({ "id": id })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+fn uuid_v4() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+    format!("{:08x}", t)
+}
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<RemoteState>>,
@@ -357,10 +388,13 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
 #inp:focus{border-color:var(--a)}
 #sendbtn{padding:11px 18px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-weight:700;font-size:16px;cursor:pointer}
 #sendbtn:active{opacity:.8}
+#newbtn{display:block;width:calc(100% - 32px);margin:0 16px 16px;padding:14px;background:var(--s);border:1px solid var(--border);border-radius:14px;color:var(--fg);font-size:15px;font-weight:600;cursor:pointer;text-align:center}
+#newbtn:active{opacity:.7}
 </style>
 </head>
 <body>
 <div id="list"></div>
+<button id="newbtn" onclick="newTerminal()">+ Nueva terminal</button>
 <div id="view">
   <div id="topbar">
     <button id="back" onclick="goBack()">‹</button>
@@ -461,6 +495,7 @@ function attach(id,title){
   activeId=id;activeTitle=title;
   reconnDelay=1000;
   document.getElementById('list').style.display='none';
+  document.getElementById('newbtn').style.display='none';
   document.getElementById('view').classList.add('on');
   document.getElementById('ttitle').textContent=title;
   document.getElementById('dot').className='off';
@@ -487,7 +522,21 @@ function goBack(){
   if(term){term.dispose();term=null}
   document.getElementById('view').classList.remove('on');
   document.getElementById('list').style.display='';
+  document.getElementById('newbtn').style.display='';
   load();
+}
+
+async function newTerminal(){
+  const btn=document.getElementById('newbtn');
+  btn.textContent='Abriendo…';
+  btn.disabled=true;
+  try{
+    const r=await fetch('/api/terminals'+q,{method:'POST'});
+    if(!r.ok){btn.textContent='+ Nueva terminal';btn.disabled=false;return}
+    const {id}=await r.json();
+    await load();
+    attach(id,id);
+  }catch(e){btn.textContent='+ Nueva terminal';btn.disabled=false}
 }
 
 load();
