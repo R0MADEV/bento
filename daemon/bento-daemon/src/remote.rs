@@ -353,7 +353,7 @@ const MOBILE_HTML: &str = r#"<!doctype html>
 html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden;touch-action:none}
 
 /* ── List ─────────────────────────────── */
-#list{height:100dvh;overflow-y:auto;padding:16px;touch-action:pan-y}
+#list{height:100dvh;overflow-y:auto;padding:16px 16px 80px;touch-action:pan-y}
 .list-head{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;padding:0 2px}
 .tb{display:flex;align-items:center;gap:12px;width:100%;padding:15px 16px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);text-align:left;margin-bottom:10px;cursor:pointer;transition:background .1s}
 .tb:active{background:var(--s2)}
@@ -388,7 +388,7 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
 #inp:focus{border-color:var(--a)}
 #sendbtn{padding:11px 18px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-weight:700;font-size:16px;cursor:pointer}
 #sendbtn:active{opacity:.8}
-#newbtn{display:block;width:calc(100% - 32px);margin:0 16px 16px;padding:14px;background:var(--s);border:1px solid var(--border);border-radius:14px;color:var(--fg);font-size:15px;font-weight:600;cursor:pointer;text-align:center}
+#newbtn{position:fixed;bottom:20px;left:16px;right:16px;padding:14px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);font-size:15px;font-weight:600;cursor:pointer;text-align:center;z-index:10}
 #newbtn:active{opacity:.7}
 </style>
 </head>
