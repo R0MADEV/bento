@@ -270,6 +270,24 @@ pub fn pty_set_title(id: String, title: String, state: tauri::State<Arc<PtyManag
     state.send(json!({ "cmd": "terminal.set_title", "pty_id": id, "title": title }).to_string())
 }
 
+#[derive(serde::Serialize)]
+pub struct PtyInfo {
+    pub id: String,
+    pub title: String,
+    pub cwd: String,
+}
+
+#[tauri::command]
+pub async fn pty_list(state: tauri::State<'_, Arc<PtyManager>>) -> Result<Vec<PtyInfo>, String> {
+    let data = state.request(json!({ "cmd": "terminals.list" })).await?;
+    let list = data.as_array().cloned().unwrap_or_default();
+    Ok(list.into_iter().map(|v| PtyInfo {
+        id:    v.get("pty_id").and_then(Value::as_str).unwrap_or("").to_string(),
+        title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+        cwd:   v.get("cwd").and_then(Value::as_str).unwrap_or("").to_string(),
+    }).collect())
+}
+
 #[tauri::command]
 pub fn pty_write(id: String, data: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
     state.send(json!({ "cmd": "terminal.write", "pty_id": id, "data": data }).to_string())

@@ -627,10 +627,26 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       .then(restoreFrom)
   }
 
+  // Adopt terminals created from mobile (or CLI) that the daemon knows about but
+  // this panel doesn't. Runs periodically so mobile-spawned shells appear here.
+  const adoptDaemonTerminals = async () => {
+    if (!initialized) return
+    const knownIds = new Set(slots.map(s => s.ptyId))
+    try {
+      const list = await invoke<Array<{ id: string; title: string; cwd: string }>>('pty_list')
+      for (const t of list) {
+        if (!knownIds.has(t.id)) {
+          addAgent(t.title || 'Mobile shell', t.cwd || projectPath, undefined, undefined, undefined, t.id)
+        }
+      }
+    } catch { /* daemon not ready */ }
+  }
+  const adoptInterval = setInterval(adoptDaemonTerminals, 4000)
+
   // Flush current agents to storage without tearing them down. Lets an embedding
   // host (e.g. the Tasks worktree terminal) save on navigation, so idle agents
   // survive even if dispose never fires (abrupt close).
   const persist = () => persistNow()
 
-  return { element: root, fit, persist, dispose }
+  return { element: root, fit, persist, dispose: () => { clearInterval(adoptInterval); dispose() } }
 }
