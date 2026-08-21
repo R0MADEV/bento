@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -34,10 +34,16 @@ pub struct RemoteInfo {
 struct ActiveRemote {
     info: RemoteInfo,
     handle: JoinHandle<()>,
+    /// Sending on this channel triggers axum's graceful shutdown, which closes
+    /// the TcpListener and drains connections. We also abort() as a hard fallback.
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl Drop for ActiveRemote {
     fn drop(&mut self) {
+        // Signal graceful shutdown first — axum releases the listening socket.
+        let _ = self.shutdown_tx.send(true);
+        // Hard abort so we don't wait for connections to drain.
         self.handle.abort();
     }
 }
@@ -112,13 +118,19 @@ impl RemoteControl {
             .route("/ws/:id", get(ws_handler))
             .with_state(state);
 
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         let log_addr = bind_addr.clone();
         let handle = tokio::spawn(async move {
             eprintln!("bento-daemon phone server on http://{log_addr}");
-            let _ = axum::serve(listener, app).await;
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    // Wait until the shutdown_tx sends true (or is dropped).
+                    let _ = shutdown_rx.wait_for(|v| *v).await;
+                })
+                .await;
         });
 
-        *self.0.active.lock().unwrap() = Some(ActiveRemote { info: info.clone(), handle });
+        *self.0.active.lock().unwrap() = Some(ActiveRemote { info: info.clone(), handle, shutdown_tx });
         Ok(info)
     }
 
