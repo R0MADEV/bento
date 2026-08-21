@@ -1,358 +1,335 @@
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+//! Terminals live in the bento-daemon (out-of-process) so they survive the app
+//! closing and can be shared with the CLI and the phone. This module is a thin
+//! client: it forwards the pty_* commands to the daemon over a single localhost
+//! connection and re-emits the daemon's output as the `pty-output-<id>` /
+//! `pty-exit-<id>` events the frontend already listens on.
+//!
+//! `terminal.open` is request/response so `pty_spawn` learns whether it reattached
+//! to an existing terminal — the caller must then not replay a launch command.
+
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use sysinfo::{Pid, System};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+use tokio::sync::{mpsc, oneshot};
 
-struct PtyInstance {
-    writer: Box<dyn Write + Send>,
-    master: Box<dyn portable_pty::MasterPty + Send>,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
-}
-
-#[derive(Default)]
 pub struct PtyManager {
-    instances: Mutex<HashMap<String, PtyInstance>>,
+    addr: String,
+    tx: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    counter: AtomicU64,
+    /// Stored so `ensure_connected` can reconnect without needing an AppHandle parameter.
+    app: Arc<Mutex<Option<AppHandle>>>,
+    /// Child handle of the daemon we spawned — used to kill it on shutdown.
+    daemon_child: Arc<Mutex<Option<std::process::Child>>>,
 }
 
-#[cfg(unix)]
-fn terminate_process_tree(root: u32) {
-    let session = Pid::from_u32(root);
-    let members = |system: &System| -> Vec<i32> {
-        system
-            .processes()
-            .iter()
-            .filter_map(|(pid, process)| {
-                (process.session_id() == Some(session)).then_some(pid.as_u32() as i32)
-            })
-            .collect()
-    };
-
-    let system = System::new_all();
-    for pid in members(&system) {
-        // SAFETY: the PID comes from the current system process snapshot.
-        unsafe { libc::kill(pid, libc::SIGTERM) };
-    }
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    let system = System::new_all();
-    for pid in members(&system) {
-        // Agents may handle/ignore SIGHUP and SIGTERM; SIGKILL guarantees that
-        // closing their owning terminal actually releases their memory.
-        unsafe { libc::kill(pid, libc::SIGKILL) };
+impl Default for PtyManager {
+    fn default() -> Self {
+        Self {
+            addr: std::env::var("BENTO_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:7877".into()),
+            tx: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            counter: AtomicU64::new(0),
+            app: Arc::new(Mutex::new(None)),
+            daemon_child: Arc::new(Mutex::new(None)),
+        }
     }
 }
 
-#[cfg(windows)]
-fn terminate_process_tree(root: u32) {
-    use std::ffi::c_void;
+impl PtyManager {
+    /// Connect to the daemon and start forwarding its output to the frontend.
+    /// Always kills any running daemon first so the freshly compiled binary is used.
+    /// Safe to call again after a disconnect — replaces the old connection.
+    pub async fn connect(&self, app: AppHandle) -> Result<(), String> {
+        *self.app.lock().unwrap() = Some(app.clone());
 
-    type Handle = *mut c_void;
-    const PROCESS_TERMINATE: u32 = 0x0001;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
-        fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
-        fn CloseHandle(handle: Handle) -> i32;
-    }
+        // Kill any daemon we started in this session.
+        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        // Kill any orphaned daemon from a previous session.
+        kill_existing_daemon();
+        // Brief pause so the port is freed before we try to bind again.
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let system = System::new_all();
-    let mut tree = vec![Pid::from_u32(root)];
-    loop {
-        let before = tree.len();
-        for (pid, process) in system.processes() {
-            if process
-                .parent()
-                .is_some_and(|parent| tree.contains(&parent))
-                && !tree.contains(pid)
-            {
-                tree.push(*pid);
+        if let Some(child) = spawn_daemon() {
+            *self.daemon_child.lock().unwrap() = Some(child);
+        }
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if TcpStream::connect(&self.addr).await.is_ok() {
+                break;
             }
         }
-        if tree.len() == before {
-            break;
-        }
-    }
+        let stream = TcpStream::connect(&self.addr)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (read_half, mut write_half) = stream.into_split();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        *self.tx.lock().unwrap() = Some(tx);
 
-    // Children first so they cannot survive after their parent disappears.
-    for pid in tree.into_iter().rev() {
-        // SAFETY: handles are checked and closed, and PROCESS_TERMINATE is the
-        // minimum access required for this operation.
-        unsafe {
-            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid.as_u32());
-            if !handle.is_null() {
-                TerminateProcess(handle, 1);
-                CloseHandle(handle);
+        tauri::async_runtime::spawn(async move {
+            while let Some(line) = rx.recv().await {
+                if write_half.write_all(line.as_bytes()).await.is_err()
+                    || write_half.write_all(b"\n").await.is_err()
+                {
+                    break;
+                }
             }
-        }
-    }
-}
-
-fn terminate_instance(mut instance: PtyInstance) {
-    if let Some(pid) = instance.child.process_id() {
-        terminate_process_tree(pid);
-    }
-    let _ = instance.child.kill();
-    let _ = instance.child.wait();
-}
-
-pub fn kill_all(manager: &PtyManager) {
-    let instances: Vec<PtyInstance> = manager
-        .instances
-        .lock()
-        .unwrap()
-        .drain()
-        .map(|(_, instance)| instance)
-        .collect();
-    for instance in instances {
-        terminate_instance(instance);
-    }
-}
-
-fn dirs_home() -> Option<String> {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
-}
-
-/// Drains as much valid UTF-8 as possible from `pending`, returning it and
-/// keeping any incomplete trailing multi-byte sequence for the next read.
-/// PTY reads can split a multi-byte char across the 4096-byte buffer boundary;
-/// decoding each chunk lossily would corrupt box-drawing/Unicode glyphs, which
-/// shows up as flicker/tremble in TUIs (vim, top, catunes).
-fn drain_utf8(pending: &mut Vec<u8>) -> String {
-    let valid = match std::str::from_utf8(pending) {
-        Ok(_) => pending.len(),
-        // Leading invalid byte (genuine garbage, not a split): drop it so we
-        // don't stall forever waiting for a continuation that won't come.
-        Err(e) if e.valid_up_to() == 0 && e.error_len().is_some() => {
-            pending.remove(0);
-            0
-        }
-        Err(e) => e.valid_up_to(),
-    };
-    let rest = pending.split_off(valid);
-    String::from_utf8(std::mem::replace(pending, rest)).unwrap()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::drain_utf8;
-
-    #[test]
-    fn returns_complete_ascii() {
-        let mut p = b"hello".to_vec();
-        assert_eq!(drain_utf8(&mut p), "hello");
-        assert!(p.is_empty());
-    }
-
-    #[test]
-    fn keeps_split_multibyte_char() {
-        // "─" is 0xE2 0x94 0x80; arrives split across two reads.
-        let mut p = vec![0xE2, 0x94];
-        assert_eq!(drain_utf8(&mut p), "");
-        assert_eq!(p, vec![0xE2, 0x94]);
-
-        p.push(0x80);
-        assert_eq!(drain_utf8(&mut p), "─");
-        assert!(p.is_empty());
-    }
-
-    #[test]
-    fn emits_valid_prefix_and_keeps_partial_tail() {
-        // "a" + first two bytes of "─"
-        let mut p = vec![b'a', 0xE2, 0x94];
-        assert_eq!(drain_utf8(&mut p), "a");
-        assert_eq!(p, vec![0xE2, 0x94]);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn terminating_a_pty_kills_its_whole_session() {
-        use super::{terminate_instance, PtyInstance};
-        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-
-        let pair = native_pty_system()
-            .openpty(PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        let mut command = CommandBuilder::new("/bin/sh");
-        command.args(["-c", "sleep 30 & wait"]);
-        let child = pair.slave.spawn_command(command).unwrap();
-        let pid = child.process_id().unwrap();
-        let writer = pair.master.take_writer().unwrap();
-
-        terminate_instance(PtyInstance {
-            writer,
-            master: pair.master,
-            child,
         });
 
-        // Signal 0 only checks existence; ESRCH proves the session leader was
-        // killed and reaped rather than merely detached from the UI.
-        let exists = unsafe { libc::kill(pid as i32, 0) } == 0;
-        assert!(!exists, "PTY process {pid} survived termination");
-    }
-}
-
-#[tauri::command]
-pub fn pty_spawn(
-    id: String,
-    shell: String,
-    rows: u16,
-    cols: u16,
-    cwd: Option<String>,
-    // When set, run this argv directly (e.g. `docker exec -it <c> sh`) instead of
-    // the user's login shell — used by the Docker panel's exec terminal.
-    command: Option<Vec<String>>,
-    state: tauri::State<Arc<PtyManager>>,
-    agent_socket: tauri::State<Arc<crate::agent_socket::AgentSocket>>,
-    app: AppHandle,
-) -> Result<(), String> {
-    let pty_system = native_pty_system();
-
-    let pair = pty_system
-        .openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut cmd = match command.filter(|c| !c.is_empty()) {
-        Some(argv) => {
-            let mut c = CommandBuilder::new(&argv[0]);
-            for arg in &argv[1..] {
-                c.arg(arg);
-            }
-            c
-        }
-        None => {
-            // Use the user's default shell ($SHELL) so it loads their config
-            // (zsh/bash with prompt, git, autocompletion). Fall back to the one passed by the front.
-            let user_shell = std::env::var("SHELL").unwrap_or(shell);
-            let mut c = CommandBuilder::new(&user_shell);
-            // Login + interactive: loads ~/.zprofile, ~/.zshrc, etc.
-            if !cfg!(target_os = "windows") {
-                c.arg("-l");
-            }
-            c
-        }
-    };
-    cmd.env("TERM", "xterm-256color");
-    // Inject herdr-compatible env vars so existing agent hooks (Claude, Codex,
-    // OpenCode) can report their session ID back to Bento's socket server.
-    cmd.env("HERDR_ENV", "1");
-    cmd.env("HERDR_SOCKET_PATH", &agent_socket.socket_path);
-    cmd.env("HERDR_PANE_ID", &id);
-
-    // Restore the saved cwd if it still exists (so a reopened terminal lands where
-    // it was), else start in the user's home like a normal terminal.
-    // Expand leading ~ so display paths saved by the frontend work correctly.
-    let start_dir = cwd
-        .map(|d| {
-            if d.starts_with("~/") {
-                dirs_home().map(|h| h + &d[1..]).unwrap_or(d)
-            } else {
-                d
-            }
-        })
-        .filter(|d| !d.is_empty() && std::path::Path::new(d.as_str()).is_dir())
-        .or_else(dirs_home);
-    if let Some(dir) = start_dir {
-        cmd.cwd(dir);
-    }
-
-    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
-
-    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-
-    let id_clone = id.clone();
-    let app_clone = app.clone();
-
-    state.instances.lock().unwrap().insert(
-        id.clone(),
-        PtyInstance {
-            writer,
-            master: pair.master,
-            child,
-        },
-    );
-
-    let manager = state.inner().clone();
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        // Holds bytes of a multi-byte char split across reads (see drain_utf8).
-        let mut pending: Vec<u8> = Vec::new();
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    pending.extend_from_slice(&buf[..n]);
-                    let data = drain_utf8(&mut pending);
-                    if !data.is_empty() {
-                        let _ = app_clone.emit(&format!("pty-output-{}", id_clone), data);
+        let pending = self.pending.clone();
+        let tx_slot = self.tx.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(read_half).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if let Some(event) = value.get("event").and_then(Value::as_str) {
+                    match event {
+                        "terminal.output" => {
+                            if let (Some(id), Some(data)) = (
+                                value.get("pty_id").and_then(Value::as_str),
+                                value.get("data").and_then(Value::as_str),
+                            ) {
+                                let _ = app.emit(&format!("pty-output-{id}"), data.to_string());
+                            }
+                        }
+                        "terminal.exit" => {
+                            if let Some(id) = value.get("pty_id").and_then(Value::as_str) {
+                                let _ = app.emit(&format!("pty-exit-{id}"), ());
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if let Some(id) = value.get("id").and_then(Value::as_str) {
+                    if let Some(sender) = pending.lock().unwrap().remove(id) {
+                        let _ = sender.send(value);
                     }
                 }
             }
-        }
-        // EOF: the shell exited (e.g. the user typed `exit`); tell the frontend
-        // so it can close the panel instead of leaving a dead terminal.
-        let instance = manager.instances.lock().unwrap().remove(&id_clone);
-        if let Some(instance) = instance {
-            terminate_instance(instance);
-        }
-        let _ = app_clone.emit(&format!("pty-exit-{}", id_clone), ());
-    });
+            // Daemon disconnected — clear tx so the next request auto-reconnects.
+            *tx_slot.lock().unwrap() = None;
+        });
+        Ok(())
+    }
 
-    Ok(())
+    /// Reconnect to the daemon if the connection is gone. No-op when already connected.
+    async fn ensure_connected(&self) -> Result<(), String> {
+        if self.tx.lock().unwrap().is_none() {
+            let app = self
+                .app
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| "bento-daemon not initialized".to_string())?;
+            self.connect(app).await?;
+        }
+        Ok(())
+    }
+
+    /// Fire a command with no reply (write/resize/close/subscribe).
+    fn send(&self, line: String) -> Result<(), String> {
+        let result = self
+            .tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or("bento-daemon not connected (is it running?)")?
+            .send(line);
+        if result.is_err() {
+            *self.tx.lock().unwrap() = None;
+        }
+        result.map_err(|_| "bento-daemon disconnected".to_string())
+    }
+
+    /// Kill the daemon process. Reliable even if the IPC channel is gone.
+    pub fn send_shutdown(&self) {
+        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        } else {
+            // Fallback: daemon was started by a previous session.
+            kill_existing_daemon();
+        }
+    }
+
+    /// Send a command and await its reply. Auto-reconnects if the daemon died.
+    async fn request(&self, mut command: Value) -> Result<Value, String> {
+        self.ensure_connected().await?;
+        let id = format!("r{}", self.counter.fetch_add(1, Ordering::SeqCst));
+        command["id"] = json!(id);
+        let (send, recv) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id.clone(), send);
+        self.send(command.to_string())?;
+        match tokio::time::timeout(Duration::from_secs(5), recv).await {
+            Ok(Ok(value)) => {
+                if value.get("ok").and_then(Value::as_bool) == Some(true) {
+                    Ok(value.get("data").cloned().unwrap_or(Value::Null))
+                } else {
+                    Err(value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("daemon error")
+                        .to_string())
+                }
+            }
+            _ => {
+                self.pending.lock().unwrap().remove(&id);
+                Err("bento-daemon did not respond".into())
+            }
+        }
+    }
+}
+
+/// Terminals live in the daemon, so app shutdown no longer kills them.
+pub fn kill_all(_manager: &PtyManager) {}
+
+/// Kill any running bento-daemon process.
+fn kill_existing_daemon() {
+    let _ = std::process::Command::new("pkill").args(["-f", "bento-daemon"]).output();
+}
+
+/// Launch the daemon and return the child handle so we can kill it on shutdown.
+fn spawn_daemon() -> Option<std::process::Child> {
+    daemon_binary().and_then(|b| std::process::Command::new(b).spawn().ok())
+}
+
+/// Locate the bento-daemon binary: explicit override → bundled → dev workspace.
+fn daemon_binary() -> Option<std::path::PathBuf> {
+    let name = if cfg!(windows) { "bento-daemon.exe" } else { "bento-daemon" };
+    if let Ok(explicit) = std::env::var("BENTO_DAEMON_BIN") {
+        let path = std::path::PathBuf::from(explicit);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let bundled = dir.join(name);
+    if bundled.exists() {
+        return Some(bundled);
+    }
+    // Dev layout: <repo>/src-tauri/target/<profile>/ → <repo>/daemon/target/<profile>/
+    let profile = dir.file_name()?.to_string_lossy().into_owned();
+    let candidate = dir
+        .parent()? // .../src-tauri/target
+        .parent()? // .../src-tauri
+        .parent()? // .../<repo>
+        .join("daemon")
+        .join("target")
+        .join(profile)
+        .join(name);
+    candidate.exists().then_some(candidate)
 }
 
 #[tauri::command]
-pub fn pty_write(
+pub async fn pty_spawn(
     id: String,
-    data: String,
-    state: tauri::State<Arc<PtyManager>>,
-) -> Result<(), String> {
-    let mut instances = state.instances.lock().unwrap();
-    let instance = instances.get_mut(&id).ok_or("PTY not found")?;
-    instance
-        .writer
-        .write_all(data.as_bytes())
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn pty_resize(
-    id: String,
+    #[allow(unused_variables)] shell: String,
     rows: u16,
     cols: u16,
-    state: tauri::State<Arc<PtyManager>>,
-) -> Result<(), String> {
-    let instances = state.instances.lock().unwrap();
-    let instance = instances.get(&id).ok_or("PTY not found")?;
-    instance
-        .master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| e.to_string())
+    cwd: Option<String>,
+    command: Option<Vec<String>>,
+    title: Option<String>,
+    state: tauri::State<'_, Arc<PtyManager>>,
+    agent_socket: tauri::State<'_, Arc<crate::agent_socket::AgentSocket>>,
+) -> Result<bool, String> {
+    let socket_path = agent_socket.socket_path.clone();
+    let manager = state.inner().clone();
+    let env = json!({
+        "HERDR_ENV": "1",
+        "HERDR_SOCKET_PATH": socket_path,
+        "HERDR_PANE_ID": id,
+    });
+    let open = json!({
+        "cmd": "terminal.open",
+        "pty_id": id,
+        "title": title,
+        "command": command,
+        "cwd": cwd,
+        "rows": rows,
+        "cols": cols,
+        "env": env,
+    });
+    let data = manager.request(open).await?;
+    let reattached = data.get("reattached").and_then(Value::as_bool).unwrap_or(false);
+    manager.send(json!({ "cmd": "terminal.subscribe", "pty_id": id }).to_string())?;
+    Ok(reattached)
+}
+
+#[tauri::command]
+pub fn pty_set_title(id: String, title: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
+    state.send(json!({ "cmd": "terminal.set_title", "pty_id": id, "title": title }).to_string())
+}
+
+#[tauri::command]
+pub fn pty_write(id: String, data: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
+    state.send(json!({ "cmd": "terminal.write", "pty_id": id, "data": data }).to_string())
+}
+
+#[tauri::command]
+pub fn pty_resize(id: String, rows: u16, cols: u16, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
+    state.send(json!({ "cmd": "terminal.resize", "pty_id": id, "rows": rows, "cols": cols }).to_string())
 }
 
 #[tauri::command]
 pub fn pty_kill(id: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
-    let instance = state.instances.lock().unwrap().remove(&id);
-    if let Some(instance) = instance {
-        terminate_instance(instance);
-    }
-    Ok(())
+    state.send(json!({ "cmd": "terminal.close", "pty_id": id }).to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct RemoteStatus {
+    pub running: bool,
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub addr: Option<String>,
+}
+
+#[tauri::command]
+pub async fn remote_start(
+    port: Option<u16>,
+    token: Option<String>,
+    use_tailscale: Option<bool>,
+    state: tauri::State<'_, Arc<PtyManager>>,
+) -> Result<RemoteStatus, String> {
+    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879), "token": token, "use_tailscale": use_tailscale.unwrap_or(false) })).await?;
+    Ok(RemoteStatus {
+        running: data.get("running").and_then(Value::as_bool).unwrap_or(true),
+        url:   data.get("url").and_then(Value::as_str).map(String::from),
+        token: data.get("token").and_then(Value::as_str).map(String::from),
+        addr:  data.get("addr").and_then(Value::as_str).map(String::from),
+    })
+}
+
+#[tauri::command]
+pub async fn remote_stop(state: tauri::State<'_, Arc<PtyManager>>) -> Result<(), String> {
+    state.request(json!({ "cmd": "remote.stop" })).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn remote_status(state: tauri::State<'_, Arc<PtyManager>>) -> Result<RemoteStatus, String> {
+    let data = state.request(json!({ "cmd": "remote.status" })).await?;
+    Ok(RemoteStatus {
+        running: data.get("running").and_then(Value::as_bool).unwrap_or(false),
+        url:   data.get("url").and_then(Value::as_str).map(String::from),
+        token: data.get("token").and_then(Value::as_str).map(String::from),
+        addr:  data.get("addr").and_then(Value::as_str).map(String::from),
+    })
+}
+#[tauri::command]
+pub fn tailscale_detect() -> Option<String> {
+    let output = std::process::Command::new("tailscale")
+        .args(["ip", "-4"])
+        .output()
+        .ok()?;
+    let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && !ip.is_empty() { Some(ip) } else { None }
 }

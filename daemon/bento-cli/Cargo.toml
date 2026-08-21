@@ -1,0 +1,12 @@
+[package]
+name = "bento-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bento"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "macros", "time"] }
+serde_json = "1.0"

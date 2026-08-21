@@ -21,7 +21,7 @@ export interface AgentsPanelOptions {
 // herdr-style split: the small, critical resume metadata (agent list + session
 // refs) is persisted separately from the large, optional scrollback history, so
 // a huge/over-quota snapshot can never evict or corrupt the resume info.
-interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string }
+interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string; ptyId?: string }
 
 const STATUS_ICON: Record<string, string> = {
   working: '●',
@@ -74,6 +74,8 @@ interface AgentSlot {
   customName: string
   cmd?: string
   sessionId?: string
+  // Stable, persisted pty id so a reload reattaches to the same daemon terminal.
+  ptyId: string
   handle: TerminalPanelHandle
   slot: HTMLDivElement
   titleCleanup: () => void
@@ -148,6 +150,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       cwd: slot.handle.getCwd() || entries[i]?.title || '',
       cmd: slot.cmd,
       sessionId: slot.sessionId,
+      ptyId: slot.ptyId,
     }))
     try { localStorage.setItem(sessionsKey, JSON.stringify(sessions)) }
     catch { /* metadata is tiny; nothing we can do if even this fails */ }
@@ -262,6 +265,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       committed = true
       const val = input.value.trim()
       slot.customName = val || slot.customName
+      void invoke('pty_set_title', { id: slot.ptyId, title: slot.customName })
       isEditing = false
       renderSidebar()
     }
@@ -414,11 +418,14 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   }
 
   // ── Add agent ─────────────────────────────────────────────────
-  const addAgent = (savedName?: string, savedCwd?: string, savedCmd?: string, savedSessionId?: string, savedSnapshot?: string) => {
+  const addAgent = (savedName?: string, savedCwd?: string, savedCmd?: string, savedSessionId?: string, savedSnapshot?: string, savedPtyId?: string) => {
     if (slots.length >= MAX_AGENTS) return
 
     const num = ++agentCounter
     const defaultName = `Agent ${num}`
+    // Stable id so a reload reattaches to the same daemon terminal instead of
+    // spawning a duplicate. Reuse the persisted one on restore; else mint a new one.
+    const ptyId = savedPtyId || `pty-agent-${crypto.randomUUID()}`
 
     const slot = document.createElement('div')
     slot.className = 'agents-term-slot'
@@ -431,6 +438,8 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       () => markAgentExited(slots.findIndex(s => s.handle === handle)),
       undefined,
       store,
+      ptyId,
+      savedName || defaultName,
     )
 
     slot.appendChild(handle.element)
@@ -440,6 +449,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       customName: savedName || defaultName,
       cmd: savedCmd,
       sessionId: savedSessionId,
+      ptyId,
       handle,
       slot,
       titleCleanup: () => {},
@@ -454,27 +464,35 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     })
     agentSlot.titleCleanup = () => { offTitle(); offBell() }
 
-    if (savedCmd) {
-      buildResumeCmd(savedCmd, savedCwd || projectPath, savedSessionId).then(cmd => {
-        // If the command contains --resume / --session the stored sessionId is
-        // still valid and capture can be skipped.  Otherwise the session file no
-        // longer exists (or was never captured) — clear the stale ID so the
-        // agentIsAlive() guard inside captureSession lets it poll.
-        const isResuming = cmd.includes('--resume') || cmd.includes('--session') || cmd.includes(' resume ')
-        // A resuming agent replays the whole conversation itself; painting the
-        // saved snapshot too would double it (and mis-render it at another width).
-        // Only restore the snapshot when there's no replay.
-        if (!isResuming && savedSnapshot) handle.writeSnapshot(savedSnapshot)
-        handle.sendInput(cmd)
-        if (!isResuming) {
-          if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
-          agentSlot.sessionId = undefined
-          captureSession(agentSlot, savedCmd, handle.getCwd() || savedCwd || projectPath, Date.now())
+    if (savedCmd || savedSnapshot) {
+      void handle.spawned.then(reattached => {
+        // Reattached to a still-running terminal in the daemon: the agent (or
+        // shell) is already there, so replaying its command/scrollback would
+        // double it. The daemon replays the live scrollback for us.
+        if (reattached) return
+        if (savedCmd) {
+          void buildResumeCmd(savedCmd, savedCwd || projectPath, savedSessionId).then(cmd => {
+            // If the command contains --resume / --session the stored sessionId is
+            // still valid and capture can be skipped.  Otherwise the session file no
+            // longer exists (or was never captured) — clear the stale ID so the
+            // agentIsAlive() guard inside captureSession lets it poll.
+            const isResuming = cmd.includes('--resume') || cmd.includes('--session') || cmd.includes(' resume ')
+            // A resuming agent replays the whole conversation itself; painting the
+            // saved snapshot too would double it (and mis-render it at another width).
+            // Only restore the snapshot when there's no replay.
+            if (!isResuming && savedSnapshot) handle.writeSnapshot(savedSnapshot)
+            handle.sendInput(cmd)
+            if (!isResuming) {
+              if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
+              agentSlot.sessionId = undefined
+              captureSession(agentSlot, savedCmd, handle.getCwd() || savedCwd || projectPath, Date.now())
+            }
+          })
+        } else if (savedSnapshot) {
+          // Plain shell (no agent to replay): restore its scrollback for context.
+          handle.writeSnapshot(savedSnapshot)
         }
       })
-    } else if (savedSnapshot) {
-      // Plain shell (no agent to replay): restore its scrollback for context.
-      handle.writeSnapshot(savedSnapshot)
     }
 
     // Detect known agent CLIs from what the user types.
@@ -486,7 +504,11 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       // consistent with the session captured for it (else you get e.g.
       // `opencode --session <codex-id>`). Name auto-updates only while default.
       const { name } = resolveAgentIdentity(agentSlot.customName, defaultName, cmd)
-      if (name !== agentSlot.customName) { agentSlot.customName = name; renderSidebar() }
+      if (name !== agentSlot.customName) {
+        agentSlot.customName = name
+        void invoke('pty_set_title', { id: agentSlot.ptyId, title: name })
+        renderSidebar()
+      }
       agentSlot.cmd = cmd
       // Restart session capture so the stored sessionId reflects this agent.
       if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
@@ -582,7 +604,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
         if (s.sessionId) claimedSessionIds.add(s.sessionId)
         // One bad entry must not abort the whole restore — otherwise the rest are
         // lost and the panel reopens with 1.
-        try { addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, history[i]) }
+        try { addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, history[i], s.ptyId) }
         catch { /* skip this agent, keep restoring the others */ }
       })
       if (slots.length === 0) addAgent()

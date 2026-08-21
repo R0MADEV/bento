@@ -185,6 +185,16 @@ fn main() {
     builder
         .setup(|app| {
             app.manage(agent_socket::start(app.handle()));
+            // Terminals live in the bento-daemon; connect and forward its output.
+            {
+                let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = pty_manager.connect(handle).await {
+                        eprintln!("bento: bento-daemon not reachable ({error}); start it to use terminals");
+                    }
+                });
+            }
             #[cfg(target_os = "macos")]
             install_menu(app)?;
             if let Some(window) = app.get_webview_window("main") {
@@ -203,6 +213,7 @@ fn main() {
                         let window = close_window.clone();
                         tauri::async_runtime::spawn(async move {
                             agent::cancel_all(&manager).await;
+                            pty_manager.send_shutdown();
                             pty::kill_all(&pty_manager);
                             let _ = window.close();
                         });
@@ -247,9 +258,14 @@ fn main() {
             settings::settings_get,
             settings::settings_set,
             pty::pty_spawn,
+            pty::pty_set_title,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
+            pty::remote_start,
+            pty::remote_stop,
+            pty::remote_status,
+            pty::tailscale_detect,
             traffic_lights::set_traffic_lights_visible,
             window_prefs::set_decorations,
             web_panel::web_panel_navigate,

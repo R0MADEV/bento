@@ -58,7 +58,8 @@
     "panelDiff": "Diff",
     "newDiff": "New Diff panel",
     "panelReview": "Tech Review",
-    "newReview": "New Tech Review panel"
+    "newReview": "New Tech Review panel",
+    "newRemote": "Mobile remote control"
   },
   "review": {
     "title": "Tech Review",

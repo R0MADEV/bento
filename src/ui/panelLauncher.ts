@@ -23,6 +23,7 @@ const ENTRIES: LauncherEntry[] = [
   { type: 'scripts',  icon: 'scripts',  label: () => appT('newScripts') },
   { type: 'web',      icon: 'web',      label: () => appT('newWeb') },
   { type: 'tv',       icon: 'tv',       label: () => appT('newTv') },
+  { type: 'remote',   icon: 'phone',    label: () => appT('newRemote') },
 ]
 
 // A horizontal toolbar of panel icons. It lives inside the top title strip

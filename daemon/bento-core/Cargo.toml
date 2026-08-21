@@ -1,0 +1,15 @@
+[package]
+name = "bento-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+portable-pty = "0.8"
+tokio = { version = "1", features = ["sync"] }
+sysinfo = { version = "0.30", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
