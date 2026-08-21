@@ -137,6 +137,11 @@ impl PtyManager {
         result.map_err(|_| "bento-daemon disconnected".to_string())
     }
 
+    /// Tell the daemon to exit — best-effort, fire-and-forget.
+    pub fn send_shutdown(&self) {
+        let _ = self.send(json!({ "cmd": "daemon.shutdown" }).to_string());
+    }
+
     /// Send a command and await its reply. Auto-reconnects if the daemon died.
     async fn request(&self, mut command: Value) -> Result<Value, String> {
         self.ensure_connected().await?;

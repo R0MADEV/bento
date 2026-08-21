@@ -33,6 +33,16 @@ import tvM3U from './assets/tv.m3u?raw'
 // Web panels live in Rust state and survive a frontend reload as orphans — clean them up
 invoke('web_panel_close_all').catch(() => {})
 
+// Phone remote server: auto-start as soon as Bento opens.
+// The saved token is reused so the QR never changes across sessions.
+{
+  const savedToken = localStorage.getItem('bento.remote.token') ?? undefined
+  invoke('remote_start', { port: 7879, token: savedToken }).then((s: unknown) => {
+    const status = s as { token?: string }
+    if (status?.token) localStorage.setItem('bento.remote.token', status.token)
+  }).catch(() => {})
+}
+
 // Terminal scrollback is no longer persisted; drop any old history keys to free localStorage.
 Object.keys(localStorage).filter(k => k.startsWith('bento.terminal.history.')).forEach(k => localStorage.removeItem(k))
 

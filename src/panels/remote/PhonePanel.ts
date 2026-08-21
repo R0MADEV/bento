@@ -9,9 +9,8 @@ interface RemoteStatus {
   addr?: string
 }
 
-const PORT_KEY   = 'bento.remote.port'
-const ACTIVE_KEY = 'bento.remote.active'
-const TOKEN_KEY  = 'bento.remote.token'
+const PORT_KEY  = 'bento.remote.port'
+const TOKEN_KEY = 'bento.remote.token'
 
 export function createPhonePanel(): { element: HTMLElement } {
   const root = document.createElement('div')
@@ -116,8 +115,6 @@ export function createPhonePanel(): { element: HTMLElement } {
   const startServer = async (): Promise<void> => {
     const port = parseInt(portInput.value) || 7879
     localStorage.setItem(PORT_KEY, String(port))
-    localStorage.setItem(ACTIVE_KEY, 'true')
-    // Reuse the saved token so the QR never changes between sessions
     const savedToken = localStorage.getItem(TOKEN_KEY) ?? undefined
     const s = await invoke<RemoteStatus>('remote_start', { port, token: savedToken })
     if (s.token) localStorage.setItem(TOKEN_KEY, s.token)
@@ -125,7 +122,6 @@ export function createPhonePanel(): { element: HTMLElement } {
   }
 
   const stopServer = async (): Promise<void> => {
-    localStorage.setItem(ACTIVE_KEY, 'false')
     await invoke('remote_stop')
     await render({ running: false })
   }
@@ -139,6 +135,8 @@ export function createPhonePanel(): { element: HTMLElement } {
     if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null }
   }
 
+  // On panel open: the server should already be running (auto-started in main.ts).
+  // Retry until the daemon is reachable, then start the server if it isn't already up.
   const init = async (attempt = 0): Promise<void> => {
     if (userInteracted) return
     toggleText.textContent = 'Comprobando…'
@@ -149,10 +147,8 @@ export function createPhonePanel(): { element: HTMLElement } {
       toggleInput.disabled = false
       if (s.running) {
         await render(s)
-      } else if (localStorage.getItem(ACTIVE_KEY) === 'true') {
-        await startServer()
       } else {
-        toggleText.textContent = 'Activar servidor WiFi'
+        await startServer()
       }
     } catch {
       if (userInteracted) return
@@ -160,7 +156,7 @@ export function createPhonePanel(): { element: HTMLElement } {
         retryTimer = setTimeout(() => void init(attempt + 1), RETRY_DELAYS[attempt])
       } else {
         toggleInput.disabled = false
-        toggleText.textContent = 'Activar servidor WiFi'
+        await render({ running: false })
       }
     }
   }

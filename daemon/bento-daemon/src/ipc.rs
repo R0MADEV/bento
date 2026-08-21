@@ -202,6 +202,14 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             send(ok(&req.id, serde_json::to_value(&info).unwrap_or(Value::Null)));
         }
 
+        "daemon.shutdown" => {
+            send(ok(&req.id, json!({})));
+            tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+                std::process::exit(0);
+            });
+        }
+
         other => send(fail(&req.id, format!("unknown command: {other}"))),
     }
 }

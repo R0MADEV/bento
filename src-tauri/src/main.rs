@@ -213,6 +213,7 @@ fn main() {
                         let window = close_window.clone();
                         tauri::async_runtime::spawn(async move {
                             agent::cancel_all(&manager).await;
+                            pty_manager.send_shutdown();
                             pty::kill_all(&pty_manager);
                             let _ = window.close();
                         });
