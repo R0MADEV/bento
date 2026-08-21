@@ -552,7 +552,9 @@ DIFF:
 {diff}
 ```
 
-Escribe el informe directamente, sin preámbulo. Empieza con el primer encabezado ## Corrección y lógica."#,
+Escribe el informe directamente, sin preámbulo. Empieza con:
+
+## Corrección y lógica"#,
         project = project,
         base = base,
         diff = diff,
@@ -951,6 +953,8 @@ setInterval(()=>{
 mod tests {
     use super::*;
 
+    // ── resolve_bind_ip ───────────────────────────────────────────────────────
+
     #[test]
     fn lan_mode_binds_to_lan_ip_only() {
         let r = resolve_bind_ip(false, Some("100.64.0.1".into()), "192.168.1.10".into());
@@ -970,5 +974,57 @@ mod tests {
         let r = resolve_bind_ip(true, None, "192.168.1.10".into());
         assert_eq!(r.bind_host, "192.168.1.10");
         assert_eq!(r.display_ip, "192.168.1.10");
+    }
+
+    // ── build_review_prompt ───────────────────────────────────────────────────
+
+    #[test]
+    fn prompt_contains_project_name_from_cwd() {
+        let p = build_review_prompt("/home/user/mi-proyecto", "main", "diff content");
+        assert!(p.contains("mi-proyecto"), "debe incluir el nombre del proyecto");
+    }
+
+    #[test]
+    fn prompt_contains_base_branch() {
+        let p = build_review_prompt("/repo", "develop", "diff content");
+        assert!(p.contains("develop"), "debe mencionar la rama base");
+    }
+
+    #[test]
+    fn prompt_embeds_diff() {
+        let diff = "--- a/foo.rs\n+++ b/foo.rs\n@@ -1 +1 @@\n-old\n+new";
+        let p = build_review_prompt("/repo", "main", diff);
+        assert!(p.contains(diff), "debe incrustar el diff completo");
+    }
+
+    #[test]
+    fn prompt_covers_all_eight_sections() {
+        let p = build_review_prompt("/repo", "main", "x");
+        let sections = [
+            "Corrección y lógica",
+            "Seguridad",
+            "Cambios que rompen compatibilidad",
+            "Rendimiento",
+            "Manejo de errores",
+            "Concurrencia",
+            "Calidad del código",
+            "Cobertura de tests",
+        ];
+        for s in &sections {
+            assert!(p.contains(s), "falta sección: {s}");
+        }
+    }
+
+    #[test]
+    fn prompt_uses_project_basename_not_full_path() {
+        let p = build_review_prompt("/home/user/deep/path/proyecto", "main", "x");
+        assert!(p.contains("proyecto"));
+        assert!(!p.contains("/home/user/deep/path/proyecto"), "no debe aparecer la ruta completa");
+    }
+
+    #[test]
+    fn prompt_ends_with_first_section_instruction() {
+        let p = build_review_prompt("/repo", "main", "x");
+        assert!(p.trim_end().ends_with("## Corrección y lógica"), "debe terminar instruyendo con el primer encabezado");
     }
 }
