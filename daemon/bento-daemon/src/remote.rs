@@ -16,6 +16,7 @@ use bento_core::{PtyEvent, PtyManager};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -41,24 +42,49 @@ impl Drop for ActiveRemote {
     }
 }
 
+struct RemoteControlInner {
+    active: Mutex<Option<ActiveRemote>>,
+    /// Bumped by stop() and by each new start() attempt. A start() that sees
+    /// the counter move after the async TCP bind knows a stop (or newer start)
+    /// arrived while it was binding — it aborts without storing the new server.
+    generation: AtomicU64,
+}
+
+impl Default for RemoteControlInner {
+    fn default() -> Self {
+        Self { active: Mutex::new(None), generation: AtomicU64::new(0) }
+    }
+}
+
 /// Shared handle to the optional phone HTTP server. Clone-cheap (Arc inside).
-#[derive(Clone, Default)]
-pub struct RemoteControl(Arc<Mutex<Option<ActiveRemote>>>);
+#[derive(Clone)]
+pub struct RemoteControl(Arc<RemoteControlInner>);
+
+impl Default for RemoteControl {
+    fn default() -> Self {
+        Self(Arc::new(RemoteControlInner::default()))
+    }
+}
 
 impl RemoteControl {
     /// Start the server on `0.0.0.0:<port>`. If already running, returns
     /// the existing info without restarting.
     pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>) -> Result<RemoteInfo, String> {
+        // Fast path: server is already healthy.
         {
-            let guard = self.0.lock().unwrap();
+            let guard = self.0.active.lock().unwrap();
             if let Some(active) = &*guard {
                 if !active.handle.is_finished() {
                     return Ok(active.info.clone());
                 }
-                // Task died unexpectedly — fall through to restart
             }
         }
-        *self.0.lock().unwrap() = None; // Clear stale state before restarting
+
+        // Claim a generation slot. If stop() or a concurrent start() bumps the
+        // counter before the bind finishes, we'll see it and abort.
+        let gen = self.0.generation.fetch_add(1, Ordering::SeqCst);
+        *self.0.active.lock().unwrap() = None;
+
         let token = token.unwrap_or_else(generate_token);
         let ip = local_ip();
         let bind_addr = format!("0.0.0.0:{port}");
@@ -70,10 +96,14 @@ impl RemoteControl {
             url,
         };
 
-        // Use async bind so tokio registers the socket correctly.
         let listener = tokio::net::TcpListener::bind(&bind_addr)
             .await
             .map_err(|e| e.to_string())?;
+
+        // stop() was called while we were binding — discard our new server.
+        if self.0.generation.load(Ordering::SeqCst) != gen + 1 {
+            return Ok(RemoteInfo { running: false, addr: String::new(), token: String::new(), url: String::new() });
+        }
 
         let state = Arc::new(RemoteState { manager, token });
         let app = Router::new()
@@ -88,22 +118,23 @@ impl RemoteControl {
             let _ = axum::serve(listener, app).await;
         });
 
-        *self.0.lock().unwrap() = Some(ActiveRemote { info: info.clone(), handle });
+        *self.0.active.lock().unwrap() = Some(ActiveRemote { info: info.clone(), handle });
         Ok(info)
     }
 
     pub fn stop(&self) {
+        // Bump generation to invalidate any start() that is still binding.
+        self.0.generation.fetch_add(1, Ordering::SeqCst);
         // Drop aborts the handle immediately, freeing the port.
-        *self.0.lock().unwrap() = None;
+        *self.0.active.lock().unwrap() = None;
     }
 
     pub fn status(&self) -> RemoteInfo {
-        let mut guard = self.0.lock().unwrap();
+        let mut guard = self.0.active.lock().unwrap();
         if let Some(active) = &*guard {
             if !active.handle.is_finished() {
                 return active.info.clone();
             }
-            // Task died — clear stale state so next start() restarts it
         }
         *guard = None;
         RemoteInfo { running: false, addr: String::new(), token: String::new(), url: String::new() }

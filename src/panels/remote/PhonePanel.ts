@@ -12,6 +12,11 @@ interface RemoteStatus {
 const PORT_KEY  = 'bento.remote.port'
 const TOKEN_KEY = 'bento.remote.token'
 
+// Session-scoped: survives panel close/reopen within the same Bento session.
+// true = user explicitly stopped the server; init() won't auto-restart until
+// the user clicks ON again.
+let sessionStopped = false
+
 export function createPhonePanel(): { element: HTMLElement } {
   const root = document.createElement('div')
   root.className = 'phone-panel'
@@ -113,6 +118,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   }
 
   const startServer = async (): Promise<void> => {
+    sessionStopped = false
     const port = parseInt(portInput.value) || 7879
     localStorage.setItem(PORT_KEY, String(port))
     const savedToken = localStorage.getItem(TOKEN_KEY) ?? undefined
@@ -122,11 +128,12 @@ export function createPhonePanel(): { element: HTMLElement } {
   }
 
   const stopServer = async (): Promise<void> => {
+    sessionStopped = true
     await invoke('remote_stop')
     await render({ running: false })
   }
 
-  // ── Mount: sync state with daemon, retry until connected ──────────────────
+  // ── Init: poll until daemon is reachable, then auto-start once per session ─
   const RETRY_DELAYS = [300, 600, 1200, 2000, 3000]
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let userInteracted = false
@@ -135,10 +142,6 @@ export function createPhonePanel(): { element: HTMLElement } {
     if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null }
   }
 
-  // On panel open: poll status until the daemon is reachable.
-  // Auto-start is handled exclusively in main.ts — init() never starts the server
-  // to avoid a race where two remote_start calls are in-flight and the second one
-  // restarts the server after the user has already stopped it.
   const init = async (attempt = 0): Promise<void> => {
     if (userInteracted) return
     toggleText.textContent = 'Comprobando…'
@@ -147,7 +150,14 @@ export function createPhonePanel(): { element: HTMLElement } {
       const s = await invoke<RemoteStatus>('remote_status')
       if (userInteracted) return
       toggleInput.disabled = false
-      await render(s)
+      if (s.running) {
+        await render(s)
+      } else if (!sessionStopped) {
+        // Auto-start once per session (user hasn't explicitly stopped it)
+        await startServer()
+      } else {
+        await render({ running: false })
+      }
     } catch {
       if (userInteracted) return
       if (attempt < RETRY_DELAYS.length) {
