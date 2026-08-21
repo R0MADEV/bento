@@ -635,11 +635,13 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       const list = await invoke<Array<{ id: string; title: string; cwd: string }>>('pty_list')
       const daemonIds = new Set(list.map(t => t.id))
 
-      // Remove mobile slots that the daemon no longer has (killed from mobile)
+      // Remove slots the daemon no longer has, if there's nothing to resume
       for (let i = slots.length - 1; i >= 0; i--) {
-        if (slots[i].ptyId.startsWith('pty-mobile-') && !daemonIds.has(slots[i].ptyId)) {
-          removeAgent(i)
-        }
+        const slot = slots[i]
+        const isMobile = slot.ptyId.startsWith('pty-mobile-')
+        const isGone = !daemonIds.has(slot.ptyId)
+        const hasNoSession = !slot.cmd && !slot.sessionId
+        if (isGone && (isMobile || hasNoSession)) removeAgent(i)
       }
 
       // Adopt new terminals not yet tracked
