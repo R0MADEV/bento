@@ -24,6 +24,8 @@ pub struct PtyManager {
     counter: AtomicU64,
     /// Stored so `ensure_connected` can reconnect without needing an AppHandle parameter.
     app: Arc<Mutex<Option<AppHandle>>>,
+    /// Child handle of the daemon we spawned — used to kill it on shutdown.
+    daemon_child: Arc<Mutex<Option<std::process::Child>>>,
 }
 
 impl Default for PtyManager {
@@ -34,24 +36,35 @@ impl Default for PtyManager {
             pending: Arc::new(Mutex::new(HashMap::new())),
             counter: AtomicU64::new(0),
             app: Arc::new(Mutex::new(None)),
+            daemon_child: Arc::new(Mutex::new(None)),
         }
     }
 }
 
 impl PtyManager {
     /// Connect to the daemon and start forwarding its output to the frontend.
-    /// Starts the daemon automatically if it isn't running yet.
+    /// Always kills any running daemon first so the freshly compiled binary is used.
     /// Safe to call again after a disconnect — replaces the old connection.
     pub async fn connect(&self, app: AppHandle) -> Result<(), String> {
         *self.app.lock().unwrap() = Some(app.clone());
 
-        if TcpStream::connect(&self.addr).await.is_err() {
-            spawn_daemon();
-            for _ in 0..40 {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                if TcpStream::connect(&self.addr).await.is_ok() {
-                    break;
-                }
+        // Kill any daemon we started in this session.
+        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        // Kill any orphaned daemon from a previous session.
+        kill_existing_daemon();
+        // Brief pause so the port is freed before we try to bind again.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        if let Some(child) = spawn_daemon() {
+            *self.daemon_child.lock().unwrap() = Some(child);
+        }
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if TcpStream::connect(&self.addr).await.is_ok() {
+                break;
             }
         }
         let stream = TcpStream::connect(&self.addr)
@@ -137,9 +150,15 @@ impl PtyManager {
         result.map_err(|_| "bento-daemon disconnected".to_string())
     }
 
-    /// Tell the daemon to exit — best-effort, fire-and-forget.
+    /// Kill the daemon process. Reliable even if the IPC channel is gone.
     pub fn send_shutdown(&self) {
-        let _ = self.send(json!({ "cmd": "daemon.shutdown" }).to_string());
+        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        } else {
+            // Fallback: daemon was started by a previous session.
+            kill_existing_daemon();
+        }
     }
 
     /// Send a command and await its reply. Auto-reconnects if the daemon died.
@@ -173,11 +192,14 @@ impl PtyManager {
 /// Terminals live in the daemon, so app shutdown no longer kills them.
 pub fn kill_all(_manager: &PtyManager) {}
 
-/// Launch the daemon as a detached process (it outlives the app).
-fn spawn_daemon() {
-    if let Some(binary) = daemon_binary() {
-        let _ = std::process::Command::new(binary).spawn();
-    }
+/// Kill any running bento-daemon process.
+fn kill_existing_daemon() {
+    let _ = std::process::Command::new("pkill").args(["-f", "bento-daemon"]).output();
+}
+
+/// Launch the daemon and return the child handle so we can kill it on shutdown.
+fn spawn_daemon() -> Option<std::process::Child> {
+    daemon_binary().and_then(|b| std::process::Command::new(b).spawn().ok())
 }
 
 /// Locate the bento-daemon binary: explicit override → bundled → dev workspace.
