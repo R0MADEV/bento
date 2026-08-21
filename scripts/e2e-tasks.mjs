@@ -87,7 +87,9 @@ const route = path => `/session/${sessionId}${path}`
 const elementKey = 'element-6066-11e4-a52e-4f735466cecf'
 async function createSession() {
   const capabilities = provider === 'embedded' ? {} : { 'tauri:options': { application: app } }
-  const until = Date.now() + (provider === 'external' ? 120000 : 20000)
+  // Windows CI runners start WebView2-based WebDriver slower than Linux/macOS.
+  const embeddedTimeout = process.platform === 'win32' ? 60000 : 20000
+  const until = Date.now() + (provider === 'external' ? 120000 : embeddedTimeout)
   let lastError
 
   if (provider === 'external') {
@@ -123,7 +125,7 @@ async function createSession() {
       throw new Error(`tauri-driver exited before WebDriver became ready (code=${driverExit.code}, signal=${driverExit.signal})`)
     }
     try {
-      const value = await request('/session', { capabilities: { alwaysMatch: capabilities } })
+      const value = await request('/session', { capabilities: { alwaysMatch: capabilities } }, 'POST', 3000)
       sessionId = value.sessionId ?? value.capabilities?.sessionId
       if (!sessionId) throw new Error(`Driver returned no session id: ${JSON.stringify(value)}`)
       return
