@@ -70,9 +70,19 @@ impl PtyManager {
     /// subscribers. Returns `(id, reattached)`: if `opts.id` names a terminal that
     /// is already open it is returned as-is (`reattached = true`) without spawning
     /// again — the caller must then NOT replay a launch command onto it.
+    pub fn set_title(&self, id: &str, title: &str) {
+        if let Some(instance) = self.instances.lock().unwrap().get_mut(id) {
+            instance.title = title.to_string();
+        }
+    }
+
     pub fn open(&self, opts: OpenOptions) -> Result<(String, bool), String> {
         if let Some(id) = opts.id.as_deref().filter(|id| !id.is_empty()) {
-            if self.instances.lock().unwrap().contains_key(id) {
+            let mut guard = self.instances.lock().unwrap();
+            if let Some(instance) = guard.get_mut(id) {
+                if let Some(title) = &opts.title {
+                    instance.title = title.clone();
+                }
                 return Ok((id.to_string(), true));
             }
         }

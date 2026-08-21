@@ -122,6 +122,11 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             }
         }
 
+        "terminal.set_title" => match (&req.pty_id, &req.title) {
+            (Some(id), Some(title)) => { manager.set_title(id, title); send(ok(&req.id, Value::Null)) }
+            _ => send(fail(&req.id, "pty_id and title required".into())),
+        },
+
         "terminal.write" => match (&req.pty_id, &req.data) {
             (Some(id), Some(data)) => match manager.write(id, data) {
                 Ok(()) => send(ok(&req.id, Value::Null)),

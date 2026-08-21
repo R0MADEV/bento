@@ -266,6 +266,11 @@ pub async fn pty_spawn(
 }
 
 #[tauri::command]
+pub fn pty_set_title(id: String, title: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
+    state.send(json!({ "cmd": "terminal.set_title", "pty_id": id, "title": title }).to_string())
+}
+
+#[tauri::command]
 pub fn pty_write(id: String, data: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
     state.send(json!({ "cmd": "terminal.write", "pty_id": id, "data": data }).to_string())
 }

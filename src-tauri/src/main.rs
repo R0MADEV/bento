@@ -258,6 +258,7 @@ fn main() {
             settings::settings_get,
             settings::settings_set,
             pty::pty_spawn,
+            pty::pty_set_title,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,

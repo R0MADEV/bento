@@ -265,6 +265,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       committed = true
       const val = input.value.trim()
       slot.customName = val || slot.customName
+      void invoke('pty_set_title', { id: slot.ptyId, title: slot.customName })
       isEditing = false
       renderSidebar()
     }
@@ -503,7 +504,11 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       // consistent with the session captured for it (else you get e.g.
       // `opencode --session <codex-id>`). Name auto-updates only while default.
       const { name } = resolveAgentIdentity(agentSlot.customName, defaultName, cmd)
-      if (name !== agentSlot.customName) { agentSlot.customName = name; renderSidebar() }
+      if (name !== agentSlot.customName) {
+        agentSlot.customName = name
+        void invoke('pty_set_title', { id: agentSlot.ptyId, title: name })
+        renderSidebar()
+      }
       agentSlot.cmd = cmd
       // Restart session capture so the stored sessionId reflects this agent.
       if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
