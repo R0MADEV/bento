@@ -342,7 +342,10 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
                     let msg = format!("{{\"type\":\"title\",\"value\":{}}}", serde_json::json!(title));
                     if sender.send(Message::Text(msg)).await.is_err() { break; }
                 }
-                Ok(PtyEvent::Exit(_)) => break,
+                Ok(PtyEvent::Exit(_)) => {
+                    let _ = sender.send(Message::Text(r#"{"type":"exit"}"#.into())).await;
+                    break;
+                }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => break,
             }
@@ -513,11 +516,8 @@ function connect(id){
     if(typeof e.data==='string'){
       try{
         const msg=JSON.parse(e.data);
-        if(msg.type==='title'){
-          activeTitle=msg.value;
-          document.getElementById('ttitle').textContent=msg.value;
-          return;
-        }
+        if(msg.type==='title'){activeTitle=msg.value;document.getElementById('ttitle').textContent=msg.value;return}
+        if(msg.type==='exit'){goBack();return}
       }catch(_){}
       term&&term.write(e.data);
     }else{
@@ -565,7 +565,8 @@ function goBack(){
   if(term){term.dispose();term=null}
   document.getElementById('view').classList.remove('on');
   document.getElementById('list').style.display='';
-  document.getElementById('newbtn').style.display='';
+  const nb=document.getElementById('newbtn');
+  nb.style.display='';nb.textContent='+ Nueva terminal';nb.disabled=false;
   load();
 }
 
