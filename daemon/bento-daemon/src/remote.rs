@@ -171,13 +171,13 @@ struct BindResolution {
 }
 
 /// Choose bind host and display IP based on whether Tailscale mode is requested.
-/// - LAN mode: bind 0.0.0.0, show LAN IP.
+/// - LAN mode: bind to LAN IP only (Tailscale traffic blocked).
 /// - Tailscale mode + IP found: bind Tailscale IP (only reachable via Tailscale).
 /// - Tailscale mode + no IP: fall back to LAN.
 fn resolve_bind_ip(use_tailscale: bool, tailscale_ip: Option<String>, lan_ip: String) -> BindResolution {
     match (use_tailscale, tailscale_ip) {
         (true, Some(ts_ip)) => BindResolution { bind_host: ts_ip.clone(), display_ip: ts_ip },
-        _ => BindResolution { bind_host: "0.0.0.0".into(), display_ip: lan_ip },
+        _ => BindResolution { bind_host: lan_ip.clone(), display_ip: lan_ip },
     }
 }
 
@@ -482,9 +482,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lan_mode_binds_to_all_interfaces() {
+    fn lan_mode_binds_to_lan_ip_only() {
         let r = resolve_bind_ip(false, Some("100.64.0.1".into()), "192.168.1.10".into());
-        assert_eq!(r.bind_host, "0.0.0.0");
+        assert_eq!(r.bind_host, "192.168.1.10");
         assert_eq!(r.display_ip, "192.168.1.10");
     }
 
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn tailscale_mode_falls_back_to_lan_when_unavailable() {
         let r = resolve_bind_ip(true, None, "192.168.1.10".into());
-        assert_eq!(r.bind_host, "0.0.0.0");
+        assert_eq!(r.bind_host, "192.168.1.10");
         assert_eq!(r.display_ip, "192.168.1.10");
     }
 }
