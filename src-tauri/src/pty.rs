@@ -290,9 +290,10 @@ pub struct RemoteStatus {
 pub async fn remote_start(
     port: Option<u16>,
     token: Option<String>,
+    use_tailscale: Option<bool>,
     state: tauri::State<'_, Arc<PtyManager>>,
 ) -> Result<RemoteStatus, String> {
-    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879), "token": token })).await?;
+    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879), "token": token, "use_tailscale": use_tailscale.unwrap_or(false) })).await?;
     Ok(RemoteStatus {
         running: data.get("running").and_then(Value::as_bool).unwrap_or(true),
         url:   data.get("url").and_then(Value::as_str).map(String::from),
@@ -315,4 +316,13 @@ pub async fn remote_status(state: tauri::State<'_, Arc<PtyManager>>) -> Result<R
         token: data.get("token").and_then(Value::as_str).map(String::from),
         addr:  data.get("addr").and_then(Value::as_str).map(String::from),
     })
+}
+#[tauri::command]
+pub fn tailscale_detect() -> Option<String> {
+    let output = std::process::Command::new("tailscale")
+        .args(["ip", "-4"])
+        .output()
+        .ok()?;
+    let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && !ip.is_empty() { Some(ip) } else { None }
 }

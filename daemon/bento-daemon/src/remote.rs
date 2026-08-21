@@ -75,7 +75,7 @@ impl Default for RemoteControl {
 impl RemoteControl {
     /// Start the server on `0.0.0.0:<port>`. If already running, returns
     /// the existing info without restarting.
-    pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>) -> Result<RemoteInfo, String> {
+    pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>, use_tailscale: bool) -> Result<RemoteInfo, String> {
         // Fast path: server is already healthy.
         {
             let guard = self.0.active.lock().unwrap();
@@ -92,12 +92,12 @@ impl RemoteControl {
         *self.0.active.lock().unwrap() = None;
 
         let token = token.unwrap_or_else(generate_token);
-        let ip = local_ip();
-        let bind_addr = format!("0.0.0.0:{port}");
-        let url = format!("http://{}:{}/?token={}", ip, port, token);
+        let res = resolve_bind_ip(use_tailscale, tailscale_ip(), local_ip());
+        let bind_addr = format!("{}:{}", res.bind_host, port);
+        let url = format!("http://{}:{}/?token={}", res.display_ip, port, token);
         let info = RemoteInfo {
             running: true,
-            addr: format!("{}:{}", ip, port),
+            addr: format!("{}:{}", res.display_ip, port),
             token: token.clone(),
             url,
         };
@@ -161,15 +161,42 @@ pub fn generate_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// ── LAN IP detection (no extra crates) ───────────────────────────────────────
+// ── IP detection ─────────────────────────────────────────────────────────────
+
+struct BindResolution {
+    /// Address the TCP listener binds to (e.g. "0.0.0.0" or "100.64.0.1").
+    bind_host: String,
+    /// IP shown in the URL/QR code.
+    display_ip: String,
+}
+
+/// Choose bind host and display IP based on whether Tailscale mode is requested.
+/// - LAN mode: bind 0.0.0.0, show LAN IP.
+/// - Tailscale mode + IP found: bind Tailscale IP (only reachable via Tailscale).
+/// - Tailscale mode + no IP: fall back to LAN.
+fn resolve_bind_ip(use_tailscale: bool, tailscale_ip: Option<String>, lan_ip: String) -> BindResolution {
+    match (use_tailscale, tailscale_ip) {
+        (true, Some(ts_ip)) => BindResolution { bind_host: ts_ip.clone(), display_ip: ts_ip },
+        _ => BindResolution { bind_host: "0.0.0.0".into(), display_ip: lan_ip },
+    }
+}
 
 fn local_ip() -> String {
     use std::net::UdpSocket;
-    // Connecting a UDP socket doesn't send packets; it just picks a route.
     UdpSocket::bind("0.0.0.0:0")
         .and_then(|s| { s.connect("8.8.8.8:80")?; s.local_addr() })
         .map(|a| a.ip().to_string())
         .unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+/// Returns the Tailscale IPv4 address if Tailscale is installed and connected.
+pub fn tailscale_ip() -> Option<String> {
+    let output = std::process::Command::new("tailscale")
+        .args(["ip", "-4"])
+        .output()
+        .ok()?;
+    let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && !ip.is_empty() { Some(ip) } else { None }
 }
 
 // ── Internal HTTP server ──────────────────────────────────────────────────────
@@ -449,3 +476,29 @@ load();
 </script>
 </body>
 </html>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lan_mode_binds_to_all_interfaces() {
+        let r = resolve_bind_ip(false, Some("100.64.0.1".into()), "192.168.1.10".into());
+        assert_eq!(r.bind_host, "0.0.0.0");
+        assert_eq!(r.display_ip, "192.168.1.10");
+    }
+
+    #[test]
+    fn tailscale_mode_binds_to_tailscale_ip() {
+        let r = resolve_bind_ip(true, Some("100.64.0.1".into()), "192.168.1.10".into());
+        assert_eq!(r.bind_host, "100.64.0.1");
+        assert_eq!(r.display_ip, "100.64.0.1");
+    }
+
+    #[test]
+    fn tailscale_mode_falls_back_to_lan_when_unavailable() {
+        let r = resolve_bind_ip(true, None, "192.168.1.10".into());
+        assert_eq!(r.bind_host, "0.0.0.0");
+        assert_eq!(r.display_ip, "192.168.1.10");
+    }
+}

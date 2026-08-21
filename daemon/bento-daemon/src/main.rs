@@ -21,7 +21,7 @@ async fn main() {
             .and_then(|p| p.parse().ok())
             .unwrap_or(7879);
         let token = std::env::var("BENTO_REMOTE_TOKEN").ok();
-        match remote.start(manager.clone(), port, token).await {
+        match remote.start(manager.clone(), port, token, false).await {
             Ok(info) => eprintln!("bento-daemon phone token: {}", info.token),
             Err(e) => eprintln!("bento-daemon remote: {e}"),
         }

@@ -9,8 +9,9 @@ interface RemoteStatus {
   addr?: string
 }
 
-const PORT_KEY  = 'bento.remote.port'
-const TOKEN_KEY = 'bento.remote.token'
+const PORT_KEY       = 'bento.remote.port'
+const TOKEN_KEY      = 'bento.remote.token'
+const TAILSCALE_KEY  = 'bento.remote.tailscale'
 
 // Session-scoped: survives panel close/reopen within the same Bento session.
 // true = user explicitly stopped the server; init() won't auto-restart until
@@ -41,6 +42,17 @@ export function createPhonePanel(): { element: HTMLElement } {
   toggleText.textContent = 'Activar servidor WiFi'
   toggleLabel.append(toggleInput, toggleText)
 
+  // Tailscale toggle (hidden until tailscale_detect confirms it's available)
+  const tsLabel = document.createElement('label')
+  tsLabel.className = 'phone-toggle-row hidden'
+  const tsToggle = document.createElement('input')
+  tsToggle.type = 'checkbox'
+  tsToggle.checked = localStorage.getItem(TAILSCALE_KEY) === 'true'
+  const tsText = document.createElement('span')
+  tsText.textContent = 'Usar Tailscale (fuera de casa)'
+  tsLabel.append(tsToggle, tsText)
+  tsToggle.onchange = () => localStorage.setItem(TAILSCALE_KEY, String(tsToggle.checked))
+
   // Port
   const portRow = document.createElement('div')
   portRow.className = 'phone-port-row'
@@ -54,7 +66,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   portInput.value = localStorage.getItem(PORT_KEY) ?? '7879'
   portRow.append(portLabel, portInput)
 
-  body.append(toggleLabel, portRow)
+  body.append(toggleLabel, tsLabel, portRow)
 
   // ── Active section ────────────────────────────────────────────────────────
   const activeSection = document.createElement('div')
@@ -79,7 +91,6 @@ export function createPhonePanel(): { element: HTMLElement } {
 
   const warn = document.createElement('p')
   warn.className = 'phone-warn'
-  warn.textContent = 'Solo en tu red WiFi local — nunca exponer a internet.'
 
   activeSection.append(urlRow, qrImg, warn)
   body.append(activeSection)
@@ -111,6 +122,9 @@ export function createPhonePanel(): { element: HTMLElement } {
       try {
         qrImg.src = await QRCode.toDataURL(s.url, { width: 220, margin: 2, color: { dark: '#e2e8f8', light: '#0e0e1c' } })
       } catch { /* ignore */ }
+      warn.textContent = tsToggle.checked
+        ? 'Accesible vía Tailscale desde cualquier red.'
+        : 'Solo en tu red WiFi local — nunca exponer a internet.'
       activeSection.classList.remove('hidden')
     } else {
       activeSection.classList.add('hidden')
@@ -122,7 +136,8 @@ export function createPhonePanel(): { element: HTMLElement } {
     const port = parseInt(portInput.value) || 7879
     localStorage.setItem(PORT_KEY, String(port))
     const savedToken = localStorage.getItem(TOKEN_KEY) ?? undefined
-    const s = await invoke<RemoteStatus>('remote_start', { port, token: savedToken })
+    const useTailscale = tsToggle.checked
+    const s = await invoke<RemoteStatus>('remote_start', { port, token: savedToken, useTailscale })
     if (s.token) localStorage.setItem(TOKEN_KEY, s.token)
     await render(s)
   }
@@ -147,9 +162,15 @@ export function createPhonePanel(): { element: HTMLElement } {
     toggleText.textContent = 'Comprobando…'
     toggleInput.disabled = true
     try {
-      const s = await invoke<RemoteStatus>('remote_status')
+      const [s, tsIp] = await Promise.all([
+        invoke<RemoteStatus>('remote_status'),
+        invoke<string | null>('tailscale_detect').catch(() => null),
+      ])
       if (userInteracted) return
       toggleInput.disabled = false
+      if (tsIp) {
+        tsLabel.classList.remove('hidden')
+      }
       if (s.running) {
         await render(s)
       } else if (!sessionStopped) {
