@@ -438,6 +438,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       undefined,
       store,
       ptyId,
+      savedName || defaultName,
     )
 
     slot.appendChild(handle.element)

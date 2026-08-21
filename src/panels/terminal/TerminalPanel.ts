@@ -58,7 +58,7 @@ export interface TerminalPanelHandle {
 
 const DEFAULT_FONT_FAMILY = '"JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "CaskaydiaCove Nerd Font", "Symbols Nerd Font", "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, monospace'
 
-export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void, execCommand?: string[], store?: AgentStore, stablePtyId?: string): TerminalPanelHandle {
+export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () => void, execCommand?: string[], store?: AgentStore, stablePtyId?: string, ptyTitle?: string): TerminalPanelHandle {
   const root = document.createElement('div')
   root.className = 'terminal-panel'
 
@@ -172,7 +172,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const spawnShell = (shellPath: string): Promise<boolean> => {
     const resolved = shellPath === 'auto' ? (navigator.platform.includes('Win') ? 'powershell.exe' : '/bin/sh') : shellPath
-    return invoke<boolean>('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null, command: execCommand ?? null })
+    return invoke<boolean>('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null, command: execCommand ?? null, title: ptyTitle ?? null })
       .catch(err => { term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`); return false })
   }
 

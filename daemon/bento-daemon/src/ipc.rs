@@ -33,6 +33,8 @@ struct Request {
     token: Option<String>,
     #[serde(default)]
     use_tailscale: Option<bool>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -105,6 +107,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
         "terminal.open" => {
             let opts = OpenOptions {
                 id: req.pty_id.clone(),
+                title: req.title.clone(),
                 shell: req.shell.clone(),
                 command: req.command.clone(),
                 cwd: req.cwd.clone(),

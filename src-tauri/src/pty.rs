@@ -238,6 +238,7 @@ pub async fn pty_spawn(
     cols: u16,
     cwd: Option<String>,
     command: Option<Vec<String>>,
+    title: Option<String>,
     state: tauri::State<'_, Arc<PtyManager>>,
     agent_socket: tauri::State<'_, Arc<crate::agent_socket::AgentSocket>>,
 ) -> Result<bool, String> {
@@ -251,6 +252,7 @@ pub async fn pty_spawn(
     let open = json!({
         "cmd": "terminal.open",
         "pty_id": id,
+        "title": title,
         "command": command,
         "cwd": cwd,
         "rows": rows,
