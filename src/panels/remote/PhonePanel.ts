@@ -51,7 +51,23 @@ export function createPhonePanel(): { element: HTMLElement } {
   const tsText = document.createElement('span')
   tsText.textContent = 'Usar Tailscale (fuera de casa)'
   tsLabel.append(tsToggle, tsText)
-  tsToggle.onchange = () => localStorage.setItem(TAILSCALE_KEY, String(tsToggle.checked))
+  tsToggle.onchange = async () => {
+    localStorage.setItem(TAILSCALE_KEY, String(tsToggle.checked))
+    if (toggleInput.checked) {
+      clearError()
+      toggleInput.disabled = true
+      tsToggle.disabled = true
+      try {
+        await invoke('remote_stop')
+        await startServer()
+      } catch (e) {
+        showError(`Error: ${String(e)}`)
+      } finally {
+        toggleInput.disabled = false
+        tsToggle.disabled = false
+      }
+    }
+  }
 
   // Port
   const portRow = document.createElement('div')
