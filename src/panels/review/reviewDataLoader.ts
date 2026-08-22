@@ -6,7 +6,7 @@ import { diffGit } from '../diff/diffGitClient'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import type { ReviewChangeFile, GhComment, GhPr, SidebarMode, FileTypeFilter } from './reviewFormat'
-import { describeReviewPrState, describeReviewNoBranchChanges, getFileState, computeCiStatus, relativeTime } from './reviewFormat'
+import { renderReviewPrStateBadge, describeReviewNoBranchChanges, getFileState, computeCiStatus, relativeTime } from './reviewFormat'
 
 export type StatusRollupEntry = { name?: string; workflowName?: string; conclusion?: string | null; state?: string; context?: string; targetUrl?: string }
 
@@ -35,7 +35,6 @@ export interface ReviewDataLoaderState {
   setSelectedBranch: (v: string) => void
   getActiveLocalBranch: () => string
   setActiveLocalBranch: (v: string) => void
-  getAllBranches: () => string[]
   setAllBranches: (v: string[]) => void
   getCurrentPrNumber: () => number | null
   setCurrentPrNumber: (v: number | null) => void
@@ -48,7 +47,6 @@ export interface ReviewDataLoaderState {
   setFileTypeFilter: (v: FileTypeFilter) => void
   getTotalFiles: () => number
   setTotalFiles: (v: number) => void
-  getLastFiles: () => ReviewChangeFile[]
   setLastFiles: (v: ReviewChangeFile[]) => void
   setLastStatusRollup: (v: StatusRollupEntry[]) => void
   setResolvedComments: (v: Set<number>) => void
@@ -160,14 +158,8 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
         link.addEventListener('click', e => { e.preventDefault(); openUrl(pr.url).catch(() => {}) })
         prMetaEl.append(link)
 
-        const stateBadge = describeReviewPrState(pr.state, pr.mergedAt)
-        if (stateBadge) {
-          prMetaEl.append(Object.assign(document.createElement('span'), {
-            className: `review-pr-state ${stateBadge.cls}`,
-            textContent: stateBadge.text,
-            title: stateBadge.title,
-          }))
-        }
+        const stateBadge = renderReviewPrStateBadge(pr.state, pr.mergedAt, 'review-pr-state')
+        if (stateBadge) prMetaEl.append(stateBadge)
 
         const ci = computeCiStatus(statusRollup)
         if (ci !== 'none') {

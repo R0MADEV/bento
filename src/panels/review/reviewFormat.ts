@@ -80,6 +80,16 @@ export function describeReviewPrState(state?: string | null, mergedAt?: string |
   }
 }
 
+export function renderReviewPrStateBadge(state: string | null | undefined, mergedAt: string | null | undefined, classPrefix: string): HTMLSpanElement | null {
+  const badge = describeReviewPrState(state, mergedAt)
+  if (!badge) return null
+  return Object.assign(document.createElement('span'), {
+    className: `${classPrefix} ${badge.cls}`,
+    textContent: badge.text,
+    title: badge.title,
+  })
+}
+
 export function describeReviewNoBranchChanges(state?: string | null, baseBranch = ''): string {
   if ((state ?? '').toUpperCase() === 'MERGED') {
     return reviewT('mergedNoBranchChanges', { base: baseBranch })

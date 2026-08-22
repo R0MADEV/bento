@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { icon } from '../../ui/icons'
-import { parseDiffFiles } from '../diff/diffStats'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { getUiZoom, toLayoutPixels } from '../../ui/zoom'
@@ -17,7 +16,7 @@ import { buildReviewSidebarLists } from './ReviewSidebarLists'
 import { buildReviewDiffView } from './ReviewDiffView'
 import { buildReviewDataLoader } from './reviewDataLoader'
 import { buildReviewAiRun } from './reviewAiRun'
-import type { GhComment, GhPr, SidebarMode, FileTypeFilter } from './reviewFormat'
+import type { GhComment, GhPr, SidebarMode, FileTypeFilter, ReviewChangeFile } from './reviewFormat'
 import {
   resolveReviewFollowUpSession,
   buildReviewFileManifest,
@@ -64,7 +63,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let focusedFileIdx = -1
   let treeView = false
   let splitView = false
-  let lastFiles: Array<ReturnType<typeof parseDiffFiles>[0] & { state: 'A'|'D'|'M' }> = []
+  let lastFiles: ReviewChangeFile[] = []
   let lastStatusRollup: Array<{ name?: string; workflowName?: string; conclusion?: string|null; state?: string; context?: string; targetUrl?: string }> = []
   let resolvedComments: Set<number> = new Set()
   let discSeq = 0
@@ -479,7 +478,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       setSelectedBranch: v => { selectedBranch = v },
       getActiveLocalBranch: () => activeLocalBranch,
       setActiveLocalBranch: v => { activeLocalBranch = v },
-      getAllBranches: () => allBranches,
       setAllBranches: v => { allBranches = v },
       getCurrentPrNumber: () => currentPrNumber,
       setCurrentPrNumber: v => { currentPrNumber = v },
@@ -492,7 +490,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       setFileTypeFilter: v => { fileTypeFilter = v },
       getTotalFiles: () => totalFiles,
       setTotalFiles: v => { totalFiles = v },
-      getLastFiles: () => lastFiles,
       setLastFiles: v => { lastFiles = v },
       setLastStatusRollup: v => { lastStatusRollup = v },
       setResolvedComments: v => { resolvedComments = v },

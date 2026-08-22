@@ -10,6 +10,40 @@ export interface ReviewCommentActions {
   refresh: () => Promise<void>
 }
 
+// A textarea + Cancel/Send actions row, the shared shape behind every comment
+// form in the review panel (edit, reply, inline line-comment, file-comment).
+// `status` is always created (callers that don't need it just leave it
+// unappended-to-DOM) so callers get a uniform, non-optional return shape.
+export interface CommentInputRow {
+  textarea: HTMLTextAreaElement
+  actionsRow: HTMLElement
+  sendBtn: HTMLButtonElement
+  cancelBtn: HTMLButtonElement
+  status: HTMLSpanElement
+}
+
+export function buildCommentInputRow(options: {
+  rows: number
+  placeholder?: string
+  value?: string
+  sendLabel: string
+  withStatus?: boolean
+}): CommentInputRow {
+  const textarea = document.createElement('textarea')
+  textarea.className = 'review-comment-input'
+  textarea.rows = options.rows
+  if (options.placeholder) textarea.placeholder = options.placeholder
+  if (options.value !== undefined) textarea.value = options.value
+  const actionsRow = document.createElement('div')
+  actionsRow.className = 'review-line-form-actions'
+  const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: options.sendLabel })
+  const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
+  const status = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
+  actionsRow.append(cancelBtn, sendBtn)
+  if (options.withStatus) actionsRow.append(status)
+  return { textarea, actionsRow, sendBtn, cancelBtn, status }
+}
+
 // ── Comment bubble (edit/delete/reply) ────────────────────────────────────
 export function buildReviewCommentBubble(c: GhComment, actions: ReviewCommentActions): HTMLElement {
   const bubble = document.createElement('div')
@@ -53,15 +87,7 @@ export function buildReviewCommentBubble(c: GhComment, actions: ReviewCommentAct
 
   editBtn.addEventListener('click', () => {
     if (bubble.querySelector('.review-edit-wrap')) return
-    const editArea = document.createElement('textarea')
-    editArea.className = 'review-comment-input'
-    editArea.value = c.body
-    editArea.rows = 3
-    const actionsRow = document.createElement('div')
-    actionsRow.className = 'review-line-form-actions'
-    const saveBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: 'Save' })
-    const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
-    actionsRow.append(cancelBtn, saveBtn)
+    const { textarea: editArea, actionsRow, sendBtn: saveBtn, cancelBtn } = buildCommentInputRow({ rows: 3, value: c.body, sendLabel: 'Save' })
     const wrap = document.createElement('div')
     wrap.className = 'review-edit-wrap'
     wrap.append(editArea, actionsRow)
@@ -90,15 +116,7 @@ export function buildReviewCommentBubble(c: GhComment, actions: ReviewCommentAct
 
   replyBtn.addEventListener('click', () => {
     if (bubble.querySelector('.review-reply-wrap')) return
-    const replyArea = document.createElement('textarea')
-    replyArea.className = 'review-comment-input'
-    replyArea.placeholder = reviewT('commentPlaceholder')
-    replyArea.rows = 2
-    const actionsRow = document.createElement('div')
-    actionsRow.className = 'review-line-form-actions'
-    const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: reviewT('sendComment') })
-    const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
-    actionsRow.append(cancelBtn, sendBtn)
+    const { textarea: replyArea, actionsRow, sendBtn, cancelBtn } = buildCommentInputRow({ rows: 2, placeholder: reviewT('commentPlaceholder'), sendLabel: reviewT('sendComment') })
     const wrap = document.createElement('div')
     wrap.className = 'review-reply-wrap'
     wrap.append(replyArea, actionsRow)
@@ -131,22 +149,14 @@ export interface ReviewLineFormActions {
 export function buildReviewLineForm(filePath: string, line: number, startLine: number | undefined, actions: ReviewLineFormActions): HTMLElement {
   const form = document.createElement('div')
   form.className = 'review-line-form'
-  const input = document.createElement('textarea')
-  input.className = 'review-comment-input'
-  input.placeholder = reviewT('commentPlaceholder')
-  input.rows = 3
+  const { textarea: input, actionsRow, sendBtn, cancelBtn, status } =
+    buildCommentInputRow({ rows: 3, placeholder: reviewT('commentPlaceholder'), sendLabel: reviewT('sendComment'), withStatus: true })
   const draftKey = `bento.review.draft.${actions.repoPath()}.${actions.selectedBranch()}.${filePath}.${line}`
   const saved = localStorage.getItem(draftKey)
   if (saved) input.value = saved
   input.addEventListener('input', () => {
     if (input.value) localStorage.setItem(draftKey, input.value); else localStorage.removeItem(draftKey)
   })
-  const actionsRow = document.createElement('div')
-  actionsRow.className = 'review-line-form-actions'
-  const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: reviewT('sendComment') })
-  const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
-  const status = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
-  actionsRow.append(cancelBtn, sendBtn, status)
   form.append(input, actionsRow)
   cancelBtn.addEventListener('click', () => form.remove())
   sendBtn.addEventListener('click', async () => {

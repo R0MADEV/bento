@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { reviewT } from './i18n'
-import { describeReviewPrState, filterReviewPrs, type GhPr, type SidebarMode } from './reviewFormat'
+import { renderReviewPrStateBadge, filterReviewPrs, type GhPr, type SidebarMode } from './reviewFormat'
 
 export interface ReviewSidebarRefs {
   branchSearch: HTMLInputElement
@@ -72,14 +72,8 @@ export function buildReviewSidebarLists(refs: ReviewSidebarRefs, state: ReviewSi
         Object.assign(document.createElement('div'), { className: 'review-pr-item-title', textContent: `#${pr.number} ${pr.title}` }),
         Object.assign(document.createElement('div'), { className: 'review-pr-item-author', textContent: pr.author.login }),
       )
-      const stateBadge = describeReviewPrState(pr.state, pr.mergedAt)
-      if (stateBadge) {
-        item.append(Object.assign(document.createElement('span'), {
-          className: `review-pr-item-state ${stateBadge.cls}`,
-          textContent: stateBadge.text,
-          title: stateBadge.title,
-        }))
-      }
+      const stateBadge = renderReviewPrStateBadge(pr.state, pr.mergedAt, 'review-pr-item-state')
+      if (stateBadge) item.append(stateBadge)
       item.addEventListener('click', () => {
         const branches = state.allBranches()
         const branch = branches.find(b => b.endsWith('/' + pr.headRefName)) ?? ('origin/' + pr.headRefName)

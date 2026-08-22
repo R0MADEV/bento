@@ -8,14 +8,6 @@ html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-sy
 .tab.active{color:var(--a);border-bottom-color:var(--a)}
 
 /* ── Shared ───────────────────────────── */
-.list-head{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;padding:0 2px}
-.tb{display:flex;align-items:center;gap:12px;width:100%;padding:15px 16px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);text-align:left;margin-bottom:10px;cursor:pointer;transition:background .1s}
-.tb:active{background:var(--s2)}
-.tb-ico{font-size:22px;flex-shrink:0}
-.tb-info{flex:1;min-width:0}
-.tb-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tb-cwd{font-size:11px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tb-arrow{color:var(--dim);font-size:18px;flex-shrink:0}
 .empty{padding:40px 16px;text-align:center;color:var(--dim);font-size:14px;line-height:1.6}
 .err-msg{color:var(--re)}
 input.field,select.field{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:15px;outline:none;-webkit-appearance:none}

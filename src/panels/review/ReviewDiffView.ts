@@ -3,6 +3,7 @@ import { icon } from '../../ui/icons'
 import { reviewT } from './i18n'
 import type { ReviewChangeFile, GhComment, FileTypeFilter } from './reviewFormat'
 import { esc, highlightCode, wordDiff } from './reviewFormat'
+import { buildCommentInputRow } from './ReviewCommentBubble'
 
 export interface ReviewDiffDom {
   diffView: HTMLElement
@@ -36,6 +37,62 @@ export interface ReviewDiffView {
   updateCommentBadges: () => void
 }
 
+// Drag-to-select a line range within a diff container, opening a comment form
+// anchored after `getInsertTarget(anchorWrap)` once the drag ends.
+function createLineRangeSelector(
+  container: HTMLElement,
+  filePath: string,
+  makeLineForm: ReviewDiffState['makeLineForm'],
+  getInsertTarget: (anchorWrap: HTMLElement) => Element,
+): { start: (line: number) => void } {
+  let dragStart: number | null = null
+  const lineFromEl = (el: Element | null): number | null => {
+    const wrap = el?.closest<HTMLElement>('[data-line]')
+    const n = parseInt(wrap?.dataset.line ?? '', 10)
+    return isNaN(n) ? null : n
+  }
+  const clearHighlight = (): void =>
+    container.querySelectorAll('.review-line-wrap--selected').forEach(el => el.classList.remove('review-line-wrap--selected'))
+  const highlightRange = (a: number, b: number): void => {
+    const lo = Math.min(a, b), hi = Math.max(a, b)
+    container.querySelectorAll<HTMLElement>('[data-line]').forEach(wrap => {
+      const ln = parseInt(wrap.dataset.line ?? '', 10)
+      wrap.classList.toggle('review-line-wrap--selected', ln >= lo && ln <= hi)
+    })
+  }
+  const openRangeForm = (lo: number, hi: number): void => {
+    container.querySelectorAll('.review-line-form').forEach(el => el.remove())
+    clearHighlight()
+    const anchorWrap = container.querySelector<HTMLElement>(`[data-line="${hi}"]`)
+    if (!anchorWrap) return
+    const form = makeLineForm(filePath, hi, lo < hi ? lo : undefined)
+    getInsertTarget(anchorWrap).after(form)
+    form.querySelector('textarea')?.focus()
+  }
+  const onMouseMove = (e: MouseEvent): void => {
+    if (dragStart === null) return
+    const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY))
+    if (ln !== null) highlightRange(dragStart, ln)
+  }
+  const onMouseUp = (e: MouseEvent): void => {
+    if (dragStart === null) return
+    const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY)) ?? dragStart
+    const lo = Math.min(dragStart, ln), hi = Math.max(dragStart, ln)
+    dragStart = null
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    openRangeForm(lo, hi)
+  }
+  return {
+    start: (line: number) => {
+      dragStart = line
+      highlightRange(line, line)
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    },
+  }
+}
+
 export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState): ReviewDiffView {
   const { diffView, diffSearchInput, filterBar } = dom
 
@@ -44,45 +101,7 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
     const container = document.createElement('div')
     container.dataset.filepath = filePath
     const ext = filePath.split('.').pop() ?? ''
-    let dragStart: number | null = null
-
-    const lineFromEl = (el: Element | null): number | null => {
-      const wrap = el?.closest<HTMLElement>('[data-line]')
-      const n = parseInt(wrap?.dataset.line ?? '', 10)
-      return isNaN(n) ? null : n
-    }
-    const clearHighlight = (): void =>
-      container.querySelectorAll('.review-line-wrap--selected').forEach(el => el.classList.remove('review-line-wrap--selected'))
-    const highlightRange = (a: number, b: number): void => {
-      const lo = Math.min(a, b), hi = Math.max(a, b)
-      container.querySelectorAll<HTMLElement>('[data-line]').forEach(wrap => {
-        const ln = parseInt(wrap.dataset.line ?? '', 10)
-        wrap.classList.toggle('review-line-wrap--selected', ln >= lo && ln <= hi)
-      })
-    }
-    const openRangeForm = (lo: number, hi: number): void => {
-      container.querySelectorAll('.review-line-form').forEach(el => el.remove())
-      clearHighlight()
-      const anchorWrap = container.querySelector<HTMLElement>(`[data-line="${hi}"]`)
-      if (!anchorWrap) return
-      const form = state.makeLineForm(filePath, hi, lo < hi ? lo : undefined)
-      anchorWrap.after(form)
-      form.querySelector('textarea')?.focus()
-    }
-    const onMouseMove = (e: MouseEvent): void => {
-      if (dragStart === null) return
-      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY))
-      if (ln !== null) highlightRange(dragStart, ln)
-    }
-    const onMouseUp = (e: MouseEvent): void => {
-      if (dragStart === null) return
-      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY)) ?? dragStart
-      const lo = Math.min(dragStart, ln), hi = Math.max(dragStart, ln)
-      dragStart = null
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-      openRangeForm(lo, hi)
-    }
+    const rangeSelector = createLineRangeSelector(container, filePath, state.makeLineForm, anchorWrap => anchorWrap)
 
     // Parse diff into typed entries for two-pass rendering with word diff
     type UEntry =
@@ -126,10 +145,7 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
           className: 'review-line-comment-btn', textContent: '+', title: `Comment line ${lineNo}`,
         })
         addBtn.addEventListener('mousedown', e => {
-          e.preventDefault(); dragStart = capturedLine
-          highlightRange(capturedLine, capturedLine)
-          document.addEventListener('mousemove', onMouseMove)
-          document.addEventListener('mouseup', onMouseUp)
+          e.preventDefault(); rangeSelector.start(capturedLine)
         })
         lineEl.append(addBtn)
       }
@@ -210,45 +226,10 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
     }
 
     // Drag-to-select (right side only)
-    let dragStart: number | null = null
-    const lineFromEl = (el: Element | null): number | null => {
-      const wrap = el?.closest<HTMLElement>('[data-line]')
-      const n = parseInt(wrap?.dataset.line ?? '', 10)
-      return isNaN(n) ? null : n
-    }
-    const clearHighlight = (): void =>
-      container.querySelectorAll('.review-line-wrap--selected').forEach(el => el.classList.remove('review-line-wrap--selected'))
-    const highlightRange = (a: number, b: number): void => {
-      const lo = Math.min(a, b), hi = Math.max(a, b)
-      container.querySelectorAll<HTMLElement>('[data-line]').forEach(wrap => {
-        const ln = parseInt(wrap.dataset.line ?? '', 10)
-        wrap.classList.toggle('review-line-wrap--selected', ln >= lo && ln <= hi)
-      })
-    }
-    const openRangeForm = (lo: number, hi: number): void => {
-      container.querySelectorAll('.review-line-form').forEach(el => el.remove())
-      clearHighlight()
-      const anchorWrap = container.querySelector<HTMLElement>(`[data-line="${hi}"]`)
-      if (!anchorWrap) return
-      const row = anchorWrap.closest('.review-split-row') ?? anchorWrap
-      const form = state.makeLineForm(filePath, hi, lo < hi ? lo : undefined)
-      row.after(form)
-      form.querySelector('textarea')?.focus()
-    }
-    const onMouseMove = (e: MouseEvent): void => {
-      if (dragStart === null) return
-      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY))
-      if (ln !== null) highlightRange(dragStart, ln)
-    }
-    const onMouseUp = (e: MouseEvent): void => {
-      if (dragStart === null) return
-      const ln = lineFromEl(document.elementFromPoint(e.clientX, e.clientY)) ?? dragStart
-      const lo = Math.min(dragStart, ln), hi = Math.max(dragStart, ln)
-      dragStart = null
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-      openRangeForm(lo, hi)
-    }
+    const rangeSelector = createLineRangeSelector(
+      container, filePath, state.makeLineForm,
+      anchorWrap => anchorWrap.closest('.review-split-row') ?? anchorWrap,
+    )
 
     const mkRightCell = (lineNo: number, text: string, extraCls: string, preHtml?: string): HTMLElement => {
       const cell = document.createElement('div')
@@ -259,10 +240,7 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
       })
       const cap = lineNo
       addBtn.addEventListener('mousedown', e => {
-        e.preventDefault(); dragStart = cap
-        highlightRange(cap, cap)
-        document.addEventListener('mousemove', onMouseMove)
-        document.addEventListener('mouseup', onMouseUp)
+        e.preventDefault(); rangeSelector.start(cap)
       })
       cell.innerHTML = `<span class="tasks-diff-line-no">${lineNo}</span>${preHtml ?? highlightCode(text, ext)}`
       cell.prepend(addBtn)
@@ -388,13 +366,9 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
       if (details.querySelector('.review-file-comment-form')) return
       const form = document.createElement('div')
       form.className = 'review-file-comment-form'
-      const ta = document.createElement('textarea')
-      ta.className = 'review-comment-input'; ta.placeholder = reviewT('commentPlaceholder'); ta.rows = 2
-      const acts = document.createElement('div'); acts.className = 'review-line-form-actions'
-      const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: reviewT('sendComment') })
-      const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
-      const st = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
-      acts.append(cancelBtn, sendBtn, st); form.append(ta, acts)
+      const { textarea: ta, actionsRow: acts, sendBtn, cancelBtn, status: st } =
+        buildCommentInputRow({ rows: 2, placeholder: reviewT('commentPlaceholder'), sendLabel: reviewT('sendComment'), withStatus: true })
+      form.append(ta, acts)
       cancelBtn.addEventListener('click', () => form.remove())
       sendBtn.addEventListener('click', async () => {
         const body = ta.value.trim()
