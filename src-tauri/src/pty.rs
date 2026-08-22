@@ -26,6 +26,12 @@ pub struct PtyManager {
     app: Arc<Mutex<Option<AppHandle>>>,
     /// Child handle of the daemon we spawned — used to kill it on shutdown.
     daemon_child: Arc<Mutex<Option<std::process::Child>>>,
+    /// Serializes connect attempts: the app-startup connect and any command
+    /// racing in via `ensure_connected` must not both kill+respawn the daemon
+    /// concurrently, or whichever's server lands on the loser's daemon dies
+    /// with it (this is why the remote/phone server used to silently die at
+    /// startup even though it briefly logged as started).
+    connect_lock: tokio::sync::Mutex<()>,
 }
 
 impl Default for PtyManager {
@@ -37,6 +43,7 @@ impl Default for PtyManager {
             counter: AtomicU64::new(0),
             app: Arc::new(Mutex::new(None)),
             daemon_child: Arc::new(Mutex::new(None)),
+            connect_lock: tokio::sync::Mutex::new(()),
         }
     }
 }
@@ -46,6 +53,11 @@ impl PtyManager {
     /// Always kills any running daemon first so the freshly compiled binary is used.
     /// Safe to call again after a disconnect — replaces the old connection.
     pub async fn connect(&self, app: AppHandle) -> Result<(), String> {
+        let _guard = self.connect_lock.lock().await;
+        self.connect_locked(app).await
+    }
+
+    async fn connect_locked(&self, app: AppHandle) -> Result<(), String> {
         *self.app.lock().unwrap() = Some(app.clone());
 
         // Kill any daemon we started in this session.
@@ -122,7 +134,11 @@ impl PtyManager {
     }
 
     /// Reconnect to the daemon if the connection is gone. No-op when already connected.
+    /// Guarded by the same lock as `connect` so a command racing in while the
+    /// app-startup connect is still in flight waits for it instead of also
+    /// kill+respawning the daemon (see `connect_lock` doc comment).
     async fn ensure_connected(&self) -> Result<(), String> {
+        let _guard = self.connect_lock.lock().await;
         if self.tx.lock().unwrap().is_none() {
             let app = self
                 .app
@@ -130,7 +146,7 @@ impl PtyManager {
                 .unwrap()
                 .clone()
                 .ok_or_else(|| "bento-daemon not initialized".to_string())?;
-            self.connect(app).await?;
+            self.connect_locked(app).await?;
         }
         Ok(())
     }
