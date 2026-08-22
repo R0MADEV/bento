@@ -221,7 +221,12 @@ fn spawn_daemon() -> Option<std::process::Child> {
     daemon_binary().and_then(|b| std::process::Command::new(b).spawn().ok())
 }
 
-/// Locate the bento-daemon binary: explicit override → bundled → dev workspace.
+/// Locate the bento-daemon binary: explicit override → bundled sidecar → dev workspace.
+/// Tauri's `externalBin` staging needs the `-<target-triple>` suffix on the
+/// source file (see `scripts/build-daemon-sidecar.mjs`) to disambiguate
+/// multi-arch builds, but strips it when copying into the final per-platform
+/// bundle — so the packaged binary sits right next to the app executable
+/// under the plain name, same as `name` below.
 fn daemon_binary() -> Option<std::path::PathBuf> {
     let name = if cfg!(windows) { "bento-daemon.exe" } else { "bento-daemon" };
     if let Ok(explicit) = std::env::var("BENTO_DAEMON_BIN") {
