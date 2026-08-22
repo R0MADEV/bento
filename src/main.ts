@@ -29,9 +29,13 @@ import { getUiZoom } from './ui/zoom'
 import { isMac } from './ui/platform'
 import { invoke } from '@tauri-apps/api/core'
 import { setBackend, tauriBackend } from './core/transport'
+import { autoStartRemote } from './panels/remote/autoStart'
 import tvM3U from './assets/tv.m3u?raw'
 
 setBackend(tauriBackend(invoke))
+
+// Auto-start remote control on every launch (Tailscale if available)
+void autoStartRemote()
 
 // Web panels live in Rust state and survive a frontend reload as orphans — clean them up
 invoke('web_panel_close_all').catch(() => {})

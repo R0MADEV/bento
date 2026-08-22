@@ -47,12 +47,14 @@ export function createPhonePanel(): { element: HTMLElement } {
   tsLabel.className = 'phone-toggle-row hidden'
   const tsToggle = document.createElement('input')
   tsToggle.type = 'checkbox'
-  tsToggle.checked = localStorage.getItem(TAILSCALE_KEY) === 'true'
+  // Opt-out: checked unless user explicitly set to 'false'
+  tsToggle.checked = localStorage.getItem(TAILSCALE_KEY) !== 'false'
   const tsText = document.createElement('span')
   tsText.textContent = 'Usar Tailscale (fuera de casa)'
   tsLabel.append(tsToggle, tsText)
   tsToggle.onchange = async () => {
-    localStorage.setItem(TAILSCALE_KEY, String(tsToggle.checked))
+    // Store 'false' explicitly when disabled; absence or 'true' means enabled
+    localStorage.setItem(TAILSCALE_KEY, tsToggle.checked ? 'true' : 'false')
     if (toggleInput.checked) {
       clearError()
       toggleInput.disabled = true
