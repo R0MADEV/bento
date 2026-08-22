@@ -29,6 +29,10 @@ function run(command, args, env = process.env) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
+// This calls `cargo build` directly (skipping `tauri build`'s beforeBuildCommand
+// hook), so tauri-build's externalBin validation needs the sidecar staged by hand.
+run(process.execPath, ['scripts/build-daemon-sidecar.mjs'])
+
 const npmBuild = npmRunInvocation('build')
 run(npmBuild.command, npmBuild.args)
 run(cargo, ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'e2e'], {

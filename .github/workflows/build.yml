@@ -68,6 +68,12 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      # tauri-build's externalBin validation requires the sidecar to already
+      # exist for ANY compile of src-tauri, not just `tauri build` — bindings
+      # check and clippy below compile it directly, bypassing beforeBuildCommand.
+      - name: Build daemon sidecar
+        run: node scripts/build-daemon-sidecar.mjs
+
       - name: Verify generated Rust bindings
         run: npm run bindings:check
 
