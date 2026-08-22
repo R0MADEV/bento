@@ -17,7 +17,7 @@ async fn main() {
     // Opt-in via env for the manual / test workflow:
     //   BENTO_REMOTE_ADDR=0.0.0.0:7879 BENTO_REMOTE_TOKEN=mytoken bento-daemon
     if let Ok(remote_addr) = std::env::var("BENTO_REMOTE_ADDR") {
-        let port: u16 = remote_addr.split(':').last()
+        let port: u16 = remote_addr.split(':').next_back()
             .and_then(|p| p.parse().ok())
             .unwrap_or(7879);
         let token = std::env::var("BENTO_REMOTE_TOKEN").ok();
