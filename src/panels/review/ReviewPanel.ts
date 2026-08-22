@@ -14,229 +14,36 @@ import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey, techReviewCheckpointKey } from '../../core/ai/chatHistory'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { t as i18nT } from '../../i18n'
+import { buildReviewAgentControls } from './ReviewAgentControls'
+import { buildReviewCommentBubble, buildReviewLineForm } from './ReviewCommentBubble'
+import { buildReviewSidebarLists } from './ReviewSidebarLists'
+import type { ReviewChangeFile, GhComment, GhPr, SidebarMode, FileTypeFilter } from './reviewFormat'
+import {
+  resolveReviewFollowUpSession,
+  buildReviewFileManifest,
+  buildReviewFileBatches,
+  describeReviewPrState,
+  describeReviewNoBranchChanges,
+  filterReviewPrs,
+  highlightCode,
+  getFileState,
+  computeCiStatus,
+  relativeTime,
+  wordDiff,
+  esc,
+} from './reviewFormat'
+
+export {
+  resolveReviewFollowUpSession,
+  buildReviewFileManifest,
+  buildReviewFileBatches,
+  describeReviewPrState,
+  describeReviewNoBranchChanges,
+  filterReviewPrs,
+}
 
 const REPO_KEY = 'bento.review.repo'
 const BASE_KEY = 'bento.review.base'
-
-type ReviewChangeFile = ReturnType<typeof parseDiffFiles>[0] & { state: 'A' | 'D' | 'M' }
-
-export function resolveReviewFollowUpSession(reviewRuns: MultiAgentReviewRun[], reviewAgentCount: number): { sessionId: string | null; sessionAgent: AgentType | null } {
-  const run = reviewRuns
-    .slice(0, reviewAgentCount)
-    .reverse()
-    .find(run => run.sessionId)
-  return {
-    sessionId: run?.sessionId ?? null,
-    sessionAgent: run?.agent ?? null,
-  }
-}
-
-export function buildReviewFileManifest(files: ReviewChangeFile[]): string {
-  return files.map(file => `${file.state} ${file.file} (+${file.additions}/-${file.deletions})`).join('\n')
-}
-
-export function buildReviewFileBatches(files: ReviewChangeFile[], maxBatchChars = 12_000): ReviewChangeFile[][] {
-  if (!files.length) return []
-  const batches: ReviewChangeFile[][] = []
-  let batch: ReviewChangeFile[] = []
-  let chars = 0
-  files.forEach(file => {
-    const nextChars = chars + file.chunk.length
-    if (batch.length && nextChars > maxBatchChars) {
-      batches.push(batch)
-      batch = []
-      chars = 0
-    }
-    batch.push(file)
-    chars += file.chunk.length
-  })
-  if (batch.length) batches.push(batch)
-  return batches
-}
-
-export function describeReviewPrState(state?: string | null, mergedAt?: string | null): { text: string; cls: string; title: string } | null {
-  const normalized = (state ?? '').toUpperCase()
-  const map: Record<string, { text: string; cls: string }> = {
-    OPEN: { text: 'Open', cls: 'review-pr-state--open' },
-    DRAFT: { text: 'Draft', cls: 'review-pr-state--draft' },
-    MERGED: { text: 'Merged', cls: 'review-pr-state--merged' },
-    CLOSED: { text: 'Closed', cls: 'review-pr-state--closed' },
-  }
-  const badge = map[normalized]
-  if (!badge) return null
-  return {
-    text: badge.text,
-    cls: badge.cls,
-    title: mergedAt ? `Merged at ${new Date(mergedAt).toLocaleString()}` : normalized,
-  }
-}
-
-export function describeReviewNoBranchChanges(state?: string | null, baseBranch = ''): string {
-  if ((state ?? '').toUpperCase() === 'MERGED') {
-    return reviewT('mergedNoBranchChanges', { base: baseBranch })
-  }
-  return reviewT('noBranchChanges', { base: baseBranch })
-}
-
-export function filterReviewPrs(prs: readonly GhPr[], query: string): GhPr[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return [...prs]
-  return prs.filter(pr => {
-    const fields = [
-      String(pr.number),
-      pr.title,
-      pr.author.login,
-      pr.headRefName,
-      pr.baseRefName,
-      pr.state ?? '',
-    ]
-    return fields.some(value => value.toLowerCase().includes(q))
-  })
-}
-
-interface GhComment {
-  id: number
-  path: string
-  line: number
-  body: string
-  user: { login: string }
-  html_url: string
-  created_at?: string
-}
-
-interface GhPr {
-  number: number
-  title: string
-  url: string
-  headRefName: string
-  baseRefName: string
-  author: { login: string }
-  state?: 'OPEN' | 'CLOSED' | 'MERGED' | string
-  mergedAt?: string | null
-}
-
-type SidebarMode = 'branches' | 'prs'
-type FileTypeFilter = 'all' | 'A' | 'M' | 'D' | 'commented'
-
-// ── Syntax highlighting ───────────────────────────────────────────────────────
-const KW: Record<string, string[]> = {
-  ts: ['const','let','var','function','return','if','else','for','while','class','import','export','from','default','async','await','new','this','typeof','null','undefined','true','false','void','type','interface','enum','extends','implements','public','private','protected','readonly','static','abstract','switch','case','break','continue','try','catch','finally','throw','delete','in','of','instanceof'],
-  rs: ['fn','let','mut','const','struct','enum','impl','trait','use','pub','mod','return','if','else','for','while','match','Some','None','Ok','Err','true','false','self','Self','super','crate','async','await','move','where','type','ref','loop','break','continue'],
-  py: ['def','class','return','if','else','elif','for','while','import','from','as','with','in','not','and','or','is','None','True','False','pass','break','continue','try','except','finally','raise','yield','async','await','lambda','global','nonlocal'],
-  go: ['func','var','const','return','if','else','for','range','go','select','case','default','break','continue','type','struct','interface','import','package','nil','true','false','defer','make','new','len','cap','chan','map','switch'],
-  css: ['@import','@media','@keyframes','@font-face','!important'],
-}
-const EXT_LANG: Record<string, string> = {
-  ts:'ts', tsx:'ts', js:'ts', jsx:'ts', mjs:'ts', cjs:'ts',
-  rs:'rs', py:'py', go:'go', css:'css', scss:'css',
-}
-
-const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-const sp = (cls: string, text: string): string => `<span class="sh-${cls}">${esc(text)}</span>`
-
-function highlightCode(code: string, ext: string): string {
-  const lang = EXT_LANG[ext.toLowerCase()]
-  if (!lang) return esc(code)
-  const kws = new Set(KW[lang] ?? [])
-  const commentPfx = lang === 'py' ? '#' : '//'
-  const result: string[] = []
-  let i = 0
-  while (i < code.length) {
-    if (code.startsWith(commentPfx, i)) { result.push(sp('comment', code.slice(i))); break }
-    if (lang !== 'py' && code.startsWith('/*', i)) {
-      const end = code.indexOf('*/', i + 2)
-      const s = end === -1 ? code.slice(i) : code.slice(i, end + 2)
-      result.push(sp('comment', s)); i += s.length; continue
-    }
-    const q = code[i]
-    if (q === '"' || q === "'" || q === '`') {
-      let j = i + 1
-      while (j < code.length) {
-        if (code[j] === '\\') { j += 2; continue }
-        if (code[j] === q) { j++; break }
-        j++
-      }
-      result.push(sp('string', code.slice(i, j))); i = j; continue
-    }
-    if (code[i] >= '0' && code[i] <= '9') {
-      let j = i
-      while (j < code.length && /[\d._a-zA-Z]/.test(code[j])) j++
-      result.push(sp('number', code.slice(i, j))); i = j; continue
-    }
-    if (/[a-zA-Z_$]/.test(code[i])) {
-      let j = i
-      while (j < code.length && /[\w$]/.test(code[j])) j++
-      const word = code.slice(i, j)
-      result.push(kws.has(word) ? sp('keyword', word) : esc(word)); i = j; continue
-    }
-    result.push(esc(code[i])); i++
-  }
-  return result.join('')
-}
-
-// ── File state from diff chunk ────────────────────────────────────────────────
-const getFileState = (chunk: string): 'A' | 'D' | 'M' => {
-  if (/^new file mode/m.test(chunk)) return 'A'
-  if (/^deleted file mode/m.test(chunk)) return 'D'
-  return 'M'
-}
-
-// ── CI status ─────────────────────────────────────────────────────────────────
-const computeCiStatus = (rollup: Array<{ conclusion?: string | null; state?: string }>): 'success' | 'failure' | 'pending' | 'none' => {
-  if (!rollup?.length) return 'none'
-  const vals = rollup.map(c => (c.conclusion ?? c.state ?? '').toUpperCase())
-  if (vals.some(v => ['FAILURE','ERROR','TIMED_OUT','CANCELLED'].includes(v))) return 'failure'
-  if (vals.some(v => ['PENDING','IN_PROGRESS','QUEUED','WAITING','ACTION_REQUIRED'].includes(v))) return 'pending'
-  return 'success'
-}
-
-// ── Relative time ─────────────────────────────────────────────────────────────
-const relativeTime = (iso: string): string => {
-  const diff = Date.now() - new Date(iso).getTime()
-  if (diff < 60000) return 'just now'
-  const min = Math.floor(diff / 60000)
-  if (min < 60) return `${min}m ago`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  return `${Math.floor(hr / 24)}d ago`
-}
-
-// ── Word-level diff ───────────────────────────────────────────────────────────
-const wordDiff = (oldText: string, newText: string): { oldHtml: string; newHtml: string } => {
-  const tokenize = (s: string): string[] => {
-    const r: string[] = []
-    let i = 0
-    while (i < s.length) {
-      if (/\w/.test(s[i])) {
-        let j = i; while (j < s.length && /\w/.test(s[j])) j++
-        r.push(s.slice(i, j)); i = j
-      } else { r.push(s[i]); i++ }
-    }
-    return r
-  }
-  const a = tokenize(oldText), b = tokenize(newText)
-  if (a.length > 300 || b.length > 300) return { oldHtml: esc(oldText), newHtml: esc(newText) }
-  const m = a.length, n = b.length
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))
-  for (let ii = 1; ii <= m; ii++)
-    for (let jj = 1; jj <= n; jj++)
-      dp[ii][jj] = a[ii-1] === b[jj-1] ? dp[ii-1][jj-1] + 1 : Math.max(dp[ii-1][jj], dp[ii][jj-1])
-  type Op = { t: '='; v: string } | { t: '-'; v: string } | { t: '+'; v: string }
-  const ops: Op[] = []
-  let i = m, j = n
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i-1] === b[j-1]) { ops.unshift({ t: '=', v: a[i-1] }); i--; j-- }
-    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { ops.unshift({ t: '+', v: b[j-1] }); j-- }
-    else { ops.unshift({ t: '-', v: a[i-1] }); i-- }
-  }
-  let oldHtml = '', newHtml = ''
-  for (const op of ops) {
-    if (op.t === '=') { oldHtml += esc(op.v); newHtml += esc(op.v) }
-    else if (op.t === '-') oldHtml += `<mark class="sh-word-del">${esc(op.v)}</mark>`
-    else newHtml += `<mark class="sh-word-add">${esc(op.v)}</mark>`
-  }
-  return { oldHtml, newHtml }
-}
 
 export function createReviewPanel(sessionPath?: string): { element: HTMLElement; dispose?: () => void; onVisibilityChange?: (visible: boolean) => void } {
   const root = document.createElement('div')
@@ -305,104 +112,16 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
 
   const viewedCounterEl = Object.assign(document.createElement('span'), { className: 'review-viewed-counter hidden' })
 
-  const REVIEW_AGENT_KEY = 'bento.review.agent'
-  const REVIEW_COMPARE_AGENTS_KEY = 'bento.review.compare-agents'
-  const REVIEW_SECONDARY_AGENT_KEY = 'bento.review.agent.secondary'
-  const REVIEW_TERTIARY_AGENT_KEY = 'bento.review.agent.tertiary'
-  const REVIEW_AGENT_TYPES: AgentType[] = ['claude', 'opencode', 'codex']
-  const reviewAgentSelect = document.createElement('select')
-  reviewAgentSelect.className = 'review-agent-select'
-  ;(['claude', 'opencode', 'codex'] as const).forEach(val => {
-    reviewAgentSelect.appendChild(Object.assign(document.createElement('option'), {
-      value: val, textContent: agentLabel(val),
-    }))
-  })
-  reviewAgentSelect.value = localStorage.getItem(REVIEW_AGENT_KEY) ?? 'claude'
-  const reviewCompareAgentsToggle = Object.assign(document.createElement('input'), {
-    type: 'checkbox',
-    className: 'review-agent-toggle-input',
-  })
-  reviewCompareAgentsToggle.checked = localStorage.getItem(REVIEW_COMPARE_AGENTS_KEY) === '1'
-  reviewCompareAgentsToggle.dataset.testid = 'review-compare-agents-toggle'
-  const reviewCompareAgentsLabel = document.createElement('label')
-  reviewCompareAgentsLabel.className = 'review-agent-toggle'
-  reviewCompareAgentsLabel.append(reviewCompareAgentsToggle, Object.assign(document.createElement('span'), {
-    textContent: i18nT('common.reviewCompareAgents'),
-  }))
-  const reviewAgentHint = Object.assign(document.createElement('div'), { className: 'review-agent-hint' })
-
-  const mkOptionalAgentSelect = (value: string | null, testid: string): HTMLSelectElement => {
-    const select = document.createElement('select')
-    select.className = 'review-agent-select review-agent-select--optional'
-    select.dataset.testid = testid
-    select.appendChild(Object.assign(document.createElement('option'), { value: '', textContent: i18nT('common.reviewAgentNone') }))
-    REVIEW_AGENT_TYPES.forEach(agent => {
-      select.appendChild(Object.assign(document.createElement('option'), { value: agent, textContent: agentLabel(agent) }))
-    })
-    select.value = value && REVIEW_AGENT_TYPES.includes(value as AgentType) ? value : ''
-    return select
-  }
-
-  const reviewSecondaryAgentSelect = mkOptionalAgentSelect(localStorage.getItem(REVIEW_SECONDARY_AGENT_KEY), 'review-secondary-agent')
-  const reviewTertiaryAgentSelect = mkOptionalAgentSelect(localStorage.getItem(REVIEW_TERTIARY_AGENT_KEY), 'review-tertiary-agent')
-  const reviewSecondaryRow = document.createElement('div')
-  reviewSecondaryRow.className = 'review-agent-extra hidden'
-  reviewSecondaryRow.append(Object.assign(document.createElement('span'), { className: 'review-agent-extra-label', textContent: i18nT('common.reviewAgentSecondary') }), reviewSecondaryAgentSelect)
-  const reviewTertiaryRow = document.createElement('div')
-  reviewTertiaryRow.className = 'review-agent-extra hidden'
-  reviewTertiaryRow.append(Object.assign(document.createElement('span'), { className: 'review-agent-extra-label', textContent: i18nT('common.reviewAgentTertiary') }), reviewTertiaryAgentSelect)
-
-  const reviewAgentBadge = document.createElement('span')
-  reviewAgentBadge.className = 'review-agent-badge'
-  reviewAgentBadge.dataset.testid = 'review-agent-badge'
-
-  const selectedReviewAgents = (): AgentType[] => {
-    const selected: AgentType[] = [reviewAgentSelect.value as AgentType]
-    if (!reviewCompareAgentsToggle.checked) return selected
-    const extras = [reviewSecondaryAgentSelect.value, reviewTertiaryAgentSelect.value]
-      .filter((value): value is AgentType => REVIEW_AGENT_TYPES.includes(value as AgentType))
-    return [...selected, ...extras]
-  }
-
-  const syncReviewAgentOptionState = (): void => {
-    // Repeated agents are allowed: the compare UI is only a configuration of
-    // how many runs to launch, not a uniqueness constraint.
-  }
-
-  const normalizeReviewAgents = (): void => {
-    if (!reviewCompareAgentsToggle.checked) return
-    const primary = reviewAgentSelect.value as AgentType
-    if (!reviewSecondaryAgentSelect.value) {
-      reviewSecondaryAgentSelect.value = primary
-    }
-    if (!reviewTertiaryAgentSelect.value) reviewTertiaryAgentSelect.value = primary
-  }
-
-  const syncReviewAgentUi = (): void => {
-    reviewSecondaryRow.classList.toggle('hidden', !reviewCompareAgentsToggle.checked)
-    reviewTertiaryRow.classList.toggle('hidden', !reviewCompareAgentsToggle.checked)
-    normalizeReviewAgents()
-    syncReviewAgentOptionState()
-    localStorage.setItem(REVIEW_AGENT_KEY, reviewAgentSelect.value)
-    localStorage.setItem(REVIEW_COMPARE_AGENTS_KEY, reviewCompareAgentsToggle.checked ? '1' : '0')
-    if (reviewSecondaryAgentSelect.value) localStorage.setItem(REVIEW_SECONDARY_AGENT_KEY, reviewSecondaryAgentSelect.value)
-    else localStorage.removeItem(REVIEW_SECONDARY_AGENT_KEY)
-    if (reviewTertiaryAgentSelect.value) localStorage.setItem(REVIEW_TERTIARY_AGENT_KEY, reviewTertiaryAgentSelect.value)
-    else localStorage.removeItem(REVIEW_TERTIARY_AGENT_KEY)
-    const agents = selectedReviewAgents().map(agentLabel)
-    reviewAgentBadge.textContent = agents.length === 1
-      ? i18nT('common.reviewAgentFixed', { agent: agents[0] })
-      : i18nT('common.reviewAgentsFixed', { agents: agents.join(' + ') })
-    reviewAgentHint.textContent = reviewCompareAgentsToggle.checked
-      ? reviewT('agentModeHintCombined')
-      : reviewT('agentModeHintSingle')
-  }
-
-  reviewCompareAgentsToggle.addEventListener('change', syncReviewAgentUi)
-  reviewAgentSelect.addEventListener('change', syncReviewAgentUi)
-  reviewSecondaryAgentSelect.addEventListener('change', syncReviewAgentUi)
-  reviewTertiaryAgentSelect.addEventListener('change', syncReviewAgentUi)
-  syncReviewAgentUi()
+  const {
+    reviewAgentSelect,
+    reviewCompareAgentsToggle,
+    reviewCompareAgentsLabel,
+    reviewAgentHint,
+    reviewSecondaryRow,
+    reviewTertiaryRow,
+    reviewAgentBadge,
+    selectedReviewAgents,
+  } = buildReviewAgentControls()
 
   // ── Body: collapsible sidebar (all controls + lists) + free detail ──────────
   const body = document.createElement('div')
@@ -695,269 +414,44 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   }
 
   // ── Comment bubble (edit/delete/reply) ────────────────────────────────────
-  const buildCommentBubble = (c: GhComment): HTMLElement => {
-    const bubble = document.createElement('div')
-    bubble.className = 'review-existing-comment'
-    bubble.dataset.commentId = String(c.id)
-    if (resolvedComments.has(c.id)) bubble.classList.add('review-existing-comment--resolved')
-
-    const header = document.createElement('div')
-    header.className = 'review-existing-comment-header'
-    const userSpan = Object.assign(document.createElement('span'), { className: 'review-comment-author', textContent: c.user.login })
-    const editBtn = Object.assign(document.createElement('button'), { className: 'review-comment-action-btn', textContent: reviewT('editComment') })
-    const replyBtn = Object.assign(document.createElement('button'), { className: 'review-comment-action-btn', textContent: reviewT('replyComment') })
-    const deleteBtn = Object.assign(document.createElement('button'), { className: 'review-comment-action-btn review-comment-delete-btn', textContent: reviewT('deleteComment') })
-    const resolveBtn = Object.assign(document.createElement('button'), {
-      className: 'review-resolve-btn',
-      textContent: resolvedComments.has(c.id) ? reviewT('unresolveComment') : reviewT('resolveComment'),
-    })
-    if (c.created_at) {
-      const timeSpan = Object.assign(document.createElement('span'), { className: 'review-comment-time', textContent: relativeTime(c.created_at) })
-      header.append(userSpan, timeSpan, editBtn, replyBtn, deleteBtn, resolveBtn)
-    } else {
-      header.append(userSpan, editBtn, replyBtn, deleteBtn, resolveBtn)
-    }
-
-    const bodyEl = Object.assign(document.createElement('div'), { className: 'review-existing-comment-body', textContent: c.body })
-    bubble.append(header, bodyEl)
-
-    bubble.addEventListener('click', e => {
-      if ((e.target as Element).closest('button')) return
-      if (bubble.classList.contains('review-existing-comment--resolved')) {
-        bubble.classList.toggle('review-existing-comment--expanded')
-      }
-    })
-    resolveBtn.addEventListener('click', () => {
-      const nowResolved = !resolvedComments.has(c.id)
-      setCommentResolved(c.id, nowResolved)
-      bubble.classList.toggle('review-existing-comment--resolved', nowResolved)
-      bubble.classList.remove('review-existing-comment--expanded')
-      resolveBtn.textContent = nowResolved ? reviewT('unresolveComment') : reviewT('resolveComment')
-    })
-
-    editBtn.addEventListener('click', () => {
-      if (bubble.querySelector('.review-edit-wrap')) return
-      const editArea = document.createElement('textarea')
-      editArea.className = 'review-comment-input'
-      editArea.value = c.body
-      editArea.rows = 3
-      const actions = document.createElement('div')
-      actions.className = 'review-line-form-actions'
-      const saveBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: 'Save' })
-      const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
-      actions.append(cancelBtn, saveBtn)
-      const wrap = document.createElement('div')
-      wrap.className = 'review-edit-wrap'
-      wrap.append(editArea, actions)
-      bodyEl.after(wrap)
-      bodyEl.classList.add('hidden')
-      editArea.focus()
-      cancelBtn.addEventListener('click', () => { wrap.remove(); bodyEl.classList.remove('hidden') })
-      saveBtn.addEventListener('click', async () => {
-        const newBody = editArea.value.trim()
-        if (!newBody) return
-        saveBtn.disabled = true
-        try {
-          await invoke('gh_pr_update_comment', { path: repoPath, commentId: c.id, body: newBody })
-          await loadExistingComments()
-          injectExistingComments()
-        } catch (err) { console.error(err) } finally { saveBtn.disabled = false }
-      })
-    })
-
-    deleteBtn.addEventListener('click', async () => {
-      if (!confirm(reviewT('deleteConfirm'))) return
-      try {
-        await invoke('gh_pr_delete_comment', { path: repoPath, commentId: c.id })
-        await loadExistingComments()
-        injectExistingComments()
-      } catch (err) { console.error(err) }
-    })
-
-    replyBtn.addEventListener('click', () => {
-      if (bubble.querySelector('.review-reply-wrap')) return
-      const replyArea = document.createElement('textarea')
-      replyArea.className = 'review-comment-input'
-      replyArea.placeholder = reviewT('commentPlaceholder')
-      replyArea.rows = 2
-      const actions = document.createElement('div')
-      actions.className = 'review-line-form-actions'
-      const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: reviewT('sendComment') })
-      const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
-      actions.append(cancelBtn, sendBtn)
-      const wrap = document.createElement('div')
-      wrap.className = 'review-reply-wrap'
-      wrap.append(replyArea, actions)
-      bubble.append(wrap)
-      replyArea.focus()
-      cancelBtn.addEventListener('click', () => wrap.remove())
-      sendBtn.addEventListener('click', async () => {
-        const body = replyArea.value.trim()
-        if (!body) return
-        sendBtn.disabled = true
-        try {
-          await invoke('gh_pr_reply_comment', { path: repoPath, commentId: c.id, body })
-          await loadExistingComments()
-          injectExistingComments()
-        } catch (err) { console.error(err) } finally { sendBtn.disabled = false }
-      })
-    })
-
-    return bubble
+  const commentActions = {
+    repoPath: () => repoPath,
+    isResolved: (id: number) => resolvedComments.has(id),
+    setResolved: setCommentResolved,
+    refresh: async () => { await loadExistingComments(); injectExistingComments() },
   }
+  const buildCommentBubble = (c: GhComment): HTMLElement => buildReviewCommentBubble(c, commentActions)
 
-  // ── Sidebar: branches ─────────────────────────────────────────────────────
-  const renderBranchList = (): void => {
-    const q = branchSearch.value.toLowerCase()
-    const visible = q ? allBranches.filter(b => b.toLowerCase().includes(q)) : allBranches
-    branchList.replaceChildren(...visible.slice(0, 50).map(b => {
-      const item = Object.assign(document.createElement('div'), {
-        className: `review-branch-item${b === selectedBranch ? ' review-branch-item--active' : ''}`,
-        textContent: b, title: b,
-      })
-      item.addEventListener('click', () => { selectBranch(b) })
-      return item
-    }))
-  }
-  branchSearch.addEventListener('input', () => {
-    if (sidebarMode === 'prs') { renderPrList(); return }
-    renderBranchList()
-  })
-
-  // ── Sidebar: PR list ──────────────────────────────────────────────────────
-  const renderPrList = (): void => {
-    const visiblePrs = filterReviewPrs(openPrs, branchSearch.value)
-    if (!openPrs.length) {
-      prList.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-pr-list-empty', textContent: reviewT('noPrs') }))
-      return
-    }
-    if (!visiblePrs.length) {
-      prList.replaceChildren(Object.assign(document.createElement('div'), { className: 'review-pr-list-empty', textContent: reviewT('noMatchingPrs') }))
-      return
-    }
-    prList.replaceChildren(...visiblePrs.map(pr => {
-      const item = document.createElement('div')
-      item.className = `review-pr-item${currentPrNumber === pr.number ? ' review-pr-item--active' : ''}`
-      item.append(
-        Object.assign(document.createElement('div'), { className: 'review-pr-item-title', textContent: `#${pr.number} ${pr.title}` }),
-        Object.assign(document.createElement('div'), { className: 'review-pr-item-author', textContent: pr.author.login }),
-      )
-      const stateBadge = describeReviewPrState(pr.state, pr.mergedAt)
-      if (stateBadge) {
-        item.append(Object.assign(document.createElement('span'), {
-          className: `review-pr-item-state ${stateBadge.cls}`,
-          textContent: stateBadge.text,
-          title: stateBadge.title,
-        }))
-      }
-      item.addEventListener('click', () => {
-        const branch = allBranches.find(b => b.endsWith('/' + pr.headRefName)) ?? ('origin/' + pr.headRefName)
-        // Auto-set base branch from PR's base
-        const prBase = allBranches.find(b => b.endsWith('/' + pr.baseRefName)) ?? ('origin/' + pr.baseRefName)
-        baseBranch = prBase
-        branchInput.value = prBase
-        localStorage.setItem(BASE_KEY, baseBranch)
-        selectBranch(branch)
-      })
-      return item
-    }))
-  }
-
-  const loadPrList = async (): Promise<void> => {
-    if (!repoPath) return
-    try {
-      openPrs = await invoke<GhPr[]>('gh_pr_list_open', { path: repoPath })
-      if (sidebarMode === 'prs') renderPrList()
-    } catch { openPrs = [] }
-  }
-
-  const setSidebarMode = (mode: SidebarMode): void => {
-    sidebarMode = mode
-    branchesTab.classList.toggle('review-tab--active', mode === 'branches')
-    prsTab.classList.toggle('review-tab--active', mode === 'prs')
-    branchList.classList.toggle('hidden', mode === 'prs')
-    prList.classList.toggle('hidden', mode === 'branches')
-    if (mode === 'prs') { renderPrList(); if (!openPrs.length) loadPrList() }
-  }
-  branchesTab.addEventListener('click', () => setSidebarMode('branches'))
-  prsTab.addEventListener('click', () => setSidebarMode('prs'))
-
-  // ── Base dropdown ─────────────────────────────────────────────────────────
-  const renderBaseDropdown = (): void => {
-    const q = branchInput.value.toLowerCase()
-    const matches = q ? allBranches.filter(b => b.toLowerCase().includes(q)) : allBranches
-    branchDropdown.replaceChildren(...matches.slice(0, 20).map(b => {
-      const item = Object.assign(document.createElement('div'), {
-        className: `review-branch-option${b === baseBranch ? ' review-branch-option--active' : ''}`, textContent: b,
-      })
-      item.addEventListener('mousedown', e => {
-        e.preventDefault(); baseBranch = b; branchInput.value = b
-        localStorage.setItem(BASE_KEY, baseBranch)
-        branchDropdown.classList.add('hidden')
-        if (selectedBranch) loadDiff()
-      })
-      return item
-    }))
-    branchDropdown.classList.toggle('hidden', matches.length === 0)
-  }
-  branchInput.addEventListener('focus', renderBaseDropdown)
-  branchInput.addEventListener('input', renderBaseDropdown)
-  branchInput.addEventListener('blur', () => setTimeout(() => branchDropdown.classList.add('hidden'), 150))
-  branchInput.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { branchDropdown.classList.add('hidden'); return }
-    if (e.key === 'Enter') {
-      branchDropdown.classList.add('hidden')
-      const next = branchInput.value.trim().replace(':', '/')
-      branchInput.value = next
-      if (next && next !== baseBranch) { baseBranch = next; localStorage.setItem(BASE_KEY, baseBranch); if (selectedBranch) loadDiff() }
-    }
-  })
+  const { renderBranchList, renderPrList, loadPrList, setSidebarMode, renderBaseDropdown } = buildReviewSidebarLists(
+    { branchSearch, branchList, prList, branchesTab, prsTab, branchInput, branchDropdown },
+    {
+      repoPath: () => repoPath,
+      allBranches: () => allBranches,
+      selectedBranch: () => selectedBranch,
+      baseBranch: () => baseBranch,
+      setBaseBranch: value => { baseBranch = value; localStorage.setItem(BASE_KEY, baseBranch) },
+      sidebarMode: () => sidebarMode,
+      setSidebarModeState: mode => { sidebarMode = mode },
+      openPrs: () => openPrs,
+      setOpenPrs: prs => { openPrs = prs },
+      currentPrNumber: () => currentPrNumber,
+      selectBranch: branch => selectBranch(branch),
+      loadDiff: () => loadDiff(),
+    },
+  )
 
   const ghBranch = (b: string): string => b.replace(/^[^/]+\//, '')
 
   // ── Inline comment form (with draft) ─────────────────────────────────────
-  const makeLineForm = (filePath: string, line: number, startLine?: number): HTMLElement => {
-    const form = document.createElement('div')
-    form.className = 'review-line-form'
-    const input = document.createElement('textarea')
-    input.className = 'review-comment-input'
-    input.placeholder = reviewT('commentPlaceholder')
-    input.rows = 3
-    const draftKey = `bento.review.draft.${repoPath}.${selectedBranch}.${filePath}.${line}`
-    const saved = localStorage.getItem(draftKey)
-    if (saved) input.value = saved
-    input.addEventListener('input', () => {
-      if (input.value) localStorage.setItem(draftKey, input.value); else localStorage.removeItem(draftKey)
-    })
-    const actions = document.createElement('div')
-    actions.className = 'review-line-form-actions'
-    const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: reviewT('sendComment') })
-    const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
-    const status = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
-    actions.append(cancelBtn, sendBtn, status)
-    form.append(input, actions)
-    cancelBtn.addEventListener('click', () => form.remove())
-    sendBtn.addEventListener('click', async () => {
-      const body = input.value.trim()
-      if (!body) { input.focus(); return }
-      if (currentPrNumber === null) { status.textContent = 'No PR for this branch'; return }
-      sendBtn.disabled = true
-      try {
-        const commitId = await invoke<string>('git_rev_parse', { path: repoPath, reference: selectedBranch })
-        const url = await invoke<string>('gh_pr_inline_comment', { path: repoPath, prNumber: currentPrNumber, commitId, file: filePath, line, startLine, body })
-        localStorage.removeItem(draftKey)
-        input.value = ''
-        showSentLink(status, url)
-        await loadExistingComments()
-        injectExistingComments()
-        setTimeout(() => form.remove(), 4000)
-      } catch (err) {
-        status.textContent = String(err)
-        status.className = 'review-comment-status review-comment-err'
-      } finally { sendBtn.disabled = false }
-    })
-    return form
+  const lineFormActions = {
+    repoPath: () => repoPath,
+    selectedBranch: () => selectedBranch,
+    currentPrNumber: () => currentPrNumber,
+    refresh: async () => { await loadExistingComments(); injectExistingComments() },
+    showSentLink,
   }
+  const makeLineForm = (filePath: string, line: number, startLine?: number): HTMLElement =>
+    buildReviewLineForm(filePath, line, startLine, lineFormActions)
 
   // ── Diff renderer ─────────────────────────────────────────────────────────
   const buildFileDiff = (chunk: string, filePath: string): HTMLElement => {
