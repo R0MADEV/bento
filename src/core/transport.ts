@@ -1,7 +1,5 @@
-type Invoker = (cmd: string, args?: unknown) => Promise<unknown>
-
 export interface Backend {
-  call<T>(cmd: string, args?: unknown): Promise<T>
+  call<T>(cmd: string, args?: Record<string, unknown>): Promise<T>
 }
 
 let _backend: Backend | null = null
@@ -10,14 +8,14 @@ export function setBackend(b: Backend | null): void {
   _backend = b
 }
 
-export async function call<T>(cmd: string, args?: unknown): Promise<T> {
+export async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (!_backend) throw new Error('transport not initialized')
   return _backend.call<T>(cmd, args)
 }
 
-export function tauriBackend(invoke: Invoker): Backend {
+export function tauriBackend(invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>): Backend {
   return {
-    call<T>(cmd: string, args?: unknown): Promise<T> {
+    call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
       return invoke(cmd, args) as Promise<T>
     },
   }
@@ -25,7 +23,7 @@ export function tauriBackend(invoke: Invoker): Backend {
 
 export function httpBackend(baseUrl: string, token: string): Backend {
   return {
-    async call<T>(cmd: string, args?: unknown): Promise<T> {
+    async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
       const r = await fetch(`${baseUrl}/api/${cmd}?token=${encodeURIComponent(token)}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

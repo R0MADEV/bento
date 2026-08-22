@@ -116,7 +116,6 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 env: req.env.clone().map(|m| m.into_iter().collect()).unwrap_or_default(),
                 rows: req.rows.unwrap_or(0),
                 cols: req.cols.unwrap_or(0),
-                ..Default::default()
             };
             match manager.open(opts) {
                 Ok((id, reattached)) => send(ok(&req.id, json!({ "pty_id": id, "reattached": reattached }))),

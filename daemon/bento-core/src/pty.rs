@@ -444,6 +444,7 @@ mod tests {
             match rx.recv().await {
                 Ok(PtyEvent::Output(text)) => got.push_str(&text),
                 Ok(PtyEvent::Exit(_)) => break,
+                Ok(PtyEvent::TitleChanged(_)) => {}
                 Err(_) => break,
             }
         }

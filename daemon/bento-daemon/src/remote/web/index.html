@@ -1,0 +1,1398 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>Bento</title>
+<link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
+<script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{--bg:#0d0d0d;--s:#161616;--s2:#1e1e1e;--b:#2a2a2a;--a:#a78bfa;--ag:#73daca;--re:#f7768e;--yw:#e0af68;--fg:#e2e8f8;--dim:#555}
+html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden}
+
+/* ── Tab bar ──────────────────────────── */
+#tabbar{display:flex;height:44px;background:var(--s);border-bottom:1px solid var(--b);flex-shrink:0}
+.tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:600;color:var(--dim);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+.tab.active{color:var(--a);border-bottom-color:var(--a)}
+
+/* ── Shared ───────────────────────────── */
+.list-head{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;padding:0 2px}
+.tb{display:flex;align-items:center;gap:12px;width:100%;padding:15px 16px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);text-align:left;margin-bottom:10px;cursor:pointer;transition:background .1s}
+.tb:active{background:var(--s2)}
+.tb-ico{font-size:22px;flex-shrink:0}
+.tb-info{flex:1;min-width:0}
+.tb-name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-cwd{font-size:11px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-arrow{color:var(--dim);font-size:18px;flex-shrink:0}
+.empty{padding:40px 16px;text-align:center;color:var(--dim);font-size:14px;line-height:1.6}
+.err-msg{color:var(--re)}
+input.field,select.field{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:15px;outline:none;-webkit-appearance:none}
+input.field:focus,select.field:focus{border-color:var(--a)}
+.btn-primary{width:100%;padding:14px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn-primary:active{opacity:.8}
+.btn-primary:disabled{opacity:.4;cursor:default}
+.field-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:4px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.3);border-top-color:#07070f;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Terminals page ───────────────────── */
+#page-terminals{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#list{flex:1;overflow-y:auto;padding:16px 16px 80px;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+#newbtn{position:fixed;bottom:20px;left:16px;right:16px;padding:14px;background:var(--s);border:1px solid var(--b);border-radius:14px;color:var(--fg);font-size:15px;font-weight:600;cursor:pointer;text-align:center;z-index:10}
+#newbtn:active{opacity:.7}
+
+/* ── Terminal view ────────────────────── */
+#view{display:none;flex-direction:column;height:100dvh}
+#topbar{display:flex;align-items:center;gap:10px;padding:0 12px;height:48px;background:var(--s);border-bottom:1px solid var(--b);flex-shrink:0}
+#back{background:none;border:none;color:var(--a);font-size:26px;padding:4px 6px;cursor:pointer;line-height:1}
+#ttitle{flex:1;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dot{width:8px;height:8px;border-radius:50%;background:var(--ag);flex-shrink:0;transition:background .3s}
+#dot.off{background:var(--re)}
+#killbtn{background:none;border:none;color:var(--dim);font-size:20px;padding:4px 6px;cursor:pointer;line-height:1;flex-shrink:0}
+#killbtn:active{color:var(--re)}
+#tcon{flex:1;min-height:0;background:#000;overflow:hidden;touch-action:none;overscroll-behavior:contain}
+#tcon .xterm,#tcon .xterm-viewport,#tcon .xterm-screen{height:100%!important}
+#keys{display:flex;gap:5px;padding:6px 8px;background:var(--s);border-top:1px solid var(--b);overflow-x:auto;flex-shrink:0;scrollbar-width:none}
+#keys::-webkit-scrollbar{display:none}
+.k{flex-shrink:0;padding:7px 12px;background:var(--bg);border:1px solid var(--b);border-radius:8px;color:var(--fg);font-size:13px;font-family:monospace;cursor:pointer}
+.k:active{background:var(--s2);border-color:var(--a)}
+#inputbar{display:flex;gap:8px;padding:8px 10px;background:var(--s);border-top:1px solid var(--b);flex-shrink:0}
+#inp{flex:1;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:16px;outline:none;-webkit-appearance:none;caret-color:var(--a)}
+#inp:focus{border-color:var(--a)}
+#sendbtn{padding:11px 18px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-weight:700;font-size:16px;cursor:pointer}
+#sendbtn:active{opacity:.8}
+
+/* ── Review page ──────────────────────── */
+#page-review{display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#rv-project-bar{padding:12px 16px;border-bottom:1px solid var(--b);flex-shrink:0}
+#rv-subtabs{display:flex;border-bottom:1px solid var(--b);flex-shrink:0}
+.rv-tab{flex:1;padding:10px 4px;font-size:12px;font-weight:600;color:var(--dim);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
+.rv-tab.active{color:var(--a);border-bottom-color:var(--a)}
+.rv-subpage{display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.rv-subpage.active{display:flex}
+
+/* ── IA Review sub-page ───────────────── */
+#rv-ai-controls{padding:16px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid var(--b);flex-shrink:0}
+.btn-stop{padding:12px 18px;background:transparent;border:1px solid var(--b);border-radius:14px;color:var(--dim);font-weight:600;font-size:14px;cursor:pointer;flex-shrink:0;white-space:nowrap}
+.btn-stop:active{opacity:.7}
+#rv-history{padding:8px 16px;display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;border-bottom:1px solid var(--b);flex-shrink:0;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+#rv-history::-webkit-scrollbar{display:none}
+.rv-hist-chip{flex-shrink:0;background:var(--s2);border:1px solid var(--b);border-radius:20px;padding:5px 10px 5px 12px;font-size:12px;cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:6px;text-align:left}
+.rv-hist-chip.active{border-color:var(--a);background:color-mix(in srgb,var(--a) 12%,transparent)}
+.rv-hist-chip-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rv-hist-chip-branch{font-weight:600;color:var(--fg);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.rv-hist-chip-date{color:var(--dim);font-size:11px}
+.rv-hist-chip-del{background:none;border:none;color:var(--dim);font-size:16px;line-height:1;padding:0 2px;cursor:pointer;flex-shrink:0;opacity:.6}
+.rv-hist-chip-del:hover{opacity:1;color:var(--fg)}
+.rv-agent-row{display:flex;align-items:center;gap:8px}
+.rv-agent-select{flex:1;padding:8px 10px;background:var(--bg);border:1px solid var(--b);border-radius:10px;color:var(--fg);font-size:13px;-webkit-appearance:none;appearance:none}
+.rv-agent-toggle-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--fg);cursor:pointer}
+.rv-agent-toggle-row input{accent-color:var(--a);width:15px;height:15px;cursor:pointer;flex-shrink:0}
+.rv-agent-extra{display:flex;align-items:center;gap:8px}
+.rv-agent-extra.hidden{display:none}
+.rv-agent-extra-label{font-size:12px;color:var(--dim);flex-shrink:0;min-width:72px}
+.rv-agent-badge{font-size:12px;color:var(--dim);padding:4px 8px;background:var(--s2);border-radius:8px;border:1px solid var(--b);display:none}
+#rv-progress{padding:12px 16px;border-bottom:1px solid var(--b);flex-shrink:0;background:var(--s)}
+#rv-progress-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+#rv-progress-status{font-size:13px;font-weight:600;color:var(--fg);flex:1}
+#rv-progress-meta{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+#rv-progress-toggle{background:none;border:none;color:var(--dim);cursor:pointer;padding:2px 8px;font-size:12px;border-radius:6px;border:1px solid var(--b)}
+#rv-progress-stream{font-size:11px;font-family:Menlo,Monaco,monospace;color:var(--dim);background:var(--bg);border:1px solid var(--b);border-radius:8px;padding:10px;max-height:140px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;-webkit-overflow-scrolling:touch}
+#rv-progress-stream.collapsed{display:none}
+#rv-output-wrap{display:flex;flex-direction:column;flex:1;min-height:0}
+#rv-output-wrap.expanded{position:fixed;top:0;left:0;right:0;height:100dvh;z-index:999;background:var(--bg);display:flex;flex-direction:column}
+#rv-output-bar{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;border-bottom:1px solid var(--b);flex-shrink:0;min-height:32px}
+#rv-output-bar-label{font-size:11px;color:var(--dim)}
+#rv-expand-btn{background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;padding:2px 4px;line-height:1}
+#rv-expand-btn:hover{color:var(--fg)}
+#rv-output{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+#rv-output.empty-state{display:flex;align-items:center;justify-content:center}
+#rv-chat{border-top:1px solid var(--b);flex-shrink:0;display:flex;flex-direction:column;max-height:45dvh}
+#rv-chat-msgs{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch;padding:10px 14px;display:flex;flex-direction:column;gap:10px}
+.rv-chat-q{align-self:flex-end;background:var(--a);color:#07070f;padding:8px 12px;border-radius:14px 14px 4px 14px;font-size:13px;max-width:85%;white-space:pre-wrap;word-break:break-word}
+.rv-chat-a{align-self:flex-start;background:var(--s2);border:1px solid var(--b);padding:10px 12px;border-radius:4px 14px 14px 14px;font-size:13px;max-width:95%;min-width:60px}
+.rv-chat-a.streaming{opacity:.8}
+#rv-chat-input-row{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--b);align-items:flex-end;flex-shrink:0}
+#rv-ask-input{flex:1;padding:9px 12px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:14px;resize:none;outline:none;max-height:120px;overflow-y:auto;-webkit-appearance:none;line-height:1.4}
+#rv-ask-send{padding:9px 14px;background:var(--a);border:none;border-radius:10px;color:#07070f;font-size:16px;cursor:pointer;flex-shrink:0;line-height:1}
+#rv-ask-send:disabled{opacity:.4;cursor:default}
+.rv-placeholder{text-align:center;color:var(--dim);font-size:14px;line-height:1.7}
+.rv-md h2{font-size:16px;font-weight:700;color:var(--a);margin:20px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--b)}
+.rv-md h2:first-child{margin-top:0}
+.rv-md h3{font-size:14px;font-weight:600;color:var(--fg);margin:14px 0 6px}
+.rv-md p{font-size:14px;line-height:1.65;margin-bottom:10px;color:var(--fg)}
+.rv-md ul,.rv-md ol{padding-left:20px;margin-bottom:10px}
+.rv-md li{font-size:14px;line-height:1.6;color:var(--fg);margin-bottom:4px}
+.rv-md code{font-family:Menlo,Monaco,monospace;font-size:12px;background:var(--s2);border:1px solid var(--b);padding:1px 5px;border-radius:4px;color:var(--ag)}
+.rv-md pre{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:12px;overflow-x:auto;margin-bottom:12px}
+.rv-md pre code{background:none;border:none;padding:0;color:var(--fg);font-size:12px}
+.rv-md strong{font-weight:700;color:var(--fg)}
+.rv-md em{font-style:italic;color:var(--dim)}
+
+/* ── Archivos sub-page ────────────────── */
+#rv-files-controls{padding:12px 16px;display:flex;gap:8px;align-items:flex-end;border-bottom:1px solid var(--b);flex-shrink:0}
+#rv-files-controls .field{flex:1;caret-color:var(--a)}
+#rv-files-load{padding:11px 16px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-weight:700;font-size:14px;cursor:pointer;flex-shrink:0;white-space:nowrap}
+#rv-files-load:active{opacity:.8}
+#rv-files-list{flex:1;overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+.file-item{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--b);cursor:pointer}
+.file-item:active{background:var(--s2)}
+.file-badge{font-size:10px;font-weight:700;width:20px;text-align:center;padding:2px 4px;border-radius:4px;flex-shrink:0}
+.badge-M{background:rgba(167,139,250,.15);color:var(--a)}
+.badge-A{background:rgba(115,218,202,.15);color:var(--ag)}
+.badge-D{background:rgba(247,118,142,.15);color:var(--re)}
+.badge-R{background:rgba(224,175,104,.15);color:var(--yw)}
+.file-path{flex:1;font-size:12px;font-family:Menlo,Monaco,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
+.file-stat{font-size:11px;flex-shrink:0;text-align:right;min-width:60px}
+.stat-add{color:var(--ag)}
+.stat-del{color:var(--re)}
+
+/* ── Folder browser ──────────────────── */
+.dir-item{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--b);cursor:pointer;font-size:14px;color:var(--fg)}
+.dir-item:active{background:var(--s2)}
+.dir-up{color:var(--dim);font-size:13px}
+.dir-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dir-arrow{color:var(--dim);flex-shrink:0}
+.folder-select-bar{padding:12px 16px;border-top:1px solid var(--b);flex-shrink:0}
+
+/* ── PRs sub-page ─────────────────────── */
+#rv-prs-list{flex:1;overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+.pr-item{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-bottom:1px solid var(--b);cursor:pointer}
+.pr-item:active{background:var(--s2)}
+.pr-number{font-size:11px;color:var(--dim)}
+.pr-title-text{font-size:14px;font-weight:600;color:var(--fg);line-height:1.3}
+.pr-meta{font-size:11px;color:var(--dim)}
+
+/* ── Overlay (file diff + PR detail) ─── */
+.overlay{display:none;flex-direction:column;position:fixed;inset:0;background:var(--bg);z-index:200}
+.overlay.on{display:flex}
+.overlay-topbar{display:flex;align-items:center;gap:10px;padding:0 12px;height:48px;background:var(--s);border-bottom:1px solid var(--b);flex-shrink:0}
+.overlay-back{background:none;border:none;color:var(--a);font-size:26px;padding:4px 6px;cursor:pointer;line-height:1}
+.overlay-title{flex:1;font-size:13px;font-family:Menlo,Monaco,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
+
+/* ── Diff view ────────────────────────── */
+.diff-scroll{flex:1;overflow:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+.diff-inner{padding:0;font-family:Menlo,Monaco,monospace;font-size:12px;line-height:1.5;min-width:max-content}
+.dl{padding:1px 12px;white-space:pre;display:block}
+.dl-add{background:rgba(115,218,202,.08);color:#73daca}
+.dl-del{background:rgba(247,118,142,.08);color:#f7768e}
+.dl-hunk{background:rgba(167,139,250,.08);color:#a78bfa}
+.dl-ctx{color:var(--fg)}
+.dl-hdr{color:var(--dim)}
+
+/* ── PR overlay sub-tabs ──────────────── */
+#rv-pr-subtabs{display:flex;border-bottom:1px solid var(--b);flex-shrink:0}
+.rv-pr-tab{flex:1;padding:10px 4px;font-size:12px;font-weight:600;color:var(--dim);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
+.rv-pr-tab.active{color:var(--a);border-bottom-color:var(--a)}
+.pr-subpage{display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.pr-subpage.active{display:flex}
+
+/* ── Comments ─────────────────────────── */
+#rv-comments-list{flex:1;overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+.comment-item{padding:14px 16px;border-bottom:1px solid var(--b)}
+.comment-header{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+.comment-author{font-size:12px;font-weight:700;color:var(--a)}
+.comment-date{font-size:11px;color:var(--dim)}
+.comment-state{font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:auto}
+.state-APPROVED{background:rgba(115,218,202,.15);color:var(--ag)}
+.state-CHANGES_REQUESTED{background:rgba(247,118,142,.15);color:var(--re)}
+.state-COMMENTED{background:var(--s2);color:var(--dim)}
+.comment-body-text{font-size:13px;line-height:1.55;color:var(--fg);white-space:pre-wrap;word-break:break-word}
+.comment-form{padding:12px 16px;border-top:1px solid var(--b);flex-shrink:0;display:flex;flex-direction:column;gap:8px}
+.comment-textarea{width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--b);border-radius:10px;color:var(--fg);font-size:14px;resize:none;height:80px;outline:none;caret-color:var(--a)}
+.comment-textarea:focus{border-color:var(--a)}
+.btn-comment{padding:11px;background:var(--a);border:none;border-radius:10px;color:#07070f;font-weight:700;font-size:14px;cursor:pointer}
+.btn-comment:active{opacity:.8}
+.btn-comment:disabled{opacity:.4;cursor:default}
+
+/* ── Submit review ────────────────────── */
+#rv-submit-form{padding:16px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+.submit-option{display:flex;align-items:center;gap:12px;padding:12px;background:var(--s);border:1px solid var(--b);border-radius:10px;cursor:pointer}
+.submit-option input[type=radio]{accent-color:var(--a);width:16px;height:16px;flex-shrink:0}
+.submit-option-label{font-size:14px;font-weight:600}
+.opt-approve .submit-option-label{color:var(--ag)}
+.opt-request .submit-option-label{color:var(--re)}
+.opt-comment .submit-option-label{color:var(--fg)}
+</style>
+</head>
+<body style="display:flex;flex-direction:column;height:100dvh">
+
+<!-- Tab bar -->
+<div id="tabbar">
+  <button class="tab active" onclick="switchTab('terminals')">&#11035; Terminales</button>
+  <button class="tab" onclick="switchTab('review')">&#128269; Review</button>
+</div>
+
+<!-- Terminals page -->
+<div id="page-terminals" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+  <div id="list" style="flex:1;overflow-y:auto;padding:16px 16px 80px;touch-action:pan-y"></div>
+  <button id="newbtn" onclick="newTerminal()">+ Nueva terminal</button>
+</div>
+
+<!-- Terminal view -->
+<div id="view" style="display:none;flex-direction:column;height:100dvh">
+  <div id="topbar">
+    <button id="back" onclick="goBack()">&#8249;</button>
+    <span id="ttitle">Terminal</span>
+    <div id="dot" class="off"></div>
+    <button id="killbtn" onclick="killTerminal()">&#10005;</button>
+  </div>
+  <div id="tcon"></div>
+  <div id="keys">
+    <button class="k" onclick="s('\x1b')">Esc</button>
+    <button class="k" onclick="s('\t')">Tab</button>
+    <button class="k" onclick="s('\x1b[A')">&#8593;</button>
+    <button class="k" onclick="s('\x1b[B')">&#8595;</button>
+    <button class="k" onclick="s('\x1b[C')">&#8594;</button>
+    <button class="k" onclick="s('\x1b[D')">&#8592;</button>
+    <button class="k" onclick="s('\x03')">^C</button>
+    <button class="k" onclick="s('\x04')">^D</button>
+    <button class="k" onclick="s('\x0c')">^L</button>
+    <button class="k" onclick="s('\x1b[H')">Home</button>
+    <button class="k" onclick="s('\x1b[F')">End</button>
+  </div>
+  <div id="inputbar">
+    <input id="inp" type="text" placeholder="Escribe&#8230;" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+    <button id="sendbtn" onclick="sendInp()">&#8629;</button>
+  </div>
+</div>
+
+<!-- Review page -->
+<div id="page-review">
+  <!-- Shared project selector -->
+  <div id="rv-project-bar">
+    <div class="field-label">Proyecto</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="rv-project" class="field" style="flex:1" onchange="onProjectChange()">
+        <option value="">Cargando&#8230;</option>
+      </select>
+      <button onclick="openFolderBrowser()" title="Examinar carpetas" style="flex-shrink:0;padding:10px 14px;background:var(--s);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:17px;cursor:pointer;line-height:1">&#128193;</button>
+    </div>
+  </div>
+  <!-- Hidden datalist shared by both base-branch inputs -->
+  <datalist id="rv-branches-datalist"></datalist>
+
+  <!-- Review sub-tabs -->
+  <div id="rv-subtabs">
+    <button class="rv-tab active" onclick="switchReviewTab('ai')">IA Review</button>
+    <button class="rv-tab" onclick="switchReviewTab('files')">Archivos</button>
+    <button class="rv-tab" onclick="switchReviewTab('prs')">PRs</button>
+  </div>
+
+  <!-- IA Review sub-page -->
+  <div id="rv-page-ai" class="rv-subpage active">
+    <div id="rv-ai-controls">
+      <div>
+        <div class="field-label">¿Qué cambia en esta revisión? (opcional)</div>
+        <textarea id="rv-context" class="field" rows="3" placeholder="Describe brevemente qué se hizo: nueva feature, refactor, bug fix…" autocapitalize="off" autocorrect="off" spellcheck="false" style="resize:vertical;caret-color:var(--a)"></textarea>
+      </div>
+      <div>
+        <div class="field-label">Rama a revisar <span style="color:var(--dim);font-size:11px">(vacío = cambios actuales)</span></div>
+        <input id="rv-branch" class="field" type="text" list="rv-branches-datalist" placeholder="ej: feat/mi-rama" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" style="caret-color:var(--a)">
+      </div>
+      <div>
+        <div class="field-label">Comparar contra</div>
+        <input id="rv-base" class="field" type="text" value="main" list="rv-branches-datalist" placeholder="ej: main" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" style="caret-color:var(--a)" onchange="restoreReviewCheckpoint(cwd(),this.value.trim()||'main')">
+      </div>
+      <div>
+        <div class="field-label">Agentes</div>
+        <div class="rv-agent-row">
+          <select id="rv-agent" class="rv-agent-select" onchange="syncAgentUi()">
+            <option value="claude">Claude</option>
+            <option value="opencode">OpenCode</option>
+            <option value="codex">Codex</option>
+          </select>
+        </div>
+        <label class="rv-agent-toggle-row" style="margin-top:8px">
+          <input type="checkbox" id="rv-compare-toggle" onchange="syncAgentUi()">
+          <span>Comparar agentes</span>
+        </label>
+        <div id="rv-agent-secondary-row" class="rv-agent-extra hidden" style="margin-top:8px">
+          <span class="rv-agent-extra-label">Secundario</span>
+          <select id="rv-agent-secondary" class="rv-agent-select" onchange="syncAgentUi()">
+            <option value="">Ninguno</option>
+            <option value="claude">Claude</option>
+            <option value="opencode">OpenCode</option>
+            <option value="codex">Codex</option>
+          </select>
+        </div>
+        <div id="rv-agent-tertiary-row" class="rv-agent-extra hidden" style="margin-top:8px">
+          <span class="rv-agent-extra-label">Terciario</span>
+          <select id="rv-agent-tertiary" class="rv-agent-select" onchange="syncAgentUi()">
+            <option value="">Ninguno</option>
+            <option value="claude">Claude</option>
+            <option value="opencode">OpenCode</option>
+            <option value="codex">Codex</option>
+          </select>
+        </div>
+        <div id="rv-agent-badge" class="rv-agent-badge" style="margin-top:8px"></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="rv-start" class="btn-primary" style="flex:1" onclick="startReview()">Iniciar revisi&#243;n</button>
+        <button id="rv-stop" class="btn-stop" style="display:none" onclick="stopReview()">Detener</button>
+      </div>
+    </div>
+    <div id="rv-history" style="display:none"></div>
+    <div id="rv-progress" style="display:none">
+      <div id="rv-progress-header">
+        <span id="rv-progress-status">Iniciando&#8230;</span>
+        <span id="rv-progress-meta"></span>
+        <button id="rv-progress-toggle" onclick="toggleProgressStream()" title="Mostrar/ocultar detalle">&#9660;</button>
+      </div>
+      <pre id="rv-progress-stream"></pre>
+    </div>
+    <div id="rv-output-wrap">
+      <div id="rv-output-bar">
+        <span id="rv-output-bar-label"></span>
+        <button id="rv-expand-btn" onclick="toggleOutputExpand()" title="Expandir">&#x2922;</button>
+      </div>
+      <div id="rv-output" class="empty-state">
+        <div class="rv-placeholder">Elige un proyecto y una rama base<br>para iniciar la revisi&#243;n.</div>
+      </div>
+      <div id="rv-chat" style="display:none">
+        <div id="rv-chat-msgs"></div>
+        <div id="rv-chat-input-row">
+          <textarea id="rv-ask-input" placeholder="Pregunta sobre el c&#243;digo&#8230;" rows="1" onkeydown="onAskKey(event)"></textarea>
+          <button id="rv-ask-send" onclick="sendAsk()">&#9658;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Archivos sub-page -->
+  <div id="rv-page-files" class="rv-subpage">
+    <div id="rv-files-controls">
+      <input id="rv-files-base" class="field" type="text" value="main" list="rv-branches-datalist" placeholder="Comparar contra (ej: main)" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false">
+      <button id="rv-files-load" onclick="loadFiles()">Ver</button>
+    </div>
+    <div id="rv-branch-info" style="display:none;padding:8px 16px;border-bottom:1px solid var(--b);background:var(--s);flex-shrink:0;font-size:12px;color:var(--dim)">
+      <span id="rv-branch-current" style="color:var(--a);font-family:Menlo,Monaco,monospace;font-weight:600"></span>
+      <span id="rv-branch-vs"> vs </span>
+      <span id="rv-branch-base" style="font-family:Menlo,Monaco,monospace"></span>
+    </div>
+    <div id="rv-files-list"><div class="empty">Selecciona un proyecto y pulsa Ver.</div></div>
+  </div>
+
+  <!-- PRs sub-page -->
+  <div id="rv-page-prs" class="rv-subpage">
+    <div id="rv-prs-list"><div class="empty">Selecciona un proyecto para ver sus PRs.</div></div>
+  </div>
+</div>
+
+<!-- Folder browser overlay -->
+<div id="rv-folder-view" class="overlay">
+  <div class="overlay-topbar">
+    <button class="overlay-back" onclick="closeFolderBrowser()">&#8249;</button>
+    <span id="rv-folder-path" class="overlay-title">/</span>
+  </div>
+  <div id="rv-folder-list" style="flex:1;overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch"></div>
+  <div class="folder-select-bar">
+    <button class="btn-primary" onclick="selectFolder()">&#10003; Seleccionar esta carpeta</button>
+  </div>
+</div>
+
+<!-- File diff overlay -->
+<div id="rv-file-view" class="overlay">
+  <div class="overlay-topbar">
+    <button class="overlay-back" onclick="closeFileDiff()">&#8249;</button>
+    <span id="rv-file-title" class="overlay-title"></span>
+  </div>
+  <div class="diff-scroll">
+    <div id="rv-diff-content" class="diff-inner"></div>
+  </div>
+</div>
+
+<!-- PR detail overlay -->
+<div id="rv-pr-view" class="overlay">
+  <div class="overlay-topbar">
+    <button class="overlay-back" onclick="closePRView()">&#8249;</button>
+    <span id="rv-pr-title" class="overlay-title"></span>
+  </div>
+  <div id="rv-pr-subtabs">
+    <button class="rv-pr-tab active" onclick="switchPRTab('diff')">Diff</button>
+    <button class="rv-pr-tab" onclick="switchPRTab('comments')">Comentarios</button>
+    <button class="rv-pr-tab" onclick="switchPRTab('submit')">Submit</button>
+  </div>
+
+  <!-- PR Diff -->
+  <div id="rv-pr-page-diff" class="pr-subpage active">
+    <div class="diff-scroll">
+      <div id="rv-pr-diff-content" class="diff-inner"></div>
+    </div>
+  </div>
+
+  <!-- PR Comments -->
+  <div id="rv-pr-page-comments" class="pr-subpage">
+    <div id="rv-comments-list"></div>
+    <div class="comment-form">
+      <textarea id="rv-comment-text" class="comment-textarea" placeholder="A&#241;adir comentario&#8230;"></textarea>
+      <button id="rv-comment-submit" class="btn-comment" onclick="submitComment()">Comentar</button>
+    </div>
+  </div>
+
+  <!-- PR Submit review -->
+  <div id="rv-pr-page-submit" class="pr-subpage">
+    <div id="rv-submit-form">
+      <label class="submit-option opt-approve">
+        <input type="radio" name="rv-event" value="APPROVE">
+        <span class="submit-option-label">&#10003; Aprobar</span>
+      </label>
+      <label class="submit-option opt-request">
+        <input type="radio" name="rv-event" value="REQUEST_CHANGES">
+        <span class="submit-option-label">&#8634; Pedir cambios</span>
+      </label>
+      <label class="submit-option opt-comment">
+        <input type="radio" name="rv-event" value="COMMENT" checked>
+        <span class="submit-option-label">&#128172; Comentar</span>
+      </label>
+      <div>
+        <div class="field-label" style="margin-bottom:8px">Comentario <span style="color:var(--dim);font-weight:400">(opcional al aprobar)</span></div>
+        <textarea id="rv-submit-body" class="comment-textarea" placeholder="Escribe un comentario&#8230;" style="height:100px"></textarea>
+      </div>
+      <button id="rv-submit-btn" class="btn-comment" onclick="submitReview()">Enviar revisi&#243;n</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const token=new URLSearchParams(location.search).get('token')||'';
+const q='?token='+encodeURIComponent(token);
+
+// ── Terminal state ─────────────────────────────────────────────────────────────
+let ws,term,fit,ro,reconnTimer,reconnDelay,activeId,activeTitle,leaving=false;
+
+// ── Review state ───────────────────────────────────────────────────────────────
+let reviewSse=null;
+let currentPR=null;
+let reviewSessionId=null;
+let reviewSessionAgent=null;
+
+function fmtRelDate(iso){
+  try{
+    const diff=Date.now()-new Date(iso).getTime();
+    const mins=Math.floor(diff/60000);
+    if(mins<1)return 'ahora';
+    if(mins<60)return mins+'m';
+    const hrs=Math.floor(mins/60);
+    if(hrs<24)return hrs+'h';
+    const days=Math.floor(hrs/24);
+    if(days<30)return days+'d';
+    return new Date(iso).toLocaleDateString([],{day:'numeric',month:'short'});
+  }catch(_){return '';}
+}
+async function saveReviewCheckpoint(dir,base,buf){
+  if(!buf.trim())return;
+  try{
+    const body={cwd:dir,base,content:buf,saved_at:new Date().toISOString()};
+    if(reviewSessionId){body.session_id=reviewSessionId;}
+    if(reviewSessionAgent){body.session_agent=reviewSessionAgent;}
+    await fetch('/api/review/checkpoint'+q,{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    await renderReviewHistory(dir);
+  }catch(_){}
+}
+async function renderReviewHistory(dir){
+  const hist=document.getElementById('rv-history');
+  if(!hist)return;
+  let items=[];
+  try{
+    const res=await fetch('/api/review/checkpoints'+q+'&cwd='+encodeURIComponent(dir));
+    if(res.ok)items=await res.json();
+  }catch(_){}
+  if(!items.length){hist.style.display='none';return;}
+  const currentBase=(document.getElementById('rv-base').value||'').trim()||'main';
+  hist.innerHTML='';
+  hist.style.display='flex';
+  items.forEach(item=>{
+    const chip=document.createElement('div');
+    chip.className='rv-hist-chip'+(item.base===currentBase?' active':'');
+    chip.style.cursor='pointer';
+    const info=document.createElement('div');
+    info.className='rv-hist-chip-info';
+    info.innerHTML='<span class="rv-hist-chip-branch">'+esc(item.base)+'</span>'
+      +(item.saved_at?'<span class="rv-hist-chip-date">'+esc(fmtRelDate(item.saved_at))+'</span>':'');
+    info.onclick=()=>{
+      document.getElementById('rv-base').value=item.base;
+      void restoreReviewCheckpoint(dir,item.base);
+      void renderReviewHistory(dir);
+    };
+    const del=document.createElement('button');
+    del.className='rv-hist-chip-del';
+    del.textContent='×';
+    del.title='Eliminar review';
+    del.onclick=async ev=>{
+      ev.stopPropagation();
+      try{await fetch('/api/review/checkpoint'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(item.base),{method:'DELETE'});}catch(_){}
+      if(item.base===currentBase){
+        const out=document.getElementById('rv-output');
+        if(out){out.className='empty-state';out.innerHTML='<div class="rv-placeholder">Elige un proyecto y una rama base<br>para iniciar la revisión.</div>';}
+      }
+      await renderReviewHistory(dir);
+    };
+    chip.append(info,del);
+    hist.append(chip);
+  });
+}
+async function restoreReviewCheckpoint(dir,base){
+  const out=document.getElementById('rv-output');
+  if(!out)return;
+  try{
+    const res=await fetch('/api/review/checkpoint'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base));
+    if(!res.ok){
+      hideChat();
+      out.className='empty-state';
+      out.innerHTML='<div class="rv-placeholder">Elige un proyecto y una rama base<br>para iniciar la revisión.</div>';
+      return;
+    }
+    const cp=await res.json();
+    out.className='rv-md';
+    out.innerHTML=mdToHtml(cp.content||'');
+    showChat();
+  }catch(_){}
+}
+
+function cwd(){return document.getElementById('rv-project').value}
+
+// ── Output expand ──────────────────────────────────────────────────────────────
+function toggleOutputExpand(){
+  const wrap=document.getElementById('rv-output-wrap');
+  const btn=document.getElementById('rv-expand-btn');
+  const expanded=wrap.classList.toggle('expanded');
+  btn.textContent=expanded?'✕':'⤢';
+}
+
+// ── Chat / follow-up ask ───────────────────────────────────────────────────────
+let askSse=null;
+
+function showChat(){
+  const chat=document.getElementById('rv-chat');
+  if(chat)chat.style.display='flex';
+}
+function hideChat(){
+  const chat=document.getElementById('rv-chat');
+  if(chat)chat.style.display='none';
+  const msgs=document.getElementById('rv-chat-msgs');
+  if(msgs)msgs.innerHTML='';
+}
+
+function onAskKey(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendAsk();}
+}
+
+function sendAsk(){
+  const input=document.getElementById('rv-ask-input');
+  const question=(input.value||'').trim();
+  if(!question)return;
+  if(askSse){askSse.close();askSse=null;}
+
+  const dir=cwd();
+  const base=(document.getElementById('rv-base').value||'').trim()||'main';
+  const agent=document.getElementById('rv-agent')?.value||'claude';
+
+  const msgs=document.getElementById('rv-chat-msgs');
+  const qEl=document.createElement('div');
+  qEl.className='rv-chat-q';
+  qEl.textContent=question;
+  msgs.append(qEl);
+  input.value='';
+  input.style.height='';
+
+  const aEl=document.createElement('div');
+  aEl.className='rv-chat-a streaming';
+  msgs.append(aEl);
+  msgs.scrollTop=msgs.scrollHeight;
+
+  const sendBtn=document.getElementById('rv-ask-send');
+  sendBtn.disabled=true;
+
+  let buf='';
+  const url='/api/review/ask'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)
+    +'&agent='+encodeURIComponent(agent)+'&question='+encodeURIComponent(question);
+  askSse=new EventSource(url);
+  askSse.onmessage=e=>{
+    let data;try{data=JSON.parse(e.data);}catch(_){data=e.data;}
+    if(data==='[DONE]'){
+      askSse.close();askSse=null;
+      aEl.classList.remove('streaming');
+      sendBtn.disabled=false;
+      return;
+    }
+    buf+=data;
+    appendPinned(msgs,()=>{aEl.innerHTML=mdToHtml(buf);});
+  };
+  askSse.onerror=()=>{
+    askSse.close();askSse=null;
+    aEl.classList.remove('streaming');
+    if(!buf)aEl.textContent='Error al conectar con el agente.';
+    sendBtn.disabled=false;
+  };
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+// Margen en px dentro del cual se considera que el usuario sigue "pegado" al fondo.
+const SCROLL_PIN_SLACK=40;
+
+function isPinnedToBottom(el){
+  return el.scrollHeight-el.scrollTop-el.clientHeight<=SCROLL_PIN_SLACK;
+}
+
+// Escribe contenido nuevo y solo baja al fondo si el usuario ya estaba abajo.
+// Hay que medir ANTES de mutar: al crecer scrollHeight nadie sigue "pegado".
+function appendPinned(el,render){
+  const wasPinned=isPinnedToBottom(el);
+  render();
+  if(wasPinned)el.scrollTop=el.scrollHeight;
+}
+
+function esc(s){
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+
+function fmtDate(iso){
+  const d=new Date(iso);
+  return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+}
+
+function renderDiff(text){
+  return text.split('\n').map(line=>{
+    if(line.startsWith('+++') || line.startsWith('---')) return `<span class="dl dl-hdr">${esc(line)}</span>`;
+    if(line.startsWith('+')) return `<span class="dl dl-add">${esc(line)}</span>`;
+    if(line.startsWith('-')) return `<span class="dl dl-del">${esc(line)}</span>`;
+    if(line.startsWith('@@')) return `<span class="dl dl-hunk">${esc(line)}</span>`;
+    return `<span class="dl dl-ctx">${esc(line)}</span>`;
+  }).join('');
+}
+
+function mdToHtml(text){
+  // Escape first so any HTML in the reviewed content (diff text, AI output) can't
+  // inject markup — the markdown syntax below (#, *, `, -) survives esc() untouched.
+  text=esc(text);
+  text=text.replace(/```[\w]*\n([\s\S]*?)```/g,(_,c)=>'<pre><code>'+c.trim()+'</code></pre>');
+  text=text.replace(/`([^`]+)`/g,(_,c)=>'<code>'+c+'</code>');
+  text=text.replace(/^### (.+)$/gm,'<h3>$1</h3>');
+  text=text.replace(/^## (.+)$/gm,'<h2>$1</h2>');
+  text=text.replace(/^# (.+)$/gm,'<h2>$1</h2>');
+  text=text.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  text=text.replace(/\*(.+?)\*/g,'<em>$1</em>');
+  text=text.replace(/^[-*] (.+)$/gm,'<li>$1</li>');
+  text=text.replace(/(<li>.*<\/li>\n?)+/g,'<ul>$&</ul>');
+  text=text.replace(/^(?!<[hup]|<\/|<li)(.+)$/gm,'<p>$1</p>');
+  text=text.replace(/\n{2,}/g,'');
+  return text;
+}
+
+// ── Main tab switching ─────────────────────────────────────────────────────────
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===(name==='review'?1:0)));
+  const pt=document.getElementById('page-terminals');
+  const pr=document.getElementById('page-review');
+  if(name==='review'){
+    pt.style.display='none';
+    pr.style.display='flex';
+    loadProjects().then(()=>{const dir=cwd();if(dir)loadBranches(dir)});
+  } else {
+    pr.style.display='none';
+    pt.style.display='flex';
+    load();
+  }
+}
+
+// ── Review sub-tab switching ───────────────────────────────────────────────────
+
+function switchReviewTab(name){
+  document.querySelectorAll('.rv-tab').forEach((t,i)=>{
+    const names=['ai','files','prs'];
+    t.classList.toggle('active',names[i]===name);
+  });
+  document.querySelectorAll('.rv-subpage').forEach(p=>p.classList.remove('active'));
+  document.getElementById('rv-page-'+name).classList.add('active');
+  if(name==='prs' && cwd()) loadPRs();
+}
+
+function onProjectChange(){
+  const dir=cwd();
+  if(!dir) return;
+  loadBranches(dir);
+  document.getElementById('rv-base').value='main';
+  document.getElementById('rv-files-base').value='main';
+  document.getElementById('rv-branch-info').style.display='none';
+  document.getElementById('rv-files-list').innerHTML='<div class="empty">Selecciona un proyecto y pulsa Ver.</div>';
+  void restoreReviewCheckpoint(dir,'main');
+  void renderReviewHistory(dir);
+  initAgentUi();
+  const tab=document.querySelector('.rv-tab.active');
+  const idx=[...document.querySelectorAll('.rv-tab')].indexOf(tab);
+  if(idx===2) loadPRs();
+}
+
+async function loadBranches(dir){
+  try{
+    const r=await fetch('/api/review/branches'+q+'&cwd='+encodeURIComponent(dir));
+    if(!r.ok) return;
+    const branches=await r.json();
+    const dl=document.getElementById('rv-branches-datalist');
+    dl.innerHTML=branches.map(b=>`<option value="${esc(b)}">`).join('');
+  }catch(_){}
+}
+
+// ── Projects loader ────────────────────────────────────────────────────────────
+
+async function loadProjects(){
+  const sel=document.getElementById('rv-project');
+  try{
+    const r=await fetch('/api/projects'+q);
+    if(!r.ok){sel.innerHTML='<option value="">Sin proyectos</option>';return}
+    const ps=await r.json();
+    if(!ps.length){sel.innerHTML='<option value="">No hay terminales con cwd</option>';return}
+    const prev=sel.value;
+    sel.innerHTML=ps.map(p=>{
+      const name=p.cwd.split('/').filter(Boolean).pop()||p.cwd;
+      const label=p.branch?`${name}  ·  ${p.branch}`:name;
+      return `<option value="${esc(p.cwd)}">${esc(label)}</option>`;
+    }).join('');
+    if(prev && [...sel.options].some(o=>o.value===prev)) sel.value=prev;
+  }catch(_){sel.innerHTML='<option value="">Error al cargar</option>'}
+}
+
+// ── IA Review ──────────────────────────────────────────────────────────────────
+
+let reviewTimer=null;
+
+function toggleProgressStream(){
+  const s=document.getElementById('rv-progress-stream');
+  const t=document.getElementById('rv-progress-toggle');
+  const collapsed=s.classList.toggle('collapsed');
+  t.textContent=collapsed?'▶':'▼';
+}
+
+// ── Agent selector ─────────────────────────────────────────────────────────────
+
+const AGENT_LABELS={claude:'Claude',opencode:'OpenCode',codex:'Codex'};
+const AGENT_TYPES=['claude','opencode','codex'];
+function agentLabel(a){return AGENT_LABELS[a]||a;}
+
+function selectedAgents(){
+  const primary=document.getElementById('rv-agent').value||'claude';
+  const toggle=document.getElementById('rv-compare-toggle').checked;
+  if(!toggle)return[primary];
+  const sec=document.getElementById('rv-agent-secondary').value;
+  const ter=document.getElementById('rv-agent-tertiary').value;
+  const extras=[sec,ter].filter(v=>AGENT_TYPES.includes(v));
+  return[primary,...extras];
+}
+
+function normalizeAgentSelects(){
+  const primary=document.getElementById('rv-agent').value||'claude';
+  const sec=document.getElementById('rv-agent-secondary');
+  const ter=document.getElementById('rv-agent-tertiary');
+  if(!sec.value)sec.value=primary;
+  if(!ter.value)ter.value=primary;
+}
+
+function syncAgentUi(){
+  const toggle=document.getElementById('rv-compare-toggle').checked;
+  document.getElementById('rv-agent-secondary-row').classList.toggle('hidden',!toggle);
+  document.getElementById('rv-agent-tertiary-row').classList.toggle('hidden',!toggle);
+  if(toggle)normalizeAgentSelects();
+  localStorage.setItem('bento.review.agent',document.getElementById('rv-agent').value);
+  localStorage.setItem('bento.review.compare-agents',toggle?'1':'0');
+  const sec=document.getElementById('rv-agent-secondary').value;
+  const ter=document.getElementById('rv-agent-tertiary').value;
+  if(sec)localStorage.setItem('bento.review.agent.secondary',sec);
+  else localStorage.removeItem('bento.review.agent.secondary');
+  if(ter)localStorage.setItem('bento.review.agent.tertiary',ter);
+  else localStorage.removeItem('bento.review.agent.tertiary');
+  const agents=selectedAgents().map(agentLabel);
+  const badge=document.getElementById('rv-agent-badge');
+  badge.textContent=agents.length===1?'Agente: '+agents[0]:'Agentes: '+agents.join(' + ');
+  badge.style.display='block';
+}
+
+function initAgentUi(){
+  const primary=localStorage.getItem('bento.review.agent')||'claude';
+  const compare=localStorage.getItem('bento.review.compare-agents')==='1';
+  const sec=localStorage.getItem('bento.review.agent.secondary')||'';
+  const ter=localStorage.getItem('bento.review.agent.tertiary')||'';
+  const agentEl=document.getElementById('rv-agent');
+  const compareEl=document.getElementById('rv-compare-toggle');
+  const secEl=document.getElementById('rv-agent-secondary');
+  const terEl=document.getElementById('rv-agent-tertiary');
+  if(agentEl&&AGENT_TYPES.includes(primary))agentEl.value=primary;
+  if(compareEl)compareEl.checked=compare;
+  if(secEl&&AGENT_TYPES.includes(sec))secEl.value=sec;
+  if(terEl&&AGENT_TYPES.includes(ter))terEl.value=ter;
+  syncAgentUi();
+}
+
+function stopReview(){
+  if(reviewSse){reviewSse.close();reviewSse=null;}
+  if(reviewTimer){clearInterval(reviewTimer);reviewTimer=null;}
+  const btn=document.getElementById('rv-start');
+  const stopBtn=document.getElementById('rv-stop');
+  document.getElementById('rv-progress').style.display='none';
+  btn.disabled=false;btn.textContent='Iniciar revisión';
+  stopBtn.style.display='none';
+}
+
+function startReview(){
+  const dir=cwd();
+  const base=document.getElementById('rv-base').value.trim()||'main';
+  const branch=(document.getElementById('rv-branch').value||'').trim();
+  const context=document.getElementById('rv-context').value.trim();
+  const agents=selectedAgents();
+  if(!dir)return;
+
+  if(reviewSse){reviewSse.close();reviewSse=null;}
+  if(reviewTimer){clearInterval(reviewTimer);reviewTimer=null;}
+
+  const out=document.getElementById('rv-output');
+  const progress=document.getElementById('rv-progress');
+  const progressStatus=document.getElementById('rv-progress-status');
+  const progressMeta=document.getElementById('rv-progress-meta');
+  const progressStream=document.getElementById('rv-progress-stream');
+  const btn=document.getElementById('rv-start');
+  const stopBtn=document.getElementById('rv-stop');
+
+  hideChat();
+  reviewSessionId=null;
+  reviewSessionAgent=null;
+  out.className='empty-state';
+  out.innerHTML='<div class="rv-placeholder">Esperando síntesis&#8230;</div>';
+  progressStatus.textContent='Iniciando&#8230;';
+  progressMeta.textContent='0s';
+  progressStream.textContent='';
+  progressStream.classList.remove('collapsed');
+  document.getElementById('rv-progress-toggle').textContent='▼';
+  progress.style.display='block';
+  btn.disabled=true;
+  btn.innerHTML='<span class="spinner"></span> Analizando&#8230;';
+  stopBtn.style.display='block';
+
+  // finalBuf = synthesis output (or single batch if no synthesis)
+  let finalBuf='';
+  // batchBuf = live text for current batch (shown in progress stream)
+  let batchBuf='';
+  let hasSynthesis=false;
+  // agentReports keeps each completed batch so we can fall back if synthesis fails
+  let agentReports=[];
+  let startedAt=Date.now();
+
+  reviewTimer=setInterval(()=>{
+    const secs=Math.floor((Date.now()-startedAt)/1000);
+    progressMeta.textContent=secs+'s';
+  },500);
+
+  const endReview=()=>{
+    if(reviewTimer){clearInterval(reviewTimer);reviewTimer=null;}
+    progress.style.display='none';
+    btn.disabled=false;btn.textContent='Iniciar revisión';
+    stopBtn.style.display='none';
+  };
+
+  let url='/api/review'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)+'&agents='+encodeURIComponent(agents.join(','));
+  if(branch)url+='&branch='+encodeURIComponent(branch);
+  if(context)url+='&context='+encodeURIComponent(context);
+  reviewSse=new EventSource(url);
+
+  reviewSse.onmessage=e=>{
+    let data;try{data=JSON.parse(e.data);}catch(_){data=e.data;}
+
+    if(data==='[DONE]'){
+      reviewSse.close();reviewSse=null;
+      if(batchBuf.trim())agentReports.push(batchBuf);
+      if(!hasSynthesis){
+        finalBuf=agentReports[agentReports.length-1]||batchBuf;
+        out.className='rv-md';
+        out.innerHTML=mdToHtml(finalBuf);
+      }
+      saveReviewCheckpoint(dir,base,finalBuf);
+      showChat();
+      endReview();
+      return;
+    }
+
+    if(data.startsWith('[ERROR]')){
+      out.className='rv-md';
+      out.innerHTML='<p class="err-msg">'+esc(data.slice(7).trim())+'</p>';
+      reviewSse.close();reviewSse=null;
+      endReview();
+      return;
+    }
+
+    const sessionMatch=data.match(/^\[SESSION:([^:]+):(.+)\]$/);
+    if(sessionMatch){
+      reviewSessionAgent=sessionMatch[1];
+      reviewSessionId=sessionMatch[2];
+      return;
+    }
+
+    const batchMatch=data.match(/^\[BATCH:(\d+)\/(\d+)\]$/);
+    if(batchMatch){
+      const n=parseInt(batchMatch[1]),total=parseInt(batchMatch[2]);
+      if(batchBuf.trim()){agentReports.push(batchBuf);saveReviewCheckpoint(dir,base,batchBuf);}
+      batchBuf='';
+      startedAt=Date.now();
+      const isMulti=agents.length>1;
+      const label=isMulti
+        ?(agentLabel(agents[n-1]||agents[0])+' · '+n+'/'+total)
+        :('Batch '+n+'/'+total);
+      progressStatus.textContent=label;
+      progressStream.textContent='';
+      return;
+    }
+
+    if(data==='[SYNTHESIS]'){
+      if(batchBuf.trim()){agentReports.push(batchBuf);saveReviewCheckpoint(dir,base,batchBuf);}
+      batchBuf='';
+      hasSynthesis=true;
+      startedAt=Date.now();
+      progressStatus.textContent='Síntesis final&#8230;';
+      out.className='rv-md';
+      out.innerHTML='';
+      return;
+    }
+
+    if(hasSynthesis){
+      // Synthesis streams into the main output
+      finalBuf+=data;
+      appendPinned(out,()=>{out.innerHTML=mdToHtml(finalBuf);});
+    } else {
+      // Batch streams into the progress area (live detail)
+      batchBuf+=data;
+      appendPinned(progressStream,()=>{progressStream.textContent=batchBuf;});
+    }
+  };
+
+  reviewSse.onerror=()=>{
+    reviewSse.close();reviewSse=null;
+    if(!finalBuf&&!batchBuf)out.innerHTML='<p class="err-msg">Error de conexión.</p>';
+    endReview();
+  };
+}
+
+// ── Archivos ───────────────────────────────────────────────────────────────────
+
+async function loadFiles(){
+  const dir=cwd();
+  const base=document.getElementById('rv-files-base').value.trim()||'main';
+  if(!dir)return;
+
+  const el=document.getElementById('rv-files-list');
+  el.innerHTML='<div class="empty">Cargando&#8230;</div>';
+
+  // Show branch indicator
+  const info=document.getElementById('rv-branch-info');
+  const selOpt=[...document.getElementById('rv-project').selectedOptions][0];
+  const optLabel=selOpt?.textContent||'';
+  const branchMatch=optLabel.match(/·\s*(.+)$/);
+  const currentBranch=branchMatch?branchMatch[1].trim():'HEAD';
+  document.getElementById('rv-branch-current').textContent=currentBranch;
+  document.getElementById('rv-branch-base').textContent=base;
+  info.style.display='flex';
+
+  try{
+    const r=await fetch('/api/review/files'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base));
+    if(!r.ok){el.innerHTML='<div class="empty err-msg">'+esc(await r.text())+'</div>';info.style.display='none';return}
+    const files=await r.json();
+    if(!files.length){el.innerHTML='<div class="empty">Sin cambios respecto a <strong>'+esc(base)+'</strong>.</div>';return}
+
+    el.innerHTML=files.map(f=>{
+      const badge=f.status||'M';
+      const add=f.added>0?`<span class="stat-add">+${f.added}</span>`:'';
+      const del=f.deleted>0?`<span class="stat-del"> -${f.deleted}</span>`:'';
+      return `<div class="file-item" onclick="openFileDiff(${esc(JSON.stringify(f.path))},${esc(JSON.stringify(base))})">
+        <span class="file-badge badge-${badge}">${esc(badge)}</span>
+        <span class="file-path">${esc(f.path)}</span>
+        <span class="file-stat">${add}${del}</span>
+      </div>`;
+    }).join('');
+  }catch(e){el.innerHTML='<div class="empty err-msg">Error de conexión.</div>'}
+}
+
+async function openFileDiff(path, base){
+  const dir=cwd();
+  const overlay=document.getElementById('rv-file-view');
+  document.getElementById('rv-file-title').textContent=path;
+  document.getElementById('rv-diff-content').innerHTML='<span class="dl dl-ctx">Cargando&#8230;</span>';
+  overlay.classList.add('on');
+
+  try{
+    const r=await fetch('/api/review/file'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)+'&path='+encodeURIComponent(path));
+    const text=await r.text();
+    document.getElementById('rv-diff-content').innerHTML=r.ok ? renderDiff(text) : `<span class="dl dl-del">${esc(text)}</span>`;
+  }catch(e){
+    document.getElementById('rv-diff-content').innerHTML='<span class="dl dl-del">Error de conexión.</span>';
+  }
+}
+
+function closeFileDiff(){
+  document.getElementById('rv-file-view').classList.remove('on');
+}
+
+// ── PRs ────────────────────────────────────────────────────────────────────────
+
+async function loadPRs(){
+  const dir=cwd();
+  const el=document.getElementById('rv-prs-list');
+  if(!dir){el.innerHTML='<div class="empty">Selecciona un proyecto.</div>';return}
+  el.innerHTML='<div class="empty">Cargando PRs&#8230;</div>';
+
+  try{
+    const r=await fetch('/api/review/prs'+q+'&cwd='+encodeURIComponent(dir));
+    if(!r.ok){el.innerHTML='<div class="empty err-msg">'+esc(await r.text())+'</div>';return}
+    const prs=await r.json();
+    if(!prs.length){el.innerHTML='<div class="empty">No hay PRs abiertos.</div>';return}
+
+    el.innerHTML=prs.map(p=>`
+      <div class="pr-item" onclick="openPR(${p.number},${esc(JSON.stringify(p.title))})">
+        <span class="pr-number">#${p.number}</span>
+        <span class="pr-title-text">${esc(p.title)}</span>
+        <span class="pr-meta">${esc(p.headRefName||'')} &middot; ${esc(p.author?.login||'')}</span>
+      </div>`).join('');
+  }catch(e){el.innerHTML='<div class="empty err-msg">Error de conexión.</div>'}
+}
+
+async function openPR(number, title){
+  currentPR=number;
+  document.getElementById('rv-pr-title').textContent='#'+number+' '+title;
+  document.getElementById('rv-pr-view').classList.add('on');
+
+  // reset to Diff tab
+  switchPRTab('diff');
+  loadPRDiff();
+}
+
+function closePRView(){
+  document.getElementById('rv-pr-view').classList.remove('on');
+  currentPR=null;
+}
+
+function switchPRTab(name){
+  document.querySelectorAll('.rv-pr-tab').forEach((t,i)=>{
+    const names=['diff','comments','submit'];
+    t.classList.toggle('active',names[i]===name);
+  });
+  document.querySelectorAll('.pr-subpage').forEach(p=>p.classList.remove('active'));
+  document.getElementById('rv-pr-page-'+name).classList.add('active');
+  if(name==='comments') loadPRComments();
+}
+
+// ── PR Diff ────────────────────────────────────────────────────────────────────
+
+async function loadPRDiff(){
+  const dir=cwd();
+  const el=document.getElementById('rv-pr-diff-content');
+  el.innerHTML='<span class="dl dl-ctx">Cargando diff&#8230;</span>';
+
+  try{
+    const r=await fetch('/api/review/pr/diff'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR);
+    const text=await r.text();
+    el.innerHTML=r.ok ? renderDiff(text) : `<span class="dl dl-del">${esc(text)}</span>`;
+  }catch(e){
+    el.innerHTML='<span class="dl dl-del">Error de conexión.</span>';
+  }
+}
+
+// ── PR Comments ────────────────────────────────────────────────────────────────
+
+async function loadPRComments(){
+  const dir=cwd();
+  const el=document.getElementById('rv-comments-list');
+  el.innerHTML='<div class="empty">Cargando&#8230;</div>';
+
+  try{
+    const r=await fetch('/api/review/pr/comments'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR);
+    if(!r.ok){el.innerHTML='<div class="empty err-msg">'+esc(await r.text())+'</div>';return}
+    const data=await r.json();
+
+    const comments=(data.comments||[]).map(c=>({...c,kind:'comment'}));
+    const reviews=(data.reviews||[]).filter(r=>r.body||r.state).map(r=>({...r,kind:'review'}));
+    const all=[...comments,...reviews].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+
+    if(!all.length){el.innerHTML='<div class="empty">Sin comentarios aún.</div>';return}
+
+    el.innerHTML=all.map(c=>{
+      const author=c.author?.login||'unknown';
+      const date=c.createdAt?fmtDate(c.createdAt):'';
+      const stateTag=c.kind==='review' && c.state && c.state!=='PENDING'
+        ? `<span class="comment-state state-${c.state}">${esc(c.state.replace('_',' '))}</span>` : '';
+      return `<div class="comment-item">
+        <div class="comment-header">
+          <span class="comment-author">@${esc(author)}</span>
+          <span class="comment-date">${esc(date)}</span>
+          ${stateTag}
+        </div>
+        <div class="comment-body-text">${esc(c.body||'')}</div>
+      </div>`;
+    }).join('');
+  }catch(e){el.innerHTML='<div class="empty err-msg">Error de conexión.</div>'}
+}
+
+async function submitComment(){
+  const dir=cwd();
+  const textarea=document.getElementById('rv-comment-text');
+  const btn=document.getElementById('rv-comment-submit');
+  const body=textarea.value.trim();
+  if(!body)return;
+
+  btn.disabled=true;btn.textContent='Enviando&#8230;';
+  try{
+    const r=await fetch('/api/review/pr/comment'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR,{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({body}),
+    });
+    if(r.ok){
+      textarea.value='';
+      loadPRComments();
+    }
+  }finally{
+    btn.disabled=false;btn.textContent='Comentar';
+  }
+}
+
+// ── Submit review ──────────────────────────────────────────────────────────────
+
+async function submitReview(){
+  const dir=cwd();
+  const event=[...document.querySelectorAll('input[name=rv-event]')].find(r=>r.checked)?.value||'COMMENT';
+  const body=document.getElementById('rv-submit-body').value.trim();
+  const btn=document.getElementById('rv-submit-btn');
+
+  btn.disabled=true;btn.textContent='Enviando&#8230;';
+  try{
+    const r=await fetch('/api/review/pr/submit'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR,{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({event,body:body||undefined}),
+    });
+    if(r.ok){
+      document.getElementById('rv-submit-body').value='';
+      closePRView();
+    }
+  }finally{
+    btn.disabled=false;btn.textContent='Enviar revisión';
+  }
+}
+
+// ── Folder browser ────────────────────────────────────────────────────────────
+
+let folderCurrentPath = '';
+
+function openFolderBrowser(){
+  document.getElementById('rv-folder-view').classList.add('on');
+  const startPath=cwd()||'';
+  browseDir(startPath||null);
+}
+
+function closeFolderBrowser(){
+  document.getElementById('rv-folder-view').classList.remove('on');
+}
+
+async function browseDir(path){
+  const el=document.getElementById('rv-folder-list');
+  el.innerHTML='<div class="empty">Cargando&#8230;</div>';
+  try{
+    const url='/api/fs/dirs'+q+(path?'&path='+encodeURIComponent(path):'');
+    const r=await fetch(url);
+    if(!r.ok){el.innerHTML='<div class="empty err-msg">Error al leer directorio.</div>';return}
+    const data=await r.json();
+    folderCurrentPath=data.path;
+    document.getElementById('rv-folder-path').textContent=data.path;
+    let html='';
+    if(data.parent){
+      html+=`<div class="dir-item dir-up" data-path="${esc(data.parent)}"><span style="font-size:18px">&#8593;</span><span class="dir-name">.. subir</span></div>`;
+    }
+    if(data.dirs.length){
+      html+=data.dirs.map(d=>{
+        const full=data.path.replace(/\/$/,'')+'/'+d;
+        return `<div class="dir-item" data-path="${esc(full)}"><span style="font-size:18px">&#128193;</span><span class="dir-name">${esc(d)}</span><span class="dir-arrow">&#8250;</span></div>`;
+      }).join('');
+    } else {
+      html+='<div class="empty" style="padding-top:20px">Sin subcarpetas.</div>';
+    }
+    el.innerHTML=html;
+    el.querySelectorAll('.dir-item[data-path]').forEach(item=>{
+      item.addEventListener('click',()=>browseDir(item.dataset.path));
+    });
+  }catch(e){el.innerHTML='<div class="empty err-msg">Error de conexión.</div>'}
+}
+
+function selectFolder(){
+  if(!folderCurrentPath) return;
+  const sel=document.getElementById('rv-project');
+  let opt=[...sel.options].find(o=>o.value===folderCurrentPath);
+  if(!opt){
+    opt=new Option(folderCurrentPath,folderCurrentPath);
+    sel.appendChild(opt);
+  }
+  sel.value=folderCurrentPath;
+  closeFolderBrowser();
+  onProjectChange();
+}
+
+// ── Terminals ─────────────────────────────────────────────────────────────────
+
+function s(d){if(ws&&ws.readyState===1)ws.send(d)}
+
+function sendInp(){
+  const inp=document.getElementById('inp');
+  s(inp.value+'\r');inp.value='';inp.focus();
+}
+
+document.getElementById('inp').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();sendInp()}
+});
+
+async function load(){
+  const el=document.getElementById('list');
+  try{
+    const r=await fetch('/api/terminals'+q);
+    if(!r.ok){el.innerHTML='<div class="empty err-msg">Token inválido.</div>';return}
+    const ts=await r.json();
+    if(!ts.length){el.innerHTML='<div class="empty">No hay terminales abiertos.<br>Abre un agente o terminal en Bento.</div>';return}
+    el.innerHTML='<div class="list-head">Terminales activos</div>';
+    ts.forEach(t=>{
+      const b=document.createElement('button');
+      b.className='tb';
+      const sub=t.branch?'⎷ '+t.branch+(t.cwd?' · '+t.cwd:''):t.cwd||'';
+      b.innerHTML='<span class="tb-ico">&#11035;</span><div class="tb-info"><div class="tb-name">'+esc(t.title||t.id)+'</div><div class="tb-cwd">'+esc(sub)+'</div></div><span class="tb-arrow">&#8250;</span>';
+      b.onclick=()=>attach(t.id,t.title||t.id);
+      el.appendChild(b);
+    });
+  }catch(e){el.innerHTML='<div class="empty err-msg">No se pudo conectar al daemon.</div>'}
+}
+
+function sendResize(){
+  if(ws&&ws.readyState===1&&term)
+    ws.send(JSON.stringify({type:'resize',rows:term.rows,cols:term.cols}));
+}
+
+function connect(id){
+  if(leaving)return;
+  const dot=document.getElementById('dot');
+  ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws/'+id+q);
+  ws.onopen=()=>{dot.className='';reconnDelay=1000;sendResize()};
+  ws.onmessage=e=>{
+    if(typeof e.data==='string'){
+      try{
+        const msg=JSON.parse(e.data);
+        if(msg.type==='title'){activeTitle=msg.value;document.getElementById('ttitle').textContent=msg.value;return}
+        if(msg.type==='exit'){goBack();return}
+      }catch(_){}
+      term&&term.write(e.data);
+    }else{term&&term.write(new Uint8Array(e.data))}
+  };
+  ws.onclose=()=>{
+    if(leaving)return;
+    dot.className='off';
+    term&&term.write('\r\n\x1b[33m[reconectando en '+(reconnDelay/1000)+'s…]\x1b[0m\r\n');
+    reconnTimer=setTimeout(()=>connect(id),reconnDelay);
+    reconnDelay=Math.min(reconnDelay*2,16000);
+  };
+}
+
+// En móvil no existe el evento `wheel`, único que xterm traduce, así que el dedo
+// no movía nada. No reimplementamos el scroll: xterm ya decide bien según el caso
+// (scrollback normal, flechas en alt-screen respetando applicationCursorKeys, o
+// eventos SGR si la TUI captura el ratón), y acumula el desplazamiento parcial.
+// Basta con sintetizar el wheel que el navegador no emite.
+function enableTouchScroll(el){
+  let lastY=null;
+  el.addEventListener('touchstart',e=>{
+    if(e.touches.length!==1)return;
+    lastY=e.touches[0].clientY;
+  },{passive:true});
+  el.addEventListener('touchmove',e=>{
+    const isTrackingOneFinger=lastY!==null&&e.touches.length===1;
+    if(!isTrackingOneFinger||!term||!term.element)return;
+    const t=e.touches[0];
+    // Dedo hacia arriba (y decrece) = deltaY positivo = scroll hacia abajo.
+    const deltaY=lastY-t.clientY;
+    lastY=t.clientY;
+    if(!deltaY)return;
+    // Se despacha en el nodo más interno para que alcance a todos sus ancestros:
+    // el listener de xterm cuelga del contenedor y los eventos solo burbujean.
+    const target=term.element.querySelector('.xterm-screen')||term.element;
+    target.dispatchEvent(new WheelEvent('wheel',{
+      deltaY,deltaMode:0,bubbles:true,cancelable:true,
+      clientX:t.clientX,clientY:t.clientY,
+    }));
+    e.preventDefault();
+  },{passive:false});
+  const stop=()=>{lastY=null};
+  el.addEventListener('touchend',stop,{passive:true});
+  el.addEventListener('touchcancel',stop,{passive:true});
+}
+
+function attach(id,title){
+  leaving=false;activeId=id;activeTitle=title;reconnDelay=1000;
+  document.getElementById('page-terminals').style.display='none';
+  document.getElementById('tabbar').style.display='none';
+  const viewEl=document.getElementById('view');
+  viewEl.style.display='flex';
+  document.getElementById('ttitle').textContent=title;
+  document.getElementById('dot').className='off';
+
+  const con=document.getElementById('tcon');
+  con.innerHTML='';
+  term=new Terminal({fontSize:13,fontFamily:'Menlo,Monaco,"Cascadia Code",monospace',theme:{background:'#000000',foreground:'#e2e8f8',cursor:'#a78bfa',selectionBackground:'#3a3a5c'},convertEol:false,cursorBlink:true,scrollback:2000});
+  fit=new FitAddon.FitAddon();
+  term.loadAddon(fit);term.open(con);fit.fit();
+  enableTouchScroll(con);
+  term.onData(d=>s(d));
+  ro=new ResizeObserver(()=>{if(fit){fit.fit();sendResize()}});
+  ro.observe(con);
+  connect(id);
+}
+
+function goBack(){
+  leaving=true;clearTimeout(reconnTimer);
+  if(ro){ro.disconnect();ro=null}
+  if(ws){ws.close();ws=null}
+  if(term){term.dispose();term=null}
+  document.getElementById('view').style.display='none';
+  document.getElementById('tabbar').style.display='flex';
+  document.getElementById('page-terminals').style.display='flex';
+  const nb=document.getElementById('newbtn');
+  nb.textContent='+ Nueva terminal';nb.disabled=false;
+  load();
+}
+
+async function killTerminal(){
+  if(!activeId)return;
+  if(!confirm('&#191;Cerrar "'+activeTitle+'"?'))return;
+  try{await fetch('/api/terminals/'+encodeURIComponent(activeId)+q,{method:'DELETE'})}catch(_){}
+  goBack();
+}
+
+async function newTerminal(){
+  const btn=document.getElementById('newbtn');
+  btn.textContent='Abriendo…';btn.disabled=true;
+  try{
+    const r=await fetch('/api/terminals'+q,{method:'POST'});
+    if(!r.ok){btn.textContent='+ Nueva terminal';btn.disabled=false;return}
+    const {id}=await r.json();
+    await load();attach(id,id);
+  }catch(e){btn.textContent='+ Nueva terminal';btn.disabled=false}
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+load();
+setInterval(()=>{
+  if(document.getElementById('page-terminals').style.display!=='none') load();
+},3000);
+</script>
+</body>
+</html>

@@ -213,7 +213,7 @@ fn home_dir() -> std::io::Result<std::path::PathBuf> {
 }
 
 fn io_err(msg: &str) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, msg)
+    std::io::Error::other(msg)
 }
 
 /// Spawn `bin` detached so it keeps running after the CLI exits.
@@ -311,7 +311,7 @@ async fn request_data(body: Value) -> std::io::Result<Value> {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         if v.get("ok").and_then(Value::as_bool) == Some(false) {
             let msg = v.get("error").and_then(Value::as_str).unwrap_or("daemon error");
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, msg));
+            return Err(std::io::Error::other(msg));
         }
         return Ok(v.get("data").cloned().unwrap_or(Value::Null));
     }
