@@ -35,6 +35,12 @@ use review::{
 };
 
 const MOBILE_HTML: &str = include_str!("web/index.html");
+const SHARED_CSS: &str = include_str!("web/shared.css");
+const TERMINAL_CSS: &str = include_str!("web/terminal.css");
+const REVIEW_CSS: &str = include_str!("web/review.css");
+const SHARED_JS: &str = include_str!("web/shared.js");
+const TERMINAL_JS: &str = include_str!("web/terminal.js");
+const REVIEW_JS: &str = include_str!("web/review.js");
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -121,6 +127,12 @@ impl RemoteControl {
         let state = Arc::new(RemoteState { manager, token, herdr_socket });
         let app = Router::new()
             .route("/", get(index))
+            .route("/shared.css", get(|| asset("text/css", SHARED_CSS)))
+            .route("/terminal.css", get(|| asset("text/css", TERMINAL_CSS)))
+            .route("/review.css", get(|| asset("text/css", REVIEW_CSS)))
+            .route("/shared.js", get(|| asset("text/javascript", SHARED_JS)))
+            .route("/terminal.js", get(|| asset("text/javascript", TERMINAL_JS)))
+            .route("/review.js", get(|| asset("text/javascript", REVIEW_JS)))
             .route("/api/terminals", get(terminals))
             .route("/api/terminals", post(new_terminal))
             .route("/api/terminals/:id", delete(kill_terminal))
@@ -241,6 +253,15 @@ async fn index(State(state): State<Arc<RemoteState>>, Query(auth): Query<Auth>) 
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
     Html(MOBILE_HTML).into_response()
+}
+
+// Static CSS/JS assets for the mobile web client. Unauthenticated: `index.html`
+// is a compile-time `include_str!` constant with no server-side templating, so
+// a `<script src>`/`<link>` tag has no way to carry the `?token=` query param.
+// The content itself is non-sensitive UI code — every data-bearing route
+// (`/api/*`, `/ws/*`) keeps its own `authorized()` check untouched.
+async fn asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
+    ([(axum::http::header::CONTENT_TYPE, content_type)], body)
 }
 
 fn git_branch(cwd: &str) -> Option<String> {
@@ -475,5 +496,30 @@ mod tests {
         let r = resolve_bind_ip(true, None, "192.168.1.10".into());
         assert_eq!(r.bind_host, "192.168.1.10");
         assert_eq!(r.display_ip, "192.168.1.10");
+    }
+
+    #[test]
+    fn mobile_html_references_split_assets() {
+        assert!(MOBILE_HTML.contains(r#"href="/shared.css""#));
+        assert!(MOBILE_HTML.contains(r#"href="/terminal.css""#));
+        assert!(MOBILE_HTML.contains(r#"href="/review.css""#));
+        assert!(MOBILE_HTML.contains(r#"src="/shared.js""#));
+        assert!(MOBILE_HTML.contains(r#"src="/terminal.js""#));
+        assert!(MOBILE_HTML.contains(r#"src="/review.js""#));
+        assert!(!MOBILE_HTML.contains("<style>"));
+        assert!(!MOBILE_HTML.contains("function switchTab"));
+    }
+
+    #[test]
+    fn split_assets_contain_expected_functions() {
+        assert!(SHARED_JS.contains("function switchTab"));
+        assert!(SHARED_JS.contains("function esc"));
+        assert!(TERMINAL_JS.contains("function attach"));
+        assert!(TERMINAL_JS.contains("function connect"));
+        assert!(REVIEW_JS.contains("function startReview"));
+        assert!(REVIEW_JS.contains("function loadPRs"));
+        assert!(SHARED_CSS.contains("#tabbar"));
+        assert!(TERMINAL_CSS.contains("#tcon"));
+        assert!(REVIEW_CSS.contains("#rv-output"));
     }
 }
