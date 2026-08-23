@@ -21,8 +21,9 @@ import {
 import { matchesMemoryQuery } from '../../core/memory/memorySearch'
 import {
   KIND_LABEL, KIND_OPTIONS, splitList, basename, projectName,
-  detailProject, lexisProjectFolder, timeLabel, sourceLabel, canRegenerateSummary,
+  timeLabel, sourceLabel, canRegenerateSummary,
 } from '../../core/memory/memoryFormat'
+import { candidateProject, computePreviewCandidateState } from '../../core/memory/memoryCandidates'
 import type {
   MemorySource, ImportedMemoryCandidate, PreviewCandidateState, MemorySummaryJob,
 } from '../../core/memory/memorySource'
@@ -302,21 +303,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     if (previewSourceId === '__draft__') return sourceLabelInput.value.trim() || basename(sourcePathInput.value.trim()) || i18nT('memory.currentSelection')
     return currentSource()?.label ?? i18nT('memory.currentSelection')
   }
-  const candidateProject = (candidate: ImportedMemoryCandidate): string => {
-    if (candidate.source.startsWith('source:') && candidate.tags.includes('lexis')) {
-      const detailed = detailProject(candidate.details)
-      if (detailed) return projectName(detailed)
-      const absoluteProject = candidate.files.find(file => file.startsWith('/Users/') || file.startsWith('/private/') || file.startsWith('/var/'))
-      if (absoluteProject && !absoluteProject.includes('/.lexis/projects/')) return projectName(absoluteProject)
-      const lexisIndex = candidate.files.find(file => file.includes('/.lexis/projects/'))
-      const folder = lexisIndex ? lexisProjectFolder(lexisIndex) : null
-      if (folder) return folder
-      const titled = candidate.title.replace(/^Lexis snapshot ·\s*/, '').trim()
-      if (titled && titled !== candidate.title) return titled
-      return 'Proyecto desconocido'
-    }
-    return projectName(candidate.files[0] || candidate.externalId)
-  }
   const visiblePreviewCandidates = (): ImportedMemoryCandidate[] => previewCandidates.filter(candidate => {
     if (selectedSourceProject === 'all') return true
     return candidateProject(candidate) === selectedSourceProject
@@ -417,34 +403,11 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     clearVisiblePreviewBtn.disabled = visibleCount === 0 || selectedCount === 0
   }
 
-  const computePreviewCandidateState = (candidate: ImportedMemoryCandidate, existing: MemoryEntry[]): PreviewCandidateState => {
-    const payload: NewMemoryEntry = {
-      kind: 'note',
-      title: candidate.title,
-      summary: candidate.summary,
-      details: candidate.details,
-      source: candidate.source,
-      externalId: candidate.externalId,
-      files: candidate.files,
-      tags: candidate.tags,
-      createdAt: candidate.createdAt,
-      updatedAt: candidate.createdAt,
-    }
-    const normalized = normalizeNewMemoryEntry(currentProject, payload)
-    const duplicateExternal = existing.some(entry => entry.externalId === normalized.externalId)
-    const duplicate = duplicateExternal ? existing.find(entry => entry.externalId === normalized.externalId) : findSemanticallyDuplicate(existing, normalized)
-    return {
-      duplicateExternal,
-      duplicateSemantic: !duplicateExternal && Boolean(duplicate),
-      duplicateTitle: duplicate?.title || undefined,
-    }
-  }
-
   const refreshPreviewCandidateState = async (): Promise<void> => {
     previewCandidateState.clear()
     if (!previewCandidates.length) return
     const existing = await targetProjectEntries()
-    previewCandidates.forEach(candidate => previewCandidateState.set(candidate.externalId, computePreviewCandidateState(candidate, existing)))
+    previewCandidates.forEach(candidate => previewCandidateState.set(candidate.externalId, computePreviewCandidateState(currentProject, candidate, existing)))
   }
 
   const syncSourceForm = (): void => {
