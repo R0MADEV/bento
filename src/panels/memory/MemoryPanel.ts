@@ -18,7 +18,7 @@ import {
   toggleMemoryTag,
   uniqMemoryValues,
 } from '../../core/memory/normalize'
-import { matchesMemoryQuery } from '../../core/memory/memorySearch'
+import { filterMemoryEntries } from '../../core/memory/memoryFilter'
 import {
   KIND_LABEL, KIND_OPTIONS, splitList, basename, projectName,
   timeLabel, sourceLabel, canRegenerateSummary,
@@ -318,16 +318,12 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   }
   const selectedPreviewCount = (): number => previewCheckedIds().size
 
-  const visibleRows = (): MemoryEntry[] => {
-    const kindValue = kindFilter.value as MemoryKind | 'all'
-    const sourceValue = sourceFilter.value
-    return entries.filter(entry => {
-      if (!archivedCheckbox.checked && isArchivedMemory(entry)) return false
-      if (kindValue !== 'all' && entry.kind !== kindValue) return false
-      if (sourceValue !== 'all' && entry.source !== sourceValue) return false
-      return matchesMemoryQuery(entry, search.value)
-    })
-  }
+  const visibleRows = (): MemoryEntry[] => filterMemoryEntries(entries, {
+    query: search.value,
+    kind: kindFilter.value as MemoryKind | 'all',
+    source: sourceFilter.value,
+    includeArchived: archivedCheckbox.checked,
+  })
 
   const selectedRows = (): MemoryEntry[] => entries.filter(entry => selectedIds.has(entry.id))
   const targetProjectEntries = async (): Promise<MemoryEntry[]> => {
