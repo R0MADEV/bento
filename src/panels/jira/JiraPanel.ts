@@ -9,6 +9,7 @@ import { findTransitionForColumn, type JiraTransition } from '../../core/jira/tr
 import { groupByCategory, mapToAgileColumns, statusCategoryClass, type AgileBoard, type AgileColumn } from '../../core/jira/board'
 import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
 import { icon } from '../../ui/icons'
+import { note, mkBtn, detailHeader, field } from './jiraWidgets'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { createJiraClient, type JiraAccount } from './jiraClient'
 
@@ -99,28 +100,6 @@ export function createJiraPanel(): { element: HTMLElement } {
   const showDetail = (...nodes: HTMLElement[]): void => { detailPane.replaceChildren(...nodes) }
 
   const showHint = (text: string): void => showDetail(note(text, 'jira-detail-hint'))
-
-  const detailHeader = (title: string, ...actions: HTMLElement[]): HTMLElement => {
-    const bar = document.createElement('div')
-    bar.className = 'jira-header'
-    const h = document.createElement('span')
-    h.className = 'jira-title'
-    h.textContent = title
-    bar.append(h, ...actions)
-    return bar
-  }
-
-  const field = (label: string, value = '', type = 'text'): { row: HTMLElement; input: HTMLInputElement } => {
-    const row = document.createElement('label')
-    row.className = 'jira-field'
-    row.textContent = label
-    const input = document.createElement('input')
-    input.className = 'jira-input'
-    input.type = type
-    input.value = value
-    row.appendChild(input)
-    return { row, input }
-  }
 
   // ---- config form (shown in detail pane) ----
   const showConfig = (existing?: JiraAccount): void => {
@@ -905,18 +884,3 @@ export function createJiraPanel(): { element: HTMLElement } {
   return { element: root }
 }
 
-function note(text: string, cls = 'jira-note'): HTMLElement {
-  const el = document.createElement('div')
-  el.className = cls
-  el.textContent = text
-  return el
-}
-
-function mkBtn(iconName: string, title: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = 'jira-action'
-  b.title = title
-  b.innerHTML = icon(iconName)
-  b.addEventListener('click', onClick)
-  return b
-}
