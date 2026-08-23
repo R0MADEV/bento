@@ -4,33 +4,23 @@ import { parseDockerPs } from '../../core/db/dockerPs'
 import { serverKind } from '../../core/db/serverKind'
 import { publishedPort } from '../../core/db/hostPort'
 import { mysqlCreds, mongoCreds, pgCreds } from '../../core/db/credentials'
-import { DEFAULT_PORT, LISTABLE, kindForPort, type DbServer, type DbKind } from '../../core/db/dbServer'
+import { DEFAULT_PORT, LISTABLE, kindForPort, type DbServer } from '../../core/db/dbServer'
 import { icon } from '../../ui/icons'
 import { askAi, type AiQueryRunner, type AiTool } from '../../ui/askAi'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { buildJoinPath, type Relation } from '../../core/db/joinPath'
 import { withRowLimit } from '../../core/db/rowLimit'
 import { buildJoinQuery, buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from './queryBuilders'
+import {
+  KIND_LABEL, isMongo, isPg, isRedis, envValue, sqlCmd, creds, target,
+  parseRedisLines, fetchColumns, listDatabases, listTables, fetchRelations,
+  type TableData, type EditMeta,
+} from './dbAccess'
 import { parseStructuredJson } from './jsonValues'
 
 // Counter for unique datalist ids (several DB panels/views at once).
 let joinListSeq = 0
 let closeOpenPanel: (() => void) | null = null
-
-const KIND_LABEL: Record<DbKind, string> = {
-  mysql: 'MySQL', mariadb: 'MariaDB', mongodb: 'MongoDB', postgres: 'PostgreSQL', redis: 'Redis',
-}
-
-interface TableData { columns: string[]; rows: string[][] }
-const isMongo = (s: DbServer): boolean => s.kind === 'mongodb'
-const isPg = (s: DbServer): boolean => s.kind === 'postgres'
-const isRedis = (s: DbServer): boolean => s.kind === 'redis'
-const envValue = (env: string[], key: string): string => env.find(e => e.startsWith(`${key}=`))?.slice(key.length + 1) ?? ''
-// SQL engines share the same grid logic; only the command prefix differs.
-const sqlCmd = (s: DbServer, op: string): string => `db_docker_${isPg(s) ? 'pg' : 'mysql'}_${op}`
-const creds = (s: DbServer): { user: string; password: string } => ({ user: s.user ?? '', password: s.password ?? '' })
-// Where to run: a Docker container, or a local server (empty container → host:port).
-const target = (s: DbServer): { container: string; host: string; port: number } => ({ container: s.container ?? '', host: s.host, port: s.port })
 
 const note = (text: string, cls = 'db-note'): HTMLElement => {
   const el = document.createElement('div')
@@ -288,52 +278,6 @@ const makeResultWrap = (tbl: HTMLElement, toolbarItems: HTMLElement[]): HTMLElem
   return wrap
 }
 
-const sqlEscQ = (v: string): string => v.replace(/'/g, "''")
-
-const parseRedisLines = (raw: string): string[] =>
-  raw.split('\n')
-    .map(l => l.trim())
-    .filter(l => /^\d+\)/.test(l))
-    .map(l => {
-      const m = l.match(/^\d+\)\s+(.*)$/)
-      if (!m) return ''
-      let v = m[1]
-      if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-      return v
-    })
-
-const fetchColumns = async (s: DbServer, db: string, table: string): Promise<string[]> => {
-  try {
-    if (isMongo(s)) {
-      const esc = sqlEscQ
-      const script = `Object.keys(db.getSiblingDB('${esc(db)}').getCollection('${esc(table)}').findOne()||{}).join('\\n')`
-      const out = await invoke<string>('db_docker_mongo_query', { ...target(s), db, script, ...creds(s) })
-      return out.split('\n').map(x => x.trim()).filter(Boolean)
-    }
-    if (isPg(s)) {
-      const parts = table.split('.')
-      const tbl = parts.pop() ?? table
-      const schema = parts.pop() ?? 'public'
-      const sql = `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='${sqlEscQ(schema)}' AND table_name='${sqlEscQ(tbl)}' ORDER BY ordinal_position`
-      const data = await invoke<TableData>('db_docker_pg_query', { ...target(s), db, sql, ...creds(s) })
-      return data.rows.map(r => `${r[0]} (${r[1]})`)
-    }
-    const sql = `SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='${sqlEscQ(db)}' AND TABLE_NAME='${sqlEscQ(table)}' ORDER BY ORDINAL_POSITION`
-    const data = await invoke<TableData>('db_docker_mysql_query', { ...target(s), db, sql, ...creds(s) })
-    return data.rows.map(r => `${r[0]} (${r[1]})`)
-  } catch {
-    return []
-  }
-}
-
-interface EditMeta {
-  s: DbServer
-  db: string
-  table: string
-  pkIdx: number[]
-  fkColMap: Map<string, { ref_table: string; ref_column: string }>
-}
-
 export function createDbPanel(): { element: HTMLElement } {
   const root = document.createElement('div')
   root.className = 'db-panel'
@@ -410,20 +354,6 @@ export function createDbPanel(): { element: HTMLElement } {
     if (isPg(s)) { s.user = 'postgres'; s.connectDb = 'postgres' }
     else if (isMongo(s) || isRedis(s)) { s.user = '' }
     else { s.user = 'root' }
-  }
-
-  // ---- data access (Docker via exec, local via the host's own client) ----
-  const listDatabases = (s: DbServer): Promise<string[]> => {
-    if (isRedis(s)) return invoke<string[]>('db_docker_redis_dbs', { ...target(s), password: s.password ?? '' })
-    if (isMongo(s)) return invoke<string[]>('db_docker_list_mongo', { ...target(s), ...creds(s) })
-    if (isPg(s)) return invoke<string[]>('db_docker_pg_databases', { ...target(s), db: s.connectDb ?? 'postgres', ...creds(s) })
-    return invoke<string[]>('db_docker_list_mysql', { ...target(s), ...creds(s) })
-  }
-
-  const listTables = (s: DbServer, db: string): Promise<string[]> => {
-    if (isRedis(s)) return invoke<string[]>('db_docker_redis_keys', { ...target(s), db, password: s.password ?? '' })
-    const cmd = isMongo(s) ? 'db_docker_mongo_collections' : sqlCmd(s, 'tables')
-    return invoke<string[]>(cmd, { ...target(s), db, ...creds(s) })
   }
 
   const renderRedisValue = (s: DbServer, db: string, key: string, v: { kind: string; value: string }, ttl: number): void => {
@@ -715,13 +645,6 @@ export function createDbPanel(): { element: HTMLElement } {
     const text = out.trim()
     pre.textContent = text.length > 200000 ? i18nT('db.truncated', { text: text.slice(0, 200000) }) : text || i18nT('db.noOutput')
     return pre
-  }
-
-  // DB relations: FKs in SQL, heuristic references in Mongo, nothing in Redis.
-  const fetchRelations = (s: DbServer, db: string): Promise<ForeignKey[]> => {
-    if (isRedis(s)) return Promise.resolve([])
-    const cmd = isMongo(s) ? 'db_docker_mongo_refs' : sqlCmd(s, 'fks')
-    return invoke<ForeignKey[]>(cmd, { ...target(s), db, ...creds(s) }).catch(() => [] as ForeignKey[])
   }
 
   const openQuery = (s: DbServer, db: string, names: string[]): void => {
