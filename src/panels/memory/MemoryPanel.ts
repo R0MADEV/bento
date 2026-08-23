@@ -1,19 +1,14 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import type { MemoryEntry, MemoryKind, NewMemoryEntry } from '../../core/memory/MemoryEntry'
 import {
-  MEMORY_ARCHIVED_TAG,
   MEMORY_PINNED_TAG,
   MEMORY_SUPERSEDED_TAG,
   MEMORY_VERIFIED_TAG,
-  archiveMemoryTags,
   isArchivedMemory,
-  mergeMemoryEntries,
-  toggleMemoryTag,
 } from '../../core/memory/normalize'
 import { filterMemoryEntries } from '../../core/memory/memoryFilter'
 import {
@@ -21,6 +16,7 @@ import {
   timeLabel, sourceLabel, canRegenerateSummary,
 } from '../../core/memory/memoryFormat'
 import { runCandidateImport } from './memoryImportRunner'
+import { createMemoryEntryActions } from './memoryEntryActions'
 import { createMemorySourcesView } from './memorySourcesView'
 import { createMemorySummaryJobsView } from './memorySummaryJobsView'
 import type { ImportedMemoryCandidate } from '../../core/memory/memorySource'
@@ -391,72 +387,15 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     requestAnimationFrame(() => list.querySelector<HTMLElement>('.memory-item.active')?.scrollIntoView({ block: 'nearest' }))
   }
 
-  const toggleSelectedTag = async (tag: string): Promise<void> => {
-    const entry = selected()
-    if (!entry) return
-    const updated = await repo.update(entry.projectPath, entry.id, { tags: toggleMemoryTag(entry, tag) })
-    if (!updated) return
-    selectedId = updated.id
-    await reload()
-  }
-
-  const updateEntry = async (entry: MemoryEntry, patch: Partial<NewMemoryEntry>): Promise<MemoryEntry | null> => (
-    repo.update(entry.projectPath, entry.id, patch)
-  )
-
-  const archiveEntries = async (rows: MemoryEntry[]): Promise<void> => {
-    if (!rows.length) return
-    for (const entry of rows) {
-      await updateEntry(entry, { tags: archiveMemoryTags(entry) })
-      selectedIds.delete(entry.id)
-    }
-    await reload()
-    setStatus(rows.length === 1 ? i18nT('memory.memoryArchived') : i18nT('memory.archivedCount', { count: rows.length }))
-  }
-
-  const deleteEntries = async (rows: MemoryEntry[]): Promise<void> => {
-    if (!rows.length) return
-    const confirmed = await askConfirm(
-      rows.length === 1
-        ? i18nT('memory.deleteOneQuestion', { title: rows[0].title || i18nT('memory.untitled2') })
-        : i18nT('memory.deleteManyQuestion', { count: rows.length }),
-      { title: i18nT('memory.deleteMemory'), kind: 'warning', okLabel: i18nT('common.delete'), cancelLabel: i18nT('common.cancel') },
-    )
-    if (!confirmed) return
-    for (const entry of rows) {
-      await repo.remove(entry.projectPath, entry.id)
-      selectedIds.delete(entry.id)
-      if (selectedId === entry.id) selectedId = null
-    }
-    await reload()
-    setStatus(rows.length === 1 ? i18nT('memory.memoryDeleted') : i18nT('memory.deletedCount', { count: rows.length }))
-  }
-
-  const mergeSelected = async (): Promise<void> => {
-    const rows = selectedRows()
-    if (rows.length < 2) return
-    const merged = mergeMemoryEntries(rows)
-    const target = selected() && selectedIds.has(selectedId!) ? selected()! : rows[0]
-    const patch: Partial<NewMemoryEntry> = {
-      kind: merged.kind,
-      title: merged.title,
-      summary: merged.summary,
-      details: merged.details,
-      tags: merged.tags.filter(tag => tag !== MEMORY_ARCHIVED_TAG),
-      files: merged.files,
-      source: merged.source,
-      externalId: merged.externalId,
-    }
-    const saved = await repo.update(target.projectPath, target.id, patch)
-    if (!saved) throw new Error('No se pudo fusionar la memoria principal.')
-    for (const entry of rows) {
-      if (entry.id !== target.id) await repo.remove(entry.projectPath, entry.id)
-    }
-    selectedIds.clear()
-    selectedId = target.id
-    await reload()
-    setStatus(i18nT('memory.mergedCount', { count: rows.length }), saved)
-  }
+  const { archiveEntries, deleteEntries, mergeSelected, toggleSelectedTag } = createMemoryEntryActions({
+    repo,
+    getEntries: () => entries,
+    getSelectedId: () => selectedId,
+    setSelectedId: id => { selectedId = id },
+    selectedIds,
+    reload: () => reload(),
+    setStatus: (message, entry) => setStatus(message, entry),
+  })
 
   addBtn.addEventListener('click', () => {
     selectedId = null
