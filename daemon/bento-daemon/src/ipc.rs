@@ -37,6 +37,10 @@ struct Request {
     title: Option<String>,
     #[serde(default)]
     herdr_socket: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    signaling_base: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -215,6 +219,21 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             let info = remote.status();
             send(ok(&req.id, serde_json::to_value(&info).unwrap_or(Value::Null)));
         }
+
+        "webrtc.connect" => match (req.code.clone(), req.signaling_base.clone()) {
+            (Some(code), Some(signaling_base)) => {
+                let local_port = req.port.unwrap_or(7879);
+                let out = out.clone();
+                let id = req.id.clone();
+                tokio::spawn(async move {
+                    match crate::remote::webrtc_bridge::run_offerer(code, signaling_base, local_port).await {
+                        Ok(()) => { let _ = out.send(ok(&id, json!({ "connected": true }))); }
+                        Err(e) => { let _ = out.send(fail(&id, e)); }
+                    }
+                });
+            }
+            _ => send(fail(&req.id, "code and signaling_base required".into())),
+        },
 
         "daemon.shutdown" => {
             send(ok(&req.id, json!({})));

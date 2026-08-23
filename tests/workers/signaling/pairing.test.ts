@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  answerKey,
-  appendIceCandidate,
-  generatePairingCode,
-  iceCandidatesSince,
-  iceKey,
-  isValidPairingCode,
-  offerKey,
-} from '../../../workers/signaling/src/pairing'
+import { answerKey, generatePairingCode, isValidPairingCode, offerKey } from '../../../workers/signaling/src/pairing'
 
 describe('generatePairingCode', () => {
   it('returns a 6-digit numeric string', () => {
@@ -35,42 +27,10 @@ describe('isValidPairingCode', () => {
 })
 
 describe('KV key builders', () => {
-  it('namespace offer/answer/ice keys by code, distinct from each other', () => {
+  it('namespace offer/answer keys by code, distinct from each other', () => {
     const code = '482913'
-    const keys = [offerKey(code), answerKey(code), iceKey(code)]
-    expect(new Set(keys).size).toBe(3)
+    const keys = [offerKey(code), answerKey(code)]
+    expect(new Set(keys).size).toBe(2)
     for (const key of keys) expect(key).toContain(code)
-  })
-})
-
-describe('appendIceCandidate', () => {
-  it('appends to an empty list', () => {
-    expect(appendIceCandidate([], 'candidate-a')).toEqual(['candidate-a'])
-  })
-
-  it('preserves existing candidates and order', () => {
-    expect(appendIceCandidate(['a', 'b'], 'c')).toEqual(['a', 'b', 'c'])
-  })
-})
-
-describe('iceCandidatesSince', () => {
-  it('returns every candidate when since is 0', () => {
-    const result = iceCandidatesSince(['a', 'b', 'c'], 0)
-    expect(result).toEqual({ candidates: ['a', 'b', 'c'], total: 3 })
-  })
-
-  it('returns only candidates added after the given cursor', () => {
-    const result = iceCandidatesSince(['a', 'b', 'c'], 1)
-    expect(result).toEqual({ candidates: ['b', 'c'], total: 3 })
-  })
-
-  it('returns nothing new when the cursor is already caught up', () => {
-    const result = iceCandidatesSince(['a', 'b'], 2)
-    expect(result).toEqual({ candidates: [], total: 2 })
-  })
-
-  it('clamps a cursor beyond the list instead of throwing', () => {
-    const result = iceCandidatesSince(['a'], 99)
-    expect(result).toEqual({ candidates: [], total: 1 })
   })
 })

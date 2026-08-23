@@ -80,37 +80,71 @@ cómo el teléfono llega hasta ahí.
   - `GET  /offer/:code`  → lee el offer (el móvil hace polling ~1s)
   - `POST /answer/:code` → guarda el answer SDP
   - `GET  /answer/:code` → lee el answer (el Mac hace polling ~1s)
-  - `POST /ice/:code`    → agrega un ICE candidate a una lista en KV
-  - `GET  /ice/:code?since=N` → candidatos nuevos desde el cursor `N`
   - Código de emparejamiento: 6 dígitos aleatorios, expira solo, sin auth
     (el código en sí ya es el secreto — igual que un PIN de pairing)
+  - **Simplificación tras empezar la Fase 2**: ICE es non-trickle
+    (gather-then-send, como recomiendan los propios ejemplos oficiales de
+    `webrtc-rs`) — se espera a que termine el gathering antes de mandar el
+    SDP, que ya trae los candidatos embebidos. Por eso se sacó el endpoint
+    `/ice/:code` que estaba en el diseño original: no hacía falta (YAGNI).
   - Verificado end-to-end en local con `wrangler dev --local` (KV simulada,
-    sin cuenta de Cloudflare) — offer/answer/ICE/código inválido/ruta
-    desconocida, los 8 casos responden como se esperaba.
+    sin cuenta de Cloudflare).
 - [ ] **1.3** `wrangler deploy` → URL gratis en `*.workers.dev` (pendiente:
   requiere `wrangler kv namespace create PAIRING` con una cuenta real y
   pegar el id resultante en `wrangler.toml`)
 - [x] **1.4** Tests (`tests/workers/signaling/pairing.test.ts`, TDD): formato
-  del código, unicidad, keys de KV distintas por code, paginación de ICE
-  candidates por cursor (`since`)
+  del código, unicidad, keys de KV distintas por code
 
 ### Fase 2 — Forwarder en el daemon (Rust)
 
 > Objetivo: el DataChannel WebRTC entra al Mac y llega a `127.0.0.1:7879`
 > exactamente como si fuera una conexión de red normal.
 
-- [ ] **2.1** Dependencia `webrtc` (crate Rust, `webrtc-rs`) en
-  `daemon/bento-daemon/Cargo.toml`.
-- [ ] **2.2** Nuevo `daemon/bento-daemon/src/remote/webrtc.rs`:
-  - Arma el `RTCPeerConnection`, hace polling al Worker (Fase 1) con el
-    código que le pasa el usuario, intercambia offer/answer/ICE
+- [x] **2.1** Dependencia `webrtc = "0.20.3"` (crate Rust, `webrtc-rs`) +
+  `async-trait`, `bytes`, `reqwest` en `daemon/bento-daemon/Cargo.toml`.
+  API real verificada contra el código fuente y los ejemplos oficiales del
+  crate en GitHub (tag `v0.20.3`) en vez de asumida de memoria — la 0.20.x
+  reescribió la API a builders (`PeerConnectionBuilder`,
+  `RTCConfigurationBuilder`) + un `Runtime` inyectable, distinta de
+  versiones más viejas.
+- [x] **2.2** Nuevo `daemon/bento-daemon/src/remote/webrtc_bridge.rs`
+  (nombrado así, no `webrtc.rs`, para no chocar con el propio crate
+  `webrtc` en las rutas `use`):
+  - Arma el `RTCPeerConnection` como *offerer*, crea el DataChannel,
+    espera el gathering ICE (con timeout de 5s — ver nota abajo) y postea
+    el offer al Worker; hace polling de `/answer/:code` hasta que el
+    móvil conteste
   - Al abrir el DataChannel: por cada mensaje, reenvía crudo a un socket
-    TCP local (`127.0.0.1:7879`) y viceversa — proxy simple, sin parsear
+    TCP local (`127.0.0.1:<port>`) y viceversa — proxy simple, sin parsear
     el contenido (no necesita saber qué es HTTP o WS, solo reenviar bytes)
-- [ ] **2.3** Comando IPC nuevo para que la app Tauri le pida al daemon
-  "empezar a escuchar un código de emparejamiento X"
+  - **Bug real encontrado y corregido verificando en vivo** (no solo
+    compilando): el gathering ICE se quedaba colgado para siempre en esta
+    máquina — nunca disparaba `RTCIceGatheringState::Complete`. Diagnosticado
+    activando logs internos del crate (`log`/`env_logger`, temporal, ya
+    sacado): el STUN nunca vuelve por la interfaz de Tailscale
+    (`100.88.x.x`), y el gatherer esperaba a que **todas** las interfaces
+    locales terminaran antes de avisar. Fix: no bloquear indefinidamente en
+    `gathering_complete_rx.recv()` — envolverlo en
+    `tokio::time::timeout(ICE_GATHERING_TIMEOUT, ...)` y seguir con lo que
+    se haya juntado (alcanza un candidato válido; ya se habían conseguido
+    host + srflx en <1s por la interfaz LAN normal). Irónico: la interfaz
+    de Tailscale — lo que este feature reemplaza — es la que rompía el
+    reemplazo.
+  - Verificado end-to-end real (no solo `cargo build`): Worker de
+    señalización local (`wrangler dev`) + el binario del daemon compilado,
+    hablándole por el socket IPC crudo (mismo protocolo que usa la app
+    Tauri) con un código de pairing — el offer con SDP+candidatos válidos
+    llega a KV en ~8s.
+- [x] **2.3** Comando IPC nuevo `webrtc.connect` (`code`, `signaling_base`,
+  `port` opcional) en `daemon/bento-daemon/src/ipc.rs`, mismo patrón que
+  `remote.start` (spawn + responde ok/fail por el canal de salida).
 - [ ] **2.4** Tests: el forwarder reenvía bytes en ambas direcciones sin
-  corromper el framing (test con un servidor TCP de prueba en vez de axum)
+  corromper el framing. Pendiente — no hay un peer real (Fase 3, el
+  navegador del móvil) contra el cual probar esa mitad todavía; lo que sí
+  se verificó en vivo es todo el tramo hasta el offer siendo publicado. El
+  puente DataChannel↔TCP en sí no tiene un seam de test razonable sin un
+  segundo peer WebRTC real o mockear el crate entero — se prueba de punta a
+  punta natural cuando entre la Fase 3.
 
 ### Fase 3 — Cliente WebRTC + Service Worker (móvil)
 

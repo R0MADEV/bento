@@ -3,6 +3,7 @@
 //! caller explicitly calls `RemoteControl::start`.
 
 mod review;
+pub(crate) mod webrtc_bridge;
 
 use axum::{
     extract::{

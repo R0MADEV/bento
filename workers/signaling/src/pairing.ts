@@ -17,15 +17,3 @@ export function offerKey(code: string): string {
 export function answerKey(code: string): string {
   return `answer:${code}`
 }
-
-export function iceKey(code: string): string {
-  return `ice:${code}`
-}
-
-export function appendIceCandidate(existing: string[], candidate: string): string[] {
-  return [...existing, candidate]
-}
-
-export function iceCandidatesSince(candidates: string[], since: number): { candidates: string[]; total: number } {
-  return { candidates: candidates.slice(since), total: candidates.length }
-}

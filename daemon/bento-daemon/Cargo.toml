@@ -17,3 +17,8 @@ serde_json = "1.0"
 axum = { version = "0.7", features = ["ws"] }
 futures-util = "0.3"
 getrandom = "0.2"
+# WebRTC remote control: P2P DataChannel to the phone, bypassing Tailscale.
+webrtc = "0.20.3"
+async-trait = "0.1"
+bytes = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
