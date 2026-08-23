@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
-import { note, makeFilterInput, makeCsvBtn, makeResultWrap, buildWheres, rowEl, appendExpandable } from '../../../src/panels/db/dbWidgets'
+import { note, makeFilterInput, makeCsvBtn, makeResultWrap, buildWheres, rowEl, appendExpandable, copyToClipboard } from '../../../src/panels/db/dbWidgets'
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', makeLocalStorage())
@@ -120,5 +120,40 @@ describe('appendExpandable', () => {
     row.click()
     expect(children.classList.contains('hidden')).toBe(false)
     expect(row.classList.contains('open')).toBe(true)
+  })
+})
+
+describe('copyToClipboard', () => {
+  const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0))
+
+  it('writes the given text, not what the button shows', async () => {
+    const writeText = vi.fn(async () => {})
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    const btn = document.createElement('button')
+    btn.textContent = '\u2398'
+    await copyToClipboard(btn, 'the raw value')
+    expect(writeText).toHaveBeenCalledWith('the raw value')
+  })
+
+  it('flashes a tick and restores the original content', async () => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: async () => {} } })
+    vi.useFakeTimers()
+    const btn = document.createElement('button')
+    btn.innerHTML = '<svg></svg>'
+    const done = copyToClipboard(btn, 'x')
+    await vi.advanceTimersByTimeAsync(0)
+    await done
+    expect(btn.textContent).toBe('\u2713')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(btn.innerHTML).toBe('<svg></svg>')
+  })
+
+  it('leaves the button alone when the clipboard refuses', async () => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: async () => { throw new Error('denied') } } })
+    const btn = document.createElement('button')
+    btn.textContent = '\u2398'
+    await copyToClipboard(btn, 'x')
+    await flush()
+    expect(btn.textContent).toBe('\u2398')
   })
 })

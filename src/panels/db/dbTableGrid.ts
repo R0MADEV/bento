@@ -3,10 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import type { DbServer } from '../../core/db/dbServer'
 import { icon } from '../../ui/icons'
 import { parseStructuredJson } from './jsonValues'
-import { isPg, sqlCmd, creds, target, type TableData } from './dbAccess'
+import { sqlCmd, creds, target, type TableData } from './dbAccess'
 import { buildJsonTree, renderCellValue } from './dbCellRender'
-import { note, makeFilterInput, makeCsvBtn, makeResultWrap } from './dbWidgets'
+import { note, makeFilterInput, makeCsvBtn, makeResultWrap, copyToClipboard } from './dbWidgets'
 import { editCell, deleteRow } from './dbRowEdit'
+import { ident, qualifiedTable, quoteValue } from './dbSqlQuote'
 import type { DbDetailHost } from './dbDetailHost'
 
 export const renderGrid = (
@@ -108,7 +109,7 @@ export const renderGrid = (
       copyBtn2.addEventListener('click', () => {
         const obj: Record<string, string> = {}
         data.columns.forEach((col, i) => { obj[col] = row[i] })
-        void navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).then(() => { copyBtn2.innerHTML = '✓'; setTimeout(() => { copyBtn2.innerHTML = icon('copy') }, 1200) })
+        void copyToClipboard(copyBtn2, JSON.stringify(obj, null, 2))
       })
       actions.appendChild(copyBtn2)
       if (editable) {
@@ -188,21 +189,15 @@ export const renderGrid = (
       okBtn.textContent = '✓'
       okBtn.title = i18nT('db.insertRow')
       okBtn.addEventListener('click', async () => {
-        const ident = (id: string): string => isPg(s) ? `"${id}"` : `\`${id}\``
-        const quote = (v: string): string => isPg(s)
-          ? `'${v.replace(/'/g, "''")}'`
-          : `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
         const vals: Array<[string, string | null]> = []
         cellStates.forEach(({ input: inp, isNull }, i) => {
           if (isNull) vals.push([data.columns[i], null])
           else if (inp.value !== '') vals.push([data.columns[i], inp.value])
         })
         if (!vals.length) { alert(i18nT('db.insertNeedValue')); return }
-        const colSql = vals.map(([c]) => ident(c)).join(', ')
-        const valSql = vals.map(([, v]) => v === null ? 'NULL' : quote(v)).join(', ')
-        const tblQ = isPg(s)
-          ? table.split('.').map(p => `"${p}"`).join('.')
-          : `\`${db}\`.\`${table}\``
+        const colSql = vals.map(([c]) => ident(s, c)).join(', ')
+        const valSql = vals.map(([, v]) => v === null ? 'NULL' : quoteValue(s, v)).join(', ')
+        const tblQ = qualifiedTable(s, db, table)
         okBtn.disabled = true
         try {
           await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `INSERT INTO ${tblQ} (${colSql}) VALUES (${valSql})`, ...creds(s) })

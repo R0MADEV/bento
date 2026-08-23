@@ -4,6 +4,7 @@ import type { DbServer } from '../../core/db/dbServer'
 import { isPg, sqlCmd, creds, target, type TableData } from './dbAccess'
 import { renderCellValue } from './dbCellRender'
 import { buildWheres } from './dbWidgets'
+import { ident, qualifiedTable } from './dbSqlQuote'
 
 export const editCell = (
   s: DbServer, db: string, table: string, columns: string[],
@@ -22,12 +23,9 @@ export const editCell = (
     if (!confirm(summary)) { restore(); return }
     try {
       if (setNull) {
-        const ident = (id: string): string => isPg(s) ? `"${id}"` : `\`${id}\``
-        const w = wheres.map(([c, v]) => `${ident(c)} = '${v.replace(/'/g, "''")}'`).join(' AND ')
-        const tblQ = isPg(s)
-          ? table.split('.').map(p => `"${p}"`).join('.')
-          : `\`${db}\`.\`${table}\``
-        await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `UPDATE ${tblQ} SET ${ident(column)} = NULL WHERE ${w}`, ...creds(s) })
+        const w = wheres.map(([c, v]) => `${ident(s, c)} = '${v.replace(/'/g, "''")}'`).join(' AND ')
+        const tblQ = qualifiedTable(s, db, table)
+        await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `UPDATE ${tblQ} SET ${ident(s, column)} = NULL WHERE ${w}`, ...creds(s) })
         row[colIdx] = 'NULL'
         renderCellValue(td as HTMLTableCellElement, 'NULL')
         return

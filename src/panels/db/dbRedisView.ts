@@ -4,7 +4,7 @@ import type { DbServer } from '../../core/db/dbServer'
 import { parseStructuredJson } from './jsonValues'
 import { target, parseRedisLines } from './dbAccess'
 import { prettyJson, highlightJson } from './dbCellRender'
-import { note } from './dbWidgets'
+import { note, copyToClipboard } from './dbWidgets'
 import type { DbDetailHost } from './dbDetailHost'
 
 export const renderRedisValue = (
@@ -102,9 +102,7 @@ export const renderRedisValue = (
   const content = buildContent()
   const copyBtn = document.createElement('button')
   copyBtn.className = 'db-action'; copyBtn.title = i18nT('db.jsonCopy'); copyBtn.textContent = '⎘'
-  copyBtn.addEventListener('click', () => {
-    void navigator.clipboard.writeText(rawValue).then(() => { copyBtn.textContent = '✓'; setTimeout(() => { copyBtn.textContent = '⎘' }, 1200) })
-  })
+  copyBtn.addEventListener('click', () => { void copyToClipboard(copyBtn, rawValue) })
   const toolbar = document.createElement('div'); toolbar.className = 'db-result-toolbar'; toolbar.appendChild(copyBtn)
   const scroll = document.createElement('div'); scroll.className = 'db-docs'; scroll.appendChild(content)
   showDetail(detailHead(`db${db} · ${key}`, kindStr), toolbar, scroll)

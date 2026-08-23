@@ -1,5 +1,6 @@
 import { t as i18nT } from '../../i18n'
 import { parseStructuredJson } from './jsonValues'
+import { copyToClipboard } from './dbWidgets'
 
 // Only one expanded JSON/text panel at a time: opening one closes the previous.
 let closeOpenPanel: (() => void) | null = null
@@ -197,10 +198,7 @@ export const renderCellValue = (td: HTMLTableCellElement, value: string): void =
   copyBtn.textContent = '⎘'
   copyBtn.addEventListener('click', e => {
     e.stopPropagation()
-    void navigator.clipboard.writeText(rawContent).then(() => {
-      copyBtn.textContent = '✓'
-      setTimeout(() => { copyBtn.textContent = '⎘' }, 1200)
-    })
+    void copyToClipboard(copyBtn, rawContent)
   })
 
   const panel = document.createElement('div')

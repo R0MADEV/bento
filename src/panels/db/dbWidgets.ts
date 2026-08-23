@@ -94,3 +94,15 @@ export const appendExpandable = (
   })
   parent.appendChild(row)
 }
+
+/** Copies text and flashes a tick on the button, restoring whatever it showed before. */
+export const copyToClipboard = async (btn: HTMLButtonElement, text: string): Promise<void> => {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    return // nothing copied: leave the button as it was
+  }
+  const original = btn.innerHTML
+  btn.textContent = '✓'
+  setTimeout(() => { btn.innerHTML = original }, 1200)
+}
