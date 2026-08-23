@@ -24,6 +24,7 @@ import {
   timeLabel, sourceLabel, canRegenerateSummary,
 } from '../../core/memory/memoryFormat'
 import { candidateProject, computePreviewCandidateState } from '../../core/memory/memoryCandidates'
+import { planCandidateImport } from '../../core/memory/memoryImportPlan'
 import type {
   MemorySource, ImportedMemoryCandidate, PreviewCandidateState, MemorySummaryJob,
 } from '../../core/memory/memorySource'
@@ -674,38 +675,19 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       let lastAffectedId: string | null = null
       for (const [index, candidate] of candidates.entries()) {
         setSourceActivity(i18nT('memory.importingProgress', { label: item.label, current: index + 1, total: candidates.length }), ((index + 1) / Math.max(candidates.length, 1)) * 100)
-        const payload: NewMemoryEntry = {
-          kind: 'note',
-          title: candidate.title,
-          summary: candidate.summary,
-          details: candidate.details,
-          source: candidate.source,
-          externalId: candidate.externalId,
-          files: candidate.files,
-          tags: candidate.tags,
-          createdAt: candidate.createdAt,
-          updatedAt: new Date().toISOString(),
-        }
-        const normalized = normalizeNewMemoryEntry(currentProject, payload)
-        const existingExternal = existing.find(entry => entry.externalId === normalized.externalId)
-        if (existingExternal) {
-          lastAffectedId = existingExternal.id
+        const plan = planCandidateImport(currentProject, candidate, existing)
+        if (plan.action === 'skip') {
+          lastAffectedId = plan.entryId
           skipped++
           continue
         }
-        const duplicate = findSemanticallyDuplicate(existing, normalized)
-        if (duplicate) {
-          const updated = await repo.update(currentProject, duplicate.id, {
-            tags: uniqMemoryValues([...duplicate.tags, ...normalized.tags]),
-            files: uniqMemoryValues([...duplicate.files, ...normalized.files]),
-            summary: duplicate.summary.length >= normalized.summary.length ? duplicate.summary : normalized.summary,
-            details: duplicate.details.length >= normalized.details.length ? duplicate.details : normalized.details,
-          })
-          lastAffectedId = updated?.id ?? duplicate.id
+        if (plan.action === 'merge') {
+          const updated = await repo.update(currentProject, plan.entry.id, plan.patch)
+          lastAffectedId = updated?.id ?? plan.entry.id
           merged++
           continue
         }
-        const created = await repo.create(currentProject, payload)
+        const created = await repo.create(currentProject, plan.payload)
         existing.unshift(created)
         lastAffectedId = created.id
         saved++
