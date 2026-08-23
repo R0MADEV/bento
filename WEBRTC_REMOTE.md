@@ -72,18 +72,27 @@ cómo el teléfono llega hasta ahí.
 
 > Objetivo: que el móvil y el Mac se encuentren e intercambien SDP/ICE.
 
-- [ ] **1.1** Cuenta gratuita de Cloudflare + `wrangler login` (una sola vez).
-- [ ] **1.2** Worker mínimo (`workers/signaling/index.ts`), sin framework:
+- [ ] **1.1** Cuenta gratuita de Cloudflare + `wrangler login` (una sola vez,
+  la tiene que hacer el usuario — necesita su propia cuenta).
+- [x] **1.2** Worker mínimo (`workers/signaling/src/worker.ts` +
+  `src/pairing.ts`), sin framework:
   - `POST /offer/:code`  → guarda el offer SDP en KV bajo `code`, TTL 5 min
   - `GET  /offer/:code`  → lee el offer (el móvil hace polling ~1s)
   - `POST /answer/:code` → guarda el answer SDP
   - `GET  /answer/:code` → lee el answer (el Mac hace polling ~1s)
   - `POST /ice/:code`    → agrega un ICE candidate a una lista en KV
-  - `GET  /ice/:code`    → lee los ICE candidates nuevos
+  - `GET  /ice/:code?since=N` → candidatos nuevos desde el cursor `N`
   - Código de emparejamiento: 6 dígitos aleatorios, expira solo, sin auth
     (el código en sí ya es el secreto — igual que un PIN de pairing)
-- [ ] **1.3** `wrangler deploy` → URL gratis en `*.workers.dev`
-- [ ] **1.4** Tests: expiración del código, formato inválido rechazado
+  - Verificado end-to-end en local con `wrangler dev --local` (KV simulada,
+    sin cuenta de Cloudflare) — offer/answer/ICE/código inválido/ruta
+    desconocida, los 8 casos responden como se esperaba.
+- [ ] **1.3** `wrangler deploy` → URL gratis en `*.workers.dev` (pendiente:
+  requiere `wrangler kv namespace create PAIRING` con una cuenta real y
+  pegar el id resultante en `wrangler.toml`)
+- [x] **1.4** Tests (`tests/workers/signaling/pairing.test.ts`, TDD): formato
+  del código, unicidad, keys de KV distintas por code, paginación de ICE
+  candidates por cursor (`since`)
 
 ### Fase 2 — Forwarder en el daemon (Rust)
 

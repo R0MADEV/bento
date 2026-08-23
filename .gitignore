@@ -29,3 +29,6 @@ artifacts/e2e/
 
 # Tauri
 src-tauri/target/
+
+# Cloudflare Workers
+.wrangler/

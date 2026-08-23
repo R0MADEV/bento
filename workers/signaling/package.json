@@ -1,0 +1,14 @@
+{
+  "name": "bento-signaling",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "kv:create": "wrangler kv namespace create PAIRING"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
