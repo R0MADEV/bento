@@ -18,6 +18,7 @@ import { note, makeFilterInput, makeCsvBtn, makeResultWrap, rowEl, appendExpanda
 import { detectDocker, detectLocal, resolveCreds } from './dbDetect'
 import { editCell, deleteRow } from './dbRowEdit'
 import { renderResultTable, preResult } from './dbResultTable'
+import { createDetailHost } from './dbDetailHost'
 
 // Counter for unique datalist ids (several DB panels/views at once).
 let joinListSeq = 0
@@ -54,7 +55,7 @@ export function createDbPanel(): { element: HTMLElement } {
   body.append(cs.element, cs.resizer, detail)
   root.append(body)
 
-  const showDetail = (...nodes: HTMLElement[]): void => { detail.replaceChildren(...nodes) }
+  const { showDetail, detailHead } = createDetailHost(detail)
   showDetail(note(i18nT('db.selectATableOrCollectionToViewIts'), 'db-detail-hint'))
 
   const renderRedisValue = (s: DbServer, db: string, key: string, v: { kind: string; value: string }, ttl: number): void => {
@@ -184,30 +185,6 @@ export function createDbPanel(): { element: HTMLElement } {
     } catch (e) {
       showDetail(note(String(e), 'db-detail-error'))
     }
-  }
-
-  // ---- detail renderers ----
-  const detailHead = (path: string, count: string): HTMLElement => {
-    const bar = document.createElement('div')
-    bar.className = 'db-detail-head'
-    const p = document.createElement('span')
-    p.className = 'db-detail-path'
-    p.textContent = path
-    const c = document.createElement('span')
-    c.className = 'db-detail-count'
-    c.textContent = count
-    // Send to the AI chat: the selection or, if there's none, the current view (table/docs).
-    const askBtn = document.createElement('button')
-    askBtn.className = 'db-action'
-    askBtn.title = i18nT('common.sendToAiChat')
-    askBtn.innerHTML = icon('chat')
-    askBtn.addEventListener('click', () => {
-      const selection = window.getSelection()?.toString().trim()
-      const content = (selection || detail.textContent || '').slice(-12000)
-      if (content.trim()) askAi(`Contexto — datos de BD (${path}):\n\n\`\`\`\n${content}\n\`\`\`\n\n`)
-    })
-    bar.append(p, c, askBtn)
-    return bar
   }
 
   const openQuery = (s: DbServer, db: string, names: string[]): void => {
