@@ -40,10 +40,9 @@ describe('makeFilterInput', () => {
 describe('makeCsvBtn', () => {
   it('quotes every field and doubles embedded quotes', () => {
     let csv = ''
-    vi.stubGlobal('URL', {
-      createObjectURL: (b: { text: () => Promise<string> }) => { void b; return 'blob:x' },
-      revokeObjectURL: () => {},
-    })
+    // Patch only the two statics: replacing URL itself breaks the anchor click.
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     vi.stubGlobal('Blob', class {
       constructor(parts: string[]) { csv = parts.join('') }
     })
