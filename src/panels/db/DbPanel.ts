@@ -19,6 +19,7 @@ import { createDetailHost } from './dbDetailHost'
 import { renderGrid } from './dbTableGrid'
 import { renderDocs } from './dbDocsView'
 import { renderRedisValue } from './dbRedisView'
+import { createQueryHistory } from './dbQueryHistory'
 
 // Counter for unique datalist ids (several DB panels/views at once).
 let joinListSeq = 0
@@ -182,43 +183,11 @@ export function createDbPanel(): { element: HTMLElement } {
       askAi(`${schema}\n\nEscríbeme ${dialect} para: ${guide}`, false, runner, tools)
     })
 
-    const histBtn = document.createElement('button')
-    histBtn.className = 'db-connect'
-    histBtn.title = i18nT('db.queryHistory')
-    histBtn.textContent = '⏱'
-    const histDrop = document.createElement('div')
-    histDrop.className = 'db-hist-drop hidden'
-    let offHistClick: (() => void) | null = null
-    histBtn.addEventListener('click', e => {
-      e.stopPropagation()
-      if (offHistClick) { document.removeEventListener('click', offHistClick); offHistClick = null }
-      const h = getHistory()
-      histDrop.replaceChildren()
-      if (!h.length) {
-        histDrop.append(note(i18nT('db.noHistory'), 'db-detail-hint'))
-      } else {
-        h.forEach(q => {
-          const btn = document.createElement('button')
-          btn.className = 'db-hist-item'
-          btn.textContent = q.split('\n')[0].slice(0, 80)
-          btn.title = q
-          btn.addEventListener('click', () => { editor.value = q; histDrop.classList.add('hidden'); editor.focus() })
-          histDrop.appendChild(btn)
-        })
-      }
-      histDrop.classList.toggle('hidden')
-      if (!histDrop.classList.contains('hidden')) {
-        offHistClick = (): void => { histDrop.classList.add('hidden'); offHistClick = null }
-        setTimeout(() => { if (offHistClick) document.addEventListener('click', offHistClick, { once: true }) }, 0)
-      }
-    })
-    const histWrap = document.createElement('div')
-    histWrap.className = 'db-hist-wrap'
-    histWrap.append(histBtn, histDrop)
+    const history = createQueryHistory(s, db, q => { editor.value = q; editor.focus() })
 
     const actions = document.createElement('div')
     actions.className = 'db-query-actions'
-    actions.append(runBtn, aiBtn, histWrap)
+    actions.append(runBtn, aiBtn, history.element)
 
     // Deterministic JOIN builder (no AI): you pick tables and Bento finds the
     // JOIN path through the foreign keys. SQL only.
@@ -393,13 +362,6 @@ export function createDbPanel(): { element: HTMLElement } {
       return out
     }
 
-    const HIST_KEY = `bento.db.qhist.${s.kind}.${db}`
-    const getHistory = (): string[] => { try { return JSON.parse(localStorage.getItem(HIST_KEY) ?? '[]') as string[] } catch { return [] } }
-    const saveHistory = (q: string): void => {
-      const h = [q, ...getHistory().filter(x => x !== q)].slice(0, 20)
-      localStorage.setItem(HIST_KEY, JSON.stringify(h))
-    }
-
     // Runs a query and returns the element with the result (table or text).
     // Reused by the editor and by the "Run" button in the AI chat.
     const executeQuery = async (text: string): Promise<HTMLElement> => {
@@ -473,7 +435,7 @@ export function createDbPanel(): { element: HTMLElement } {
       resultArea.replaceChildren(note(i18nT('db.running'), 'db-detail-loading'))
       try {
         const result = await executeQuery(text)
-        saveHistory(text)
+        history.saveHistory(text)
         resultArea.replaceChildren(result)
       } catch (e) {
         const errEl = note(String(e), 'db-detail-error')
