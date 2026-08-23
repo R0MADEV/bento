@@ -20,11 +20,11 @@ import {
 } from '../../core/memory/normalize'
 import { filterMemoryEntries } from '../../core/memory/memoryFilter'
 import {
-  KIND_LABEL, KIND_OPTIONS, splitList, projectName,
+  KIND_LABEL, KIND_OPTIONS, splitList,
   timeLabel, sourceLabel, canRegenerateSummary,
 } from '../../core/memory/memoryFormat'
 import { createMemorySourcesView } from './memorySourcesView'
-import type { MemorySummaryJob } from '../../core/memory/memorySource'
+import { createMemorySummaryJobsView } from './memorySummaryJobsView'
 
 import type { MemoryRepository } from '../../ports/MemoryRepository'
 
@@ -97,14 +97,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   deleteSelectedBtn.className = 'memory-action danger'
   deleteSelectedBtn.textContent = i18nT('common.delete2')
   controls.append(search, kindFilter, sourceFilter, archivedToggle, selectVisibleBtn, clearSelectionBtn, archiveSelectedBtn, mergeSelectedBtn, deleteSelectedBtn)
-
-  const summaryJobsPanel = document.createElement('details')
-  summaryJobsPanel.className = 'memory-summary-jobs'
-  const summaryJobsTitle = document.createElement('summary')
-  summaryJobsTitle.textContent = i18nT('memory.sessionSummaries')
-  const summaryJobsList = document.createElement('div')
-  summaryJobsList.className = 'memory-summary-jobs-list'
-  summaryJobsPanel.append(summaryJobsTitle, summaryJobsList)
 
   const list = document.createElement('div')
   list.className = 'memory-list'
@@ -188,6 +180,15 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   form.append(kind, source, titleInput, tags, files, summary, details, saveBtn)
   detail.append(detailHead, form)
+  const summaryJobsView = createMemorySummaryJobsView({
+    currentProject,
+    setStatus: (message, entry) => setStatus(message, entry),
+    onRegenerated: async updated => {
+      if (updated) selectedId = updated.id
+      await reload()
+    },
+  })
+
   // The callbacks are wrapped rather than passed directly: reload and
   // revealMemoryEntry are declared further down.
   const sourcesView = createMemorySourcesView({
@@ -200,11 +201,10 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     },
   })
 
-  cs.list.append(controls, summaryJobsPanel, sourcesView.element, list)
+  cs.list.append(controls, summaryJobsView.element, sourcesView.element, list)
   root.append(cs.element, cs.resizer, detail)
 
   let entries: MemoryEntry[] = []
-  let summaryJobs: MemorySummaryJob[] = []
   let selectedId: string | null = null
   const selectedIds = new Set<string>()
 
@@ -243,51 +243,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       : currentProject
         ? i18nT('memory.projectLabel', { project: currentProject })
         : i18nT('memory.globalMemory')
-  }
-
-  const renderSummaryJobs = (): void => {
-    const pending = summaryJobs.filter(job => job.status === 'pending' || job.status === 'processing')
-    const failed = summaryJobs.filter(job => job.status === 'failed')
-    const completed = summaryJobs.filter(job => job.status === 'completed' || job.status === 'skipped')
-    summaryJobsTitle.textContent = i18nT('memory.summaryJobs', {
-      pending: pending.length ? i18nT('memory.pendingCount', { count: pending.length }) : '',
-      failed: failed.length ? i18nT('memory.failedCount', { count: failed.length }) : '',
-      completed: completed.length ? i18nT('memory.processedCount', { count: completed.length }) : '',
-    })
-    summaryJobsList.innerHTML = ''
-    const actionable = [...pending, ...failed]
-    if (!actionable.length) {
-      summaryJobsList.textContent = summaryJobs.length
-        ? i18nT('memory.thereAreNoPendingOrFailedSummaries')
-        : i18nT('memory.thereAreNoRecordedSessionClosuresYet')
-      return
-    }
-    actionable.forEach(job => {
-      const row = document.createElement('div')
-      row.className = `memory-summary-job ${job.status}`
-      const text = document.createElement('div')
-      const projectLabel = projectName(job.projectPath) || i18nT('common.global')
-      text.textContent = `${job.agent} · ${projectLabel} · ${job.status}${job.error ? ` · ${job.error}` : ''}`
-      row.appendChild(text)
-      if (job.status === 'failed' || job.status === 'pending') {
-        const retry = document.createElement('button')
-        retry.className = 'memory-action'
-        retry.textContent = i18nT('memory.retry')
-        retry.addEventListener('click', () => { void retrySummaryJob(job) })
-        row.appendChild(retry)
-      }
-      summaryJobsList.appendChild(row)
-    })
-    if (failed.length) summaryJobsPanel.open = true
-  }
-
-  const reloadSummaryJobs = async (): Promise<void> => {
-    try {
-      summaryJobs = await invoke<MemorySummaryJob[]>('memory_summary_job_list', { projectPath: currentProject })
-    } catch {
-      summaryJobs = []
-    }
-    renderSummaryJobs()
   }
 
   const syncBulkButtons = (): void => {
@@ -424,23 +379,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     requestAnimationFrame(() => list.querySelector<HTMLElement>('.memory-item.active')?.scrollIntoView({ block: 'nearest' }))
   }
 
-  const retrySummaryJob = async (job: MemorySummaryJob): Promise<void> => {
-    try {
-      setStatus(i18nT('memory.regeneratingAgent', { agent: job.agent }))
-      const updated = await invoke<MemoryEntry | null>('memory_regenerate_summary', {
-        projectPath: job.projectPath,
-        externalId: `${job.agent}:session-summary:${job.sessionId}`,
-      })
-      if (updated) selectedId = updated.id
-      await reload()
-      await reloadSummaryJobs()
-      setStatus(updated ? i18nT('memory.summaryRegenerated') : i18nT('memory.theSummarizerReturnedNoReusableMemory'), updated ?? undefined)
-    } catch (error) {
-      await reloadSummaryJobs()
-      setStatus(i18nT('memory.regenerateFailed', { error: error instanceof Error ? error.message : String(error) }))
-    }
-  }
-
   const toggleSelectedTag = async (tag: string): Promise<void> => {
     const entry = selected()
     if (!entry) return
@@ -514,7 +452,7 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     renderList()
     titleInput.focus()
   })
-  refreshBtn.addEventListener('click', () => { void Promise.all([reload(), reloadSummaryJobs()]) })
+  refreshBtn.addEventListener('click', () => { void Promise.all([reload(), summaryJobsView.reload()]) })
 
   search.addEventListener('input', renderList)
   kindFilter.addEventListener('change', renderList)
@@ -665,6 +603,5 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   syncBulkButtons()
   void reload()
-  void reloadSummaryJobs()
   return { element: root }
 }
