@@ -3,11 +3,12 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
 import { filterWorktrees, groupWorktreesByRepo } from '../../core/git/worktreeList'
+import { summarisePrChecks } from '../../core/git/prChecks'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
 import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
 import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
-import { previewRebase, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
+import { previewRebase, reorderByDrop, swapItems, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
 import {
   fetchIssue, fetchTransitions, applyTransition, browseUrl, loadJiraConfig,
   type JiraConfig, type TaskIssue,
@@ -654,20 +655,18 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
         CLOSED: taskT('closedPr'),
       }
       prEl.className = `tasks-pr-badge ${stateMap[pr.state] ?? ''}`
-      const checks = pr.statusCheckRollup ?? []
-      const failedChecks = checks.filter(check => /FAIL|ERROR|CANCEL|TIMED_OUT/i.test(check.conclusion ?? check.state ?? ''))
-      const pendingChecks = checks.filter(check => /PENDING|QUEUED|IN_PROGRESS|EXPECTED/i.test(check.status ?? check.state ?? ''))
-      prEl.textContent = failedChecks.length ? taskT('failedChecks', { count: failedChecks.length })
-        : pendingChecks.length ? taskT('pendingChecks', { count: pendingChecks.length })
+      const checks = summarisePrChecks(pr.statusCheckRollup ?? [])
+      prEl.textContent = checks.failed ? taskT('failedChecks', { count: checks.failed })
+        : checks.pending ? taskT('pendingChecks', { count: checks.pending })
           : labelMap[pr.state] ?? taskT('openPrShort')
       const prSignals = [
         pr.baseRefName ? `base: ${pr.baseRefName}` : '',
         pr.mergeable === 'CONFLICTING' ? taskT('baseConflicts') : '',
         pr.reviewDecision === 'APPROVED' ? taskT('approved') : pr.reviewDecision === 'CHANGES_REQUESTED' ? taskT('changesRequested') : pr.reviewDecision === 'REVIEW_REQUIRED' ? taskT('reviewPending') : '',
-        failedChecks.length ? taskT('failingChecks', { count: failedChecks.length }) : pendingChecks.length ? taskT('checksPending', { count: pendingChecks.length }) : checks.length ? taskT('checksPassed') : '',
+        checks.failed ? taskT('failingChecks', { count: checks.failed }) : checks.pending ? taskT('checksPending', { count: checks.pending }) : checks.total ? taskT('checksPassed') : '',
       ].filter(Boolean)
       prEl.title = `${pr.title}${prSignals.length ? ` · ${prSignals.join(' · ')}` : ''}`
-      if (failedChecks.length || pr.mergeable === 'CONFLICTING') prEl.classList.add('tasks-pr-checks-failed')
+      if (checks.failed || pr.mergeable === 'CONFLICTING') prEl.classList.add('tasks-pr-checks-failed')
       prEl.addEventListener('click', e => { e.stopPropagation(); openUrl(pr.url).catch(() => {}) })
     }
 
@@ -1407,7 +1406,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
 
   function showRebaseEditor(wt: Worktree, entries: CommitEntry[]): void {
     type RebaseItem = RebasePlanItem & { action: RebaseAction; newMessage: string }
-    const items: RebaseItem[] = entries.map(e => ({ action: 'pick', hash: e.hash, short: e.short, subject: e.subject, newMessage: '' }))
+    let items: RebaseItem[] = entries.map(e => ({ action: 'pick', hash: e.hash, short: e.short, subject: e.subject, newMessage: '' }))
     const ACTIONS: RebaseAction[] = ['pick', 'reword', 'edit', 'squash', 'fixup', 'drop']
     let draggedIndex: number | null = null
     let dragTarget: { index: number; after: boolean } | null = null
@@ -1496,10 +1495,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
           if (!dragTarget) return
           const { index, after } = dragTarget
           dragTarget = null
-          const [moved] = items.splice(from, 1)
-          let target = index + (after ? 1 : 0)
-          if (from < target) target--
-          items.splice(target, 0, moved)
+          items = reorderByDrop(items, from, index, after)
           renderList()
         }
         dragHandle.addEventListener('pointerup', finishPointerDrag)
@@ -1542,12 +1538,12 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
 
         const upBtn = iconBtn('chevron-up', taskT('moveUp'), () => {
           if (idx === 0) return
-          ;[items[idx - 1], items[idx]] = [items[idx], items[idx - 1]]
+          items = swapItems(items, idx - 1, idx)
           renderList()
         })
         const downBtn = iconBtn('chevron-down', taskT('moveDown'), () => {
           if (idx === items.length - 1) return
-          ;[items[idx + 1], items[idx]] = [items[idx], items[idx + 1]]
+          items = swapItems(items, idx + 1, idx)
           renderList()
         })
         upBtn.disabled = idx === 0
@@ -1558,7 +1554,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
           e.preventDefault()
           const target = e.key === 'ArrowUp' ? idx - 1 : idx + 1
           if (target < 0 || target >= items.length) return
-          ;[items[target], items[idx]] = [items[idx], items[target]]
+          items = swapItems(items, target, idx)
           renderList()
           list.querySelectorAll<HTMLElement>('.tasks-rebase-item')[target]?.focus()
         })

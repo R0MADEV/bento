@@ -91,3 +91,26 @@ export async function mapWithConcurrency<T, R>(
   await Promise.all(runners)
   return results
 }
+
+/**
+ * The list after dragging the item at `from` onto the row at `target`, dropping
+ * it after that row when `after` is set. The index shifts once the dragged item
+ * is lifted out, so a downward move lands one place earlier than it looks.
+ */
+export function reorderByDrop<T>(items: T[], from: number, target: number, after: boolean): T[] {
+  const next = [...items]
+  const [moved] = next.splice(from, 1)
+  let at = target + (after ? 1 : 0)
+  if (from < at) at--
+  next.splice(at, 0, moved)
+  return next
+}
+
+/** The list with two positions exchanged; unchanged if either is out of range. */
+export function swapItems<T>(items: T[], a: number, b: number): T[] {
+  const isOutOfRange = a < 0 || b < 0 || a >= items.length || b >= items.length
+  if (isOutOfRange) return [...items]
+  const next = [...items]
+  ;[next[a], next[b]] = [next[b], next[a]]
+  return next
+}
