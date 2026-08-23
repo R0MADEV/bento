@@ -16,7 +16,8 @@ import type { MemoryRepository } from '../ports/MemoryRepository'
 import { getActiveProjectPath, setActiveProjectPath } from './activeProject'
 import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
 import { redact, startAgent, resolvePersistedSessionId, buildReviewMessage } from '../core/ai/agentClient'
-import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory, serializeChatHistory } from '../core/ai/chatHistory'
+import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory, pinnedFollowUpHistory, serializeChatHistory } from '../core/ai/chatHistory'
+import { isCapacityError } from '../core/ai/capacityError'
 import { getUiZoom, toLayoutPixels } from './zoom'
 
 const AI_POSITION_KEY = 'bento.ai.position.v2'
@@ -34,12 +35,6 @@ async function verifyResumableSession(agent: AgentType, cwd: string, sessionId: 
   if (agent === 'claude') return (await invoke<boolean>('agent_claude_session_exists', { cwd, sessionId }).catch(() => false)) ? sessionId : null
   if (agent === 'codex') return (await invoke<boolean>('agent_codex_session_exists', { sessionId }).catch(() => false)) ? sessionId : null
   return sessionId
-}
-
-// A token/rate/usage limit means THIS agent can't continue — worth switching to a
-// different agent rather than retrying the same one.
-export function isCapacityError(message: string): boolean {
-  return /rate.?limit|too many requests|\b429\b|overloaded|\b529\b|usage limit|quota|out of tokens|token limit|context (?:length|window)|maximum context|prompt is too long|too long/i.test(message)
 }
 
 // Order to fall over through when an agent runs out of capacity (custom excluded:
@@ -713,13 +708,8 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
     // Always carry the review report as context, even in a long chat: the agent
     // only sees a recent window, so keep the first assistant message (the report)
     // pinned at the front when the conversation has grown past it.
-    const buildFollowUpHistory = (): ChatMessage[] => {
-      const full = messages.slice(0, -1)
-      if (!conversationContext?.branch || full.length <= 20) return full
-      const report = full.find(m => m.role === 'assistant')
-      const recent = full.slice(-19)
-      return report && !recent.includes(report) ? [report, ...recent] : full.slice(-20)
-    }
+    const buildFollowUpHistory = (): ChatMessage[] =>
+      pinnedFollowUpHistory(messages.slice(0, -1), Boolean(conversationContext?.branch))
     let awaitingFirstChunk = true
     const runAttempt = async (attemptAgent: AgentType, resumeId: string | null): Promise<string | null> => {
       awaitingFirstChunk = true

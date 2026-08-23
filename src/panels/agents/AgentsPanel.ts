@@ -6,6 +6,7 @@ import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/Termi
 import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
 import { emitAgentDock, AGENT_ACTIVATE_EVENT, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
+import { buildResumeCmd } from './agentResume'
 
 const MAX_AGENTS = 20
 
@@ -39,34 +40,6 @@ const SESSION_FIND: Record<string, string> = {
 }
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-// Builds the exact resume command, verifying the session still exists on disk
-// before using --resume to avoid "No conversation found" errors.
-async function buildResumeCmd(cmd: string, cwd: string, sessionId?: string): Promise<string> {
-  if (cmd === 'claude') {
-    if (sessionId) {
-      const exists = await invoke<boolean>('agent_claude_session_exists', { cwd, sessionId }).catch(() => false)
-      return exists ? `claude --resume ${sessionId}` : 'claude'
-    }
-    return 'claude'
-  }
-  if (cmd === 'opencode') return sessionId ? `opencode --session ${sessionId}` : 'opencode'
-  if (cmd === 'codex') {
-    if (sessionId) {
-      // Codex only writes the rollout on the first message: a session captured at
-      // launch but closed before any turn was never saved. Verify it exists before
-      // resuming, else `codex resume <id>` fails hard with "No saved session found".
-      const exists = await invoke<boolean>('agent_codex_session_exists', { sessionId }).catch(() => false)
-      if (!exists) return 'codex'
-      // Clear stale thread-writer lock so codex doesn't reject with
-      // "already has an active writer" when the previous PTY was killed externally.
-      await invoke('agent_codex_clear_lock', { sessionId }).catch(() => {})
-      return `codex resume ${sessionId}`
-    }
-    return 'codex'
-  }
-  return cmd
-}
 
 
 interface AgentSlot {

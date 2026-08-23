@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { boardCategory, groupByCategory, parseAgileBoards, parseAgileColumns, mapToAgileColumns } from '../../../src/core/jira/board'
+import { boardCategory, groupByCategory, parseAgileBoards, parseAgileColumns, mapToAgileColumns, statusCategoryClass } from '../../../src/core/jira/board'
 import type { JiraIssue } from '../../../src/core/jira/issues'
 
 const issue = (key: string, statusId: string, statusCategory = ''): JiraIssue =>
@@ -94,5 +94,20 @@ describe('mapToAgileColumns', () => {
     const issues = [issue('A-1', '99999')]
     const map = mapToAgileColumns(issues, columns)
     expect(map.get('To Do')?.map(i => i.key)).toEqual(['A-1'])
+  })
+})
+
+describe('statusCategoryClass', () => {
+  it('maps done', () => {
+    expect(statusCategoryClass('done')).toBe('jira-st-done')
+  })
+
+  it('maps in-progress (indeterminate)', () => {
+    expect(statusCategoryClass('indeterminate')).toBe('jira-st-progress')
+  })
+
+  it('maps to-do (new) and anything else', () => {
+    expect(statusCategoryClass('new')).toBe('jira-st-todo')
+    expect(statusCategoryClass('')).toBe('jira-st-todo')
   })
 })

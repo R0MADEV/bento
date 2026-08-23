@@ -4,12 +4,6 @@ export function extractIssueKey(branch: string | null): string | null {
   return match?.[0] ?? null
 }
 
-export function statusCategoryClass(category: string): string {
-  if (category === 'done') return 'jira-st-done'
-  if (category === 'indeterminate') return 'jira-st-progress'
-  return 'jira-st-todo'
-}
-
 // Parses the output of `git rev-list --left-right --count origin/<base>...HEAD`.
 // Format: "<left>\t<right>" where left = behind (commits in base not in HEAD),
 // right = ahead (commits in HEAD not in base).

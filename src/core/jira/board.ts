@@ -66,3 +66,10 @@ export function mapToAgileColumns(issues: JiraIssue[], columns: AgileColumn[]): 
   }
   return result
 }
+
+/** The CSS class that colours a status chip by its Jira status category. */
+export function statusCategoryClass(category: string): string {
+  if (category === 'done') return 'jira-st-done'
+  if (category === 'indeterminate') return 'jira-st-progress'
+  return 'jira-st-todo'
+}

@@ -2,6 +2,7 @@ import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { askAi } from '../../ui/askAi'
 import { parseNote, serializeNote, type ParsedNote } from '../../core/notes/noteFile'
+import { groupNoteEntries, type NoteGroup } from '../../core/notes/noteGroups'
 import { noteTitle } from '../../core/notes/noteTitle'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { initUndo, commit, undo, redo, current, type UndoState } from '../../core/notes/undoStack'
@@ -192,21 +193,7 @@ export function createNotesPanel() {
 
   const displayTitle = (n: ParsedNote): string => n.title.trim() || noteTitle(n.body)
 
-  const groups = (): { category: string; items: Entry[] }[] => {
-    const q = search.value.trim().toLowerCase()
-    const matches = (e: Entry): boolean => {
-      if (!q) return true
-      return `${e.note.title} ${e.note.category} ${e.note.tags.join(' ')}`.toLowerCase().includes(q)
-    }
-    const map = new Map<string, Entry[]>()
-    entries.filter(matches).forEach(e => {
-      const cat = e.note.category.trim() || i18nT('notes.uncategorized')
-      const items = map.get(cat) ?? []
-      items.push(e)
-      map.set(cat, items)
-    })
-    return [...map.entries()].map(([category, items]) => ({ category, items }))
-  }
+  const groups = (): NoteGroup[] => groupNoteEntries(entries, search.value, i18nT('notes.uncategorized'))
 
   const renderList = (): void => {
     list.innerHTML = ''
