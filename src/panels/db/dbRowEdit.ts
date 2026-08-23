@@ -1,10 +1,10 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { DbServer } from '../../core/db/dbServer'
-import { isPg, sqlCmd, creds, target, type TableData } from './dbAccess'
+import { isPg, sqlCmd, creds, target, type TableData } from '../../core/db/dbEngine'
 import { renderCellValue } from './dbCellRender'
 import { buildWheres } from './dbWidgets'
-import { ident, qualifiedTable } from './dbSqlQuote'
+import { ident, qualifiedTable } from '../../core/db/sqlQuote'
 
 export const editCell = (
   s: DbServer, db: string, table: string, columns: string[],

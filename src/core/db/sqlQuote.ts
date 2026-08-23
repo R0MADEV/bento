@@ -1,5 +1,5 @@
 import type { DbServer } from '../../core/db/dbServer'
-import { isPg } from './dbAccess'
+import { isPg } from './dbEngine'
 
 /** Quotes a column or table name for the engine's own identifier syntax. */
 export const ident = (s: DbServer, id: string): string => isPg(s) ? `"${id}"` : `\`${id}\``

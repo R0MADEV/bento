@@ -1,6 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import { icon } from '../../ui/icons'
-import { type TableData, type EditMeta } from './dbAccess'
+import { type TableData } from '../../core/db/dbEngine'
+import { type EditMeta } from './dbAccess'
 import { renderCellValue } from './dbCellRender'
 import { note, makeFilterInput, makeCsvBtn, makeResultWrap } from './dbWidgets'
 import { editCell, deleteRow } from './dbRowEdit'

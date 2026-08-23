@@ -3,11 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import type { DbServer } from '../../core/db/dbServer'
 import { icon } from '../../ui/icons'
 import { parseStructuredJson } from './jsonValues'
-import { sqlCmd, creds, target, type TableData } from './dbAccess'
+import { sqlCmd, creds, target, type TableData } from '../../core/db/dbEngine'
 import { buildJsonTree, renderCellValue } from './dbCellRender'
 import { note, makeFilterInput, makeCsvBtn, makeResultWrap, copyToClipboard } from './dbWidgets'
 import { editCell, deleteRow } from './dbRowEdit'
-import { ident, qualifiedTable, quoteValue } from './dbSqlQuote'
+import { ident, qualifiedTable, quoteValue } from '../../core/db/sqlQuote'
 import type { DbDetailHost } from './dbDetailHost'
 
 export const renderGrid = (

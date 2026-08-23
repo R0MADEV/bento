@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ident, qualifiedTable, quoteValue } from '../../../src/panels/db/dbSqlQuote'
+import { ident, qualifiedTable, quoteValue } from '../../../src/core/db/sqlQuote'
 import type { DbServer } from '../../../src/core/db/dbServer'
 
 const mysql: DbServer = { kind: 'mysql', source: 'docker', host: '127.0.0.1', port: 3306, container: 'c1' }

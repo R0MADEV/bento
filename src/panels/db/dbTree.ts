@@ -1,6 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import { LISTABLE, type DbServer } from '../../core/db/dbServer'
-import { KIND_LABEL, isMongo, isRedis, fetchColumns, listDatabases, listTables } from './dbAccess'
+import { KIND_LABEL, isMongo, isRedis } from '../../core/db/dbEngine'
+import { fetchColumns, listDatabases, listTables } from './dbAccess'
 import { note, rowEl, appendExpandable } from './dbWidgets'
 import { resolveCreds } from './dbDetect'
 

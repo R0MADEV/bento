@@ -4,7 +4,7 @@ import { serverKind } from '../../core/db/serverKind'
 import { publishedPort } from '../../core/db/hostPort'
 import { mysqlCreds, mongoCreds, pgCreds } from '../../core/db/credentials'
 import { DEFAULT_PORT, kindForPort, type DbServer } from '../../core/db/dbServer'
-import { isMongo, isPg, isRedis, envValue } from './dbAccess'
+import { isMongo, isPg, isRedis, envValue } from '../../core/db/dbEngine'
 
 export const detectDocker = async (): Promise<DbServer[]> => {
   const raw = await invoke<string>('db_docker_ps').catch(() => '')
