@@ -1,18 +1,16 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { basicAuth } from '../../core/jira/auth'
-import { apiUrl, browseUrl } from '../../core/jira/urls'
-import { parseIssues, type JiraIssue } from '../../core/jira/issues'
+import type { JiraIssue } from '../../core/jira/issues'
 import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
-import { groupByCategory, boardCategory, parseAgileBoards, parseAgileColumns, mapToAgileColumns, type AgileBoard, type AgileColumn } from '../../core/jira/board'
+import { browseUrl } from '../../core/jira/urls'
+import { groupByCategory, boardCategory, mapToAgileColumns, type AgileBoard, type AgileColumn } from '../../core/jira/board'
 import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
 import { icon } from '../../ui/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
+import { createJiraClient, type JiraAccount } from './jiraClient'
 
-interface JiraAccount { id: string; site: string; email: string; token: string }
-interface HttpResponse { status: number; body: string }
 
 export function createJiraPanel(): { element: HTMLElement } {
   let accounts: JiraAccount[] = []
@@ -93,117 +91,10 @@ export function createJiraPanel(): { element: HTMLElement } {
     }
   }
 
-  // ---- API ----
-  const api = async (method: string, path: string, body?: unknown): Promise<unknown> => {
-    if (!activeAccount) throw new Error('No account selected')
-    const res = await invoke<HttpResponse>('http_request', {
-      method,
-      url: apiUrl(activeAccount.site, path),
-      headers: [
-        ['Authorization', basicAuth(activeAccount.email, activeAccount.token)],
-        ['Accept', 'application/json'],
-        ['Content-Type', 'application/json'],
-      ],
-      body: body !== undefined ? JSON.stringify(body) : null,
-    })
-    if (res.status >= 400) throw new Error(`HTTP ${res.status} — ${res.body.slice(0, 300)}`)
-    return res.body ? JSON.parse(res.body) : null
-  }
+  const jira = createJiraClient(() => activeAccount)
+  const api = jira.request
+  const { searchIssues, fetchIssueDetail, createIssue, resolveAccountId, fetchAsDataUrl } = jira
 
-  const searchIssues = async (jql: string): Promise<JiraIssue[]> => {
-    const json = await api('POST', 'api/3/search/jql', {
-      jql,
-      fields: ['summary', 'status', 'issuetype', 'assignee'],
-      maxResults: 50,
-    })
-    return parseIssues(json)
-  }
-
-  interface IssueDetail {
-    description: string
-    isRenderedHtml: boolean
-    attachments: Array<{ id: string; filename: string; content: string; thumbnail: string; mimeType: string }>
-    pullRequests: Array<{ title: string; url: string; status: string }>
-    assignee: string; assigneeAvatar: string
-    reporter: string; reporterAvatar: string
-    priority: string
-    sprint: string
-    fixVersions: string[]
-    estimate: string
-  }
-
-  // Fetch a binary asset (image) with Jira auth and return as a base64 data URL.
-  const fetchAsDataUrl = (url: string): Promise<string> =>
-    invoke<string>('http_fetch_base64', {
-      url,
-      headers: [
-        ['Authorization', basicAuth(activeAccount!.email, activeAccount!.token)],
-      ],
-    })
-
-  const fetchIssueDetail = async (key: string): Promise<IssueDetail> => {
-    const json = await api('GET', `api/2/issue/${key}?fields=description,attachment,assignee,reporter,priority,customfield_10020,fixVersions,timeoriginalestimate&expand=renderedFields`) as {
-      renderedFields?: { description?: string }
-      fields?: {
-        description?: string
-        attachment?: Array<{ id?: string; filename?: string; content?: string; mimeType?: string; thumbnail?: string }>
-        assignee?: { displayName?: string; avatarUrls?: { '48x48'?: string } }
-        reporter?: { displayName?: string; avatarUrls?: { '48x48'?: string } }
-        priority?: { name?: string }
-        customfield_10020?: Array<{ name?: string }>
-        fixVersions?: Array<{ name?: string }>
-        timeoriginalestimate?: number
-      }
-    }
-    const f = json?.fields ?? {}
-    const attachments = (f.attachment ?? []).map(a => ({
-      id: a.id ?? '',
-      filename: a.filename ?? '',
-      content: a.content ?? '',
-      thumbnail: a.thumbnail ?? '',
-      mimeType: a.mimeType ?? '',
-    }))
-    let pullRequests: IssueDetail['pullRequests'] = []
-    try {
-      const dev = await api('GET', `dev-info/0.10/issue/detail/${key}?_format=summary`) as {
-        detail?: Array<{ pullRequests?: Array<{ title?: string; url?: string; status?: string }> }>
-      }
-      pullRequests = (dev?.detail ?? []).flatMap(d => d.pullRequests ?? []).map(pr => ({
-        title: pr.title ?? '', url: pr.url ?? '', status: pr.status ?? '',
-      }))
-    } catch { /* not available on all instances */ }
-    const secs = f.timeoriginalestimate
-    const estimate = secs ? `${Math.round(secs / 3600)}h` : ''
-    const renderedDesc = json?.renderedFields?.description
-    return {
-      description: renderedDesc ?? f.description ?? '',
-      isRenderedHtml: !!renderedDesc,
-      attachments,
-      pullRequests,
-      assignee: f.assignee?.displayName ?? '',
-      assigneeAvatar: f.assignee?.avatarUrls?.['48x48'] ?? '',
-      reporter: f.reporter?.displayName ?? '',
-      reporterAvatar: f.reporter?.avatarUrls?.['48x48'] ?? '',
-      priority: f.priority?.name ?? '',
-      sprint: f.customfield_10020?.map(s => s.name).filter(Boolean).join(', ') ?? '',
-      fixVersions: (f.fixVersions ?? []).map(v => v.name ?? '').filter(Boolean),
-      estimate,
-    }
-  }
-
-  const createIssue = (project: string, type: string, summary: string, description: string, accountId?: string): Promise<unknown> => {
-    const fields: Record<string, unknown> = { project: { key: project }, issuetype: { name: type }, summary, description }
-    if (accountId) fields.assignee = { accountId }
-    return api('POST', 'api/2/issue', { fields })
-  }
-
-  const resolveAccountId = async (email: string): Promise<string | null> => {
-    if (!email) return null
-    const users = await api('GET', `api/2/user/search?query=${encodeURIComponent(email)}`) as Array<{ accountId?: string }>
-    return Array.isArray(users) && users[0]?.accountId ? users[0].accountId : null
-  }
-
-  // ---- detail-pane helpers ----
   const showDetail = (...nodes: HTMLElement[]): void => { detailPane.replaceChildren(...nodes) }
 
   const showHint = (text: string): void => showDetail(note(text, 'jira-detail-hint'))
@@ -276,32 +167,7 @@ export function createJiraPanel(): { element: HTMLElement } {
   let selectedBoardId: number | null = null
   let agileColumns: AgileColumn[] = []
 
-  // ---- Agile board API ----
-  const fetchAgileBoards = async (nameFilter = ''): Promise<AgileBoard[]> => {
-    const q = nameFilter ? `&name=${encodeURIComponent(nameFilter)}` : ''
-    const json = await api('GET', `agile/1.0/board?maxResults=100${q}`)
-    return parseAgileBoards(json)
-  }
-
-  const fetchBoardColumns = async (boardId: number): Promise<AgileColumn[]> => {
-    const json = await api('GET', `agile/1.0/board/${boardId}/configuration`)
-    return parseAgileColumns(json)
-  }
-
-  // For scrum boards: fetch active sprint issues; for kanban: fetch board issues.
-  const fetchBoardIssues = async (boardId: number): Promise<JiraIssue[]> => {
-    // Try active sprint first (scrum boards)
-    try {
-      const sprintRes = await api('GET', `agile/1.0/board/${boardId}/sprint?state=active&maxResults=1`) as { values?: Array<{ id: number }> }
-      const sprintId = sprintRes?.values?.[0]?.id
-      if (sprintId) {
-        const json = await api('GET', `agile/1.0/sprint/${sprintId}/issue?fields=summary,status,issuetype,assignee&maxResults=100`)
-        return parseIssues(json)
-      }
-    } catch { /* not a scrum board or no active sprint — fall through */ }
-    const json = await api('GET', `agile/1.0/board/${boardId}/issue?fields=summary,status,issuetype,assignee&maxResults=100`)
-    return parseIssues(json)
-  }
+  const { fetchAgileBoards, fetchBoardColumns, fetchBoardIssues } = jira
 
   // ---- issue list / board ----
   const showIssues = (jql = lastJql): void => {
