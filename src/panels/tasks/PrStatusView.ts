@@ -1,5 +1,6 @@
 import type { PrStatus } from './gitTypes'
 import { taskT } from './i18n'
+import { classifyPrCheck } from '../../core/git/prChecks'
 
 interface PrStatusViewOptions {
   pr: PrStatus
@@ -35,8 +36,9 @@ export function buildPrStatusView({ pr, baseBranch, onBack, onOpen }: PrStatusVi
   checks.className = 'tasks-backup-list'
   for (const check of pr.statusCheckRollup ?? []) {
     const state = check.conclusion ?? check.state ?? check.status ?? 'UNKNOWN'
-    const failed = /FAIL|ERROR|CANCEL|TIMED_OUT/i.test(state)
-    const pending = /PENDING|QUEUED|IN_PROGRESS|EXPECTED/i.test(state)
+    const verdict = classifyPrCheck(check)
+    const failed = verdict === 'failed'
+    const pending = verdict === 'pending'
     const row = document.createElement('div')
     row.className = `tasks-operation-item tasks-operation-item--${failed ? 'error' : pending ? 'pending' : 'success'}`
     row.append(

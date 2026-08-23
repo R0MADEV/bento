@@ -1,0 +1,20 @@
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{--bg:#0d0d0d;--s:#161616;--s2:#1e1e1e;--b:#2a2a2a;--a:#a78bfa;--ag:#73daca;--re:#f7768e;--yw:#e0af68;--fg:#e2e8f8;--dim:#555}
+html,body{height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden}
+
+/* ── Tab bar ──────────────────────────── */
+#tabbar{display:flex;height:44px;background:var(--s);border-bottom:1px solid var(--b);flex-shrink:0}
+.tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:600;color:var(--dim);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+.tab.active{color:var(--a);border-bottom-color:var(--a)}
+
+/* ── Shared ───────────────────────────── */
+.empty{padding:40px 16px;text-align:center;color:var(--dim);font-size:14px;line-height:1.6}
+.err-msg{color:var(--re)}
+input.field,select.field{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--b);border-radius:12px;color:var(--fg);font-size:15px;outline:none;-webkit-appearance:none}
+input.field:focus,select.field:focus{border-color:var(--a)}
+.btn-primary{width:100%;padding:14px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn-primary:active{opacity:.8}
+.btn-primary:disabled{opacity:.4;cursor:default}
+.field-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:4px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.3);border-top-color:#07070f;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}

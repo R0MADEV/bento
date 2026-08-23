@@ -35,7 +35,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "node --max-old-space-size=6144 ./node_modules/vitest/vitest.mjs run --coverage",
     "test:watch": "vitest",
     "lint": "eslint src tests scripts",
     "typecheck": "tsc --noEmit",

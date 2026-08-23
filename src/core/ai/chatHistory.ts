@@ -88,6 +88,16 @@ export function serializeChatHistory(state: ChatHistoryState): string {
   return JSON.stringify(state)
 }
 
+// A review conversation only sends a recent window to the agent, but the first
+// assistant message (the review report) carries context that must survive the
+// whole conversation — so it stays pinned at the front once history grows past it.
+export function pinnedFollowUpHistory(full: ChatMessage[], hasBranch: boolean): ChatMessage[] {
+  if (!hasBranch || full.length <= 20) return full
+  const report = full.find(m => m.role === 'assistant')
+  const recent = full.slice(-19)
+  return report && !recent.includes(report) ? [report, ...recent] : full.slice(-20)
+}
+
 export function techReviewConversationKey(projectPath: string, branch: string): string {
   const normalizedPath = projectPath.trim().replace(/\\/g, '/').replace(/\/+$/, '')
   return `tech-review:${normalizedPath}:${branch.trim() || 'branch'}`

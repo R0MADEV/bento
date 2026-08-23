@@ -1,18 +1,16 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { basicAuth } from '../../core/jira/auth'
-import { apiUrl, browseUrl } from '../../core/jira/urls'
-import { parseIssues, type JiraIssue } from '../../core/jira/issues'
+import type { JiraIssue } from '../../core/jira/issues'
 import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
-import { groupByCategory, boardCategory, parseAgileBoards, parseAgileColumns, mapToAgileColumns, type AgileBoard, type AgileColumn } from '../../core/jira/board'
-import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
-import { icon } from '../../ui/icons'
+import { findTransitionForColumn, type JiraTransition } from '../../core/jira/transitions'
+import { showIssueDetail as showIssueDetailView, type JiraIssueDrawerDeps } from './jiraIssueDrawer'
+import { groupByCategory, mapToAgileColumns, statusCategoryClass, type AgileBoard, type AgileColumn } from '../../core/jira/board'
+import { note, mkBtn, detailHeader, field } from './jiraWidgets'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
+import { createJiraClient, type JiraAccount } from './jiraClient'
 
-interface JiraAccount { id: string; site: string; email: string; token: string }
-interface HttpResponse { status: number; body: string }
 
 export function createJiraPanel(): { element: HTMLElement } {
   let accounts: JiraAccount[] = []
@@ -93,142 +91,13 @@ export function createJiraPanel(): { element: HTMLElement } {
     }
   }
 
-  // ---- API ----
-  const api = async (method: string, path: string, body?: unknown): Promise<unknown> => {
-    if (!activeAccount) throw new Error('No account selected')
-    const res = await invoke<HttpResponse>('http_request', {
-      method,
-      url: apiUrl(activeAccount.site, path),
-      headers: [
-        ['Authorization', basicAuth(activeAccount.email, activeAccount.token)],
-        ['Accept', 'application/json'],
-        ['Content-Type', 'application/json'],
-      ],
-      body: body !== undefined ? JSON.stringify(body) : null,
-    })
-    if (res.status >= 400) throw new Error(`HTTP ${res.status} — ${res.body.slice(0, 300)}`)
-    return res.body ? JSON.parse(res.body) : null
-  }
+  const jira = createJiraClient(() => activeAccount)
+  const api = jira.request
+  const { searchIssues, createIssue, resolveAccountId } = jira
 
-  const searchIssues = async (jql: string): Promise<JiraIssue[]> => {
-    const json = await api('POST', 'api/3/search/jql', {
-      jql,
-      fields: ['summary', 'status', 'issuetype', 'assignee'],
-      maxResults: 50,
-    })
-    return parseIssues(json)
-  }
-
-  interface IssueDetail {
-    description: string
-    isRenderedHtml: boolean
-    attachments: Array<{ id: string; filename: string; content: string; thumbnail: string; mimeType: string }>
-    pullRequests: Array<{ title: string; url: string; status: string }>
-    assignee: string; assigneeAvatar: string
-    reporter: string; reporterAvatar: string
-    priority: string
-    sprint: string
-    fixVersions: string[]
-    estimate: string
-  }
-
-  // Fetch a binary asset (image) with Jira auth and return as a base64 data URL.
-  const fetchAsDataUrl = (url: string): Promise<string> =>
-    invoke<string>('http_fetch_base64', {
-      url,
-      headers: [
-        ['Authorization', basicAuth(activeAccount!.email, activeAccount!.token)],
-      ],
-    })
-
-  const fetchIssueDetail = async (key: string): Promise<IssueDetail> => {
-    const json = await api('GET', `api/2/issue/${key}?fields=description,attachment,assignee,reporter,priority,customfield_10020,fixVersions,timeoriginalestimate&expand=renderedFields`) as {
-      renderedFields?: { description?: string }
-      fields?: {
-        description?: string
-        attachment?: Array<{ id?: string; filename?: string; content?: string; mimeType?: string; thumbnail?: string }>
-        assignee?: { displayName?: string; avatarUrls?: { '48x48'?: string } }
-        reporter?: { displayName?: string; avatarUrls?: { '48x48'?: string } }
-        priority?: { name?: string }
-        customfield_10020?: Array<{ name?: string }>
-        fixVersions?: Array<{ name?: string }>
-        timeoriginalestimate?: number
-      }
-    }
-    const f = json?.fields ?? {}
-    const attachments = (f.attachment ?? []).map(a => ({
-      id: a.id ?? '',
-      filename: a.filename ?? '',
-      content: a.content ?? '',
-      thumbnail: a.thumbnail ?? '',
-      mimeType: a.mimeType ?? '',
-    }))
-    let pullRequests: IssueDetail['pullRequests'] = []
-    try {
-      const dev = await api('GET', `dev-info/0.10/issue/detail/${key}?_format=summary`) as {
-        detail?: Array<{ pullRequests?: Array<{ title?: string; url?: string; status?: string }> }>
-      }
-      pullRequests = (dev?.detail ?? []).flatMap(d => d.pullRequests ?? []).map(pr => ({
-        title: pr.title ?? '', url: pr.url ?? '', status: pr.status ?? '',
-      }))
-    } catch { /* not available on all instances */ }
-    const secs = f.timeoriginalestimate
-    const estimate = secs ? `${Math.round(secs / 3600)}h` : ''
-    const renderedDesc = json?.renderedFields?.description
-    return {
-      description: renderedDesc ?? f.description ?? '',
-      isRenderedHtml: !!renderedDesc,
-      attachments,
-      pullRequests,
-      assignee: f.assignee?.displayName ?? '',
-      assigneeAvatar: f.assignee?.avatarUrls?.['48x48'] ?? '',
-      reporter: f.reporter?.displayName ?? '',
-      reporterAvatar: f.reporter?.avatarUrls?.['48x48'] ?? '',
-      priority: f.priority?.name ?? '',
-      sprint: f.customfield_10020?.map(s => s.name).filter(Boolean).join(', ') ?? '',
-      fixVersions: (f.fixVersions ?? []).map(v => v.name ?? '').filter(Boolean),
-      estimate,
-    }
-  }
-
-  const createIssue = (project: string, type: string, summary: string, description: string, accountId?: string): Promise<unknown> => {
-    const fields: Record<string, unknown> = { project: { key: project }, issuetype: { name: type }, summary, description }
-    if (accountId) fields.assignee = { accountId }
-    return api('POST', 'api/2/issue', { fields })
-  }
-
-  const resolveAccountId = async (email: string): Promise<string | null> => {
-    if (!email) return null
-    const users = await api('GET', `api/2/user/search?query=${encodeURIComponent(email)}`) as Array<{ accountId?: string }>
-    return Array.isArray(users) && users[0]?.accountId ? users[0].accountId : null
-  }
-
-  // ---- detail-pane helpers ----
   const showDetail = (...nodes: HTMLElement[]): void => { detailPane.replaceChildren(...nodes) }
 
   const showHint = (text: string): void => showDetail(note(text, 'jira-detail-hint'))
-
-  const detailHeader = (title: string, ...actions: HTMLElement[]): HTMLElement => {
-    const bar = document.createElement('div')
-    bar.className = 'jira-header'
-    const h = document.createElement('span')
-    h.className = 'jira-title'
-    h.textContent = title
-    bar.append(h, ...actions)
-    return bar
-  }
-
-  const field = (label: string, value = '', type = 'text'): { row: HTMLElement; input: HTMLInputElement } => {
-    const row = document.createElement('label')
-    row.className = 'jira-field'
-    row.textContent = label
-    const input = document.createElement('input')
-    input.className = 'jira-input'
-    input.type = type
-    input.value = value
-    row.appendChild(input)
-    return { row, input }
-  }
 
   // ---- config form (shown in detail pane) ----
   const showConfig = (existing?: JiraAccount): void => {
@@ -266,8 +135,6 @@ export function createJiraPanel(): { element: HTMLElement } {
 
 
   // ---- shared helpers ----
-  const statusClass = (cat: string): string =>
-    cat === 'done' ? 'jira-st-done' : cat === 'indeterminate' ? 'jira-st-progress' : 'jira-st-todo'
 
   let viewMode: 'list' | 'board' = 'board'
   let lastJql = MY_OPEN_ISSUES
@@ -276,32 +143,7 @@ export function createJiraPanel(): { element: HTMLElement } {
   let selectedBoardId: number | null = null
   let agileColumns: AgileColumn[] = []
 
-  // ---- Agile board API ----
-  const fetchAgileBoards = async (nameFilter = ''): Promise<AgileBoard[]> => {
-    const q = nameFilter ? `&name=${encodeURIComponent(nameFilter)}` : ''
-    const json = await api('GET', `agile/1.0/board?maxResults=100${q}`)
-    return parseAgileBoards(json)
-  }
-
-  const fetchBoardColumns = async (boardId: number): Promise<AgileColumn[]> => {
-    const json = await api('GET', `agile/1.0/board/${boardId}/configuration`)
-    return parseAgileColumns(json)
-  }
-
-  // For scrum boards: fetch active sprint issues; for kanban: fetch board issues.
-  const fetchBoardIssues = async (boardId: number): Promise<JiraIssue[]> => {
-    // Try active sprint first (scrum boards)
-    try {
-      const sprintRes = await api('GET', `agile/1.0/board/${boardId}/sprint?state=active&maxResults=1`) as { values?: Array<{ id: number }> }
-      const sprintId = sprintRes?.values?.[0]?.id
-      if (sprintId) {
-        const json = await api('GET', `agile/1.0/sprint/${sprintId}/issue?fields=summary,status,issuetype,assignee&maxResults=100`)
-        return parseIssues(json)
-      }
-    } catch { /* not a scrum board or no active sprint — fall through */ }
-    const json = await api('GET', `agile/1.0/board/${boardId}/issue?fields=summary,status,issuetype,assignee&maxResults=100`)
-    return parseIssues(json)
-  }
+  const { fetchAgileBoards, fetchBoardColumns, fetchBoardIssues } = jira
 
   // ---- issue list / board ----
   const showIssues = (jql = lastJql): void => {
@@ -446,7 +288,7 @@ export function createJiraPanel(): { element: HTMLElement } {
       row.innerHTML =
         `<span class="jira-key">${it.key}</span>` +
         `<span class="jira-summary"></span>` +
-        `<span class="jira-status ${statusClass(it.statusCategory)}">${it.status}</span>`
+        `<span class="jira-status ${statusCategoryClass(it.statusCategory)}">${it.status}</span>`
       row.querySelector('.jira-summary')!.textContent = it.summary
       row.addEventListener('click', () => showIssueDetail(it))
       list.appendChild(row)
@@ -602,355 +444,23 @@ export function createJiraPanel(): { element: HTMLElement } {
   }
 
   // Find and execute the right Jira transition to move an issue to a target column.
+  const jiraDrawerDeps: JiraIssueDrawerDeps = {
+    jira, getActiveAccount: () => activeAccount, detailPane,
+    getViewMode: () => viewMode, getSelectedBoardId: () => selectedBoardId,
+    getAgileColumns: () => agileColumns, setAgileColumns: cols => { agileColumns = cols },
+    getCachedIssues: () => cachedIssues, setCachedIssues: issues => { cachedIssues = issues },
+    resetAssigneeFilter: () => { activeAssigneeId = '' },
+  }
+  const showIssueDetail = (it: JiraIssue): Promise<void> => showIssueDetailView(jiraDrawerDeps, it)
+
   const doTransitionByColumn = async (issueKey: string, targetColName: string, cols: AgileColumn[] | null): Promise<void> => {
-    const res = await api('GET', `api/2/issue/${issueKey}/transitions`) as { transitions?: Array<{ id: string; name: string; to: { id: string; name: string; statusCategory: { key: string } } }> }
-    const transitions = res?.transitions ?? []
-    let match = transitions.find(t => t.to.name === targetColName || t.name === targetColName)
-    if (!match && cols) {
-      const targetCol = cols.find(c => c.name === targetColName)
-      match = transitions.find(t => targetCol?.statusIds.includes(t.to.id))
-    }
-    if (!match) match = transitions.find(t => boardCategory(t.to.statusCategory.key) === boardCategory(agileColumns.find(c => c.name === targetColName)?.statusIds[0] ? 'indeterminate' : 'new'))
+    const res = await api('GET', `api/2/issue/${issueKey}/transitions`) as { transitions?: JiraTransition[] }
+    const match = findTransitionForColumn(res?.transitions ?? [], targetColName, cols)
     if (!match) throw new Error(`No hay transición disponible hacia "${targetColName}"`)
     await api('POST', `api/2/issue/${issueKey}/transitions`, { transition: { id: match.id } })
   }
 
   // ---- issue detail (drawer — shown on top of the board, board state preserved) ----
-  const showIssueDetail = async (it: JiraIssue): Promise<void> => {
-    const close = (): void => { overlay.remove() }
-
-    const overlay = document.createElement('div')
-    overlay.className = 'jira-drawer-overlay'
-    overlay.addEventListener('click', e => { if (e.target === overlay) close() })
-
-    const drawer = document.createElement('div')
-    drawer.className = 'jira-drawer'
-
-    const openBtn = mkBtn('globe', 'Abrir en Jira', () => openUrl(browseUrl(activeAccount!.site, it.key)).catch(() => {}))
-    const closeBtn = mkBtn('x', 'Cerrar', close)
-
-    const meta = document.createElement('div')
-    meta.className = 'jira-detail-meta'
-    const key = document.createElement('span')
-    key.className = 'jira-key'
-    key.textContent = it.key
-    const status = document.createElement('span')
-    status.className = `jira-status ${statusClass(it.statusCategory)}`
-    status.textContent = it.status
-    const issueType = document.createElement('span')
-    issueType.className = 'jira-type'
-    issueType.textContent = it.type
-    meta.append(key, status, issueType)
-    const summary = document.createElement('div')
-    summary.className = 'jira-detail-summary'
-    summary.textContent = it.summary
-    // Two-column layout: description (left) + metadata (right)
-    const body = document.createElement('div')
-    body.className = 'jira-detail jira-detail-layout'
-
-    const left = document.createElement('div')
-    left.className = 'jira-detail-left'
-
-    const right = document.createElement('div')
-    right.className = 'jira-detail-right'
-
-    const descEl = document.createElement('div')
-    descEl.className = 'jira-detail-desc jira-wiki-body'
-    descEl.textContent = 'Cargando…'
-    left.append(meta, summary, descEl)
-
-    body.append(left, right)
-    drawer.append(detailHeader('Detalle', openBtn, closeBtn), body)
-
-    fetchIssueDetail(it.key).then(async d => {
-      // Render description: use Jira's pre-rendered HTML if available, else parse wiki markup
-      const attachMap = new Map(d.attachments.map(a => [a.filename, a.content]))
-      if (d.isRenderedHtml) {
-        descEl.innerHTML = d.description || '<em>(sin descripción)</em>'
-        // Replace image srcs with authenticated data URLs
-        descEl.querySelectorAll('img').forEach(img => {
-          const src = img.getAttribute('src')
-          if (src) fetchAsDataUrl(src).then(data => { img.src = data }).catch(() => {})
-        })
-      } else {
-        descEl.innerHTML = d.description
-          ? jiraWikiToHtml(d.description, attachMap)
-          : '<em>(sin descripción)</em>'
-      }
-
-      // Wire all links to open in browser
-      descEl.querySelectorAll('a').forEach(a => {
-        a.addEventListener('click', e => {
-          e.preventDefault()
-          const href = a.getAttribute('href') || (a as HTMLElement).dataset.href
-          if (href && href !== '#') openUrl(href).catch(() => {})
-        })
-      })
-      descEl.querySelectorAll('.jira-wiki-link').forEach(a => {
-        a.addEventListener('click', e => {
-          e.preventDefault()
-          const href = (a as HTMLElement).dataset.href
-          if (href) openUrl(href).catch(() => {})
-        })
-      })
-
-      // Metadata sidebar
-      const metaItems: Array<[string, string, string?]> = ([
-        ['Asignado', d.assignee, d.assigneeAvatar] as [string, string, string?],
-        ['Informador', d.reporter, d.reporterAvatar] as [string, string, string?],
-        ['Prioridad', d.priority] as [string, string],
-        ['Sprint', d.sprint] as [string, string],
-        ['Estimación', d.estimate] as [string, string],
-        ...(d.fixVersions.length ? [['Versiones', d.fixVersions.join(', ')] as [string, string]] : []),
-      ]).filter(([, v]) => v)
-
-      right.replaceChildren()
-      metaItems.forEach(([label, value, avatar]) => {
-        const row = document.createElement('div')
-        row.className = 'jira-meta-row'
-        if (label === 'Estimación') row.dataset.field = 'estimate'
-        const lbl = document.createElement('span')
-        lbl.className = 'jira-meta-label'
-        lbl.textContent = label.toUpperCase()
-        const val = document.createElement('span')
-        val.className = 'jira-meta-value'
-        if (avatar) {
-          const img = document.createElement('img')
-          img.src = avatar
-          img.className = 'jira-meta-avatar'
-          img.alt = value
-          img.onerror = () => img.remove()
-          val.append(img)
-        }
-        val.append(document.createTextNode(value))
-        row.append(lbl, val)
-        right.append(row)
-      })
-
-      // Attachments as cards (images show thumbnail)
-      if (d.attachments.length) {
-        const attTitle = document.createElement('div')
-        attTitle.className = 'jira-detail-section-title'
-        attTitle.textContent = 'Archivos adjuntos'
-        const attGrid = document.createElement('div')
-        attGrid.className = 'jira-att-grid'
-        d.attachments.forEach(a => {
-          const card = document.createElement('div')
-          card.className = 'jira-att-card'
-          const isImg = a.mimeType.startsWith('image/')
-          const isPdf = a.mimeType === 'application/pdf'
-          if (isImg) {
-            const thumb = document.createElement('img')
-            thumb.className = 'jira-att-thumb'
-            thumb.alt = a.filename
-            thumb.addEventListener('click', () => openUrl(a.content).catch(() => {}))
-            const thumbUrl = a.thumbnail || a.content
-            fetchAsDataUrl(thumbUrl)
-              .then(data => { thumb.src = data })
-              .catch(() => { thumb.replaceWith(Object.assign(document.createElement('span'), { className: 'jira-att-icon', textContent: '🖼️' })) })
-            card.append(thumb)
-          } else {
-            const iconEl = document.createElement('span')
-            iconEl.className = 'jira-att-icon'
-            iconEl.textContent = isPdf ? '📄' : '📎'
-            card.append(iconEl)
-          }
-          const name = document.createElement('span')
-          name.className = 'jira-att-name'
-          name.textContent = a.filename
-          name.title = a.filename
-          const dlBtn = document.createElement('button')
-          dlBtn.className = 'jira-action'
-          dlBtn.title = 'Abrir / Descargar'
-          dlBtn.innerHTML = icon('arrow-right')
-          dlBtn.addEventListener('click', () => openUrl(a.content).catch(() => {}))
-          card.append(name, dlBtn)
-          attGrid.append(card)
-        })
-        left.append(attTitle, attGrid)
-      }
-
-      // Transitions — move card to another status from the detail panel
-      try {
-        const res = await api('GET', `api/2/issue/${it.key}/transitions`) as {
-          transitions?: Array<{ id: string; name: string; to: { name: string } }>
-        }
-        const transitions = (res?.transitions ?? []).filter(t => t.to.name !== it.status)
-        if (transitions.length) {
-          const trTitle = document.createElement('div')
-          trTitle.className = 'jira-meta-label'
-          trTitle.textContent = 'Mover a'
-          const trList = document.createElement('div')
-          trList.className = 'jira-transitions'
-          transitions.forEach(t => {
-            const btn = document.createElement('button')
-            btn.className = 'jira-transition-btn'
-            btn.textContent = t.to.name
-            btn.addEventListener('click', async () => {
-              btn.disabled = true
-              btn.textContent = '…'
-              try {
-                await api('POST', `api/2/issue/${it.key}/transitions`, { transition: { id: t.id } })
-                it.status = t.to.name
-                // Refresh board if in board mode
-                if (viewMode === 'board' && selectedBoardId) {
-                  agileColumns = await fetchBoardColumns(selectedBoardId).catch(() => agileColumns)
-                  const fresh = await fetchBoardIssues(selectedBoardId)
-                  cachedIssues = fresh
-                  activeAssigneeId = ''
-                }
-                close()
-              } catch { btn.disabled = false; btn.textContent = t.to.name }
-            })
-            trList.append(btn)
-          })
-          right.append(trTitle, trList)
-        }
-      } catch { /* transitions not available */ }
-
-      // Pull Requests
-      if (d.pullRequests.length) {
-        const prTitle = document.createElement('div')
-        prTitle.className = 'jira-detail-section-title'
-        prTitle.textContent = 'Pull Requests'
-        const prList = document.createElement('div')
-        prList.className = 'jira-detail-prs'
-        d.pullRequests.forEach(pr => {
-          const row = document.createElement('a')
-          row.className = `jira-pr-row jira-pr-${(pr.status || 'open').toLowerCase()}`
-          row.textContent = pr.title || pr.url
-          row.title = pr.url
-          row.addEventListener('click', () => openUrl(pr.url).catch(() => {}))
-          prList.append(row)
-        })
-        left.append(prTitle, prList)
-      }
-
-      // ---- Editable estimation in sidebar ----
-      const estRow = right.querySelector('.jira-meta-row[data-field="estimate"]') as HTMLElement | null
-      const makeEstEdit = (): void => {
-        const estInput = document.createElement('input')
-        estInput.className = 'jira-input'
-        estInput.value = d.estimate
-        estInput.placeholder = '2h, 30m…'
-        estInput.style.cssText = 'width:100%;margin-top:2px'
-        const save = document.createElement('button')
-        save.className = 'jira-primary'
-        save.style.cssText = 'margin-top:4px;padding:3px 8px;font-size:11px'
-        save.textContent = 'Guardar'
-        save.addEventListener('click', async () => {
-          save.disabled = true
-          try {
-            await api('PUT', `api/2/issue/${it.key}`, { update: { timetracking: [{ set: { originalEstimate: estInput.value.trim() } }] } })
-            d.estimate = estInput.value.trim()
-            estRow?.replaceChildren(
-              Object.assign(document.createElement('span'), { className: 'jira-meta-label', textContent: 'ESTIMACIÓN' }),
-              Object.assign(document.createElement('span'), { className: 'jira-meta-value' })
-            )
-            const valEl = estRow?.querySelector('.jira-meta-value')
-            if (valEl) valEl.textContent = d.estimate
-          } catch { save.disabled = false }
-        })
-        estRow?.append(estInput, save)
-      }
-      if (estRow) {
-        const valEl = estRow.querySelector('.jira-meta-value')
-        if (valEl) valEl.addEventListener('click', makeEstEdit)
-      }
-
-      // ---- Edit description ----
-      const editDescBtn = document.createElement('button')
-      editDescBtn.className = 'jira-action'
-      editDescBtn.title = 'Editar descripción'
-      editDescBtn.innerHTML = icon('settings')
-      editDescBtn.addEventListener('click', () => {
-        const ta = document.createElement('textarea')
-        ta.className = 'jira-textarea'
-        ta.style.cssText = 'min-height:120px;width:100%;box-sizing:border-box'
-        ta.value = d.description
-        const saveDesc = document.createElement('button')
-        saveDesc.className = 'jira-primary'
-        saveDesc.textContent = 'Guardar'
-        const cancelDesc = document.createElement('button')
-        cancelDesc.className = 'jira-transition-btn'
-        cancelDesc.textContent = 'Cancelar'
-        const row = document.createElement('div')
-        row.style.cssText = 'display:flex;gap:6px;margin-top:6px'
-        row.append(saveDesc, cancelDesc)
-        descEl.replaceChildren(ta, row)
-        cancelDesc.addEventListener('click', () => {
-          descEl.innerHTML = d.isRenderedHtml ? d.description : jiraWikiToHtml(d.description, attachMap)
-        })
-        saveDesc.addEventListener('click', async () => {
-          saveDesc.disabled = true
-          try {
-            await api('PUT', `api/2/issue/${it.key}`, { fields: { description: ta.value } })
-            d.description = ta.value
-            d.isRenderedHtml = false
-            descEl.innerHTML = jiraWikiToHtml(ta.value, attachMap)
-          } catch { saveDesc.disabled = false }
-        })
-      })
-      drawer.querySelector('.jira-header')?.append(editDescBtn)
-
-      // ---- Comments ----
-      const commentTitle = document.createElement('div')
-      commentTitle.className = 'jira-detail-section-title'
-      commentTitle.textContent = 'Comentarios'
-      const commentList = document.createElement('div')
-      commentList.className = 'jira-comment-list'
-      commentList.textContent = 'Cargando comentarios…'
-
-      const commentInput = document.createElement('textarea')
-      commentInput.className = 'jira-textarea'
-      commentInput.placeholder = 'Escribe un comentario…'
-      commentInput.style.cssText = 'min-height:70px;width:100%;box-sizing:border-box'
-      const commentSubmit = document.createElement('button')
-      commentSubmit.className = 'jira-primary'
-      commentSubmit.textContent = 'Comentar'
-      commentSubmit.addEventListener('click', async () => {
-        const text = commentInput.value.trim()
-        if (!text) return
-        commentSubmit.disabled = true
-        try {
-          await api('POST', `api/2/issue/${it.key}/comment`, { body: text })
-          commentInput.value = ''
-          const res = await api('GET', `api/2/issue/${it.key}/comment?maxResults=30&orderBy=-created`) as { comments?: Array<{ body: string; author?: { displayName?: string }; created?: string }> }
-          renderComments(res?.comments ?? [])
-        } finally { commentSubmit.disabled = false }
-      })
-
-      const renderComments = (comments: Array<{ body: string; author?: { displayName?: string }; created?: string }>): void => {
-        commentList.replaceChildren()
-        if (!comments.length) { commentList.textContent = 'Sin comentarios.'; return }
-        comments.forEach(c => {
-          const item = document.createElement('div')
-          item.className = 'jira-comment'
-          const cMeta = document.createElement('div')
-          cMeta.className = 'jira-comment-meta'
-          cMeta.textContent = `${c.author?.displayName ?? 'Anónimo'} · ${c.created ? new Date(c.created).toLocaleDateString() : ''}`
-          const cBody = document.createElement('div')
-          cBody.className = 'jira-comment-body jira-wiki-body'
-          cBody.innerHTML = jiraWikiToHtml(c.body ?? '')
-          item.append(cMeta, cBody)
-          commentList.append(item)
-        })
-      }
-
-      api('GET', `api/2/issue/${it.key}/comment?maxResults=30&orderBy=-created`)
-        .then((res: unknown) => {
-          const r = res as { comments?: Array<{ body: string; author?: { displayName?: string }; created?: string }> }
-          renderComments(r?.comments ?? [])
-        })
-        .catch(() => { commentList.textContent = 'Error cargando comentarios.' })
-
-      left.append(commentTitle, commentList, commentInput, commentSubmit)
-    }).catch(() => { descEl.textContent = '(error cargando descripción)' })
-    overlay.append(drawer)
-    detailPane.append(overlay)
-  }
-
-  // ---- create ----
   const showCreate = (): void => {
     const project = field('Proyecto (clave, ej. BEN)')
     const type = field('Tipo', 'Task')
@@ -1046,18 +556,3 @@ export function createJiraPanel(): { element: HTMLElement } {
   return { element: root }
 }
 
-function note(text: string, cls = 'jira-note'): HTMLElement {
-  const el = document.createElement('div')
-  el.className = cls
-  el.textContent = text
-  return el
-}
-
-function mkBtn(iconName: string, title: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = 'jira-action'
-  b.title = title
-  b.innerHTML = icon(iconName)
-  b.addEventListener('click', onClick)
-  return b
-}
