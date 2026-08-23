@@ -5,7 +5,7 @@ import type { JiraIssue } from '../../core/jira/issues'
 import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
 import { browseUrl } from '../../core/jira/urls'
-import { groupByCategory, boardCategory, mapToAgileColumns, type AgileBoard, type AgileColumn } from '../../core/jira/board'
+import { groupByCategory, boardCategory, mapToAgileColumns, statusCategoryClass, type AgileBoard, type AgileColumn } from '../../core/jira/board'
 import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
 import { icon } from '../../ui/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
@@ -157,8 +157,6 @@ export function createJiraPanel(): { element: HTMLElement } {
 
 
   // ---- shared helpers ----
-  const statusClass = (cat: string): string =>
-    cat === 'done' ? 'jira-st-done' : cat === 'indeterminate' ? 'jira-st-progress' : 'jira-st-todo'
 
   let viewMode: 'list' | 'board' = 'board'
   let lastJql = MY_OPEN_ISSUES
@@ -312,7 +310,7 @@ export function createJiraPanel(): { element: HTMLElement } {
       row.innerHTML =
         `<span class="jira-key">${it.key}</span>` +
         `<span class="jira-summary"></span>` +
-        `<span class="jira-status ${statusClass(it.statusCategory)}">${it.status}</span>`
+        `<span class="jira-status ${statusCategoryClass(it.statusCategory)}">${it.status}</span>`
       row.querySelector('.jira-summary')!.textContent = it.summary
       row.addEventListener('click', () => showIssueDetail(it))
       list.appendChild(row)
@@ -501,7 +499,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     key.className = 'jira-key'
     key.textContent = it.key
     const status = document.createElement('span')
-    status.className = `jira-status ${statusClass(it.statusCategory)}`
+    status.className = `jira-status ${statusCategoryClass(it.statusCategory)}`
     status.textContent = it.status
     const issueType = document.createElement('span')
     issueType.className = 'jira-type'

@@ -6,7 +6,8 @@ import { filterWorktrees, groupWorktreesByRepo } from '../../core/git/worktreeLi
 import { summarisePrChecks } from '../../core/git/prChecks'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
-import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
+import { extractIssueKey, parseAheadBehind } from '../../core/git/taskJira'
+import { statusCategoryClass } from '../../core/jira/board'
 import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch, rankFixupCandidates } from '../../core/git/commitWorkflow'
 import { previewRebase, reorderByDrop, swapItems, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
 import {

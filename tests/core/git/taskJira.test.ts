@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../../src/core/git/taskJira'
+import { extractIssueKey, parseAheadBehind } from '../../../src/core/git/taskJira'
 
 describe('extractIssueKey', () => {
   it('extracts the ticket from a feat branch', () => {
@@ -29,21 +29,6 @@ describe('extractIssueKey', () => {
 
   it('takes the first key when several appear', () => {
     expect(extractIssueKey('feat/IVOZ-1-and-IVOZ-2')).toBe('IVOZ-1')
-  })
-})
-
-describe('statusCategoryClass', () => {
-  it('maps done', () => {
-    expect(statusCategoryClass('done')).toBe('jira-st-done')
-  })
-
-  it('maps in-progress (indeterminate)', () => {
-    expect(statusCategoryClass('indeterminate')).toBe('jira-st-progress')
-  })
-
-  it('maps to-do (new) and anything else', () => {
-    expect(statusCategoryClass('new')).toBe('jira-st-todo')
-    expect(statusCategoryClass('')).toBe('jira-st-todo')
   })
 })
 
