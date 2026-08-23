@@ -38,25 +38,30 @@ Tailscale/LAN existente, que sigue disponible sin tocar.
 ```
 Tu móvil (navegador, sin app)
     │
-    │  1. Señalización (una vez, al conectar)
+    │  1. Carga /pair desde el Worker (alcanzable sin Tailscale/LAN)
+    │  2. Señalización: intercambia offer/answer vía el Worker
     ▼
-Cloudflare Worker + KV  (gratis, sirve solo para el handshake)
+Cloudflare Worker + KV  (gratis, sirve solo /pair, /pair.js, y el handshake)
     │
-    │  2. Conexión P2P directa (WebRTC DataChannel, cifrada DTLS)
+    │  3. Conexión P2P directa (WebRTC DataChannel, cifrada DTLS)
     ▼
 Mac — Bento (Tauri)
     ├── daemon/bento-daemon
-    │     ├── remote/mod.rs        (SIN CAMBIOS) — servidor HTTP+WS en 127.0.0.1:7879
-    │     └── remote/webrtc.rs     (NUEVO) — acepta el DataChannel, hace de
-    │           forwarder crudo hacia 127.0.0.1:7879 (localhost únicamente)
+    │     ├── remote/mod.rs             (SIN CAMBIOS) — servidor HTTP+WS,
+    │     │     bindeado a la IP real (Tailscale o LAN, gateado por token)
+    │     └── remote/webrtc_bridge.rs   (NUEVO) — offerer WebRTC; traduce
+    │           cada mensaje del DataChannel (protocolo de sobres JSON) a un
+    │           request HTTP/WS real contra esa IP, vía reqwest/tungstenite
     └── Frontend TypeScript
           └── PhonePanel.ts (MODIFICADO) — nuevo modo "Emparejar sin Tailscale"
-                con código corto / QR apuntando al Worker de señalización
+                con código corto / QR apuntando a /pair del Worker
 
-Web del móvil (daemon/bento-daemon/src/remote/web/*.html, SIN CAMBIOS en su
-lógica de terminales/agentes/tareas) + Service Worker (NUEVO, mismo bundle)
-que intercepta fetch()/WebSocket() de la página y los tuneliza por el
-DataChannel en vez de por la red real.
+Página de emparejamiento (workers/signaling/src/pairAssets.ts, servida por
+el Worker): arma el RTCPeerConnection como answerer, y una vez abre el
+DataChannel reemplaza fetch/WebSocket/EventSource EN LA MISMA PÁGINA (sin
+Service Worker — no puede interceptar WebSocket) para hablar el protocolo de
+sobres. Después trae index.html/shared.js/terminal.js/review.js reales del
+Mac (fetch ya tuneleado) y los inyecta — esos archivos no cambian una línea.
 ```
 
 **Nada de lo que ya funciona se toca.** El servidor Axum, sus rutas
@@ -138,40 +143,96 @@ cómo el teléfono llega hasta ahí.
 - [x] **2.3** Comando IPC nuevo `webrtc.connect` (`code`, `signaling_base`,
   `port` opcional) en `daemon/bento-daemon/src/ipc.rs`, mismo patrón que
   `remote.start` (spawn + responde ok/fail por el canal de salida).
-- [ ] **2.4** Tests: el forwarder reenvía bytes en ambas direcciones sin
-  corromper el framing. Pendiente — no hay un peer real (Fase 3, el
-  navegador del móvil) contra el cual probar esa mitad todavía; lo que sí
-  se verificó en vivo es todo el tramo hasta el offer siendo publicado. El
-  puente DataChannel↔TCP en sí no tiene un seam de test razonable sin un
-  segundo peer WebRTC real o mockear el crate entero — se prueba de punta a
-  punta natural cuando entre la Fase 3.
+- [x] **2.4** Tests: se verificó de punta a punta con un navegador real
+  (Fase 3) en vez de con un mock — ver el resumen de la Fase 3 más abajo.
 
-### Fase 3 — Cliente WebRTC + Service Worker (móvil)
+**Corrección importante encontrada al integrar con la Fase 3**: `local_port:
+u16` fue reemplazado por `local_addr: String`. `remote.start` (el servidor
+existente) bindea a una IP específica (Tailscale o LAN), **nunca** a
+`127.0.0.1` ni a `0.0.0.0` — así que el forwarder no puede asumir loopback.
+`webrtc.connect` ahora resuelve el target llamando a `remote.status()` (debe
+estar corriendo primero) y usa su `addr` real.
+
+### Fase 3 — Cliente WebRTC + envoltorio del lado móvil
 
 > Objetivo: la web del móvil funciona igual sin saber que está sobre WebRTC.
+> **Completa y verificada de punta a punta con un navegador real
+> (Playwright/Chromium)**, no solo compilada.
 
-- [ ] **3.1** Página de emparejamiento nueva (`/pair`, servida por el mismo
-  Axum de siempre): pide el código de 6 dígitos, arma el `RTCPeerConnection`
-  del lado móvil, hace el mismo intercambio con el Worker
-- [ ] **3.2** Service Worker (`sw.js`, nuevo): una vez conectado el
-  DataChannel, se registra y **intercepta todo `fetch`/`WebSocket` del mismo
-  origen**, lo serializa (método, path, headers, body) y lo manda por el
-  DataChannel; el forwarder del Mac (Fase 2) ya lo entrega a Axum como una
-  conexión más
-- [ ] **3.3** El resto del HTML/JS de terminales/agentes/tareas **no cambia
-  una línea** — corre contra `fetch`/`WebSocket` normales, ajenos a que
-  ahora viajan por el Service Worker
+**El diseño cambió respecto al original durante la implementación**, por dos
+razones técnicas reales descubiertas al construirlo (no por preferencia):
+
+1. Un Service Worker **no puede interceptar `WebSocket`** (solo `fetch`), y
+   el terminal usa WebSocket crudo — así que la idea original de "SW
+   transparente" no alcanza. Fix: en vez de un SW, la página de
+   emparejamiento reemplaza `window.fetch`/`window.WebSocket`/
+   `window.EventSource` directamente (misma página, sin *hand-off* a un
+   worker) — sigue sin tocar `terminal.js`/`review.js`/`shared.js`.
+2. El DataChannel de la Fase 2 llevaba **bytes crudos** (como un socket TCP),
+   pero un navegador no puede correr `fetch`/`WebSocket` nativos sobre un
+   transporte arbitrario sin reimplementar HTTP/WS a mano. Fix real
+   (retroactivo a la Fase 2): se reemplazó por un protocolo de **sobres JSON**
+   (`Envelope` en Rust) — `http`/`http-response`, `ws-open`/`ws-open-ack`/
+   `ws-message`/`ws-close`/`ws-error`, `sse-open`/`sse-message`/`sse-close`/
+   `sse-error`. El lado Rust usa `reqwest` (HTTP) y `tokio-tungstenite` (WS)
+   reales contra el servidor existente — no reinventa el protocolo, solo lo
+   traduce.
+
+- [x] **3.1** Página de emparejamiento — pero servida por el **Worker de
+  Cloudflare** (`workers/signaling/src/pairAssets.ts`, rutas `/pair` y
+  `/pair.js` en `worker.ts`), no por Axum: tiene que ser alcanzable sin
+  Tailscale/LAN desde el primer momento, que es justo el problema que
+  resuelve todo esto. Pide el código, arma el `RTCPeerConnection` como
+  *answerer* (ICE non-trickle, mismo timeout de 5s que el lado Rust — la
+  interfaz de Tailscale de esta máquina se colgaba en el gathering del
+  navegador exactamente igual que en Rust), hace el intercambio con el
+  Worker.
+- [x] **3.2** Sin Service Worker — la propia página parchea `fetch`/
+  `WebSocket`/`EventSource` una vez abre el DataChannel, hablando el
+  protocolo de sobres de la Fase 2. Solo tunelea paths mismo-origen
+  (`/api/...`, `/ws/...`); URLs absolutas (el CDN de xterm.js) se dejan
+  pasar por la red real del teléfono sin tocar.
+- [x] **3.3** El HTML/JS reales (`index.html`, `shared.js`, `terminal.js`,
+  `review.js`, CSS) se piden con el `fetch` ya parcheado y se inyectan en el
+  DOM de la página de emparejamiento — no hay navegación real (eso sí
+  requeriría Service Worker). Cero cambios en esos archivos.
 - [ ] **3.4** Reconexión: si el DataChannel se cae, mostrar "reconectando"
-  y reintentar el emparejamiento con el mismo código si sigue vivo en KV
+  y reintentar el emparejamiento con el mismo código si sigue vivo en KV —
+  pendiente, no cubierto todavía.
+
+**Verificado de punta a punta con Chromium real (Playwright), no solo con
+`cargo build`/`tsc`**: `wrangler dev --local` (Worker) + el binario del
+daemon + `remote.start` real + `webrtc.connect` real, todo hablado por los
+mismos protocolos IPC/HTTP/WS que usa la app de verdad. Resultado: la app
+completa se carga a través del túnel P2P (HTML de 12KB inyectado, CSS/JS
+cargados), la lista de terminales devuelve datos reales vía `fetch`
+tuneleado, y **abrir una terminal real funciona** — xterm.js renderiza salida
+de PTY real a través del WebSocket tuneleado (58KB de contenido en pantalla,
+indicador de conexión en verde). Bugs reales encontrados y corregidos en el
+camino (no hipotéticos):
+- El sobre JSON se mandaba como frame **binario** del DataChannel; el
+  navegador entrega frames binarios como `ArrayBuffer`, no `string` — el
+  `JSON.parse` fallaba en silencio. Fix: decodificar con `TextDecoder` antes
+  de parsear.
+- `GET /` (el HTML) está gateado por token igual que `/api/*` — el primer
+  `fetch` de la página de emparejamiento no tenía token todavía (se agrega
+  recién cuando `shared.js` corre). Fix: pasar `?token=` también en ese
+  primer fetch.
+- El bug de bind-address de la Fase 2 (arriba) — sin este fix, absolutamente
+  nada llega al servidor real.
 
 ### Fase 4 — UI en Bento (desktop)
 
 - [ ] **4.1** `PhonePanel.ts`: nueva opción "Conectar sin Tailscale" junto
   al toggle de Tailscale existente (no lo reemplaza, conviven)
 - [ ] **4.2** Genera el código de 6 dígitos + QR que apunta a
-  `https://<mismo-origen>/pair?code=XXXXXX`
+  `https://<worker>.workers.dev/pair?code=XXXXXX&token=YYYY` (el token viaja
+  en la URL porque la página de emparejamiento lo necesita antes de que
+  `shared.js` exista para leerlo de otra forma)
 - [ ] **4.3** Indicador de estado: conectando / P2P activo / falló (sugiere
   volver a Tailscale/LAN)
+- [ ] **4.4** Llamar `remote.start` automáticamente si no está corriendo
+  antes de `webrtc.connect` (hoy hace falta invocarlo a mano primero)
 
 ---
 
@@ -181,8 +242,9 @@ cómo el teléfono llega hasta ahí.
   quien no lo tenga no puede unirse a la señalización.
 - El tráfico real nunca pasa por Cloudflare — solo el handshake SDP/ICE.
 - WebRTC cifra el DataChannel con DTLS-SRTP nativamente, sin configuración.
-- El forwarder del Mac solo escucha localhost (`127.0.0.1:7879`) — igual
-  que hoy, el server Axum nunca se expone directo a la red.
+- El forwarder del Mac reenvía hacia la IP real que `remote.start` ya tiene
+  bindeada (Tailscale o LAN, gateada por token) — no abre ninguna
+  superficie nueva, solo un camino más para llegar a la que ya existe.
 - Sin TURN: si el P2P directo falla, no hay relay de respaldo — se informa
   al usuario en vez de degradar silenciosamente a algo menos seguro.
 

@@ -1,4 +1,5 @@
 import { answerKey, isValidPairingCode, offerKey, PAIRING_TTL_SECONDS } from './pairing'
+import { PAIR_HTML, PAIR_JS } from './pairAssets'
 
 interface KVNamespace {
   get(key: string): Promise<string | null>
@@ -11,7 +12,7 @@ interface Env {
 
 type RouteKind = 'offer' | 'answer'
 
-function parseRoute(pathname: string): { kind: RouteKind; code: string } | null {
+function parseSignalingRoute(pathname: string): { kind: RouteKind; code: string } | null {
   const match = pathname.match(/^\/(offer|answer)\/([^/]+)$/)
   if (!match) return null
   return { kind: match[1] as RouteKind, code: match[2] }
@@ -36,7 +37,16 @@ async function handleOfferOrAnswer(request: Request, env: Env, key: string): Pro
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const route = parseRoute(new URL(request.url).pathname)
+    const { pathname } = new URL(request.url)
+
+    if (pathname === '/' || pathname === '/pair') {
+      return new Response(PAIR_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
+    }
+    if (pathname === '/pair.js') {
+      return new Response(PAIR_JS, { headers: { 'content-type': 'application/javascript; charset=utf-8' } })
+    }
+
+    const route = parseSignalingRoute(pathname)
     if (!route) return new Response('not found', { status: 404 })
     if (!isValidPairingCode(route.code)) return new Response('invalid pairing code', { status: 400 })
 

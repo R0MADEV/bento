@@ -21,4 +21,6 @@ getrandom = "0.2"
 webrtc = "0.20.3"
 async-trait = "0.1"
 bytes = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+tokio-tungstenite = { version = "0.24", default-features = false }
+base64 = "0.22"
