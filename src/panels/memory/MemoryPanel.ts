@@ -17,6 +17,7 @@ import {
 } from '../../core/memory/memoryFormat'
 import { runCandidateImport } from './memoryImportRunner'
 import { createMemoryEntryActions } from './memoryEntryActions'
+import { createMemoryListView } from './memoryListView'
 import { createMemorySourcesView } from './memorySourcesView'
 import { createMemorySummaryJobsView } from './memorySummaryJobsView'
 import type { ImportedMemoryCandidate } from '../../core/memory/memorySource'
@@ -24,6 +25,9 @@ import type { ImportedMemoryCandidate } from '../../core/memory/memorySource'
 import type { MemoryRepository } from '../../ports/MemoryRepository'
 
 export function createMemoryPanel(repo: MemoryRepository, projectPath?: string): { element: HTMLElement } {
+  // Shared with the list view and the bulk actions, so all three see one set.
+  const selectedIds = new Set<string>()
+
   const root = document.createElement('div')
   root.className = 'memory-panel'
 
@@ -93,8 +97,17 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   deleteSelectedBtn.textContent = i18nT('common.delete2')
   controls.append(search, kindFilter, sourceFilter, archivedToggle, selectVisibleBtn, clearSelectionBtn, archiveSelectedBtn, mergeSelectedBtn, deleteSelectedBtn)
 
-  const list = document.createElement('div')
-  list.className = 'memory-list'
+  const listView = createMemoryListView({
+    currentProject,
+    getVisibleRows: () => visibleRows(),
+    getSelectedId: () => selectedId,
+    selectedIds,
+    setMiniItems: itemsToShow => cs.setMiniItems(itemsToShow),
+    onSelect: entry => { selectedId = entry.id; fillForm(entry) },
+    onSelectionChanged: () => syncBulkButtons(),
+  })
+  const list = listView.element
+  const renderList = (): void => listView.render()
 
   const detail = document.createElement('div')
   detail.className = 'memory-detail'
@@ -201,7 +214,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   let entries: MemoryEntry[] = []
   let selectedId: string | null = null
-  const selectedIds = new Set<string>()
 
   // The Rust importer answers in snake_case; the rest of the panel speaks the
   // candidate shape.
@@ -296,63 +308,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     supersedeBtn.textContent = entry?.tags.includes(MEMORY_SUPERSEDED_TAG) ? i18nT('memory.restore') : i18nT('memory.obsolete')
     regenerateBtn.disabled = !canRegenerateSummary(entry)
     setStatus(undefined, entry)
-  }
-
-  const renderList = (): void => {
-    list.innerHTML = ''
-    const rows = visibleRows()
-    cs.setMiniItems(rows.map(entry => ({
-      label: entry.title || i18nT('memory.untitled'),
-      active: entry.id === selectedId,
-      onClick: () => { selectedId = entry.id; fillForm(entry); renderList() },
-    })))
-    if (!rows.length) {
-      const empty = document.createElement('div')
-      empty.className = 'memory-empty'
-      empty.textContent = i18nT('memory.thereIsNoSavedMemoryForThisFilter')
-      list.appendChild(empty)
-      return
-    }
-    rows.forEach(entry => {
-      const item = document.createElement('div')
-      item.className = entry.id === selectedId ? 'memory-item active' : 'memory-item'
-      const top = document.createElement('div')
-      top.className = 'memory-item-top'
-      const checkbox = document.createElement('input')
-      checkbox.type = 'checkbox'
-      checkbox.checked = selectedIds.has(entry.id)
-      checkbox.addEventListener('click', event => event.stopPropagation())
-      checkbox.addEventListener('change', () => {
-        if (checkbox.checked) selectedIds.add(entry.id)
-        else selectedIds.delete(entry.id)
-        syncBulkButtons()
-      })
-      const badge = document.createElement('span')
-      badge.className = `memory-kind ${entry.kind}`
-      badge.textContent = KIND_LABEL[entry.kind]
-      const entryTitle = document.createElement('span')
-      entryTitle.className = 'memory-item-title'
-      entryTitle.textContent = entry.title || i18nT('memory.untitled')
-      const sourceBadge = document.createElement('span')
-      sourceBadge.className = 'memory-source'
-      sourceBadge.textContent = sourceLabel(entry.source)
-      if (entry.tags.includes(MEMORY_PINNED_TAG)) item.classList.add('pinned')
-      if (entry.tags.includes(MEMORY_VERIFIED_TAG)) item.classList.add('verified')
-      if (isArchivedMemory(entry)) item.classList.add('archived')
-      top.append(checkbox, badge, entryTitle, sourceBadge)
-      const text = document.createElement('div')
-      text.className = 'memory-item-summary'
-      text.textContent = currentProject
-        ? entry.summary || entry.details || i18nT('memory.noSummary')
-        : `${entry.projectPath || i18nT('common.global')} · ${entry.summary || entry.details || i18nT('memory.noSummary')}`
-      item.append(top, text)
-      item.addEventListener('click', () => {
-        selectedId = entry.id
-        fillForm(entry)
-        renderList()
-      })
-      list.appendChild(item)
-    })
   }
 
   const reload = async (): Promise<void> => {
