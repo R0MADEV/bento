@@ -368,9 +368,22 @@ pub async fn remote_status(state: tauri::State<'_, Arc<PtyManager>>) -> Result<R
         addr:  data.get("addr").and_then(Value::as_str).map(String::from),
     })
 }
+/// `Command::new("tailscale")` relies on PATH, but a GUI-launched macOS app
+/// (Finder/Launchpad/Dock) gets launchd's minimal PATH — `/usr/bin:/bin:/usr/sbin:/sbin` —
+/// which doesn't include where the CLI actually lives, so the plain name is
+/// never found there. Check the well-known install locations directly first.
+fn tailscale_binary() -> std::path::PathBuf {
+    for candidate in ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate.into();
+        }
+    }
+    "tailscale".into()
+}
+
 #[tauri::command]
 pub fn tailscale_detect() -> Option<String> {
-    let output = std::process::Command::new("tailscale")
+    let output = std::process::Command::new(tailscale_binary())
         .args(["ip", "-4"])
         .output()
         .ok()?;

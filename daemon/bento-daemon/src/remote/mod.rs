@@ -207,8 +207,21 @@ fn local_ip() -> String {
         .unwrap_or_else(|_| "127.0.0.1".to_string())
 }
 
+/// `Command::new("tailscale")` relies on PATH, but a GUI-launched macOS app
+/// (Finder/Launchpad/Dock) gets launchd's minimal PATH — `/usr/bin:/bin:/usr/sbin:/sbin` —
+/// which doesn't include where the CLI actually lives, so the plain name is
+/// never found there. Check the well-known install locations directly first.
+fn tailscale_binary() -> std::path::PathBuf {
+    for candidate in ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate.into();
+        }
+    }
+    "tailscale".into()
+}
+
 pub fn tailscale_ip() -> Option<String> {
-    let output = std::process::Command::new("tailscale")
+    let output = std::process::Command::new(tailscale_binary())
         .args(["ip", "-4"])
         .output()
         .ok()?;
