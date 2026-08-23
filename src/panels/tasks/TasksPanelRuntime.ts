@@ -7,7 +7,7 @@ import { summarisePrChecks } from '../../core/git/prChecks'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
 import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
-import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch } from '../../core/git/commitWorkflow'
+import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch, rankFixupCandidates } from '../../core/git/commitWorkflow'
 import { previewRebase, reorderByDrop, swapItems, type RebaseAction, type RebasePlanItem } from '../../core/git/rebaseWorkflow'
 import {
   fetchIssue, fetchTransitions, applyTransition, browseUrl, loadJiraConfig,
@@ -1162,18 +1162,15 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
       ])
       const historyScores = recommendationMap(recommendations)
       const blameScores = recommendationMap(blameRecommendations)
-      const enriched = await Promise.all(entries.map(async (entry, originalIndex) => {
+      const scored = await Promise.all(entries.map(async entry => {
         const commitFiles = await taskGit.files(wt.path, entry.hash).catch(() => [])
         const filesRaw = commitFilesRaw(commitFiles)
         const overlap = matchingPaths(incomingFiles, changedPaths(filesRaw))
         const history = historyScores.get(entry.hash) ?? { score: 0, files: [] }
         const blame = blameScores.get(entry.hash) ?? { score: 0, files: [] }
-        return { entry, commitFiles, overlap, history, blame, originalIndex }
+        return { entry, commitFiles, overlap, history, blame }
       }))
-      enriched.sort((a, b) =>
-        (b.overlap.length * 10000 + b.blame.score * 100 + b.history.score)
-        - (a.overlap.length * 10000 + a.blame.score * 100 + a.history.score)
-        || a.originalIndex - b.originalIndex)
+      const enriched = rankFixupCandidates(scored)
 
       const wrap = document.createElement('div')
       wrap.className = 'tasks-fixup-wrap'
