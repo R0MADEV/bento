@@ -1,23 +1,15 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { askAi } from '../../ui/askAi'
 import { icon } from '../../ui/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
-import type { MemoryEntry, MemoryKind, NewMemoryEntry } from '../../core/memory/MemoryEntry'
-import {
-  MEMORY_PINNED_TAG,
-  MEMORY_SUPERSEDED_TAG,
-  MEMORY_VERIFIED_TAG,
-  isArchivedMemory,
-} from '../../core/memory/normalize'
+import type { MemoryEntry, MemoryKind } from '../../core/memory/MemoryEntry'
+import { isArchivedMemory } from '../../core/memory/normalize'
 import { filterMemoryEntries } from '../../core/memory/memoryFilter'
-import {
-  KIND_LABEL, KIND_OPTIONS, splitList,
-  timeLabel, sourceLabel, canRegenerateSummary,
-} from '../../core/memory/memoryFormat'
+import { KIND_LABEL, KIND_OPTIONS } from '../../core/memory/memoryFormat'
 import { runCandidateImport } from './memoryImportRunner'
 import { createMemoryEntryActions } from './memoryEntryActions'
 import { createMemoryListView } from './memoryListView'
+import { createMemoryDetailView } from './memoryDetailView'
 import { createMemorySourcesView } from './memorySourcesView'
 import { createMemorySummaryJobsView } from './memorySummaryJobsView'
 import type { ImportedMemoryCandidate } from '../../core/memory/memorySource'
@@ -109,85 +101,30 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   const list = listView.element
   const renderList = (): void => listView.render()
 
-  const detail = document.createElement('div')
-  detail.className = 'memory-detail'
-
-  const detailHead = document.createElement('div')
-  detailHead.className = 'memory-detail-head'
-  const status = document.createElement('div')
-  status.className = 'memory-status'
-  const askBtn = document.createElement('button')
-  askBtn.className = 'memory-action'
-  askBtn.title = i18nT('common.sendToAiChat')
-  askBtn.innerHTML = icon('chat')
-  const regenerateBtn = document.createElement('button')
-  regenerateBtn.className = 'memory-action'
-  regenerateBtn.title = i18nT('memory.regenerateSummaryFromTranscript')
-  regenerateBtn.textContent = i18nT('memory.regenerate')
-  const archiveBtn = document.createElement('button')
-  archiveBtn.className = 'memory-action'
-  archiveBtn.title = i18nT('memory.archiveEntry')
-  archiveBtn.textContent = i18nT('memory.archive')
-  const pinBtn = document.createElement('button')
-  pinBtn.className = 'memory-action'
-  pinBtn.title = i18nT('memory.keepThisMemoryPrioritized')
-  pinBtn.textContent = i18nT('memory.pin')
-  const verifyBtn = document.createElement('button')
-  verifyBtn.className = 'memory-action'
-  verifyBtn.title = i18nT('memory.markContentAsManuallyReviewed')
-  verifyBtn.textContent = i18nT('memory.verify')
-  const supersedeBtn = document.createElement('button')
-  supersedeBtn.className = 'memory-action'
-  supersedeBtn.title = i18nT('memory.markAsObsoleteOrReplaced')
-  supersedeBtn.textContent = i18nT('memory.obsolete')
-  const deleteBtn = document.createElement('button')
-  deleteBtn.className = 'memory-action danger'
-  deleteBtn.title = i18nT('memory.deleteEntry')
-  deleteBtn.innerHTML = icon('trash')
-  detailHead.append(status, askBtn, regenerateBtn, pinBtn, verifyBtn, supersedeBtn, archiveBtn, deleteBtn)
-
-  const form = document.createElement('div')
-  form.className = 'memory-form'
-
-  const kind = document.createElement('select')
-  kind.className = 'memory-input'
-  KIND_OPTIONS.filter((value): value is MemoryKind => value !== 'all').forEach(value => {
-    const option = document.createElement('option')
-    option.value = value
-    option.textContent = KIND_LABEL[value]
-    kind.appendChild(option)
+  const entryActions = createMemoryEntryActions({
+    repo,
+    getEntries: () => entries,
+    getSelectedId: () => selectedId,
+    setSelectedId: id => { selectedId = id },
+    selectedIds,
+    reload: () => reload(),
+    setStatus: (message, entry) => setStatus(message, entry),
   })
 
-  const source = document.createElement('input')
-  source.className = 'memory-input'
-  source.placeholder = i18nT('memory.sourceManualCodexClaude')
+  const detailView = createMemoryDetailView({
+    repo,
+    currentProject,
+    getSelectedEntry: () => selected(),
+    getSelectedId: () => selectedId,
+    setSelectedId: id => { selectedId = id },
+    reload: () => reload(),
+    actions: entryActions,
+  })
+  const detail = detailView.element
+  const fillForm = (entry?: MemoryEntry): void => detailView.fill(entry)
+  const setStatus = (message?: string, entry?: MemoryEntry): void => detailView.setStatus(message, entry)
+  const { archiveEntries, deleteEntries, mergeSelected } = entryActions
 
-  const titleInput = document.createElement('input')
-  titleInput.className = 'memory-input'
-  titleInput.placeholder = i18nT('common.title')
-
-  const tags = document.createElement('input')
-  tags.className = 'memory-input'
-  tags.placeholder = i18nT('memory.tagsPlaceholder')
-
-  const files = document.createElement('input')
-  files.className = 'memory-input'
-  files.placeholder = i18nT('memory.filesSrcATsSrcBTs')
-
-  const summary = document.createElement('textarea')
-  summary.className = 'memory-textarea summary'
-  summary.placeholder = i18nT('memory.shortReusableSummary')
-
-  const details = document.createElement('textarea')
-  details.className = 'memory-textarea'
-  details.placeholder = i18nT('memory.detailsContextWhyNextStep')
-
-  const saveBtn = document.createElement('button')
-  saveBtn.className = 'memory-primary'
-  saveBtn.textContent = i18nT('common.save')
-
-  form.append(kind, source, titleInput, tags, files, summary, details, saveBtn)
-  detail.append(detailHead, form)
   const summaryJobsView = createMemorySummaryJobsView({
     currentProject,
     setStatus: (message, entry) => setStatus(message, entry),
@@ -253,18 +190,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     return rows.filter(entry => entry.projectPath === currentProject)
   }
 
-  const setStatus = (message?: string, entry?: MemoryEntry): void => {
-    if (message) {
-      status.textContent = message
-      return
-    }
-    status.textContent = entry
-      ? `${KIND_LABEL[entry.kind]} · ${sourceLabel(entry.source)} · ${timeLabel(entry.updatedAt)}`
-      : currentProject
-        ? i18nT('memory.projectLabel', { project: currentProject })
-        : i18nT('memory.globalMemory')
-  }
-
   const syncBulkButtons = (): void => {
     const count = selectedIds.size
     clearSelectionBtn.disabled = count === 0
@@ -287,27 +212,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       sourceFilter.appendChild(option)
     })
     sourceFilter.value = sources.includes(previous) ? previous : 'all'
-  }
-
-  const fillForm = (entry?: MemoryEntry): void => {
-    kind.value = entry?.kind ?? 'decision'
-    source.value = entry?.source ?? 'manual'
-    titleInput.value = entry?.title ?? ''
-    tags.value = entry?.tags.join(', ') ?? ''
-    files.value = entry?.files.join(', ') ?? ''
-    summary.value = entry?.summary ?? ''
-    details.value = entry?.details ?? ''
-    deleteBtn.disabled = !entry
-    askBtn.disabled = !entry
-    archiveBtn.disabled = !entry
-    pinBtn.disabled = !entry
-    verifyBtn.disabled = !entry
-    supersedeBtn.disabled = !entry
-    pinBtn.textContent = entry?.tags.includes(MEMORY_PINNED_TAG) ? i18nT('memory.unpin') : i18nT('memory.pin')
-    verifyBtn.textContent = entry?.tags.includes(MEMORY_VERIFIED_TAG) ? i18nT('memory.verified') : i18nT('memory.verify')
-    supersedeBtn.textContent = entry?.tags.includes(MEMORY_SUPERSEDED_TAG) ? i18nT('memory.restore') : i18nT('memory.obsolete')
-    regenerateBtn.disabled = !canRegenerateSummary(entry)
-    setStatus(undefined, entry)
   }
 
   const reload = async (): Promise<void> => {
@@ -342,21 +246,11 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
     requestAnimationFrame(() => list.querySelector<HTMLElement>('.memory-item.active')?.scrollIntoView({ block: 'nearest' }))
   }
 
-  const { archiveEntries, deleteEntries, mergeSelected, toggleSelectedTag } = createMemoryEntryActions({
-    repo,
-    getEntries: () => entries,
-    getSelectedId: () => selectedId,
-    setSelectedId: id => { selectedId = id },
-    selectedIds,
-    reload: () => reload(),
-    setStatus: (message, entry) => setStatus(message, entry),
-  })
-
   addBtn.addEventListener('click', () => {
     selectedId = null
     fillForm()
     renderList()
-    titleInput.focus()
+    detailView.focusTitle()
   })
   refreshBtn.addEventListener('click', () => { void Promise.all([reload(), summaryJobsView.reload()]) })
 
@@ -405,76 +299,6 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
 
   importClaudeBtn.addEventListener('click', () => { void importEntries('claude') })
   importCodexBtn.addEventListener('click', () => { void importEntries('codex') })
-
-  saveBtn.addEventListener('click', () => { void (async () => {
-    const payload: NewMemoryEntry = {
-      kind: kind.value as MemoryKind,
-      source: source.value.trim() || 'manual',
-      title: titleInput.value.trim(),
-      summary: summary.value.trim(),
-      details: details.value.trim(),
-      tags: splitList(tags.value),
-      files: splitList(files.value),
-    }
-    if (!payload.title && !payload.summary && !payload.details) return
-    try {
-      saveBtn.disabled = true
-      const entry = selectedId
-        ? await repo.update(currentProject, selectedId, payload)
-        : await repo.create(currentProject, payload)
-      if (!entry) throw new Error('La entrada ya no existe.')
-      selectedId = entry.id
-      await reload()
-      setStatus(i18nT('memory.memorySaved'), entry)
-    } catch (error) {
-      setStatus(i18nT('memory.saveFailed', { error: error instanceof Error ? error.message : String(error) }))
-    } finally {
-      saveBtn.disabled = false
-    }
-  })() })
-
-  archiveBtn.addEventListener('click', () => { void archiveEntries(selected() ? [selected()!] : []).catch(error => setStatus(String(error))) })
-  pinBtn.addEventListener('click', () => { void toggleSelectedTag(MEMORY_PINNED_TAG).catch(error => setStatus(String(error))) })
-  verifyBtn.addEventListener('click', () => { void toggleSelectedTag(MEMORY_VERIFIED_TAG).catch(error => setStatus(String(error))) })
-  supersedeBtn.addEventListener('click', () => { void toggleSelectedTag(MEMORY_SUPERSEDED_TAG).catch(error => setStatus(String(error))) })
-  deleteBtn.addEventListener('click', () => { void deleteEntries(selected() ? [selected()!] : []).catch(error => setStatus(String(error))) })
-  regenerateBtn.addEventListener('click', () => { void (async () => {
-    const entry = selected()
-    if (!entry || !entry.externalId.includes(':session-summary:')) return
-    try {
-      regenerateBtn.disabled = true
-      setStatus(i18nT('memory.regeneratingSummaryFromTranscript'))
-      const updated = await invoke<MemoryEntry | null>('memory_regenerate_summary', {
-        projectPath: entry.projectPath,
-        externalId: entry.externalId,
-      })
-      if (!updated) {
-        setStatus(i18nT('memory.theSummaryCouldNotBeRegeneratedOrThere'))
-        return
-      }
-      selectedId = updated.id
-      await reload()
-      setStatus(i18nT('memory.summaryRegenerated'), updated)
-    } catch (error) {
-      setStatus(i18nT('memory.regenerateFailed', { error: error instanceof Error ? error.message : String(error) }))
-    } finally {
-      regenerateBtn.disabled = !canRegenerateSummary(selected())
-    }
-  })() })
-
-  askBtn.addEventListener('click', () => {
-    const entry = selected()
-    if (!entry) return
-    askAi(
-      `Contexto — memoria reutilizable del proyecto${currentProject ? ` (${currentProject})` : ''}:\n\n` +
-      `Tipo: ${KIND_LABEL[entry.kind]}\n` +
-      `Origen: ${entry.source}\n` +
-      `Título: ${entry.title}\n` +
-      `Tags: ${entry.tags.join(', ')}\n` +
-      `Archivos: ${entry.files.join(', ')}\n\n` +
-      `${entry.summary}\n\n${entry.details}\n`
-    )
-  })
 
   syncBulkButtons()
   void reload()
