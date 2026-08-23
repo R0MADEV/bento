@@ -24,7 +24,7 @@ import {
   timeLabel, sourceLabel, canRegenerateSummary,
 } from '../../core/memory/memoryFormat'
 import { candidateProject, computePreviewCandidateState } from '../../core/memory/memoryCandidates'
-import { planCandidateImport } from '../../core/memory/memoryImportPlan'
+import { runCandidateImport } from './memoryImportRunner'
 import type {
   MemorySource, ImportedMemoryCandidate, PreviewCandidateState, MemorySummaryJob,
 } from '../../core/memory/memorySource'
@@ -669,29 +669,13 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
         limit: 50,
       })
       const existing = await targetProjectEntries()
-      let saved = 0
-      let merged = 0
-      let skipped = 0
-      let lastAffectedId: string | null = null
-      for (const [index, candidate] of candidates.entries()) {
-        setSourceActivity(i18nT('memory.importingProgress', { label: item.label, current: index + 1, total: candidates.length }), ((index + 1) / Math.max(candidates.length, 1)) * 100)
-        const plan = planCandidateImport(currentProject, candidate, existing)
-        if (plan.action === 'skip') {
-          lastAffectedId = plan.entryId
-          skipped++
-          continue
-        }
-        if (plan.action === 'merge') {
-          const updated = await repo.update(currentProject, plan.entry.id, plan.patch)
-          lastAffectedId = updated?.id ?? plan.entry.id
-          merged++
-          continue
-        }
-        const created = await repo.create(currentProject, plan.payload)
-        existing.unshift(created)
-        lastAffectedId = created.id
-        saved++
-      }
+      const { saved, merged, skipped, lastAffectedId } = await runCandidateImport(
+        repo, currentProject, candidates, existing,
+        (current, total) => setSourceActivity(
+          i18nT('memory.importingProgress', { label: item.label, current, total }),
+          (current / Math.max(total, 1)) * 100,
+        ),
+      )
       await reload()
       revealMemoryEntry(lastAffectedId)
       await reloadSources()
@@ -1029,48 +1013,13 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
       importSelectedSourceBtn.disabled = true
       setStatus(i18nT('memory.importingSelected', { count: candidates.length, label: sourceLabel }))
       const existing = await targetProjectEntries()
-      let saved = 0
-      let merged = 0
-      let skipped = 0
-      let lastAffectedId: string | null = null
-      for (const [index, candidate] of candidates.entries()) {
-        setSourceActivity(i18nT('memory.importingSelectionProgress', { current: index + 1, total: candidates.length }), ((index + 1) / Math.max(candidates.length, 1)) * 100)
-        const payload: NewMemoryEntry = {
-          kind: 'note',
-          title: candidate.title,
-          summary: candidate.summary,
-          details: candidate.details,
-          source: candidate.source,
-          externalId: candidate.externalId,
-          files: candidate.files,
-          tags: candidate.tags,
-          createdAt: candidate.createdAt,
-          updatedAt: new Date().toISOString(),
-        }
-        const normalized = normalizeNewMemoryEntry(currentProject, payload)
-        const existingExternal = existing.find(entry => entry.externalId === normalized.externalId)
-        if (existingExternal) {
-          lastAffectedId = existingExternal.id
-          skipped++
-          continue
-        }
-        const duplicate = findSemanticallyDuplicate(existing, normalized)
-        if (duplicate) {
-          const updated = await repo.update(currentProject, duplicate.id, {
-            tags: uniqMemoryValues([...duplicate.tags, ...normalized.tags]),
-            files: uniqMemoryValues([...duplicate.files, ...normalized.files]),
-            summary: duplicate.summary.length >= normalized.summary.length ? duplicate.summary : normalized.summary,
-            details: duplicate.details.length >= normalized.details.length ? duplicate.details : normalized.details,
-          })
-          lastAffectedId = updated?.id ?? duplicate.id
-          merged++
-          continue
-        }
-        const created = await repo.create(currentProject, payload)
-        existing.unshift(created)
-        lastAffectedId = created.id
-        saved++
-      }
+      const { saved, merged, skipped, lastAffectedId } = await runCandidateImport(
+        repo, currentProject, candidates, existing,
+        (current, total) => setSourceActivity(
+          i18nT('memory.importingSelectionProgress', { current, total }),
+          (current / Math.max(total, 1)) * 100,
+        ),
+      )
       await reload()
       revealMemoryEntry(lastAffectedId)
       await refreshPreviewCandidateState()
