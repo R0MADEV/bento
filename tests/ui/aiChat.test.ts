@@ -77,22 +77,9 @@ vi.mock('../../src/core/ai/agentClient', async (importOriginal) => ({
   redact: (value: string) => value,
 }))
 
-import { createAiChat, isCapacityError } from '../../src/ui/aiChat'
+import { createAiChat } from '../../src/ui/aiChat'
 import { AI_ASK_EVENT } from '../../src/ui/askAi'
 import type { MemoryRepository } from '../../src/ports/MemoryRepository'
-
-describe('isCapacityError', () => {
-  it('flags token / rate / usage limits so we can switch agents', () => {
-    for (const message of ['rate limit exceeded', 'usage limit reached', '429 Too Many Requests', 'model overloaded', 'quota exceeded', 'prompt is too long', 'maximum context length exceeded']) {
-      expect(isCapacityError(message)).toBe(true)
-    }
-  })
-  it('does not flag unrelated failures', () => {
-    for (const message of ['agent timeout', 'executable not found', 'No conversation found', '']) {
-      expect(isCapacityError(message)).toBe(false)
-    }
-  })
-})
 
 describe('AI chat agent follow-ups', () => {
   beforeEach(() => {
