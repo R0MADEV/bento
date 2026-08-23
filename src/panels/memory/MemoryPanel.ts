@@ -19,83 +19,16 @@ import {
   uniqMemoryValues,
 } from '../../core/memory/normalize'
 import { matchesMemoryQuery } from '../../core/memory/memorySearch'
-import type { MemoryRepository } from '../../ports/MemoryRepository'
+import {
+  KIND_LABEL, KIND_OPTIONS, splitList, basename, projectName,
+  detailProject, lexisProjectFolder, timeLabel, sourceLabel, canRegenerateSummary,
+} from '../../core/memory/memoryFormat'
+import type {
+  MemorySource, ImportedMemoryCandidate, PreviewCandidateState, MemorySummaryJob,
+} from '../../core/memory/memorySource'
 
-const KIND_LABEL: Record<MemoryKind, string> = {
-  decision: i18nT('memory.decision'),
-  fact: i18nT('memory.fact'),
-  task: i18nT('memory.task'),
-  note: i18nT('common.note'),
-}
-
-const KIND_OPTIONS: Array<MemoryKind | 'all'> = ['all', 'decision', 'fact', 'task', 'note']
 const SOURCE_PREVIEW_LIMIT = 200
-
-const splitList = (value: string): string[] => uniqMemoryValues(value.split(','))
-const basename = (value: string): string => value.split(/[\\/]/).filter(Boolean).pop() ?? ''
-const projectName = (value: string): string => basename(value) || value
-const detailProject = (value: string): string | null => {
-  const match = value.match(/^Proyecto indexado:\s+(.+)$/m)
-  return match?.[1]?.trim() ?? null
-}
-const lexisProjectFolder = (value: string): string | null => {
-  const normalized = value.replace(/\\/g, '/')
-  const marker = '/.lexis/projects/'
-  const start = normalized.indexOf(marker)
-  if (start < 0) return null
-  const rest = normalized.slice(start + marker.length)
-  const folder = rest.split('/')[0]?.trim()
-  return folder || null
-}
-
-const timeLabel = (iso: string): string => {
-  try { return new Date(iso).toLocaleString() } catch { return iso }
-}
-
-const sourceLabel = (value: string): string => value || i18nT('memory.manual')
-const canRegenerateSummary = (entry?: MemoryEntry): boolean => Boolean(entry?.externalId && entry.externalId.includes(':session-summary:'))
-
-interface MemorySource {
-  id: string
-  projectPath: string
-  kind: 'filesystem'
-  label: string
-  path: string
-  createdAt: string
-  updatedAt: string
-}
-
-interface ImportedMemoryCandidate {
-  title: string
-  summary: string
-  details: string
-  source: string
-  externalId: string
-  createdAt: string
-  files: string[]
-  tags: string[]
-}
-
-interface PreviewCandidateState {
-  duplicateExternal: boolean
-  duplicateSemantic: boolean
-  duplicateTitle?: string
-}
-
-interface MemorySummaryJob {
-  id: string
-  projectPath: string
-  agent: 'claude' | 'codex'
-  sessionId: string
-  transcriptExternalId: string
-  transcriptHash: string
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped'
-  error: string
-  attempts: number
-  metadataJson: string
-  createdAt: string
-  updatedAt: string
-}
+import type { MemoryRepository } from '../../ports/MemoryRepository'
 
 export function createMemoryPanel(repo: MemoryRepository, projectPath?: string): { element: HTMLElement } {
   const root = document.createElement('div')
