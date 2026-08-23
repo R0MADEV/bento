@@ -5,7 +5,8 @@ import type { JiraIssue } from '../../core/jira/issues'
 import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
 import { browseUrl } from '../../core/jira/urls'
-import { groupByCategory, boardCategory, mapToAgileColumns, statusCategoryClass, type AgileBoard, type AgileColumn } from '../../core/jira/board'
+import { findTransitionForColumn, type JiraTransition } from '../../core/jira/transitions'
+import { groupByCategory, mapToAgileColumns, statusCategoryClass, type AgileBoard, type AgileColumn } from '../../core/jira/board'
 import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
 import { icon } from '../../ui/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
@@ -467,14 +468,8 @@ export function createJiraPanel(): { element: HTMLElement } {
 
   // Find and execute the right Jira transition to move an issue to a target column.
   const doTransitionByColumn = async (issueKey: string, targetColName: string, cols: AgileColumn[] | null): Promise<void> => {
-    const res = await api('GET', `api/2/issue/${issueKey}/transitions`) as { transitions?: Array<{ id: string; name: string; to: { id: string; name: string; statusCategory: { key: string } } }> }
-    const transitions = res?.transitions ?? []
-    let match = transitions.find(t => t.to.name === targetColName || t.name === targetColName)
-    if (!match && cols) {
-      const targetCol = cols.find(c => c.name === targetColName)
-      match = transitions.find(t => targetCol?.statusIds.includes(t.to.id))
-    }
-    if (!match) match = transitions.find(t => boardCategory(t.to.statusCategory.key) === boardCategory(agileColumns.find(c => c.name === targetColName)?.statusIds[0] ? 'indeterminate' : 'new'))
+    const res = await api('GET', `api/2/issue/${issueKey}/transitions`) as { transitions?: JiraTransition[] }
+    const match = findTransitionForColumn(res?.transitions ?? [], targetColName, cols)
     if (!match) throw new Error(`No hay transición disponible hacia "${targetColName}"`)
     await api('POST', `api/2/issue/${issueKey}/transitions`, { transition: { id: match.id } })
   }
