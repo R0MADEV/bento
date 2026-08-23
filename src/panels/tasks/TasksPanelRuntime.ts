@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder, confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { taskBranch, taskPath, type Worktree } from '../../core/git/worktree'
+import { filterWorktrees, groupWorktreesByRepo } from '../../core/git/worktreeList'
 import { showContextMenu } from '../../ui/contextMenu'
 import { icon } from '../../ui/icons'
 import { extractIssueKey, statusCategoryClass, parseAheadBehind } from '../../core/git/taskJira'
@@ -487,10 +488,7 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
 
   function applyFilter(): void {
     updateProgress()
-    const lf = filterText.toLowerCase()
-    const filtered = filterText
-      ? worktrees.filter(wt => (wt.branch ?? '').toLowerCase().includes(lf) || wt.path.toLowerCase().includes(lf))
-      : worktrees
+    const filtered = filterWorktrees(worktrees, filterText)
 
     listWrap.replaceChildren()
     refreshCreateForm()
@@ -500,14 +498,8 @@ export function createTasksPanel(panelId = 'default'): { element: HTMLElement; d
       return
     }
 
-    // Group worktrees by their repo (single repo → one group), preserving order.
-    const byRepo = new Map<string, Worktree[]>()
-    for (const wt of filtered) {
-      const repo = repoOf.get(wt.path) ?? repoPath
-      const bucket = byRepo.get(repo) ?? []
-      bucket.push(wt)
-      byRepo.set(repo, bucket)
-    }
+    // Single repo → one group.
+    const byRepo = groupWorktreesByRepo(filtered, repoOf, repoPath)
     for (const [repo, wts] of byRepo) listWrap.appendChild(buildProjectGroup(repo, wts))
     refreshMiniItems()
   }
