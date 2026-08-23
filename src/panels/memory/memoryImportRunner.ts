@@ -22,13 +22,15 @@ export async function runCandidateImport(
   candidates: ImportedMemoryCandidate[],
   existing: MemoryEntry[],
   onProgress?: (current: number, total: number) => void,
+  /** What to stamp as updatedAt for each candidate; defaults to now. */
+  updatedAt?: (candidate: ImportedMemoryCandidate) => string,
 ): Promise<ImportOutcome> {
   const known = [...existing]
   const outcome: ImportOutcome = { saved: 0, merged: 0, skipped: 0, lastAffectedId: null }
 
   for (const [index, candidate] of candidates.entries()) {
     onProgress?.(index + 1, candidates.length)
-    const plan = planCandidateImport(projectPath, candidate, known)
+    const plan = planCandidateImport(projectPath, candidate, known, updatedAt?.(candidate))
 
     if (plan.action === 'skip') {
       outcome.lastAffectedId = plan.entryId

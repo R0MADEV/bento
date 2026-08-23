@@ -11,20 +11,19 @@ import {
   MEMORY_SUPERSEDED_TAG,
   MEMORY_VERIFIED_TAG,
   archiveMemoryTags,
-  findSemanticallyDuplicate,
   isArchivedMemory,
   mergeMemoryEntries,
-  normalizeNewMemoryEntry,
   toggleMemoryTag,
-  uniqMemoryValues,
 } from '../../core/memory/normalize'
 import { filterMemoryEntries } from '../../core/memory/memoryFilter'
 import {
   KIND_LABEL, KIND_OPTIONS, splitList,
   timeLabel, sourceLabel, canRegenerateSummary,
 } from '../../core/memory/memoryFormat'
+import { runCandidateImport } from './memoryImportRunner'
 import { createMemorySourcesView } from './memorySourcesView'
 import { createMemorySummaryJobsView } from './memorySummaryJobsView'
+import type { ImportedMemoryCandidate } from '../../core/memory/memorySource'
 
 import type { MemoryRepository } from '../../ports/MemoryRepository'
 
@@ -207,6 +206,19 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
   let entries: MemoryEntry[] = []
   let selectedId: string | null = null
   const selectedIds = new Set<string>()
+
+  // The Rust importer answers in snake_case; the rest of the panel speaks the
+  // candidate shape.
+  const toCandidate = (item: ImportedMemory): ImportedMemoryCandidate => ({
+    title: item.title,
+    summary: item.summary,
+    details: item.details,
+    source: item.source,
+    externalId: item.external_id,
+    createdAt: item.created_at,
+    files: item.files,
+    tags: item.tags,
+  })
 
   interface ImportedMemory {
     title: string
@@ -485,42 +497,11 @@ export function createMemoryPanel(repo: MemoryRepository, projectPath?: string):
         return
       }
       const existing = await targetProjectEntries()
-      let saved = 0
-      let merged = 0
-      let skipped = 0
-      for (const item of imported) {
-        const payload: NewMemoryEntry = {
-          kind: 'note',
-          title: item.title,
-          summary: item.summary,
-          details: item.details,
-          source: item.source,
-          externalId: item.external_id,
-          files: item.files,
-          tags: item.tags,
-          createdAt: item.created_at,
-          updatedAt: item.created_at,
-        }
-        const normalized = normalizeNewMemoryEntry(currentProject, payload)
-        if (existing.some(entry => entry.externalId === normalized.externalId)) {
-          skipped++
-          continue
-        }
-        const duplicate = findSemanticallyDuplicate(existing, normalized)
-        if (duplicate) {
-          await repo.update(currentProject, duplicate.id, {
-            tags: uniqMemoryValues([...duplicate.tags, ...normalized.tags]),
-            files: uniqMemoryValues([...duplicate.files, ...normalized.files]),
-            summary: duplicate.summary.length >= normalized.summary.length ? duplicate.summary : normalized.summary,
-            details: duplicate.details.length >= normalized.details.length ? duplicate.details : normalized.details,
-          })
-          merged++
-          continue
-        }
-        const created = await repo.create(currentProject, payload)
-        existing.unshift(created)
-        saved++
-      }
+      const { saved, merged, skipped } = await runCandidateImport(
+        repo, currentProject, imported.map(toCandidate), existing,
+        // Agent imports keep the memory's own timestamp instead of stamping now.
+        undefined, candidate => candidate.createdAt,
+      )
       await reload()
       setStatus(i18nT('memory.importResultExisting', { saved, merged, skipped }))
     } catch (error) {

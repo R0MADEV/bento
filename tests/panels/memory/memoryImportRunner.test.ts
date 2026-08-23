@@ -78,6 +78,27 @@ describe('across several candidates', () => {
   })
 })
 
+describe('the update stamp', () => {
+  it('stamps each entry with what the resolver says for that candidate', async () => {
+    const r = repo()
+    await runCandidateImport(
+      r, '/p',
+      [candidate({ externalId: 'a', createdAt: '2020-05-05T00:00:00.000Z' })],
+      [], undefined, c => c.createdAt,
+    )
+    const created = (r.create as ReturnType<typeof vi.fn>).mock.calls[0][1] as { updatedAt: string }
+    expect(created.updatedAt).toBe('2020-05-05T00:00:00.000Z')
+  })
+
+  it('stamps with now when no resolver is given', async () => {
+    const before = Date.now()
+    const r = repo()
+    await runCandidateImport(r, '/p', [candidate()], [])
+    const created = (r.create as ReturnType<typeof vi.fn>).mock.calls[0][1] as { updatedAt: string }
+    expect(new Date(created.updatedAt).getTime()).toBeGreaterThanOrEqual(before)
+  })
+})
+
 describe('progress', () => {
   it('reports each step in order', async () => {
     const seen: Array<[number, number]> = []

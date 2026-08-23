@@ -38,8 +38,9 @@ const mergePatch = (duplicate: MemoryEntry, incoming: NormalizedMemory): Partial
  */
 export const planCandidateImport = (
   projectPath: string, candidate: ImportedMemoryCandidate, existing: MemoryEntry[],
+  updatedAt: string = new Date().toISOString(),
 ): ImportDecision => {
-  const payload = candidatePayload(candidate, new Date().toISOString())
+  const payload = candidatePayload(candidate, updatedAt)
   const normalized = normalizeNewMemoryEntry(projectPath, payload)
 
   const alreadyImported = existing.find(entry => entry.externalId === normalized.externalId)

@@ -24,6 +24,19 @@ describe('candidatePayload', () => {
 })
 
 describe('planCandidateImport', () => {
+  it('stamps the payload with now by default', () => {
+    const before = Date.now()
+    const plan = planCandidateImport('/p', candidate(), [])
+    if (plan.action !== 'create') throw new Error('expected a create')
+    expect(new Date(plan.payload.updatedAt as string).getTime()).toBeGreaterThanOrEqual(before)
+  })
+
+  it('stamps the payload with the time it is given', () => {
+    const plan = planCandidateImport('/p', candidate(), [], '2020-05-05T00:00:00.000Z')
+    if (plan.action !== 'create') throw new Error('expected a create')
+    expect(plan.payload.updatedAt).toBe('2020-05-05T00:00:00.000Z')
+  })
+
   it('creates when nothing like it exists', () => {
     const plan = planCandidateImport('/p', candidate(), [])
     expect(plan.action).toBe('create')
