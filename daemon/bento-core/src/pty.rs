@@ -389,6 +389,15 @@ fn push_scrollback(buffer: &Arc<Mutex<Vec<u8>>>, data: &[u8]) {
     let overflow = guard.len().saturating_sub(SCROLLBACK_CAP);
     if overflow > 0 {
         guard.drain(0..overflow);
+        // A chatty TUI can push the cut past the point where it entered the
+        // alternate screen / last did a full redraw — replaying the
+        // remainder into a fresh terminal (a client reattaching) then
+        // applies cursor-positioned writes onto undefined state, which
+        // often renders as a blank screen. \x1bc (RIS, full reset)
+        // establishes a clean baseline first so whatever survived still
+        // renders as a real screen. Only affects future scrollback reads —
+        // live viewers get the raw `data` above untouched, not this buffer.
+        guard.splice(0..0, b"\x1bc".iter().copied());
     }
 }
 
@@ -420,6 +429,31 @@ mod tests {
         p.push(0x80);
         assert_eq!(drain_utf8(&mut p), "─");
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn push_scrollback_resets_terminal_state_on_truncation() {
+        // A chatty TUI (e.g. an agent redrawing its screen continuously) can
+        // fill SCROLLBACK_CAP well before the session ends. Truncating from
+        // the front can cut off mid-redraw — including the sequence that
+        // entered the alternate screen — leaving a reattaching client to
+        // replay cursor-positioned writes onto undefined state, which often
+        // renders as a blank/black screen instead of the app's last frame.
+        let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
+        push_scrollback(&buffer, &vec![b'a'; SCROLLBACK_CAP - 10]);
+        assert!(
+            !buffer.lock().unwrap().starts_with(b"\x1bc"),
+            "no truncation happened yet, nothing to reset"
+        );
+
+        push_scrollback(&buffer, &vec![b'b'; 100]);
+        let after = buffer.lock().unwrap();
+        assert!(
+            after.starts_with(b"\x1bc"),
+            "truncated buffer should start with a full reset (RIS) so a \
+             fresh terminal replaying it starts from a clean, defined state"
+        );
+        assert!(after.len() <= SCROLLBACK_CAP + b"\x1bc".len());
     }
 
     #[cfg(unix)]

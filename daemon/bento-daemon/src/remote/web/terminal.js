@@ -33,16 +33,31 @@ async function load(){
   }catch(e){el.innerHTML='<div class="empty err-msg">No se pudo conectar al daemon.</div>'}
 }
 
-function sendResize(){
+function sendResize(rows,cols){
   if(ws&&ws.readyState===1&&term)
-    ws.send(JSON.stringify({type:'resize',rows:term.rows,cols:term.cols}));
+    ws.send(JSON.stringify({type:'resize',rows:rows||term.rows,cols:cols||term.cols}));
+}
+
+// Reattaching to an already-running session (reconnect, mobile switching
+// terminals and back, WebRTC drop+reload) doesn't change the terminal's
+// size, and the PTY resize may not fire SIGWINCH at all when the size is
+// unchanged — so a TUI that only redraws inside its resize handler (most
+// of them, including anything mouse-tracking-aware) can be left showing
+// whatever it last rendered before the disconnect, or assuming terminal
+// modes (like mouse tracking) the fresh client never re-learned from a
+// truncated scrollback replay. Nudging to a different size and immediately
+// back guarantees at least one real resize the app can't ignore.
+function nudgeResize(){
+  if(!term)return;
+  sendResize(Math.max(1,term.rows-1),term.cols);
+  setTimeout(()=>sendResize(term.rows,term.cols),50);
 }
 
 function connect(id){
   if(leaving)return;
   const dot=document.getElementById('dot');
   ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws/'+id+q);
-  ws.onopen=()=>{dot.className='';reconnDelay=1000;sendResize()};
+  ws.onopen=()=>{dot.className='';reconnDelay=1000;nudgeResize()};
   ws.onmessage=e=>{
     if(typeof e.data==='string'){
       try{
