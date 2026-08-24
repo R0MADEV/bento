@@ -1,5 +1,5 @@
 {
-  "src/ui/aiChat.ts": 893,
+  "src/ui/aiChat.ts": 840,
   "src-tauri/src/memory.rs": 698,
   "daemon/bento-daemon/src/remote/web/review.js": 640,
   "src/panels/review/ReviewPanel.ts": 535,

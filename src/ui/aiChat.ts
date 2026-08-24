@@ -2,11 +2,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { icon } from './helpers/icons'
 import { AI_PROVIDERS, providerById, AGENT_PROVIDER_ID } from '../core/ai/providers'
 import {
-  loadConfig, saveConfig, buildChatBody, agentLabel, toAgentType,
+  loadConfig, saveConfig, agentLabel, toAgentType,
   type AiConfig, type ChatMessage, type AgentType,
 } from '../core/ai/config'
 import { getAiKey, setAiKey, vaultStatus, type VaultStatus } from '../adapters/aiKeys'
-import { splitLines, deltaFromLine, isDoneLine } from '../core/ai/sseStream'
+import { chatEndpoint, runWithTools, streamChat } from '../core/ai/chatApi'
 import { renderMarkdown } from '../core/notes/renderMarkdown'
 import { t as i18nT } from '../i18n'
 import { expandInput, SLASH_COMMANDS } from '../core/ai/prompts'
@@ -19,13 +19,11 @@ import { redact, startAgent, resolvePersistedSessionId, buildReviewMessage } fro
 import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory, pinnedFollowUpHistory, serializeChatHistory } from '../core/ai/chatHistory'
 import { isCapacityError } from '../core/ai/capacityError'
 import { getUiZoom, toLayoutPixels } from './helpers/zoom'
+import { clampToViewport } from './helpers/floatingPosition'
 
 const AI_POSITION_KEY = 'bento.ai.position.v2'
 const MAX_HISTORY = 200
 
-// Messages as the API expects them (includes tool_calls and tool responses).
-interface ApiToolCall { id: string; function: { name: string; arguments: string } }
-interface ApiMessage { role: string; content?: string | null; tool_calls?: ApiToolCall[]; tool_call_id?: string }
 interface ReviewBranchContextResult { path: string; commit: string; latestCommit: string; managed: boolean; stale: boolean }
 
 // Resuming a review/chat session that no longer exists makes the agent CLI exit
@@ -135,16 +133,17 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
   const clampPosition = (): void => {
     const zoom = getUiZoom()
-    const viewportWidth = window.innerWidth / zoom
-    const viewportHeight = window.innerHeight / zoom
-    const width = modal.classList.contains('hidden') ? (toggle.offsetWidth || 44) : (modal.offsetWidth || 460)
-    const height = modal.classList.contains('hidden') ? (toggle.offsetHeight || 44) : (modal.offsetHeight || 320)
-    const minX = -16
-    const maxX = Math.max(minX, viewportWidth - width - 16)
-    const minY = Math.min(16, height + 32 - viewportHeight)
-    const maxY = Math.max(minY, viewportHeight - height - 32)
-    dragX = Math.max(minX, Math.min(maxX, dragX))
-    dragY = Math.max(minY, Math.min(maxY, dragY))
+    const collapsed = modal.classList.contains('hidden')
+    const clamped = clampToViewport(
+      { x: dragX, y: dragY },
+      {
+        width: (collapsed ? toggle.offsetWidth : modal.offsetWidth) || (collapsed ? 44 : 460),
+        height: (collapsed ? toggle.offsetHeight : modal.offsetHeight) || (collapsed ? 44 : 320),
+      },
+      { width: window.innerWidth / zoom, height: window.innerHeight / zoom },
+    )
+    dragX = clamped.x
+    dragY = clamped.y
     root.style.setProperty('--ai-drag-x', `${dragX}px`)
     root.style.setProperty('--ai-drag-y', `${dragY}px`)
   }
@@ -636,8 +635,16 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
     beginBusy()
     try {
-      if (tools?.length) await runWithTools(apiMessages, assistant, apiKey)
-      else await streamReply(apiMessages, assistant, apiKey)
+      const endpoint = chatEndpoint(cfg.baseUrl, cfg.model, apiKey)
+      if (tools?.length) {
+        assistant.content = await runWithTools(endpoint, apiMessages, tools, () => {
+          assistant.content = '🔧 Consultando el esquema…'
+          renderThread()
+        })
+      } else {
+        await streamChat(endpoint, apiMessages, delta => { assistant.content += delta; renderThread() })
+      }
+      renderThread()
     } catch (e) {
       assistant.content = `⚠️ ${e instanceof Error ? e.message : 'Fallo de red'}`
       renderThread()
@@ -786,74 +793,6 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
       persistHistory()
       endBusy()
     }
-  }
-
-  const chatUrl = (): string => `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`
-  const authHeaders = (apiKey: string) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` })
-
-  // Normal streaming reply (without tools).
-  async function streamReply(apiMessages: ChatMessage[], assistant: ChatMessage, apiKey: string): Promise<void> {
-    const res = await fetch(chatUrl(), { method: 'POST', headers: authHeaders(apiKey), body: JSON.stringify(buildChatBody(apiMessages, cfg.model)) })
-    if (!res.ok || !res.body) {
-      assistant.content = `⚠️ Error ${res.status}: ${(await res.text()).slice(0, 300)}`
-      renderThread()
-      return
-    }
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let done = false
-    while (!done) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      buffer += decoder.decode(chunk.value, { stream: true })
-      const split = splitLines(buffer)
-      buffer = split.rest
-      for (const line of split.lines) {
-        if (isDoneLine(line)) { done = true; break }
-        const delta = deltaFromLine(line)
-        if (delta) { assistant.content += delta; renderThread() }
-      }
-    }
-  }
-
-  // With tools: non-streaming loop. The AI can request schema data
-  // (get_columns…) and we execute it and return it to the AI until it
-  // produces the final reply.
-  async function runWithTools(apiMessages: ChatMessage[], assistant: ChatMessage, apiKey: string): Promise<void> {
-    const byName = new Map(tools!.map(t => [t.name, t]))
-    const msgs: ApiMessage[] = [...apiMessages]
-    for (let i = 0; i < 6; i++) {
-      const res = await fetch(chatUrl(), {
-        method: 'POST',
-        headers: authHeaders(apiKey),
-        body: JSON.stringify({ model: cfg.model, messages: msgs, tools: tools!.map(t => t.schema), tool_choice: 'auto' }),
-      })
-      if (!res.ok) { assistant.content = `⚠️ Error ${res.status}: ${(await res.text()).slice(0, 300)}`; renderThread(); return }
-      const data = await res.json() as { choices?: Array<{ message?: ApiMessage }> }
-      const m = data.choices?.[0]?.message
-      if (!m) { assistant.content = i18nT('common.emptyModelResponse'); renderThread(); return }
-      if (m.tool_calls?.length) {
-        msgs.push(m)
-        assistant.content = '🔧 Consultando el esquema…'
-        renderThread()
-        for (const tc of m.tool_calls) {
-          const tool = byName.get(tc.function?.name)
-          let result = 'herramienta desconocida'
-          if (tool) {
-            try { result = await tool.run(JSON.parse(tc.function.arguments || '{}')) }
-            catch (err) { result = `error: ${err instanceof Error ? err.message : String(err)}` }
-          }
-          msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
-        }
-        continue
-      }
-      assistant.content = m.content ?? ''
-      renderThread()
-      return
-    }
-    assistant.content += `\n\n${i18nT('common.tooManyToolCalls')}`
-    renderThread()
   }
 
   sendBtn.addEventListener('click', send)
