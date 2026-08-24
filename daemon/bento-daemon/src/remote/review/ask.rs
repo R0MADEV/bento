@@ -133,6 +133,7 @@ async fn resume_claude(
         .args(["--resume", session_id, "-p", question, "--output-format", "stream-json", "--verbose"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .spawn()
         .ok()
     else { return };
@@ -172,6 +173,7 @@ async fn resume_opencode(
         .args(["--session", session_id, "run", "--format", "json", "--dir", cwd, question])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .spawn()
         .ok()
     else { return };

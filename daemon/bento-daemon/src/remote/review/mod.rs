@@ -382,6 +382,7 @@ async fn run_opencode_collecting(
         .args(["run", "--format", "json", "--dir", cwd, prompt])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .spawn()
         .ok()?;
 
@@ -450,6 +451,7 @@ async fn run_codex_collecting(
         .args(["exec", "--sandbox", "read-only", "--cd", cwd, "--json", "--skip-git-repo-check", prompt])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .spawn()
         .ok()?;
 
@@ -506,6 +508,11 @@ async fn run_claude_collecting(
         .args(["-p", prompt, "--output-format", "stream-json", "--verbose"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        // If this task gets aborted (e.g. the TUI's review is cancelled),
+        // dropping `child` mid-await must kill the real subprocess too —
+        // tokio does NOT do this by default, so a cancelled review would
+        // otherwise keep running (and billing) unseen server-side.
+        .kill_on_drop(true)
         .spawn()
         .ok()?;
 

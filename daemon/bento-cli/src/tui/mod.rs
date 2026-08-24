@@ -100,7 +100,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 tokio::select! {
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
-                        if review.handle_event(event, &cwd) {
+                        if review.handle_event(event, &cwd).await {
                             mode = Mode::List;
                         }
                     }

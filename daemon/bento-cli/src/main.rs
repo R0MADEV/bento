@@ -426,7 +426,7 @@ async fn request(body: Value) -> std::io::Result<()> {
 /// sentinels to stderr, until it signals `Done`.
 async fn stream_review(body: Value) -> std::io::Result<()> {
     use tokio::io::AsyncWriteExt as _;
-    let mut rx = review_stream::spawn_review_stream(body);
+    let (mut rx, _handle) = review_stream::spawn_review_stream(body);
     let mut stdout = tokio::io::stdout();
     while let Some(event) = rx.recv().await {
         match event {

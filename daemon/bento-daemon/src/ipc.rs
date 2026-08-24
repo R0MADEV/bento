@@ -88,19 +88,32 @@ async fn handle_conn(socket: TcpStream, manager: PtyManager, remote: RemoteContr
         }
     });
 
+    // Tracks the background task actually running an agent subprocess for
+    // review.run/review.ask on this connection (not the small forwarding
+    // task) — aborted when the connection ends so a client disconnecting
+    // (including the TUI's explicit cancel, which just drops its socket)
+    // stops the real, possibly billed, agent process instead of leaving it
+    // to finish unseen. Requires the spawned Command to be
+    // `.kill_on_drop(true)` (see review/mod.rs, review/ask.rs) — aborting a
+    // tokio task alone does not kill a child process by default.
+    let mut review_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
     let mut lines = BufReader::new(read_half).lines();
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
         }
         match serde_json::from_str::<Request>(&line) {
-            Ok(request) => dispatch(request, &manager, &remote, &out),
+            Ok(request) => dispatch(request, &manager, &remote, &out, &mut review_tasks),
             Err(error) => {
                 let _ = out.send(json!({"ok": false, "error": format!("bad request: {error}")}).to_string());
             }
         }
     }
 
+    for task in review_tasks {
+        task.abort();
+    }
     drop(out);
     let _ = writer.await;
     Ok(())
@@ -130,7 +143,7 @@ fn spawn_review_stream(out: mpsc::UnboundedSender<String>) -> tokio::sync::mpsc:
     tx
 }
 
-fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>) {
+fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>, review_tasks: &mut Vec<tokio::task::JoinHandle<()>>) {
     let send = |line: String| { let _ = out.send(line); };
     match req.cmd.as_str() {
         "daemon.status" => send(ok(&req.id, json!({ "terminals": manager.list().len() }))),
@@ -307,9 +320,9 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 let question = question.clone();
                 send(ok(&req.id, json!({ "started": true })));
                 let tx = spawn_review_stream(out.clone());
-                tokio::spawn(async move {
+                review_tasks.push(tokio::spawn(async move {
                     crate::remote::review::ask(&cwd, &base, &agent, &question, tx).await;
-                });
+                }));
             }
             _ => send(fail(&req.id, "cwd and question required".into())),
         },
@@ -323,9 +336,9 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 let agents = req.agents.clone().unwrap_or_default();
                 send(ok(&req.id, json!({ "started": true })));
                 let tx = spawn_review_stream(out.clone());
-                tokio::spawn(async move {
+                review_tasks.push(tokio::spawn(async move {
                     crate::remote::review::run_review(cwd, base, branch, context, agents, tx).await;
-                });
+                }));
             }
             None => send(fail(&req.id, "cwd required".into())),
         },

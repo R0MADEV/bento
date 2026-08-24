@@ -16,12 +16,16 @@ pub(crate) enum ReviewEvent {
     Done,
 }
 
-pub(crate) fn spawn_review_stream(body: Value) -> mpsc::UnboundedReceiver<ReviewEvent> {
+/// Returns the event receiver plus the background task's `JoinHandle` so a
+/// caller that wants to support cancelling an in-flight review (the TUI's
+/// Review tab) can `.abort()` it — the one-shot CLI just drops its handle
+/// and lets the task run to completion.
+pub(crate) fn spawn_review_stream(body: Value) -> (mpsc::UnboundedReceiver<ReviewEvent>, tokio::task::JoinHandle<()>) {
     let (tx, rx) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         run(body, tx).await;
     });
-    rx
+    (rx, handle)
 }
 
 async fn run(body: Value, tx: mpsc::UnboundedSender<ReviewEvent>) {
