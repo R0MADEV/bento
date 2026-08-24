@@ -223,16 +223,47 @@ camino (no hipotéticos):
 
 ### Fase 4 — UI en Bento (desktop)
 
-- [ ] **4.1** `PhonePanel.ts`: nueva opción "Conectar sin Tailscale" junto
-  al toggle de Tailscale existente (no lo reemplaza, conviven)
-- [ ] **4.2** Genera el código de 6 dígitos + QR que apunta a
-  `https://<worker>.workers.dev/pair?code=XXXXXX&token=YYYY` (el token viaja
-  en la URL porque la página de emparejamiento lo necesita antes de que
-  `shared.js` exista para leerlo de otra forma)
-- [ ] **4.3** Indicador de estado: conectando / P2P activo / falló (sugiere
-  volver a Tailscale/LAN)
+- [x] **4.1** `PhonePanel.ts`: nueva sección "Emparejar sin Tailscale
+  (WebRTC)" debajo del toggle de Tailscale existente — no lo reemplaza,
+  conviven. Solo visible con el servidor WiFi activo (`s.running`). Campo
+  para pegar la URL del Worker propio (persistido en localStorage,
+  `bento.remote.webrtcSignalingBase`) y botón "Generar código".
+- [x] **4.2** El botón genera un código de 6 dígitos client-side, llama al
+  nuevo comando Tauri `webrtc_connect` (`src-tauri/src/pty.rs`, mismo patrón
+  que `remote_start`/`remote_status`: forwarda `{cmd:"webrtc.connect", code,
+  signaling_base}` al daemon por IPC) y arma la URL/QR
+  `<worker>/pair?code=XXXXXX&token=YYYY` — el token sale del `remote_start`
+  ya en curso, no hace falta pedirlo aparte.
+- [ ] **4.3** Indicador de estado: conectando / P2P activo / falló. Hoy solo
+  hay un texto fijo "Esperando a que el móvil escanee…" sin confirmación de
+  éxito — ver la nota de protocolo IPC más abajo.
 - [ ] **4.4** Llamar `remote.start` automáticamente si no está corriendo
-  antes de `webrtc.connect` (hoy hace falta invocarlo a mano primero)
+  antes de `webrtc.connect` (hoy el botón solo avisa con un mensaje si no
+  está activo, no lo arranca solo)
+
+**Ajuste de protocolo IPC descubierto implementando esto**: `PtyManager::
+request` (src-tauri) tiene un timeout fijo de 5s esperando la respuesta del
+daemon — perfecto para `remote.start` (rápido, solo bindea un socket), pero
+`webrtc.connect` puede tardar minutos reales (esperando a que una persona
+escanee un QR). Si el handler de `ipc.rs` esperaba a que `run_offerer`
+terminara del todo antes de responder, el comando Tauri fallaría con
+"bento-daemon did not respond" casi siempre, aunque la conexión real
+siguiera progresando bien en segundo plano. Fix: el handler de
+`webrtc.connect` ahora responde `{started: true}` apenas arranca el intento
+(no cuando termina) — `run_offerer` sigue corriendo en su propio
+`tokio::spawn` sin que nadie espere el resultado final por este canal. Por
+eso el estado "conectado" real (4.3) no está resuelto todavía: no hay hoy un
+canal para que el daemon avise "ya conectó" de vuelta a la UI de escritorio.
+
+**Bug de CSS encontrado y corregido verificando visualmente (captura de
+pantalla real de la app corriendo)**: este proyecto no tiene una clase
+`.hidden` genérica — cada componente define su propio combinador
+`.algo.hidden { display:none }` (grep confirma 35+ reglas así, ninguna
+genérica). Los elementos nuevos (`.phone-url-row`, `.phone-qr` cuando se
+usan sueltos, no dentro de `.phone-active`) se quedaban visibles vacíos
+hasta agregar sus propias reglas `.hidden`. De paso se corrigió el mismo bug
+preexistente en `.phone-error` (visible como una barra vacía en el panel,
+ajeno a este trabajo pero en el mismo archivo).
 
 ---
 

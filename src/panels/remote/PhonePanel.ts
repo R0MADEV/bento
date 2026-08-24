@@ -12,6 +12,9 @@ interface RemoteStatus {
 const PORT_KEY       = 'bento.remote.port'
 const TOKEN_KEY      = 'bento.remote.token'
 const TAILSCALE_KEY  = 'bento.remote.tailscale'
+const SIGNALING_KEY  = 'bento.remote.webrtcSignalingBase'
+
+const generatePairingCode = (): string => String(Math.floor(100000 + Math.random() * 900000))
 
 // Session-scoped: survives panel close/reopen within the same Bento session.
 // true = user explicitly stopped the server; init() won't auto-restart until
@@ -113,6 +116,79 @@ export function createPhonePanel(): { element: HTMLElement } {
   activeSection.append(urlRow, qrImg, warn)
   body.append(activeSection)
 
+  // ── WebRTC pairing (no Tailscale, works from any network) ───────────────────
+  const webrtcSection = document.createElement('div')
+  webrtcSection.className = 'phone-active hidden'
+
+  const webrtcTitle = document.createElement('p')
+  webrtcTitle.className = 'phone-desc'
+  webrtcTitle.textContent = 'Emparejar sin Tailscale (WebRTC) — funciona desde cualquier red.'
+
+  const signalingRow = document.createElement('div')
+  signalingRow.className = 'phone-port-row'
+  const signalingLabel = document.createElement('span')
+  signalingLabel.textContent = 'URL del Worker'
+  const signalingInput = document.createElement('input')
+  signalingInput.type = 'text'
+  signalingInput.className = 'phone-port-input'
+  signalingInput.style.width = '220px'
+  signalingInput.placeholder = 'https://tu-worker.workers.dev'
+  signalingInput.value = localStorage.getItem(SIGNALING_KEY) ?? ''
+  signalingInput.onchange = () => localStorage.setItem(SIGNALING_KEY, signalingInput.value.trim())
+  signalingRow.append(signalingLabel, signalingInput)
+
+  const pairBtn = document.createElement('button')
+  pairBtn.className = 'phone-copy-btn'
+  pairBtn.textContent = 'Generar código'
+
+  const pairStatus = document.createElement('p')
+  pairStatus.className = 'phone-warn'
+
+  const pairUrlRow = document.createElement('div')
+  pairUrlRow.className = 'phone-url-row hidden'
+  const pairUrlCode = document.createElement('code')
+  pairUrlCode.className = 'phone-url'
+  const pairCopyBtn = document.createElement('button')
+  pairCopyBtn.className = 'phone-copy-btn'
+  pairCopyBtn.innerHTML = icon('copy') + ' Copiar'
+  pairCopyBtn.onclick = () => {
+    const text = pairUrlCode.textContent
+    if (text) void navigator.clipboard.writeText(text)
+  }
+  pairUrlRow.append(pairUrlCode, pairCopyBtn)
+
+  const pairQrImg = document.createElement('img')
+  pairQrImg.className = 'phone-qr hidden'
+  pairQrImg.alt = 'QR de emparejamiento WebRTC'
+
+  webrtcSection.append(webrtcTitle, signalingRow, pairBtn, pairStatus, pairUrlRow, pairQrImg)
+  body.append(webrtcSection)
+
+  let currentToken: string | undefined
+  const generatePairing = async (): Promise<void> => {
+    const signalingBase = signalingInput.value.trim().replace(/\/$/, '')
+    if (!signalingBase) { pairStatus.textContent = 'Pegá la URL de tu Worker de señalización primero.'; return }
+    if (!currentToken) { pairStatus.textContent = 'Activá el servidor WiFi primero.'; return }
+
+    pairBtn.disabled = true
+    pairStatus.textContent = 'Generando código…'
+    try {
+      const code = generatePairingCode()
+      await invoke('webrtc_connect', { code, signalingBase })
+      const pairUrl = `${signalingBase}/pair?code=${code}&token=${encodeURIComponent(currentToken)}`
+      pairUrlCode.textContent = pairUrl
+      pairUrlRow.classList.remove('hidden')
+      pairQrImg.src = await QRCode.toDataURL(pairUrl, { width: 220, margin: 2, color: { dark: '#e2e8f8', light: '#0e0e1c' } })
+      pairQrImg.classList.remove('hidden')
+      pairStatus.textContent = 'Esperando a que el móvil escanee el código o abra el enlace…'
+    } catch (e) {
+      pairStatus.textContent = `Error: ${String(e)}`
+    } finally {
+      pairBtn.disabled = false
+    }
+  }
+  pairBtn.onclick = () => void generatePairing()
+
   // ── Error ─────────────────────────────────────────────────────────────────
   const errorEl = document.createElement('p')
   errorEl.className = 'phone-error hidden'
@@ -147,6 +223,8 @@ export function createPhonePanel(): { element: HTMLElement } {
     } else {
       activeSection.classList.add('hidden')
     }
+    currentToken = s.token
+    webrtcSection.classList.toggle('hidden', !s.running)
   }
 
   const startServer = async (): Promise<void> => {

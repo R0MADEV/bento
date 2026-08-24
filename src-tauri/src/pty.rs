@@ -381,6 +381,19 @@ fn tailscale_binary() -> std::path::PathBuf {
     "tailscale".into()
 }
 
+/// Starts a WebRTC pairing attempt with the phone (see WEBRTC_REMOTE.md).
+/// Resolves as soon as the daemon has *started* the attempt, not once the
+/// phone actually connects — that handshake can take much longer than a
+/// normal IPC round trip. `remote_start` must have run first.
+#[tauri::command]
+pub async fn webrtc_connect(
+    code: String,
+    signaling_base: String,
+    state: tauri::State<'_, Arc<PtyManager>>,
+) -> Result<(), String> {
+    state.request(json!({ "cmd": "webrtc.connect", "code": code, "signaling_base": signaling_base })).await.map(|_| ())
+}
+
 #[tauri::command]
 pub fn tailscale_detect() -> Option<String> {
     let output = std::process::Command::new(tailscale_binary())

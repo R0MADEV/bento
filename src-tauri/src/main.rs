@@ -267,6 +267,7 @@ fn main() {
             pty::remote_stop,
             pty::remote_status,
             pty::tailscale_detect,
+            pty::webrtc_connect,
             traffic_lights::set_traffic_lights_visible,
             window_prefs::set_decorations,
             web_panel::web_panel_navigate,

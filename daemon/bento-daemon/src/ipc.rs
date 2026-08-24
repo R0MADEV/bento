@@ -220,6 +220,12 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             send(ok(&req.id, serde_json::to_value(&info).unwrap_or(Value::Null)));
         }
 
+        // The handshake can take anywhere from a couple seconds to the full
+        // SIGNALING_TIMEOUT (waiting for a human to scan/enter the code on
+        // the phone) — far past PtyManager::request's 5s round-trip budget
+        // on the Tauri side. So this acks as soon as the attempt is
+        // *started*, not once it succeeds; run_offerer keeps going in the
+        // background regardless of what this response reaches.
         "webrtc.connect" => match (req.code.clone(), req.signaling_base.clone()) {
             (Some(code), Some(signaling_base)) => {
                 let info = remote.status();
@@ -228,14 +234,10 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                     return;
                 }
                 let local_addr = info.addr;
-                let out = out.clone();
-                let id = req.id.clone();
                 tokio::spawn(async move {
-                    match crate::remote::webrtc_bridge::run_offerer(code, signaling_base, local_addr).await {
-                        Ok(()) => { let _ = out.send(ok(&id, json!({ "connected": true }))); }
-                        Err(e) => { let _ = out.send(fail(&id, e)); }
-                    }
+                    let _ = crate::remote::webrtc_bridge::run_offerer(code, signaling_base, local_addr).await;
                 });
+                send(ok(&req.id, json!({ "started": true })));
             }
             _ => send(fail(&req.id, "code and signaling_base required".into())),
         },
