@@ -119,6 +119,22 @@ export const PAIR_JS = `(function () {
     })
   }
 
+  // A page reload re-runs this whole script from scratch, which is exactly
+  // what re-establishing the P2P connection needs — no in-page transport
+  // hot-swap to get right. Capped: a genuinely broken network would
+  // otherwise reload forever instead of ever showing the user an error.
+  const RELOAD_COUNT_KEY = 'bento.pair.autoReloadCount'
+  const MAX_AUTO_RELOADS = 5
+  function reconnectViaReload() {
+    const count = Number(sessionStorage.getItem(RELOAD_COUNT_KEY) || '0')
+    if (count >= MAX_AUTO_RELOADS) {
+      setError('Se perdió la conexión varias veces seguidas — recargá la página para reintentar.')
+      return
+    }
+    sessionStorage.setItem(RELOAD_COUNT_KEY, String(count + 1))
+    location.reload()
+  }
+
   async function connect(code) {
     setStatus('Buscando la app…')
     const controller = new AbortController()
@@ -136,6 +152,18 @@ export const PAIR_JS = `(function () {
       ],
     })
     pc.addEventListener('iceconnectionstatechange', () => setStatus('ICE: ' + pc.iceConnectionState))
+    // Only reload once the real app is already running (appLoaded) — before
+    // that, connectionstatechange churn is normal negotiation, not a drop,
+    // and the existing error handling below already covers it failing.
+    // "disconnected" is excluded on purpose: ICE retries on its own from
+    // there and either recovers or moves on to "failed" by itself.
+    let appLoaded = false
+    pc.addEventListener('connectionstatechange', () => {
+      if (appLoaded && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) {
+        setStatus('Se perdió la conexión — reconectando…')
+        reconnectViaReload()
+      }
+    })
     const dataChannelPromise = new Promise(resolve => {
       pc.addEventListener('datachannel', e => {
         e.channel.addEventListener('open', () => resolve(e.channel))
@@ -177,6 +205,14 @@ export const PAIR_JS = `(function () {
     history.replaceState(null, '', location.pathname + '?code=' + code + '&token=' + encodeURIComponent(authToken))
     await withTimeout(loadRealApp(), 20000, 'Carga de la app')
     setStatus('Listo.')
+    appLoaded = true
+    // This attempt worked end to end — past failures don't count against
+    // future ones anymore.
+    sessionStorage.removeItem(RELOAD_COUNT_KEY)
+    // Nothing left to say once the real app is up — the banner (see
+    // ensureVisible) was only ever a stand-in for the original #status,
+    // which loadRealApp() already detached from the document.
+    if (banner) setTimeout(() => banner.remove(), 2500)
   }
 
   function isSameOriginPath(url) {

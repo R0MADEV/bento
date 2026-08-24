@@ -260,6 +260,32 @@ rompía también la dirección contraria (pulsaciones de teclado), ya que
 `#[serde(rename = "isText")]` puntual en ese campo, sin tocar el resto del
 `rename_all`. Confirmado sin errores de `atob` tras el fix.
 
+**Falta la mitad del cliente para 3.4, encontrada en uso real (agente
+opencode corriendo ~5 min, la conexión se cayó, el panel quedó congelado
+sin scroll hasta recargar a mano)**: el auto-reconectar de más arriba solo
+dispara al CARGAR la página (lee el código de la URL) — pero si el
+`DataChannel` se cae MIENTRAS la app ya está corriendo (uso normal, no un
+reload), no había nada escuchando eso. `window.fetch`/`WebSocket` seguían
+apuntando al canal muerto, así que cualquier pedido nuevo del agente se
+quedaba colgado en silencio, sin error visible. Re-cablear `fetch`/
+`WebSocket` a un canal nuevo en caliente (sin perder el estado de la app ya
+inyectada) es demasiado riesgo para el beneficio; en cambio, se agregó un
+listener de `connectionstatechange` en el `pc` que, una vez la app real ya
+está cargada (`appLoaded`), llama a `location.reload()` en cuanto el
+estado pasa a `failed`/`closed` — un reload ya reconecta solo gracias al
+fix anterior (código sigue en la URL). `disconnected` se excluye a
+propósito, mismo motivo que en el daemon: ICE reintenta solo desde ahí.
+Con un tope de 5 reloads automáticos por sesión de pestaña
+(`sessionStorage`) para no entrar en loop infinito si la red está
+genuinamente rota — se resetea apenas una reconexión termina de cargar
+bien. Confirmado matando el proceso del daemon real a mitad de una sesión
+ya cargada: la página recargó sola sin intervención.
+
+**Bug de UI menor, mismo hallazgo**: el banner de estado (`ensureVisible`,
+ver más arriba) se quedaba pegado con "Listo." para siempre una vez
+cargada la app — nadie lo escondía. Ahora se auto-remueve 2.5s después de
+mostrar "Listo.".
+
 **Nota honesta sobre el timing de reconexión real**: el mecanismo en sí
 está confirmado funcionando (el log de Rust muestra la oferta nueva
 publicándose tras cada reload, sin intervención manual). Pero un reload
