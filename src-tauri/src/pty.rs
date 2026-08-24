@@ -264,7 +264,7 @@ pub async fn pty_spawn(
     command: Option<Vec<String>>,
     title: Option<String>,
     state: tauri::State<'_, Arc<PtyManager>>,
-    agent_socket: tauri::State<'_, Arc<crate::agent_socket::AgentSocket>>,
+    agent_socket: tauri::State<'_, Arc<crate::agent::socket::AgentSocket>>,
 ) -> Result<bool, String> {
     let socket_path = agent_socket.socket_path.clone();
     let manager = state.inner().clone();
@@ -341,7 +341,7 @@ pub async fn remote_start(
     token: Option<String>,
     use_tailscale: Option<bool>,
     state: tauri::State<'_, Arc<PtyManager>>,
-    agent_socket: tauri::State<'_, Arc<crate::agent_socket::AgentSocket>>,
+    agent_socket: tauri::State<'_, Arc<crate::agent::socket::AgentSocket>>,
 ) -> Result<RemoteStatus, String> {
     let socket_path = agent_socket.socket_path.clone();
     let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879), "token": token, "use_tailscale": use_tailscale.unwrap_or(false), "herdr_socket": socket_path })).await?;

@@ -5,32 +5,19 @@
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
 mod agent;
-mod agent_history;
-mod agent_sessions;
-mod agent_socket;
-mod chat_history;
+mod app;
 mod command_error;
 mod db;
 mod docker;
 mod git;
-mod git_paths;
 mod jira;
 mod memory;
 mod http;
-mod memory_import;
-mod memory_sources;
-mod menu;
 mod notes;
 mod pty;
 mod review;
 mod scripts;
-mod settings;
-mod system_metrics;
-mod traffic_lights;
 mod vault;
-mod web_panel;
-mod window_prefs;
-mod workspace_io;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -67,7 +54,7 @@ fn main() {
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder
         .setup(|app| {
-            app.manage(agent_socket::start(app.handle()));
+            app.manage(agent::socket::start(app.handle()));
             // Terminals live in the bento-daemon; connect and forward its output.
             {
                 let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
@@ -79,7 +66,7 @@ fn main() {
                 });
             }
             #[cfg(target_os = "macos")]
-            menu::install_menu(app)?;
+            app::menu::install_menu(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 let manager = app.state::<agent::AgentManager>().inner().clone();
                 let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
@@ -107,27 +94,27 @@ fn main() {
         })
         .manage(Arc::new(pty::PtyManager::default()))
         .manage(agent::AgentManager::default())
-        .manage(web_panel::WebPanelState::default())
+        .manage(app::web_panel::WebPanelState::default())
         .manage(docker::LogStreams::default())
-        .manage(system_metrics::SystemMetricsState::default())
+        .manage(app::system_metrics::SystemMetricsState::default())
         .manage(vault::VaultState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             http::http_get,
             http::http_request,
             http::http_fetch_base64,
             app_identifier,
-            system_metrics::app_memory_usage,
+            app::system_metrics::app_memory_usage,
             agent::start_agent,
             agent::cancel_agent,
-            agent_sessions::agent_codex_clear_lock,
-            agent_sessions::agent_claude_session_exists,
-            agent_sessions::agent_codex_session_exists,
-            agent_sessions::agent_find_opencode_session,
-            agent_history::agent_history_load,
-            agent_history::agent_history_save,
-            agent_history::agent_history_clear,
-            agent_socket::agent_get_session,
-            agent_socket::agent_socket_path,
+            agent::sessions::agent_codex_clear_lock,
+            agent::sessions::agent_claude_session_exists,
+            agent::sessions::agent_codex_session_exists,
+            agent::sessions::agent_find_opencode_session,
+            agent::history::agent_history_load,
+            agent::history::agent_history_save,
+            agent::history::agent_history_clear,
+            agent::socket::agent_get_session,
+            agent::socket::agent_socket_path,
             review::review_branch_context_prepare,
             review::review_branch_context_check,
             review::review_branch_context_update,
@@ -141,11 +128,11 @@ fn main() {
             review::review_checkpoints_list,
             review::review_checkpoint_delete,
             review::review_build_synthesis_prompt,
-            workspace_io::workspace_load,
-            workspace_io::workspace_save,
-            workspace_io::workspace_reset,
-            settings::settings_get,
-            settings::settings_set,
+            app::workspace_io::workspace_load,
+            app::workspace_io::workspace_save,
+            app::workspace_io::workspace_reset,
+            app::settings::settings_get,
+            app::settings::settings_set,
             pty::pty_spawn,
             pty::pty_set_title,
             pty::pty_list,
@@ -156,15 +143,15 @@ fn main() {
             pty::remote_stop,
             pty::remote_status,
             pty::tailscale_detect,
-            traffic_lights::set_traffic_lights_visible,
-            window_prefs::set_decorations,
-            web_panel::web_panel_navigate,
-            web_panel::web_panel_set_bounds,
-            web_panel::web_panel_set_visible,
-            web_panel::web_panel_close,
-            web_panel::web_panel_close_all,
-            chat_history::chat_history_load,
-            chat_history::chat_history_save,
+            app::traffic_lights::set_traffic_lights_visible,
+            app::window_prefs::set_decorations,
+            app::web_panel::web_panel_navigate,
+            app::web_panel::web_panel_set_bounds,
+            app::web_panel::web_panel_set_visible,
+            app::web_panel::web_panel_close,
+            app::web_panel::web_panel_close_all,
+            agent::chat_history::chat_history_load,
+            agent::chat_history::chat_history_save,
             notes::notes_list,
             notes::notes_write,
             notes::notes_delete,
@@ -204,8 +191,8 @@ fn main() {
             jira::jira_accounts_get,
             jira::jira_account_set,
             jira::jira_account_delete,
-            memory_import::memory_import_claude,
-            memory_import::memory_import_codex,
+            memory::import::memory_import_claude,
+            memory::import::memory_import_codex,
             memory::memory_list,
             memory::memory_list_all,
             memory::memory_create,
@@ -216,12 +203,12 @@ fn main() {
             memory::memory_transcript_create,
             memory::memory_summary_job_list,
             memory::memory_regenerate_summary,
-            memory_sources::memory_source_list,
-            memory_sources::memory_source_create,
-            memory_sources::memory_source_remove,
-            memory_sources::memory_source_scan,
-            memory_sources::memory_source_scan_path,
-            memory_sources::memory_source_import,
+            memory::sources::memory_source_list,
+            memory::sources::memory_source_create,
+            memory::sources::memory_source_remove,
+            memory::sources::memory_source_scan,
+            memory::sources::memory_source_scan_path,
+            memory::sources::memory_source_import,
             vault::vault_exists,
             vault::vault_is_unlocked,
             vault::vault_setup,

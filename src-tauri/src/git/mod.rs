@@ -13,6 +13,7 @@ pub(crate) mod status;
 pub(crate) mod backup;
 pub(crate) mod commit;
 pub(crate) mod log;
+pub(crate) mod paths;
 pub(crate) mod pr;
 pub(crate) mod sync;
 pub(crate) mod rebase;

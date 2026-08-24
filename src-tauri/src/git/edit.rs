@@ -60,7 +60,7 @@ fn add_files_blocking(path: &str, files: &[String]) -> Result<(), String> {
     // worktree itself was reached through a symlink (notably /var ->
     // /private/var on macOS), even though the file is inside the worktree.
     for file in files {
-        crate::git_paths::existing_worktree_file(path, file)?;
+        crate::git::paths::existing_worktree_file(path, file)?;
     }
     let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
     for attempt in 0..=30 {
@@ -93,7 +93,7 @@ pub async fn git_read_file(
     file: String,
 ) -> Result<String, crate::command_error::CommandError> {
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let safe_path = crate::git_paths::existing_worktree_file(&path, &file)?;
+        let safe_path = crate::git::paths::existing_worktree_file(&path, &file)?;
         fs::read_to_string(safe_path).map_err(|e| e.to_string())
     })
     .await
@@ -109,7 +109,7 @@ pub async fn git_write_file(
     content: String,
 ) -> Result<(), crate::command_error::CommandError> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let safe_path = crate::git_paths::existing_worktree_file(&path, &file)?;
+        let safe_path = crate::git::paths::existing_worktree_file(&path, &file)?;
         fs::write(safe_path, content).map_err(|e| e.to_string())
     })
     .await

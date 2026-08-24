@@ -2,6 +2,8 @@
 //! La validación vive en `validate` y el acceso a datos en `db`.
 
 mod db;
+pub mod import;
+pub mod sources;
 mod validate;
 
 use rusqlite::{params, OptionalExtension};

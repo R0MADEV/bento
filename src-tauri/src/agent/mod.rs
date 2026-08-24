@@ -10,7 +10,11 @@ use tokio::process::Command;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+pub mod chat_history;
+pub mod history;
 mod run;
+pub mod sessions;
+pub mod socket;
 
 use run::{run_agent, set_process_group};
 
