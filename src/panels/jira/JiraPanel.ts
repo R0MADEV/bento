@@ -1,6 +1,5 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { open as openUrl } from '@tauri-apps/plugin-shell'
 import type { JiraIssue } from '../../core/jira/issues'
 import { parseBulkIssues } from '../../core/jira/bulk'
 import { MY_OPEN_ISSUES } from '../../core/jira/jql'
@@ -10,6 +9,9 @@ import { groupByCategory, mapToAgileColumns, statusCategoryClass, type AgileBoar
 import { note, mkBtn, detailHeader, field } from './jiraWidgets'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { createJiraClient, type JiraAccount } from './jiraClient'
+import { buildJiraAccountForm } from './jiraAccountForm'
+import { buildJiraAccountsList } from './jiraAccountsList'
+import { buildJiraCards } from './jiraCards'
 
 
 export function createJiraPanel(): { element: HTMLElement } {
@@ -41,46 +43,21 @@ export function createJiraPanel(): { element: HTMLElement } {
   // Highlight only (no reload) — mirrors the old md.select().
   const highlightAccount = (id: string): void => { selectedAccountId = id; renderAccounts() }
 
-  // Full select (account switch + reload) — mirrors the old md.onSelect().
-  const onSelectAccount = (id: string): void => {
-    const next = accounts.find(a => a.id === id) ?? null
-    const isAccountSwitch = next?.id !== activeAccount?.id
-    if (isAccountSwitch) {
-      agileBoards = []
-      selectedBoardId = null
-      agileColumns = []
-      cachedIssues = []
-      activeAssigneeId = ''
-    }
-    activeAccount = next
-    selectedAccountId = id
-    renderAccounts()
-    if (activeAccount) showIssues()
+
+  const removeAccount = async (account: JiraAccount): Promise<void> => {
+    await invoke('jira_account_delete', { id: account.id }).catch(() => {})
+    await loadAccounts()
   }
 
-  const renderAccounts = (): void => {
-    cs.list.replaceChildren()
-    if (!accounts.length) {
-      cs.list.append(note('Sin cuentas. Usa + para añadir una.', 'jira-note'))
-      return
-    }
-    for (const a of accounts) {
-      const row = document.createElement('div')
-      row.className = a.id === selectedAccountId ? 'jira-account-row selected' : 'jira-account-row'
-      const label = Object.assign(document.createElement('span'), { className: 'jira-account-label', textContent: a.email, title: a.email })
-      const del = mkBtn('trash', 'Eliminar cuenta', async () => {
-        await invoke('jira_account_delete', { id: a.id }).catch(() => {})
-        await loadAccounts()
-      })
-      del.classList.add('jira-account-del')
-      del.addEventListener('click', e => e.stopPropagation())
-      row.append(label, del)
-      row.addEventListener('click', () => onSelectAccount(a.id))
-      cs.list.append(row)
-    }
-  }
+  const renderAccounts = buildJiraAccountsList({
+    list: cs.list,
+    accounts: () => accounts,
+    selectedAccountId: () => selectedAccountId,
+    selectAccount: acc => { activeAccount = acc; highlightAccount(acc.id); showIssues() },
+    editAccount: acc => showConfig(acc),
+    removeAccount: acc => { void removeAccount(acc) },
+  })
 
-  // Accounts live one-per-group so the trash button appears per account.
   const loadAccounts = async (): Promise<void> => {
     accounts = await invoke<JiraAccount[]>('jira_accounts_get').catch(() => [] as JiraAccount[])
     renderAccounts()
@@ -100,39 +77,16 @@ export function createJiraPanel(): { element: HTMLElement } {
   const showHint = (text: string): void => showDetail(note(text, 'jira-detail-hint'))
 
   // ---- config form (shown in detail pane) ----
-  const showConfig = (existing?: JiraAccount): void => {
-    const siteF = field('Site (https://tuorg.atlassian.net)', existing?.site ?? '')
-    const emailF = field('Email', existing?.email ?? '')
-    const tokenF = field('API token', existing?.token ?? '', 'password')
-    const hint = document.createElement('a')
-    hint.className = 'jira-hint-link'
-    hint.textContent = i18nT('jira.generateApiToken')
-    hint.addEventListener('click', () => openUrl('https://id.atlassian.com/manage-profile/security/api-tokens').catch(() => {}))
-    const save = document.createElement('button')
-    save.className = 'jira-primary'
-    save.textContent = 'Guardar'
-    const status = note('')
-    save.addEventListener('click', async () => {
-      const s = siteF.input.value.trim()
-      const e = emailF.input.value.trim()
-      const t = tokenF.input.value.trim()
-      if (!s || !e || !t) { status.textContent = 'Todos los campos son obligatorios.'; return }
-      try {
-        const acc = await invoke<JiraAccount>('jira_account_set', { site: s, email: e, token: t })
-        await loadAccounts()
-        activeAccount = acc
-        highlightAccount(acc.id)
-        showIssues()
-      } catch (err) {
-        status.textContent = String(err)
-      }
-    })
-    const body = document.createElement('div')
-    body.className = 'jira-config'
-    body.append(siteF.row, emailF.row, tokenF.row, hint, save, status)
-    showDetail(detailHeader(existing ? 'Editar cuenta' : 'Añadir cuenta'), body)
-  }
-
+  const showConfig = buildJiraAccountForm({
+    showDetail,
+    saveAccount: async ({ site, email, token }) => {
+      const acc = await invoke<JiraAccount>('jira_account_set', { site, email, token })
+      await loadAccounts()
+      activeAccount = acc
+      highlightAccount(acc.id)
+      showIssues()
+    },
+  })
 
   // ---- shared helpers ----
 
@@ -383,65 +337,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     container.replaceChildren(wrap)
   }
 
-  const makeCard = (issue: JiraIssue, colName: string): HTMLElement => {
-    const card = document.createElement('div')
-    card.className = 'jira-board-card'
-    card.draggable = true
-    card.dataset.issueKey = issue.key
-    const keyEl = document.createElement('span')
-    keyEl.className = 'jira-key'
-    keyEl.textContent = issue.key
-    const summary = document.createElement('p')
-    summary.className = 'jira-board-card-summary'
-    summary.textContent = issue.summary
-    if (issue.assignee) {
-      const assignee = document.createElement('span')
-      assignee.className = 'jira-board-card-assignee'
-      assignee.textContent = issue.assignee
-      card.append(keyEl, summary, assignee)
-    } else {
-      card.append(keyEl, summary)
-    }
-    card.addEventListener('click', () => showIssueDetail(issue))
-    card.addEventListener('dragstart', e => {
-      card.classList.add('dragging')
-      e.dataTransfer?.setData('text/plain', issue.key)
-      e.dataTransfer?.setData('jira-from-col', colName)
-    })
-    card.addEventListener('dragend', () => card.classList.remove('dragging'))
-    return card
-  }
-
-  const makeAvatarBtn = (name: string, _id: string, avatarUrl: string, active: boolean, onClick: () => void): HTMLButtonElement => {
-    const btn = document.createElement('button')
-    btn.className = active ? 'jira-avatar-btn active' : 'jira-avatar-btn'
-    btn.title = name
-    if (avatarUrl) {
-      const img = document.createElement('img')
-      img.src = avatarUrl
-      img.className = 'jira-avatar-img'
-      img.alt = name
-      img.onerror = () => img.replaceWith(makeAvatarInitials(name))
-      btn.append(img)
-    } else {
-      btn.append(makeAvatarInitials(name))
-    }
-    btn.addEventListener('click', onClick)
-    return btn
-  }
-
-  const makeAvatarInitials = (name: string): HTMLElement => {
-    const el = document.createElement('span')
-    el.className = 'jira-avatar-initials'
-    const parts = name.trim().split(' ')
-    el.textContent = parts.length >= 2
-      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-      : name.slice(0, 2).toUpperCase()
-    // Consistent color from name hash
-    const hue = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) & 0xffff, 0) % 360
-    el.style.background = `hsl(${hue} 55% 40%)`
-    return el
-  }
+  const { makeCard, makeAvatarBtn } = buildJiraCards({ openIssue: issue => { void showIssueDetail(issue) } })
 
   // Find and execute the right Jira transition to move an issue to a target column.
   const jiraDrawerDeps: JiraIssueDrawerDeps = {
