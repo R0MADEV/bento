@@ -1,3 +1,9 @@
+//! El cifrado del vault y su fichero en disco: derivar la clave de la
+//! contraseña maestra (Argon2), cifrar y descifrar (AES-256-GCM), y leer o
+//! escribir el fichero completo.
+//!
+//! Zona intocable: aquí no se recorta ni se "simplifica" nada.
+
 // Vault: encrypted credential storage using Argon2 (key derivation) + AES-256-GCM.
 // The master password is never stored — only used to derive the encryption key.
 // File: ~/.config/bento/vault.json (0600 perms).
@@ -102,7 +108,7 @@ pub fn new_id() -> String {
 
 // ---- filesystem helpers ----
 
-fn vault_path() -> Result<PathBuf, String> {
+pub(super) fn vault_path() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "no home dir".to_string())?;
@@ -113,7 +119,7 @@ fn vault_path() -> Result<PathBuf, String> {
 
 // kdf_salt is the Argon2 salt used to derive `key` — must be stored unchanged so
 // we can re-derive the same key on the next unlock. Only the AES-GCM nonce rotates.
-fn write_vault(key: &[u8; 32], kdf_salt: &[u8], entries: &[VaultEntry]) -> Result<(), String> {
+pub(super) fn write_vault(key: &[u8; 32], kdf_salt: &[u8], entries: &[VaultEntry]) -> Result<(), String> {
     let plaintext = serde_json::to_vec(entries).map_err(|e| e.to_string())?;
     let (nonce, ciphertext) = encrypt(key, &plaintext)?;
     let file = VaultFile {
@@ -132,7 +138,7 @@ fn write_vault(key: &[u8; 32], kdf_salt: &[u8], entries: &[VaultEntry]) -> Resul
     Ok(())
 }
 
-fn read_and_decrypt(password: &str) -> Result<(Vec<VaultEntry>, [u8; 32], Vec<u8>), String> {
+pub(super) fn read_and_decrypt(password: &str) -> Result<(Vec<VaultEntry>, [u8; 32], Vec<u8>), String> {
     let path = vault_path()?;
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let file: VaultFile = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
@@ -146,145 +152,6 @@ fn read_and_decrypt(password: &str) -> Result<(Vec<VaultEntry>, [u8; 32], Vec<u8
 }
 
 // ---- Tauri commands ----
-
-#[tauri::command]
-pub fn vault_exists() -> bool {
-    vault_path().map(|p| p.exists()).unwrap_or(false)
-}
-
-#[tauri::command]
-pub fn vault_is_unlocked(state: tauri::State<VaultState>) -> bool {
-    state.0.lock().unwrap().is_some()
-}
-
-#[tauri::command]
-pub fn vault_setup(password: String, state: tauri::State<VaultState>) -> Result<(), String> {
-    if password.len() < 4 {
-        return Err("La contraseña maestra debe tener al menos 4 caracteres.".to_string());
-    }
-    let mut kdf_salt = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut kdf_salt);
-    let key = derive_key(&password, &kdf_salt)?;
-    write_vault(&key, &kdf_salt, &[])?;
-    *state.0.lock().unwrap() = Some(UnlockedVault {
-        key,
-        kdf_salt: kdf_salt.to_vec(),
-        entries: vec![],
-    });
-    Ok(())
-}
-
-#[tauri::command]
-pub fn vault_unlock(
-    password: String,
-    state: tauri::State<VaultState>,
-) -> Result<Vec<VaultEntryPublic>, String> {
-    let (entries, key, kdf_salt) = read_and_decrypt(&password)?;
-    let public: Vec<VaultEntryPublic> = entries.iter().map(|e| e.into()).collect();
-    *state.0.lock().unwrap() = Some(UnlockedVault {
-        key,
-        kdf_salt,
-        entries,
-    });
-    Ok(public)
-}
-
-#[tauri::command]
-pub fn vault_lock(state: tauri::State<VaultState>) {
-    *state.0.lock().unwrap() = None;
-}
-
-#[tauri::command]
-pub fn vault_list(state: tauri::State<VaultState>) -> Result<Vec<VaultEntryPublic>, String> {
-    let guard = state.0.lock().unwrap();
-    let vault = guard.as_ref().ok_or("Vault bloqueado.")?;
-    Ok(vault.entries.iter().map(|e| e.into()).collect())
-}
-
-#[tauri::command]
-pub fn vault_add(
-    service: String,
-    username: String,
-    password: String,
-    url: String,
-    notes: String,
-    state: tauri::State<VaultState>,
-) -> Result<VaultEntryPublic, String> {
-    let mut guard = state.0.lock().unwrap();
-    let vault = guard.as_mut().ok_or("Vault bloqueado.")?;
-    let entry = VaultEntry {
-        id: new_id(),
-        service,
-        username,
-        password,
-        url,
-        notes,
-    };
-    let public = VaultEntryPublic::from(&entry);
-    vault.entries.push(entry);
-    write_vault(&vault.key, &vault.kdf_salt, &vault.entries)?;
-    Ok(public)
-}
-
-#[tauri::command]
-pub fn vault_delete(id: String, state: tauri::State<VaultState>) -> Result<(), String> {
-    let mut guard = state.0.lock().unwrap();
-    let vault = guard.as_mut().ok_or("Vault bloqueado.")?;
-    let before = vault.entries.len();
-    vault.entries.retain(|e| e.id != id);
-    if vault.entries.len() == before {
-        return Err(format!("Entrada '{}' no encontrada.", id));
-    }
-    write_vault(&vault.key, &vault.kdf_salt, &vault.entries)
-}
-
-#[tauri::command]
-pub fn vault_verify_password(password: String) -> bool {
-    read_and_decrypt(&password).is_ok()
-}
-
-#[tauri::command]
-pub fn vault_get_password(id: String, state: tauri::State<VaultState>) -> Result<String, String> {
-    let guard = state.0.lock().unwrap();
-    let vault = guard.as_ref().ok_or("Vault bloqueado.")?;
-    vault
-        .entries
-        .iter()
-        .find(|e| e.id == id)
-        .map(|e| e.password.clone())
-        .ok_or_else(|| "Entrada no encontrada.".to_string())
-}
-
-#[tauri::command]
-pub fn vault_update(
-    id: String,
-    service: String,
-    username: String,
-    password: String,
-    url: String,
-    notes: String,
-    state: tauri::State<VaultState>,
-) -> Result<VaultEntryPublic, String> {
-    let mut guard = state.0.lock().unwrap();
-    let vault = guard.as_mut().ok_or("Vault bloqueado.")?;
-    let entry = vault
-        .entries
-        .iter_mut()
-        .find(|e| e.id == id)
-        .ok_or("Entrada no encontrada.")?;
-    entry.service = service;
-    entry.username = username;
-    if !password.is_empty() {
-        entry.password = password;
-    }
-    entry.url = url;
-    entry.notes = notes;
-    let public = VaultEntryPublic::from(&*entry);
-    write_vault(&vault.key, &vault.kdf_salt, &vault.entries)?;
-    Ok(public)
-}
-
-// ---- unit tests ----
 
 #[cfg(test)]
 mod tests {
