@@ -716,6 +716,20 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState) {
     }
 }
 
+/// Fits a path into `max` columns by dropping leading segments — the sidebar
+/// is ~40 columns, and clipping from the right left "/Users/romangomez/Desktop"
+/// on screen, which is the half that says nothing about which project it is.
+fn short_path(path: &str, max: usize) -> String {
+    if path.chars().count() <= max {
+        return path.to_string();
+    }
+    let tail: String = path.chars().skip(path.chars().count().saturating_sub(max.saturating_sub(1))).collect();
+    match tail.find('/') {
+        Some(_) if max > 1 => format!("…{}", tail.trim_start_matches(|c| c != '/')),
+        _ => String::new(),
+    }
+}
+
 fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect) {
     let agent_line = if review.compare {
         "Agente: comparar todos (claude+codex+opencode)".to_string()
@@ -724,7 +738,10 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
     };
     let compare_line = format!("Comparar: {} (x)  Contexto: {} (c)", on_off(review.compare), if review.context.is_empty() { "no" } else { "sí" });
     let mut lines = vec![
-        ratatui::text::Line::from(format!("Proyecto: {} (o cambia)", review.cwd)),
+        ratatui::text::Line::from(format!(
+            "Proyecto: {} (o cambia)",
+            short_path(&review.cwd, area.width.saturating_sub("Proyecto:  (o cambia)".len() as u16 + 2) as usize),
+        )),
         ratatui::text::Line::from(format!("Base: {}", review.base)),
         ratatui::text::Line::from(agent_line),
         ratatui::text::Line::from(compare_line),
@@ -964,5 +981,22 @@ mod tests {
         for status in ["A", "M", "D", "R", "?"] {
             assert!(file_matches_filter(status, FileFilter::All));
         }
+    }
+
+    #[test]
+    fn short_path_keeps_a_path_that_fits() {
+        assert_eq!(short_path("/a/b/c", 20), "/a/b/c");
+    }
+
+    #[test]
+    fn short_path_keeps_the_tail_of_a_long_path() {
+        // Lo que identifica el proyecto está al final: cortar por la izquierda
+        // deja "…/roma/bento/daemon" en vez de "/Users/romangomez/Desktop/roma".
+        assert_eq!(short_path("/Users/ana/Desktop/roma/bento/daemon", 20), "…/roma/bento/daemon");
+    }
+
+    #[test]
+    fn short_path_handles_a_width_smaller_than_the_ellipsis() {
+        assert_eq!(short_path("/a/b/c", 0), "");
     }
 }
