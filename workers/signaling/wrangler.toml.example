@@ -1,0 +1,13 @@
+name = "bento-signaling"
+main = "src/worker.ts"
+compatibility_date = "2026-08-23"
+
+# Per-developer setup (once):
+#   cp wrangler.toml.example wrangler.toml
+#   npx wrangler login
+#   npm run kv:create        # prints an id — paste it below
+# wrangler.toml itself is gitignored: this id is tied to YOUR Cloudflare
+# account's KV namespace, not something to share/commit.
+[[kv_namespaces]]
+binding = "PAIRING"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

@@ -44,8 +44,34 @@ export const PAIR_JS = `(function () {
   // here as our own query param, then written into the URL before injecting it.
   const authToken = params.get('token') || ''
 
-  function setStatus(text) { statusEl.textContent = text }
-  function setError(text) { errorEl.textContent = text }
+  // loadRealApp() replaces document.body.innerHTML to inject the real app —
+  // that detaches statusEl/errorEl from the document, so a status/error set
+  // after that point would silently write to an invisible node. Re-check
+  // .isConnected each call and fall back to a banner appended to <html>
+  // (outside body, so it survives the swap) once that happens.
+  let banner = null
+  function ensureVisible(el) {
+    if (el.isConnected) return el
+    if (!banner) {
+      banner = document.createElement('div')
+      banner.id = 'pair-banner'
+      banner.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;padding:8px 12px;font:13px monospace;color:#fff;background:#1e3a5f;'
+      document.documentElement.appendChild(banner)
+    }
+    return banner
+  }
+  function setStatus(text) { const el = ensureVisible(statusEl); el.textContent = text; if (el === banner) el.style.background = '#1e3a5f' }
+  function setError(text) { const el = ensureVisible(errorEl); el.textContent = text; if (el === banner) el.style.background = '#7f1d1d' }
+
+  // Real P2P networking doesn't always resolve — a stuck step should show an
+  // error, not hang on "Cargando…" forever with nothing but devtools to tell
+  // why.
+  function withTimeout(promise, ms, label) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(label + ': tardó más de ' + (ms / 1000) + 's')), ms)),
+    ])
+  }
 
   goButton.addEventListener('click', () => {
     const code = codeInput.value.trim()
@@ -87,13 +113,20 @@ export const PAIR_JS = `(function () {
     setTimeout(() => controller.abort(), 120000)
 
     const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    pc.addEventListener('iceconnectionstatechange', () => setStatus('ICE: ' + pc.iceConnectionState))
     const dataChannelPromise = new Promise(resolve => {
       pc.addEventListener('datachannel', e => {
         e.channel.addEventListener('open', () => resolve(e.channel))
       })
     })
 
+    // The signaling store (Cloudflare KV) is eventually consistent — a write
+    // from the desktop side can take up to ~60s to become readable here, so
+    // this first wait is the one most likely to look "stuck" while it's
+    // actually just propagating.
+    const slowSignalingHint = setTimeout(() => setStatus('Buscando la app… (puede tardar hasta 1 min la primera vez)'), 15000)
     const offer = await pollJson(SIGNALING_BASE + '/offer/' + code, controller.signal)
+    clearTimeout(slowSignalingHint)
     await pc.setRemoteDescription(offer)
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -105,13 +138,14 @@ export const PAIR_JS = `(function () {
       body: JSON.stringify(pc.localDescription),
     })
 
-    const channel = await dataChannelPromise
-    setStatus('Conectado. Cargando…')
+    const channel = await withTimeout(dataChannelPromise, 20000, 'Apertura del canal P2P')
+    setStatus('Conectado. Cargando la app…')
     installTransport(channel)
     // shared.js reads its auth token from location.search on load — put it there
     // before the real app's scripts run, so it authenticates like it always has.
     history.replaceState(null, '', location.pathname + '?token=' + encodeURIComponent(authToken))
-    await loadRealApp()
+    await withTimeout(loadRealApp(), 20000, 'Carga de la app')
+    setStatus('Listo.')
   }
 
   function isSameOriginPath(url) {

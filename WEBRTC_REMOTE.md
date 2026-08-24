@@ -94,9 +94,19 @@ cómo el teléfono llega hasta ahí.
     `/ice/:code` que estaba en el diseño original: no hacía falta (YAGNI).
   - Verificado end-to-end en local con `wrangler dev --local` (KV simulada,
     sin cuenta de Cloudflare).
-- [ ] **1.3** `wrangler deploy` → URL gratis en `*.workers.dev` (pendiente:
-  requiere `wrangler kv namespace create PAIRING` con una cuenta real y
-  pegar el id resultante en `wrangler.toml`)
+- [x] **1.3** `wrangler deploy` → URL gratis en `*.workers.dev`. Setup por
+  desarrollador (una vez, cada uno con su propia cuenta):
+  ```
+  cd workers/signaling && npm install
+  cp wrangler.toml.example wrangler.toml
+  npx wrangler login
+  npm run kv:create   # imprime un id — pegarlo en wrangler.toml
+  npm run deploy
+  ```
+  `wrangler.toml` está en `.gitignore` — el id de KV namespace es específico
+  de la cuenta de Cloudflare de cada uno, no algo para commitear (casi se
+  commitea así en esta misma sesión; se corrigió antes de llegar a un
+  commit real). `wrangler.toml.example` es la plantilla versionada.
 - [x] **1.4** Tests (`tests/workers/signaling/pairing.test.ts`, TDD): formato
   del código, unicidad, keys de KV distintas por code
 
@@ -264,6 +274,46 @@ usan sueltos, no dentro de `.phone-active`) se quedaban visibles vacíos
 hasta agregar sus propias reglas `.hidden`. De paso se corrigió el mismo bug
 preexistente en `.phone-error` (visible como una barra vacía en el panel,
 ajeno a este trabajo pero en el mismo archivo).
+
+**Causa raíz encontrada de las conexiones intermitentes ("se queda en
+Conectando…" / "Cargando la app…" sin avisar)**: no era un bug de ICE/WebRTC.
+`GET /offer/:code` a veces devolvía 404 durante bastante más de un minuto
+después de que el daemon confirmara `posting offer` sin error — y luego, sin
+ningún cambio de código, empezaba a devolver 200. Es **consistencia eventual
+de Cloudflare KV**: una escritura no es visible al instante desde cualquier
+edge que la lea, puede tardar hasta ~60s (a veces más) en propagarse
+globalmente — limitación conocida y documentada de KV en el plan gratuito
+(Durable Objects, que sí son fuertemente consistentes, requieren el plan de
+pago). El propio `connect()` del cliente ya tolera esto: `pollJson` reintenta
+cada 1s dentro de un presupuesto total de 120s (`controller.abort()` a
+120000ms), más que suficiente para el caso típico. Confirmado
+reproduciendo en vivo: un código que devolvía 404 en el navegador durante los
+55s de una prueba automatizada devolvía 200 minutos después, con el daemon
+mostrando `remote description set` y luego `connection state -> connected`
+apenas la respuesta llegó. **No requiere fix de código** — es un trade-off
+inherente a usar el tier gratis de Cloudflare en vez de un VPS/TURN propio;
+en el peor caso el primer emparejamiento tarda hasta un minuto.
+
+**Bug real encontrado y corregido durante la misma investigación** (este sí
+ocultaba errores): `loadRealApp()` reemplaza `document.body.innerHTML` para
+inyectar la app real — pero `statusEl`/`errorEl` se habían capturado como
+referencias al `<div id="status">`/`<div id="error">` originales al cargar
+el script, así que quedaban **desconectados del DOM** justo antes del bucle
+que carga los `<script>` de la app real. Cualquier `setStatus`/`setError`
+posterior a ese punto (incluido el mensaje de `withTimeout` si algo tarda
+más de 20s ahí) escribía en un nodo invisible — de ahí que pareciera
+"colgado para siempre" sin ningún mensaje visible, incluso cuando sí había
+un error real. Fix en `pairAssets.ts`: `setStatus`/`setError` ahora
+comprueban `.isConnected` en cada llamada y, si el nodo original ya no está
+en el documento, escriben en un banner fijo (`position:fixed`, añadido a
+`<html>` en vez de `<body>`, así que sobrevive al reemplazo) — pequeño y sin
+abstracción de más, solo asegura que el mensaje de estado siempre sea
+visible sin importar en qué punto del flujo aparezca.
+
+Se agregó también `iceconnectionstatechange` (navegador) y
+`on_connection_state_change` (Rust, ya existía el hook pero descartaba el
+estado) como logging — útil para diagnosticar sin necesitar reconstruir la
+instrumentación de nuevo la próxima vez.
 
 ---
 

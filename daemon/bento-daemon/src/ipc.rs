@@ -235,7 +235,9 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 }
                 let local_addr = info.addr;
                 tokio::spawn(async move {
-                    let _ = crate::remote::webrtc_bridge::run_offerer(code, signaling_base, local_addr).await;
+                    if let Err(e) = crate::remote::webrtc_bridge::run_offerer(code, signaling_base, local_addr).await {
+                        eprintln!("[ipc] webrtc.connect background task failed: {e}");
+                    }
                 });
                 send(ok(&req.id, json!({ "started": true })));
             }

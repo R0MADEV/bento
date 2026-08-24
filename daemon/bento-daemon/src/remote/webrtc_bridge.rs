@@ -53,6 +53,7 @@ const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct OfferHandler {
     gathering_complete: mpsc::Sender<()>,
+    pairing_code: String,
 }
 
 #[async_trait]
@@ -63,7 +64,9 @@ impl PeerConnectionEventHandler for OfferHandler {
         }
     }
 
-    async fn on_connection_state_change(&self, _state: RTCPeerConnectionState) {}
+    async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
+        eprintln!("[webrtc_bridge] connection state -> {state} (code={})", self.pairing_code);
+    }
 }
 
 /// Opens a P2P connection to the phone using `pairing_code` to find each other
@@ -81,7 +84,7 @@ pub async fn run_offerer(pairing_code: String, signaling_base: String, local_add
         .build();
 
     let (gathering_complete_tx, mut gathering_complete_rx) = mpsc::channel(1);
-    let handler = Arc::new(OfferHandler { gathering_complete: gathering_complete_tx });
+    let handler = Arc::new(OfferHandler { gathering_complete: gathering_complete_tx, pairing_code: pairing_code.clone() });
     let runtime = webrtc::runtime::default_runtime().ok_or("no webrtc runtime available")?;
 
     let peer_connection = PeerConnectionBuilder::new()
@@ -106,10 +109,16 @@ pub async fn run_offerer(pairing_code: String, signaling_base: String, local_add
 
     let local_description = peer_connection.local_description().await.ok_or("no local description after gathering")?;
     let client = reqwest::Client::new();
+    eprintln!("[webrtc_bridge] posting offer (code={pairing_code})");
     post_json(&client, &format!("{signaling_base}/offer/{pairing_code}"), &local_description).await?;
 
+    // The signaling store (Cloudflare KV) is eventually consistent — a write
+    // here can take up to ~60s to become readable from the other side, so a
+    // long wait here is expected, not a hang. poll_until_available has no
+    // internal timeout of its own; SIGNALING_TIMEOUT below bounds it.
     let answer: RTCSessionDescription = poll_until_available(&client, &format!("{signaling_base}/answer/{pairing_code}")).await?;
     peer_connection.set_remote_description(answer).await.map_err(|e| e.to_string())?;
+    eprintln!("[webrtc_bridge] SDP exchange complete, awaiting ICE/DTLS (code={pairing_code})");
 
     Ok(())
 }
