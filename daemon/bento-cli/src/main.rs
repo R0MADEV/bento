@@ -76,6 +76,19 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                 }
                 None => { eprintln!("usage: bento review ask <question> [--cwd <dir>] [--base <ref>] [--agent claude|codex|opencode]"); Ok(()) }
             },
+            Some("run") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                let mut body = json!({
+                    "id": "1", "cmd": "review.run", "cwd": cwd, "base": base,
+                    "context": flag(args, "--context").unwrap_or_default(),
+                    "agents": flag(args, "--agents").unwrap_or_default(),
+                });
+                if let Some(branch) = flag(args, "--branch") {
+                    body["branch"] = json!(branch);
+                }
+                stream_review(body).await
+            }
             Some("pr") => match args.get(2).map(String::as_str) {
                 Some("diff") => match args.get(3).and_then(|s| s.parse::<u64>().ok()) {
                     Some(pr) => {
@@ -432,8 +445,7 @@ async fn stream_review(body: Value) -> std::io::Result<()> {
         match value.get("event").and_then(Value::as_str) {
             Some("review.output") => {
                 if let Some(chunk) = value.get("data").and_then(Value::as_str) {
-                    let _ = stdout.write_all(chunk.as_bytes()).await;
-                    let _ = stdout.flush().await;
+                    print_review_chunk(&mut stdout, chunk).await;
                 }
             }
             Some("review.done") => break,
@@ -442,6 +454,75 @@ async fn stream_review(body: Value) -> std::io::Result<()> {
     }
     println!();
     Ok(())
+}
+
+/// Writes one `review.output` chunk from `review.run`/`review.ask` to stdout,
+/// routing the protocol's own control sentinels (batch/synthesis progress,
+/// the session-id marker, error text) to stderr instead of leaking them as
+/// literal `[BATCH:1/2]`-style text into the middle of the printed report —
+/// mirrors the filtering `review.js` already does for the web panel.
+async fn print_review_chunk(stdout: &mut tokio::io::Stdout, chunk: &str) {
+    use tokio::io::AsyncWriteExt as _;
+    match classify_review_chunk(chunk) {
+        ReviewChunk::Stderr(msg) => eprintln!("{msg}"),
+        ReviewChunk::Stdout(text) => {
+            let _ = stdout.write_all(text.as_bytes()).await;
+            let _ = stdout.flush().await;
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ReviewChunk<'a> {
+    Stderr(String),
+    Stdout(&'a str),
+}
+
+fn classify_review_chunk(chunk: &str) -> ReviewChunk<'_> {
+    let is_batch_or_session_marker = (chunk.starts_with("[BATCH:") || chunk.starts_with("[SESSION:"))
+        && chunk.ends_with(']');
+    if is_batch_or_session_marker || chunk == "[SYNTHESIS]" {
+        return ReviewChunk::Stderr(chunk.trim_start_matches('[').trim_end_matches(']').to_string());
+    }
+    if let Some(msg) = chunk.strip_prefix("[ERROR] ") {
+        return ReviewChunk::Stderr(format!("error: {msg}"));
+    }
+    ReviewChunk::Stdout(chunk)
+}
+
+#[cfg(test)]
+mod review_chunk_tests {
+    use super::*;
+
+    #[test]
+    fn batch_marker_goes_to_stderr() {
+        assert_eq!(classify_review_chunk("[BATCH:1/2]"), ReviewChunk::Stderr("BATCH:1/2".into()));
+    }
+
+    #[test]
+    fn session_marker_goes_to_stderr() {
+        assert_eq!(classify_review_chunk("[SESSION:claude:abc]"), ReviewChunk::Stderr("SESSION:claude:abc".into()));
+    }
+
+    #[test]
+    fn synthesis_marker_goes_to_stderr() {
+        assert_eq!(classify_review_chunk("[SYNTHESIS]"), ReviewChunk::Stderr("SYNTHESIS".into()));
+    }
+
+    #[test]
+    fn error_marker_is_prefixed_and_goes_to_stderr() {
+        assert_eq!(classify_review_chunk("[ERROR] algo falló"), ReviewChunk::Stderr("error: algo falló".into()));
+    }
+
+    #[test]
+    fn plain_text_goes_to_stdout() {
+        assert_eq!(classify_review_chunk("## Título"), ReviewChunk::Stdout("## Título"));
+    }
+
+    #[test]
+    fn bracketed_text_that_is_not_a_known_marker_goes_to_stdout() {
+        assert_eq!(classify_review_chunk("[foo]"), ReviewChunk::Stdout("[foo]"));
+    }
 }
 
 /// Send one request and return the `data` field of the response.
@@ -485,6 +566,7 @@ fn print_help() {
     eprintln!("  bento review pr comment-delete <comment_id> <number>          delete a comment (needs gh)");
     eprintln!("  bento review pr submit <number> <approve|request-changes|comment> [text]   submit a review (needs gh)");
     eprintln!("  bento review ask <question> [--cwd <dir>] [--base <ref>] [--agent <name>]   ask about a saved review (runs a real AI agent)");
+    eprintln!("  bento review run [--cwd <dir>] [--base <ref>] [--branch <ref>] [--context <text>] [--agents claude,codex,opencode]   run a full AI code review (runs real AI agents)");
     eprintln!();
     eprintln!("env: BENTO_DAEMON_ADDR (default 127.0.0.1:7877)");
 }

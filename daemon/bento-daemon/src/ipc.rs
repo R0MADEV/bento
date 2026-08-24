@@ -49,6 +49,12 @@ struct Request {
     question: Option<String>,
     #[serde(default)]
     agent: Option<String>,
+    #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
+    context: Option<String>,
+    #[serde(default)]
+    agents: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -102,6 +108,22 @@ fn ok(id: &Option<String>, data: Value) -> String {
 
 fn fail(id: &Option<String>, message: String) -> String {
     json!({ "id": id, "ok": false, "error": message }).to_string()
+}
+
+/// Spawns a task that forwards a review stream (`ask()`/`run_review()`) to
+/// the client as `review.output` events, finishing with `review.done`.
+/// `[DONE]` is those functions' own end-of-stream sentinel — swallowed here
+/// since the client already gets an explicit `review.done` event right after.
+fn spawn_review_stream(out: mpsc::UnboundedSender<String>) -> tokio::sync::mpsc::Sender<String> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+    tokio::spawn(async move {
+        while let Some(chunk) = rx.recv().await {
+            if chunk == "[DONE]" { continue; }
+            let _ = out.send(json!({ "event": "review.output", "data": chunk }).to_string());
+        }
+        let _ = out.send(json!({ "event": "review.done" }).to_string());
+    });
+    tx
 }
 
 fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>) {
@@ -280,26 +302,28 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 let agent = req.agent.clone().unwrap_or_else(|| "claude".into());
                 let question = question.clone();
                 send(ok(&req.id, json!({ "started": true })));
-                let out = out.clone();
-                let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
-                tokio::spawn(async move {
-                    while let Some(chunk) = rx.recv().await {
-                        // "[DONE]" is ask()'s own end-of-stream sentinel (also
-                        // consumed by the HTTP/SSE client) — the IPC side
-                        // already gets an explicit review.done event right
-                        // after this loop ends, so forwarding the sentinel
-                        // text itself would just leak "[DONE]" into the
-                        // user-visible output for no reason.
-                        if chunk == "[DONE]" { continue; }
-                        let _ = out.send(json!({ "event": "review.output", "data": chunk }).to_string());
-                    }
-                    let _ = out.send(json!({ "event": "review.done" }).to_string());
-                });
+                let tx = spawn_review_stream(out.clone());
                 tokio::spawn(async move {
                     crate::remote::review::ask(&cwd, &base, &agent, &question, tx).await;
                 });
             }
             _ => send(fail(&req.id, "cwd and question required".into())),
+        },
+
+        "review.run" => match &req.cwd {
+            Some(cwd) => {
+                let cwd = cwd.clone();
+                let base = req.base.clone().unwrap_or_else(|| "main".into());
+                let branch = req.branch.clone();
+                let context = req.context.clone().unwrap_or_default();
+                let agents = req.agents.clone().unwrap_or_default();
+                send(ok(&req.id, json!({ "started": true })));
+                let tx = spawn_review_stream(out.clone());
+                tokio::spawn(async move {
+                    crate::remote::review::run_review(cwd, base, branch, context, agents, tx).await;
+                });
+            }
+            None => send(fail(&req.id, "cwd required".into())),
         },
 
         "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {

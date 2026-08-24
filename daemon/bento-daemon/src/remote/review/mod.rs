@@ -171,7 +171,7 @@ pub async fn review_handler(
         }
     }
     let context = q.context.unwrap_or_default();
-    let agents = parse_agents(q.agents.as_deref().unwrap_or(""));
+    let agents = q.agents.unwrap_or_default();
 
     let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
     tokio::spawn(async move {
@@ -203,11 +203,29 @@ fn parse_agents(raw: &str) -> Vec<String> {
     if filtered.is_empty() { vec!["claude".to_string()] } else { filtered }
 }
 
-async fn run_review(cwd: String, base: String, branch: Option<String>, context: String, agents: Vec<String>, tx: tokio::sync::mpsc::Sender<String>) {
+/// Runs a full (possibly multi-agent, batched) code review and streams
+/// progress/output through `tx`, finishing with `[DONE]`. Shared by the HTTP
+/// `/api/review` SSE handler and the daemon's IPC socket (`review.run`) —
+/// `base`/`branch` are re-validated here (not just at the HTTP layer) so the
+/// IPC caller, which has no query-param validation of its own, gets the same
+/// protection against unsafe git refs.
+pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>, context: String, agents_raw: String, tx: tokio::sync::mpsc::Sender<String>) {
     let send = |msg: String| {
         let tx = tx.clone();
         async move { let _ = tx.send(msg).await; }
     };
+
+    if !is_safe_branch(&base) {
+        send("[ERROR] rama base inválida".into()).await;
+        return;
+    }
+    if let Some(ref br) = branch {
+        if !is_safe_branch(br) {
+            send("[ERROR] rama inválida".into()).await;
+            return;
+        }
+    }
+    let agents = parse_agents(&agents_raw);
 
     // When a specific branch is given, diff that branch vs base (committed changes only).
     // Otherwise diff the working tree vs base and also include untracked files.
