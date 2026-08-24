@@ -485,6 +485,46 @@ mod tests {
         assert!(got.contains("hello"), "unexpected output: {got:?}");
     }
 
+    // Backs the mobile terminal's "nudge resize on reattach" fix
+    // (bento-daemon/src/remote/web/terminal.js): a TUI that only redraws
+    // (and re-announces terminal modes, e.g. mouse tracking) inside its
+    // resize handler needs a real SIGWINCH to notice a client reattached —
+    // this is the Rust-side half of that mechanism actually delivering one.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn resize_delivers_sigwinch_to_the_child() {
+        let manager = PtyManager::new();
+        let (id, _) = manager
+            .open(OpenOptions {
+                command: Some(vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "trap 'echo GOTWINCH' WINCH; while true; do sleep 0.05; done".into(),
+                ]),
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            })
+            .unwrap();
+        let mut rx = manager.subscribe(&id).expect("subscribe");
+        // Give the trap time to install before resizing.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        manager.resize(&id, 30, 90).unwrap();
+
+        let mut got = String::new();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !got.contains("GOTWINCH") && tokio::time::Instant::now() < deadline {
+            if let Ok(Ok(PtyEvent::Output(text))) =
+                tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await
+            {
+                got.push_str(&text);
+            }
+        }
+        assert!(got.contains("GOTWINCH"), "child never observed the resize: {got:?}");
+        manager.close(&id).unwrap();
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn reopening_an_id_reattaches_and_keeps_scrollback() {
