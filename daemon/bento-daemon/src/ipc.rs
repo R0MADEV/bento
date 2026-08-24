@@ -362,6 +362,8 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                     base: base.clone(),
                     content: content.clone(),
                     saved_at: crate::remote::review::now_iso8601(),
+                    branch: None,
+                    commit: None,
                     session_id: req.session_id.clone(),
                     session_agent: req.agent.clone(),
                 };

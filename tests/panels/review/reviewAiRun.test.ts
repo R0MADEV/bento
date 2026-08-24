@@ -92,10 +92,12 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
 }
 
 const PROMPT_COMMANDS = ['review_build_prompt', 'review_build_synthesis_prompt']
+const CHECKPOINT_COMMANDS = ['review_checkpoint_save', 'review_checkpoint_get']
 
 function mockInvoke(map: Record<string, unknown>) {
   mocks.invoke.mockImplementation(async (cmd: string) => {
     if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
+    if (CHECKPOINT_COMMANDS.includes(cmd)) return null
     if (cmd in map) return map[cmd]
     throw new Error(`unmocked invoke: ${cmd}`)
   })
@@ -183,9 +185,12 @@ describe('happy path', () => {
     expect(mocks.startAgent).toHaveBeenCalledTimes(1)
     expect(mocks.askAi).toHaveBeenCalled()
     expect(h.dom.aiReviewBtn.disabled).toBe(false)
-    const checkpoint = localStorage.getItem(techReviewCheckpointKey(h.data.repoPath, h.data.selectedBranch))
-    expect(checkpoint).toBeTruthy()
-    expect(JSON.parse(checkpoint!).content).toContain('All good.')
+    // Guardado en el almacén compartido con el daemon y el CLI, no en localStorage.
+    const saved = mocks.invoke.mock.calls.find(([cmd]) => cmd === 'review_checkpoint_save')
+    expect(saved).toBeTruthy()
+    expect(saved![1]).toMatchObject({ cwd: h.data.repoPath, base: h.data.selectedBranch, commit: 'abc1234' })
+    expect((saved![1] as { content: string }).content).toContain('All good.')
+    expect(localStorage.getItem(techReviewCheckpointKey(h.data.repoPath, h.data.selectedBranch))).toBeNull()
   })
 
   it('synthesizes a final report when two agents both succeed', async () => {
@@ -214,6 +219,7 @@ describe('failure handling', () => {
     const h = makeHarness()
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
+      if (CHECKPOINT_COMMANDS.includes(cmd)) return null
       if (cmd === 'review_branch_context_prepare') throw new Error('worktree busy')
       throw new Error(`unmocked: ${cmd}`)
     })
@@ -231,6 +237,7 @@ describe('failure handling', () => {
     let snapshotCalls = 0
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
+      if (CHECKPOINT_COMMANDS.includes(cmd)) return null
       if (cmd === 'review_branch_context_prepare') return { path: '/wt', commit: 'abc1234', managed: true }
       if (cmd === 'review_snapshot') {
         snapshotCalls += 1

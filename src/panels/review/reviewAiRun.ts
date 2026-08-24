@@ -6,7 +6,7 @@ import { redact, startAgent } from '../../core/ai/agentClient'
 import { agentLabel, type AgentType } from '../../core/ai/config'
 import { buildReviewPrompt, buildReviewSynthesisPrompt, buildReviewDocument, isRetryableReviewError, createContextProvider, type MultiAgentReviewRun } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
-import { techReviewConversationKey, techReviewCheckpointKey } from '../../core/ai/chatHistory'
+import { techReviewConversationKey } from '../../core/ai/chatHistory'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { resolveReviewFollowUpSession, buildReviewFileManifest, type ReviewChangeFile } from './reviewFormat'
 
@@ -187,15 +187,17 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       const runs = outputRuns().filter(run => run.report || run.error)
       if (!runs.length || !reviewCommit) return
       const followUpSession = resolveReviewFollowUpSession(runs, runs.length)
-      try {
-        localStorage.setItem(techReviewCheckpointKey(reviewRepoPath, reviewBranch), JSON.stringify({
-          content: buildReviewDocument(reviewMeta(), runs),
-          commit: reviewCommit,
-          branch: reviewBranch,
-          sessionId: followUpSession.sessionId ?? null,
-          sessionAgent: followUpSession.sessionAgent ?? null,
-        }))
-      } catch { /* storage full — the on-screen salvage still applies */ }
+      // Saved to the store shared with the daemon and the CLI, so the review
+      // also shows up in the TUI's history and on the phone.
+      invoke('review_checkpoint_save', {
+        cwd: reviewRepoPath,
+        base: reviewBranch,
+        content: buildReviewDocument(reviewMeta(), runs),
+        branch: reviewBranch,
+        commit: reviewCommit,
+        sessionId: followUpSession.sessionId ?? null,
+        sessionAgent: followUpSession.sessionAgent ?? null,
+      }).catch(() => { /* the on-screen salvage still applies */ })
     }
     try {
       progressStatus.textContent = 'Creating isolated worktree…'

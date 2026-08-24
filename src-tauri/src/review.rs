@@ -17,6 +17,50 @@ pub struct SynthesisReport {
     report: String,
 }
 
+
+/// The review checkpoint store, shared with the daemon and the CLI: a review
+/// saved here shows up in the TUI's history and on the phone. It used to live
+/// in the browser's localStorage, visible to this app alone.
+#[tauri::command]
+pub fn review_checkpoint_save(
+    cwd: String,
+    base: String,
+    content: String,
+    branch: Option<String>,
+    commit: Option<String>,
+    session_id: Option<String>,
+    session_agent: Option<String>,
+) -> Result<(), String> {
+    if content.trim().is_empty() {
+        return Err("empty checkpoint".into());
+    }
+    bento_review::checkpoints::save_checkpoint(&bento_review::checkpoints::Checkpoint {
+        cwd,
+        base,
+        content,
+        saved_at: bento_review::checkpoints::now_iso8601(),
+        session_id,
+        session_agent,
+        branch,
+        commit,
+    })
+}
+
+#[tauri::command]
+pub fn review_checkpoint_get(cwd: String, base: String) -> Option<bento_review::checkpoints::Checkpoint> {
+    bento_review::checkpoints::get_checkpoint(&cwd, &base)
+}
+
+#[tauri::command]
+pub fn review_checkpoints_list(cwd: String) -> Vec<bento_review::checkpoints::CheckpointMeta> {
+    bento_review::checkpoints::list_checkpoint_metas(&cwd)
+}
+
+#[tauri::command]
+pub fn review_checkpoint_delete(cwd: String, base: String) -> Result<(), String> {
+    bento_review::checkpoints::delete_checkpoint(&cwd, &base)
+}
+
 /// The review prompt now lives in `bento-review`, shared with the daemon and
 /// the CLI — these two commands are the frontend's way in, so the prompt has
 /// exactly one definition instead of one per language.

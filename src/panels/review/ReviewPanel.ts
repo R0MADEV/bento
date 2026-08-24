@@ -5,7 +5,7 @@ import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { getUiZoom, toLayoutPixels } from '../../ui/zoom'
 import type { AgentType } from '../../core/ai/config'
-import { parseReviewCheckpoint } from '../../core/ai/techReview'
+import { loadReviewCheckpoint } from '../../core/ai/techReview'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey, techReviewCheckpointKey } from '../../core/ai/chatHistory'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
@@ -258,11 +258,11 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   reviewDrawerCloseBtn.addEventListener('click', hideReviewDrawer)
 
   // Re-open the last saved review for the selected branch. Findings are
-  // checkpointed to localStorage after each stage, so a crash or reload never
-  // loses them — this restores the document (and re-wires its follow-up chat).
-  const openSavedReview = (): void => {
+  // checkpointed after each stage, so a crash or reload never loses them —
+  // this restores the document (and re-wires its follow-up chat).
+  const openSavedReview = async (): Promise<void> => {
     if (!repoPath || !selectedBranch) return
-    const checkpoint = parseReviewCheckpoint(localStorage.getItem(techReviewCheckpointKey(repoPath, selectedBranch)))
+    const checkpoint = await loadReviewCheckpoint(repoPath, selectedBranch, localStorage.getItem(techReviewCheckpointKey(repoPath, selectedBranch)))
     if (!checkpoint) {
       const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: 'No saved review for this branch yet' })
       diffView.prepend(note)
@@ -279,7 +279,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     const followUpAgent = (checkpoint.sessionAgent ?? 'claude') as AgentType
     askAi('', false, undefined, undefined, { role: 'assistant', content: checkpoint.content }, repoPath, followUpAgent, techReviewConversationKey(repoPath, selectedBranch), `${projectName} · ${checkpoint.branch}`, checkpoint.branch, checkpoint.commit, checkpoint.sessionId ?? undefined, checkpoint.sessionAgent ?? undefined, [])
   }
-  reviewLastBtn.addEventListener('click', openSavedReview)
+  reviewLastBtn.addEventListener('click', () => { openSavedReview() })
 
   const showCommentStatus = (text: string, isError = false): void => {
     commentStatus.textContent = text
