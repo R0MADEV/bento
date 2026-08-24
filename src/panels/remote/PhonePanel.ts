@@ -1,7 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { icon } from '../../ui/icons'
 import QRCode from 'qrcode'
+
+const DEPLOY_SIGNALING_URL = 'https://deploy.workers.cloudflare.com/?url=https://github.com/R0MADEV/bento/tree/main/workers/signaling'
 
 interface RemoteStatus {
   running: boolean
@@ -138,6 +141,11 @@ export function createPhonePanel(): { element: HTMLElement } {
   signalingInput.onchange = () => localStorage.setItem(SIGNALING_KEY, signalingInput.value.trim())
   signalingRow.append(signalingLabel, signalingInput)
 
+  const deployHint = document.createElement('a')
+  deployHint.className = 'phone-hint-link'
+  deployHint.textContent = '¿No tenés servidor propio? Desplegalo gratis (1 clic, sin terminal)'
+  deployHint.addEventListener('click', () => openUrl(DEPLOY_SIGNALING_URL).catch(() => {}))
+
   const pairBtn = document.createElement('button')
   pairBtn.className = 'phone-copy-btn'
   pairBtn.textContent = 'Generar código'
@@ -162,7 +170,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   pairQrImg.className = 'phone-qr hidden'
   pairQrImg.alt = 'QR de emparejamiento WebRTC'
 
-  webrtcSection.append(webrtcTitle, signalingRow, pairBtn, pairStatus, pairUrlRow, pairQrImg)
+  webrtcSection.append(webrtcTitle, signalingRow, deployHint, pairBtn, pairStatus, pairUrlRow, pairQrImg)
   body.append(webrtcSection)
 
   let currentToken: string | undefined

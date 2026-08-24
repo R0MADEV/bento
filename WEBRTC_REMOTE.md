@@ -94,19 +94,29 @@ cómo el teléfono llega hasta ahí.
     `/ice/:code` que estaba en el diseño original: no hacía falta (YAGNI).
   - Verificado end-to-end en local con `wrangler dev --local` (KV simulada,
     sin cuenta de Cloudflare).
-- [x] **1.3** `wrangler deploy` → URL gratis en `*.workers.dev`. Setup por
-  desarrollador (una vez, cada uno con su propia cuenta):
-  ```
-  cd workers/signaling && npm install
-  cp wrangler.toml.example wrangler.toml
-  npx wrangler login
-  npm run kv:create   # imprime un id — pegarlo en wrangler.toml
-  npm run deploy
-  ```
-  `wrangler.toml` está en `.gitignore` — el id de KV namespace es específico
-  de la cuenta de Cloudflare de cada uno, no algo para commitear (casi se
-  commitea así en esta misma sesión; se corrigió antes de llegar a un
-  commit real). `wrangler.toml.example` es la plantilla versionada.
+- [x] **1.3** `wrangler deploy` → URL gratis en `*.workers.dev`. Dos caminos,
+  documentados en `workers/signaling/README.md`:
+  - **Botón "Deploy to Cloudflare"** (para quien no usa terminal — la
+    audiencia real del proyecto, no solo devs): clic → login con Cloudflare
+    → deploy, Cloudflare clona `workers/signaling/` a su propia cuenta de
+    GitHub y aprovisiona todo solo. Requiere el repo público (lo es) y que
+    el subdirectorio esté autocontenido (lo está: `package.json`/
+    `wrangler.toml.example` propios, sin imports fuera de la carpeta).
+  - **Terminal**, para quien lo prefiere:
+    ```
+    cd workers/signaling
+    cp wrangler.toml.example wrangler.toml
+    npx wrangler login
+    npx wrangler deploy
+    ```
+  `wrangler.toml.example` **no trae `id` de KV namespace** — con wrangler
+  ≥4.45 (auto-provisioning, confirmado con un deploy de prueba real:
+  `wrangler` crea el namespace solo y lo bindea) no hace falta el paso
+  manual `wrangler kv namespace create` + pegar el id que tenía este plan
+  originalmente. `wrangler.toml` real sigue en `.gitignore` — una vez
+  desplegado queda atado a la cuenta de quien lo corrió (casi se commitea
+  así en esta misma sesión con el flujo viejo; se corrigió antes de llegar
+  a un commit real).
 - [x] **1.4** Tests (`tests/workers/signaling/pairing.test.ts`, TDD): formato
   del código, unicidad, keys de KV distintas por code
 
