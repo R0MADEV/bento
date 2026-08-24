@@ -2,7 +2,7 @@
 //! phone) attach to the daemon's terminals. Opt-in — only started when the
 //! caller explicitly calls `RemoteControl::start`.
 
-mod review;
+pub(crate) mod review;
 
 use axum::{
     extract::{

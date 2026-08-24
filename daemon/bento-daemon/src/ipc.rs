@@ -189,6 +189,11 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             None => send(fail(&req.id, "pty_id required".into())),
         },
 
+        "review.branches" => match &req.cwd {
+            Some(cwd) => send(ok(&req.id, json!(crate::remote::review::list_branches(cwd)))),
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
         "remote.start" => {
             let port = req.port.unwrap_or(7879);
             let remote = remote.clone();

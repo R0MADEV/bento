@@ -49,6 +49,13 @@ async fn run(args: &[String]) -> std::io::Result<()> {
             _ => { print_help(); Ok(()) }
         },
         Some("terminals") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
+        Some("review") => match args.get(1).map(String::as_str) {
+            Some("branches") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                request(json!({ "id": "1", "cmd": "review.branches", "cwd": cwd })).await
+            }
+            _ => { print_help(); Ok(()) }
+        },
         Some("open") => {
             let mut body = json!({ "id": "1", "cmd": "terminal.open" });
             if let Some(cwd) = flag(args, "--cwd") {
@@ -68,6 +75,10 @@ async fn run(args: &[String]) -> std::io::Result<()> {
             Ok(())
         }
     }
+}
+
+fn current_dir_string() -> String {
+    std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {
@@ -331,6 +342,7 @@ fn print_help() {
     eprintln!("  bento terminals            list open terminals");
     eprintln!("  bento open [--cwd <dir>]   open a new terminal");
     eprintln!("  bento attach <pty_id>      attach to a terminal (stdin/stdout)");
+    eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");
     eprintln!();
     eprintln!("env: BENTO_DAEMON_ADDR (default 127.0.0.1:7877)");
 }

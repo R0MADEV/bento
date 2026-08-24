@@ -850,6 +850,25 @@ pub async fn review_pr_submit_handler(
 
 // ── /api/review/branches ──────────────────────────────────────────────────────
 
+/// Shared by the HTTP `/api/review/branches` handler and the daemon's
+/// lightweight IPC socket (`review.branches`), which has no HTTP/axum
+/// layer to go through — the actual work here never touched `RemoteState`
+/// or `authorized()` in the first place (those are the network-exposed
+/// phone-remote server's own concerns).
+pub(crate) fn list_branches(cwd: &str) -> Vec<String> {
+    git_cmd(
+        cwd,
+        &["branch", "--sort=-committerdate", "--format=%(refname:short)"],
+    )
+    .unwrap_or_default()
+    .lines()
+    .map(str::trim)
+    .filter(|s| !s.is_empty())
+    .take(20)
+    .map(String::from)
+    .collect()
+}
+
 pub async fn review_branches_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<PrQuery>,
@@ -861,18 +880,7 @@ pub async fn review_branches_handler(
         Some(c) => c,
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
-    let branches: Vec<String> = git_cmd(
-        &cwd,
-        &["branch", "--sort=-committerdate", "--format=%(refname:short)"],
-    )
-    .unwrap_or_default()
-    .lines()
-    .map(str::trim)
-    .filter(|s| !s.is_empty())
-    .take(20)
-    .map(String::from)
-    .collect();
-    Json(branches).into_response()
+    Json(list_branches(&cwd)).into_response()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
