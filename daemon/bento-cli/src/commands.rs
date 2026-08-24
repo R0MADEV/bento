@@ -1,0 +1,244 @@
+//! El dispatch de subcomandos: qué hace `bento <algo>`. Cada rama traduce
+//! argumentos a una petición al daemon; el transporte está en `main`.
+
+use serde_json::{json, Value};
+
+use crate::{attach, current_dir_string, flag, print_help, print_text, request, request_data, stream_review, tui};
+use crate::service::{daemon_install, daemon_start, daemon_uninstall};
+
+pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
+    match args.first().map(String::as_str) {
+        None => tui::run().await,
+        Some("daemon") => match args.get(1).map(String::as_str) {
+            Some("status")    => request(json!({ "id": "1", "cmd": "daemon.status" })).await,
+            Some("start")     => daemon_start().await,
+            Some("install")   => daemon_install(),
+            Some("uninstall") => daemon_uninstall(),
+            _ => { print_help(); Ok(()) }
+        },
+        Some("agent") => match args.get(1).map(String::as_str) {
+            Some("run") => {
+                let rest = &args[2..];
+                let cmd = build_agent_open_cmd(rest);
+                let pty_id = request_data(cmd).await?;
+                let id = pty_id.get("pty_id").and_then(Value::as_str).unwrap_or("?");
+                println!("agent started: {id}");
+                if flag(rest, "--attach").is_some() || rest.contains(&"--attach".to_string()) {
+                    attach::attach(id).await?;
+                }
+                Ok(())
+            }
+            Some("list") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
+            Some("attach") => match args.get(2) {
+                Some(id) => attach::attach(id).await,
+                None => { eprintln!("usage: bento agent attach <id>"); Ok(()) }
+            },
+            _ => { print_help(); Ok(()) }
+        },
+        Some("terminals") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
+        Some("review") => match args.get(1).map(String::as_str) {
+            Some("branches") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                request(json!({ "id": "1", "cmd": "review.branches", "cwd": cwd })).await
+            }
+            Some("prs") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                request(json!({ "id": "1", "cmd": "review.prs", "cwd": cwd })).await
+            }
+            Some("files") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                request(json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base })).await
+            }
+            Some("file") => match args.get(2) {
+                Some(path) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                    let data = request_data(json!({ "id": "1", "cmd": "review.file", "cwd": cwd, "base": base, "path": path })).await?;
+                    print_text(data.as_str().unwrap_or_default());
+                    Ok(())
+                }
+                None => { eprintln!("usage: bento review file <path> [--cwd <dir>] [--base <ref>]"); Ok(()) }
+            },
+            Some("ask") => match args.get(2) {
+                Some(question) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                    let agent = flag(args, "--agent").unwrap_or_else(|| "claude".to_string());
+                    stream_review(json!({
+                        "id": "1", "cmd": "review.ask", "cwd": cwd, "base": base, "agent": agent, "question": question,
+                    })).await
+                }
+                None => { eprintln!("usage: bento review ask <question> [--cwd <dir>] [--base <ref>] [--agent claude|codex|opencode]"); Ok(()) }
+            },
+            Some("run") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                let mut body = json!({
+                    "id": "1", "cmd": "review.run", "cwd": cwd, "base": base,
+                    "context": flag(args, "--context").unwrap_or_default(),
+                    "agents": flag(args, "--agents").unwrap_or_default(),
+                });
+                if let Some(branch) = flag(args, "--branch") {
+                    body["branch"] = json!(branch);
+                }
+                stream_review(body).await
+            }
+            Some("pr") => match args.get(2).map(String::as_str) {
+                Some("diff") => match args.get(3).and_then(|s| s.parse::<u64>().ok()) {
+                    Some(pr) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        let data = request_data(json!({ "id": "1", "cmd": "review.pr_diff", "cwd": cwd, "pr": pr })).await?;
+                        print_text(data.as_str().unwrap_or_default());
+                        Ok(())
+                    }
+                    None => { eprintln!("usage: bento review pr diff <number>"); Ok(()) }
+                },
+                Some("comments") => match args.get(3).and_then(|s| s.parse::<u64>().ok()) {
+                    Some(pr) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comments", "cwd": cwd, "pr": pr })).await
+                    }
+                    None => { eprintln!("usage: bento review pr comments <number>"); Ok(()) }
+                },
+                Some("comment") => match (args.get(3).and_then(|s| s.parse::<u64>().ok()), args.get(4)) {
+                    (Some(pr), Some(text)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comment_add", "cwd": cwd, "pr": pr, "data": text })).await
+                    }
+                    _ => { eprintln!("usage: bento review pr comment <number> <text>"); Ok(()) }
+                },
+                Some("comment-update") => match (
+                    args.get(3).and_then(|s| s.parse::<u64>().ok()),
+                    args.get(4).and_then(|s| s.parse::<u64>().ok()),
+                    args.get(5),
+                ) {
+                    (Some(id), Some(pr), Some(text)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comment_update", "cwd": cwd, "pr": pr, "comment_id": id, "data": text })).await
+                    }
+                    _ => { eprintln!("usage: bento review pr comment-update <comment_id> <pr_number> <text>"); Ok(()) }
+                },
+                Some("comment-delete") => match (
+                    args.get(3).and_then(|s| s.parse::<u64>().ok()),
+                    args.get(4).and_then(|s| s.parse::<u64>().ok()),
+                ) {
+                    (Some(id), Some(pr)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comment_delete", "cwd": cwd, "pr": pr, "comment_id": id })).await
+                    }
+                    _ => { eprintln!("usage: bento review pr comment-delete <comment_id> <pr_number>"); Ok(()) }
+                },
+                Some("submit") => match (args.get(3).and_then(|s| s.parse::<u64>().ok()), args.get(4)) {
+                    (Some(pr), Some(event)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        let mut body = json!({ "id": "1", "cmd": "review.pr_submit", "cwd": cwd, "pr": pr, "event": event });
+                        if let Some(text) = args.get(5) {
+                            body["data"] = json!(text);
+                        }
+                        request(body).await
+                    }
+                    _ => { eprintln!("usage: bento review pr submit <number> <approve|request-changes|comment> [text]"); Ok(()) }
+                },
+                _ => { print_help(); Ok(()) }
+            },
+            _ => { print_help(); Ok(()) }
+        },
+        Some("open") => {
+            let mut body = json!({ "id": "1", "cmd": "terminal.open" });
+            if let Some(cwd) = flag(args, "--cwd") {
+                body["cwd"] = json!(cwd);
+            }
+            request(body).await
+        }
+        Some("attach") => match args.get(1) {
+            Some(id) => attach::attach(id).await,
+            None => {
+                eprintln!("usage: bento attach <pty_id>");
+                Ok(())
+            }
+        },
+        _ => {
+            print_help();
+            Ok(())
+        }
+    }
+}
+
+/// Build a `terminal.open` IPC command for a given agent and flags.
+/// - `claude --message <msg>` → `["claude", "-p", "<msg>"]`
+/// - `codex  --message <msg>` → `["codex", "-a", "full-auto", "-q", "<msg>"]`
+/// - other   --message <msg>` → `["<agent>", "<msg>"]`
+fn build_agent_open_cmd(args: &[String]) -> Value {
+    let agent = args.first().map(String::as_str).unwrap_or("claude");
+    let cwd = flag(args, "--cwd");
+    let message = flag(args, "--message");
+
+    let command: Vec<String> = match (agent, message.as_deref()) {
+        ("claude", Some(msg)) => vec!["claude".into(), "-p".into(), msg.into()],
+        ("codex",  Some(msg)) => vec!["codex".into(), "-a".into(), "full-auto".into(), "-q".into(), msg.into()],
+        (name,     Some(msg)) => vec![name.into(), msg.into()],
+        (name,     None)      => vec![name.into()],
+    };
+
+    let mut body = json!({ "id": "1", "cmd": "terminal.open", "command": command });
+    if let Some(c) = cwd {
+        body["cwd"] = json!(c);
+    }
+    body
+}
+
+// ── IPC helpers ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_run_claude_interactive() {
+        let args = ["claude".to_string(), "--cwd".to_string(), "/home/x".to_string()];
+        let cmd = build_agent_open_cmd(&args);
+        assert_eq!(cmd["cmd"].as_str(), Some("terminal.open"));
+        assert_eq!(cmd["command"], json!(["claude"]));
+        assert_eq!(cmd["cwd"].as_str(), Some("/home/x"));
+    }
+
+    #[test]
+    fn agent_run_claude_with_message_uses_print_flag() {
+        let args = [
+            "claude".to_string(), "--cwd".to_string(), "/proj".to_string(),
+            "--message".to_string(), "fix the bug".to_string(),
+        ];
+        let cmd = build_agent_open_cmd(&args);
+        assert_eq!(cmd["command"], json!(["claude", "-p", "fix the bug"]));
+        assert_eq!(cmd["cwd"].as_str(), Some("/proj"));
+    }
+
+    #[test]
+    fn agent_run_codex_with_message_uses_full_auto() {
+        let args = [
+            "codex".to_string(),
+            "--message".to_string(), "add tests".to_string(),
+        ];
+        let cmd = build_agent_open_cmd(&args);
+        assert_eq!(cmd["command"], json!(["codex", "-a", "full-auto", "-q", "add tests"]));
+        assert!(cmd["cwd"].is_null());
+    }
+
+    #[test]
+    fn agent_run_unknown_agent_passes_message_as_arg() {
+        let args = [
+            "opencode".to_string(),
+            "--message".to_string(), "hello".to_string(),
+        ];
+        let cmd = build_agent_open_cmd(&args);
+        assert_eq!(cmd["command"], json!(["opencode", "hello"]));
+    }
+
+    #[test]
+    fn agent_run_no_cwd_omits_field() {
+        let args = ["claude".to_string()];
+        let cmd = build_agent_open_cmd(&args);
+        assert!(cmd["cwd"].is_null());
+    }
+}

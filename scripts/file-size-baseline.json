@@ -9,7 +9,6 @@
   "src/panels/review/ReviewDiffView.ts": 485,
   "src/panels/jira/JiraPanel.ts": 482,
   "src/panels/agents/AgentsPanel.ts": 444,
-  "daemon/bento-cli/src/main.rs": 441,
   "src/panels/tasks/TaskDockerView.ts": 422,
   "src-tauri/src/agent/mod.rs": 416,
   "src-tauri/src/main.rs": 413
