@@ -47,7 +47,11 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
             "Proyecto: {} (o cambia)",
             short_path(&review.cwd, area.width.saturating_sub("Proyecto:  (o cambia)".len() as u16 + 2) as usize),
         )),
-        ratatui::text::Line::from(format!("Base: {}", review.base)),
+        ratatui::text::Line::from(format!(
+            "Base: {}  ←  {}",
+            review.base,
+            review.branch.as_deref().unwrap_or("cambios sin commitear"),
+        )),
         ratatui::text::Line::from(agent_line),
         ratatui::text::Line::from(compare_line),
     ];
@@ -58,7 +62,7 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
     // clipped the agent/compare lines once "Proyecto" was added.
     let rows = Layout::vertical([Constraint::Length(lines.len() as u16 + 2), Constraint::Min(1)]).split(area);
     let header = Paragraph::new(lines)
-        .block(Block::default().title("Tech Review — r: correr").borders(Borders::ALL));
+        .block(Block::default().title("Tech Review — r: correr · F5: refrescar").borders(Borders::ALL));
     frame.render_widget(header, rows[0]);
 
     let border_style = if matches!(review.focus, Focus::Sidebar) { FOCUSED } else { Style::default() };
@@ -77,7 +81,7 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
             review.projects_selected,
         ),
         SidebarTab::Branches => (
-            format!("o proyectos · [b] Ramas ({}) · p PRs · h historial", review.branches.len()),
+            format!("o proyectos · [b] Ramas ({}) · v: revisar rama · p PRs · h historial", review.branches.len()),
             review.branches.iter().map(|b| ListItem::new(b.as_str())).collect(),
             review.branches_selected,
         ),

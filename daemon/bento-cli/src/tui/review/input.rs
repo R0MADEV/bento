@@ -33,6 +33,7 @@ impl ReviewState {
             KeyCode::Right => { self.focus = Focus::Files; false }
             KeyCode::Char('r') => { self.start_run(); false }
             KeyCode::Char('g') => { self.agent = next_agent(&self.agent); false }
+            KeyCode::F(5) => { self.refresh().await; false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('c') => {
                 self.input_purpose = Some(InputPurpose::Context);
@@ -43,7 +44,7 @@ impl ReviewState {
             KeyCode::Char('b') => { self.set_sidebar_tab(SidebarTab::Branches).await; false }
             KeyCode::Char('p') => { self.set_sidebar_tab(SidebarTab::Prs).await; false }
             KeyCode::Char('h') => { self.set_sidebar_tab(SidebarTab::Checkpoints).await; false }
-            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') => {
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') => {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
                     Focus::Files => self.handle_files_key(code).await,
@@ -84,6 +85,13 @@ impl ReviewState {
                         self.base = b.clone();
                         self.refresh_files().await;
                         self.focus = Focus::Sidebar;
+                    }
+                    false
+                }
+                KeyCode::Char('v') => {
+                    // Revisar esa rama contra la base, en vez del working tree.
+                    if let Some(b) = self.branches.get(self.branches_selected).cloned() {
+                        self.branch = if self.branch.as_deref() == Some(b.as_str()) { None } else { Some(b) };
                     }
                     false
                 }

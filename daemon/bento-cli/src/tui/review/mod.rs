@@ -57,6 +57,10 @@ pub(super) struct ReviewState {
     /// "known projects" source `/api/projects` uses for the phone remote).
     cwd: String,
     base: String,
+    /// La rama a revisar contra `base`. Sin ella se revisa el working tree,
+    /// que es el caso habitual; con ella puedes revisar la rama de otro sin
+    /// cambiarte a ella.
+    branch: Option<String>,
     agent: String,
     /// When on, `start_run` reviews with all of `AGENTS` and synthesizes
     /// their reports instead of just `agent` — mirrors desktop's "compare
@@ -118,6 +122,7 @@ impl ReviewState {
         Self {
             cwd,
             base: "main".to_string(),
+            branch: None,
             agent: AGENTS[0].to_string(),
             compare: false,
             context: String::new(),
@@ -249,7 +254,22 @@ impl ReviewState {
             .ok()
             .map(|v| format_pr_comments(&v))
             .unwrap_or_default();
-        self.pr_detail = format!("{diff}\n\n---\n\n## Comentarios\n\n{comments}");
+        // Encabezado con lo que ya trae la lista: sin él, el detalle abría
+        // directamente en el diff y no decía ni de qué PR era.
+        let header = self
+            .prs
+            .iter()
+            .find(|p| p.get("number").and_then(Value::as_u64) == Some(pr))
+            .map(|p| {
+                let field = |key: &str| p.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+                let author = p.get("author").and_then(|a| a.get("login")).and_then(Value::as_str).unwrap_or("?");
+                format!(
+                    "# #{pr} {}\n\n{} → {} · @{author}\n{}\n",
+                    field("title"), field("headRefName"), field("baseRefName"), field("url"),
+                )
+            })
+            .unwrap_or_else(|| format!("# PR #{pr}\n"));
+        self.pr_detail = format!("{header}\n---\n\n{diff}\n\n---\n\n## Comentarios\n\n{comments}");
         self.pr_scroll = 0;
         self.current_pr = Some(pr);
         self.pr_status.clear();
@@ -292,10 +312,13 @@ impl ReviewState {
         self.session_id = None;
         self.session_agent = None;
         let agents = if self.compare { AGENTS.join(",") } else { self.agent.clone() };
-        let body = json!({
+        let mut body = json!({
             "id": "1", "cmd": "review.run", "cwd": self.cwd, "base": self.base,
             "context": self.context, "agents": agents,
         });
+        if let Some(branch) = &self.branch {
+            body["branch"] = json!(branch);
+        }
         self.begin_stream(body, true);
     }
 
@@ -371,5 +394,16 @@ impl ReviewState {
         tokio::spawn(async move {
             let _ = crate::request_data(body).await;
         });
+    }
+}
+
+impl ReviewState {
+    /// Vuelve a pedir lo que se ve ahora mismo: los archivos y la pestaña
+    /// activa del sidebar. Sin esto, un commit o un `git add` hechos en otra
+    /// terminal no aparecían hasta salir y volver a entrar.
+    pub(super) async fn refresh(&mut self) {
+        self.refresh_files().await;
+        let tab = std::mem::replace(&mut self.sidebar_tab, SidebarTab::Branches);
+        self.set_sidebar_tab(tab).await;
     }
 }
