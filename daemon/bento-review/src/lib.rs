@@ -9,6 +9,8 @@ pub mod diff;
 pub mod engine;
 pub mod pr;
 pub mod prompt;
+pub mod store;
 pub mod vcs;
+pub mod viewed;
 
 pub use prompt::{build_review_prompt, build_synthesis_prompt, ReviewPromptFile, ReviewPromptInput};

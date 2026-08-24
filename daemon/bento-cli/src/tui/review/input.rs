@@ -153,6 +153,7 @@ impl ReviewState {
             KeyCode::Char(' ') => {
                 if let Some(path) = self.visible_files().get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str).map(String::from) {
                     if !self.reviewed.remove(&path) { self.reviewed.insert(path); }
+                    self.save_reviewed();
                 }
                 false
             }

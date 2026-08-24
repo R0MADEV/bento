@@ -37,22 +37,11 @@ pub struct CheckpointMeta {
 }
 
 fn checkpoints_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".bento").join("review-checkpoints"))
-}
-
-// Stable FNV-1a 64-bit — no extra deps needed.
-fn fnv1a(s: &str) -> String {
-    let mut h: u64 = 14695981039346656037;
-    for b in s.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(1099511628211);
-    }
-    format!("{:016x}", h)
+    crate::store::store_dir("review-checkpoints")
 }
 
 pub fn checkpoint_path(cwd: &str, base: &str) -> Option<PathBuf> {
-    checkpoints_dir().map(|d| d.join(format!("{}.json", fnv1a(&format!("{}:{}", cwd, base)))))
+    checkpoints_dir().map(|dir| crate::store::entry_path(&dir, cwd, base))
 }
 
 /// All saved checkpoints for `cwd` (one per base branch reviewed), newest

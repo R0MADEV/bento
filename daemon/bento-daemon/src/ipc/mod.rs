@@ -1,3 +1,5 @@
+mod review;
+
 use crate::remote::RemoteControl;
 use bento_core::{OpenOptions, PtyEvent, PtyManager};
 use serde::Deserialize;
@@ -7,60 +9,62 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
 #[derive(Deserialize)]
-struct Request {
+pub(crate) struct Request {
     #[serde(default)]
-    id: Option<String>,
-    cmd: String,
+    pub(crate) id: Option<String>,
+    pub(crate) cmd: String,
     #[serde(default)]
-    pty_id: Option<String>,
+    pub(crate) pty_id: Option<String>,
     #[serde(default)]
-    cwd: Option<String>,
+    pub(crate) cwd: Option<String>,
     #[serde(default)]
-    shell: Option<String>,
+    pub(crate) shell: Option<String>,
     #[serde(default)]
-    command: Option<Vec<String>>,
+    pub(crate) command: Option<Vec<String>>,
     #[serde(default)]
-    env: Option<std::collections::HashMap<String, String>>,
+    pub(crate) env: Option<std::collections::HashMap<String, String>>,
     #[serde(default)]
-    data: Option<String>,
+    pub(crate) data: Option<String>,
     #[serde(default)]
-    rows: Option<u16>,
+    pub(crate) paths: Option<Vec<String>>,
     #[serde(default)]
-    cols: Option<u16>,
+    pub(crate) rows: Option<u16>,
     #[serde(default)]
-    port: Option<u16>,
+    pub(crate) cols: Option<u16>,
     #[serde(default)]
-    token: Option<String>,
+    pub(crate) port: Option<u16>,
     #[serde(default)]
-    use_tailscale: Option<bool>,
+    pub(crate) token: Option<String>,
     #[serde(default)]
-    title: Option<String>,
+    pub(crate) use_tailscale: Option<bool>,
     #[serde(default)]
-    herdr_socket: Option<String>,
+    pub(crate) title: Option<String>,
     #[serde(default)]
-    base: Option<String>,
+    pub(crate) herdr_socket: Option<String>,
     #[serde(default)]
-    pr: Option<u64>,
+    pub(crate) base: Option<String>,
     #[serde(default)]
-    comment_id: Option<u64>,
+    pub(crate) pr: Option<u64>,
     #[serde(default)]
-    event: Option<String>,
+    pub(crate) comment_id: Option<u64>,
     #[serde(default)]
-    question: Option<String>,
+    pub(crate) event: Option<String>,
     #[serde(default)]
-    agent: Option<String>,
+    pub(crate) question: Option<String>,
     #[serde(default)]
-    branch: Option<String>,
+    pub(crate) agent: Option<String>,
     #[serde(default)]
-    context: Option<String>,
+    pub(crate) branch: Option<String>,
     #[serde(default)]
-    agents: Option<String>,
+    pub(crate) context: Option<String>,
     #[serde(default)]
-    content: Option<String>,
+    pub(crate) agents: Option<String>,
     #[serde(default)]
-    session_id: Option<String>,
+    pub(crate) content: Option<String>,
     #[serde(default)]
-    path: Option<String>,
+    pub(crate) session_id: Option<String>,
+    #[serde(default)]
+    pub(crate) path: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -121,11 +125,11 @@ async fn handle_conn(socket: TcpStream, manager: PtyManager, remote: RemoteContr
     Ok(())
 }
 
-fn ok(id: &Option<String>, data: Value) -> String {
+pub(crate) fn ok(id: &Option<String>, data: Value) -> String {
     json!({ "id": id, "ok": true, "data": data }).to_string()
 }
 
-fn fail(id: &Option<String>, message: String) -> String {
+pub(crate) fn fail(id: &Option<String>, message: String) -> String {
     json!({ "id": id, "ok": false, "error": message }).to_string()
 }
 
@@ -133,7 +137,7 @@ fn fail(id: &Option<String>, message: String) -> String {
 /// the client as `review.output` events, finishing with `review.done`.
 /// `[DONE]` is those functions' own end-of-stream sentinel — swallowed here
 /// since the client already gets an explicit `review.done` event right after.
-fn spawn_review_stream(out: mpsc::UnboundedSender<String>) -> tokio::sync::mpsc::Sender<String> {
+pub(crate) fn spawn_review_stream(out: mpsc::UnboundedSender<String>) -> tokio::sync::mpsc::Sender<String> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
     tokio::spawn(async move {
         while let Some(chunk) = rx.recv().await {
@@ -244,167 +248,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             None => send(fail(&req.id, "pty_id required".into())),
         },
 
-        "review.branches" => match &req.cwd {
-            Some(cwd) => send(ok(&req.id, json!(crate::remote::review::list_branches(cwd)))),
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "review.files" => match &req.cwd {
-            Some(cwd) => {
-                let base = req.base.as_deref().unwrap_or("main");
-                match crate::remote::review::list_files(cwd, base) {
-                    Ok(list) => send(ok(&req.id, json!(list))),
-                    Err(e) => send(fail(&req.id, e)),
-                }
-            }
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "review.file" => match (&req.cwd, &req.path) {
-            (Some(cwd), Some(path)) => {
-                let base = req.base.as_deref().unwrap_or("main");
-                match crate::remote::review::file_diff(cwd, path, base) {
-                    Ok(diff) => send(ok(&req.id, json!(diff))),
-                    Err(e) => send(fail(&req.id, e)),
-                }
-            }
-            _ => send(fail(&req.id, "cwd and path required".into())),
-        },
-
-        "review.prs" => match &req.cwd {
-            Some(cwd) => match crate::remote::review::list_prs(cwd) {
-                Ok(json_str) => {
-                    let data = serde_json::from_str::<Value>(&json_str).unwrap_or(Value::Null);
-                    send(ok(&req.id, data));
-                }
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "review.pr_diff" => match (&req.cwd, req.pr) {
-            (Some(cwd), Some(pr)) => match crate::remote::review::pr_diff(cwd, pr) {
-                Ok(diff) => send(ok(&req.id, json!(diff))),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            _ => send(fail(&req.id, "cwd and pr required".into())),
-        },
-
-        "review.pr_comments" => match (&req.cwd, req.pr) {
-            (Some(cwd), Some(pr)) => match crate::remote::review::pr_comments(cwd, pr) {
-                Ok(data) => send(ok(&req.id, data)),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            _ => send(fail(&req.id, "cwd and pr required".into())),
-        },
-
-        "review.pr_comment_add" => match (&req.cwd, req.pr, &req.data) {
-            (Some(cwd), Some(pr), Some(body)) => match crate::remote::review::add_comment(cwd, pr, body) {
-                Ok(_) => send(ok(&req.id, Value::Null)),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            _ => send(fail(&req.id, "cwd, pr and data required".into())),
-        },
-
-        "review.pr_comment_update" => match (&req.cwd, req.pr, req.comment_id, &req.data) {
-            (Some(cwd), Some(pr), Some(id), Some(body)) => {
-                match crate::remote::review::update_comment(cwd, pr, id, body) {
-                    Ok(()) => send(ok(&req.id, Value::Null)),
-                    Err(e) => send(fail(&req.id, e)),
-                }
-            }
-            _ => send(fail(&req.id, "cwd, pr, comment_id and data required".into())),
-        },
-
-        "review.pr_comment_delete" => match (&req.cwd, req.pr, req.comment_id) {
-            (Some(cwd), Some(pr), Some(id)) => match crate::remote::review::delete_comment(cwd, pr, id) {
-                Ok(()) => send(ok(&req.id, Value::Null)),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            _ => send(fail(&req.id, "cwd, pr and comment_id required".into())),
-        },
-
-        "review.ask" => match (&req.cwd, &req.question) {
-            (Some(cwd), Some(question)) => {
-                let cwd = cwd.clone();
-                let base = req.base.clone().unwrap_or_else(|| "main".into());
-                let agent = req.agent.clone().unwrap_or_else(|| "claude".into());
-                let question = question.clone();
-                send(ok(&req.id, json!({ "started": true })));
-                let tx = spawn_review_stream(out.clone());
-                review_tasks.push(tokio::spawn(async move {
-                    crate::remote::review::ask(&cwd, &base, &agent, &question, tx).await;
-                }));
-            }
-            _ => send(fail(&req.id, "cwd and question required".into())),
-        },
-
-        "review.run" => match &req.cwd {
-            Some(cwd) => {
-                let cwd = cwd.clone();
-                let base = req.base.clone().unwrap_or_else(|| "main".into());
-                let branch = req.branch.clone();
-                let context = req.context.clone().unwrap_or_default();
-                let agents = req.agents.clone().unwrap_or_default();
-                send(ok(&req.id, json!({ "started": true })));
-                let tx = spawn_review_stream(out.clone());
-                review_tasks.push(tokio::spawn(async move {
-                    crate::remote::review::run_review(cwd, base, branch, context, agents, tx).await;
-                }));
-            }
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "review.checkpoint_save" => match (&req.cwd, &req.base, &req.content) {
-            (Some(cwd), Some(base), Some(content)) => {
-                let cp = crate::remote::review::Checkpoint {
-                    cwd: cwd.clone(),
-                    base: base.clone(),
-                    content: content.clone(),
-                    saved_at: crate::remote::review::now_iso8601(),
-                    branch: None,
-                    commit: None,
-                    session_id: req.session_id.clone(),
-                    session_agent: req.agent.clone(),
-                };
-                match crate::remote::review::save_checkpoint(&cp) {
-                    Ok(()) => send(ok(&req.id, Value::Null)),
-                    Err(e) => send(fail(&req.id, e)),
-                }
-            }
-            _ => send(fail(&req.id, "cwd, base and content required".into())),
-        },
-
-        "review.checkpoints" => match &req.cwd {
-            Some(cwd) => send(ok(&req.id, json!(crate::remote::review::list_checkpoint_metas(cwd)))),
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "review.checkpoint_get" => match (&req.cwd, &req.base) {
-            (Some(cwd), Some(base)) => match crate::remote::review::get_checkpoint(cwd, base) {
-                Some(cp) => send(ok(&req.id, serde_json::to_value(&cp).unwrap_or(Value::Null))),
-                None => send(fail(&req.id, "no hay checkpoint guardado".into())),
-            },
-            _ => send(fail(&req.id, "cwd and base required".into())),
-        },
-
-        "review.checkpoint_delete" => match (&req.cwd, &req.base) {
-            (Some(cwd), Some(base)) => match crate::remote::review::delete_checkpoint(cwd, base) {
-                Ok(()) => send(ok(&req.id, Value::Null)),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            _ => send(fail(&req.id, "cwd and base required".into())),
-        },
-
-        "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {
-            (Some(cwd), Some(pr), Some(event)) => {
-                match crate::remote::review::submit_review(cwd, pr, event, req.data.as_deref().unwrap_or_default()) {
-                    Ok(_) => send(ok(&req.id, Value::Null)),
-                    Err(e) => send(fail(&req.id, e)),
-                }
-            }
-            _ => send(fail(&req.id, "cwd, pr and event required".into())),
-        },
+        cmd if cmd.starts_with("review.") => review::dispatch(cmd, &req, &send, out, review_tasks),
 
         "remote.start" => {
             let port = req.port.unwrap_or(7879);

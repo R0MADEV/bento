@@ -181,7 +181,14 @@ impl ReviewState {
             "id": "1", "cmd": "review.files", "cwd": self.cwd, "base": self.base,
         })).await;
         self.files_selected = 0;
-        self.reviewed.clear();
+        // Persistido por proyecto+base en el mismo almacén que los
+        // checkpoints: la marca sobrevive al refresco y al reinicio.
+        self.reviewed = self
+            .fetch_list(json!({ "id": "1", "cmd": "review.viewed", "cwd": self.cwd, "base": self.base }))
+            .await
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
         self.view = ReviewView::Browse;
     }
 
@@ -347,6 +354,19 @@ impl ReviewState {
         let body = json!({
             "id": "1", "cmd": "review.checkpoint_save", "cwd": self.cwd, "base": self.base,
             "content": self.output, "session_id": self.session_id, "agent": self.session_agent,
+        });
+        tokio::spawn(async move {
+            let _ = crate::request_data(body).await;
+        });
+    }
+}
+
+impl ReviewState {
+    /// Fire-and-forget: guarda la lista de revisados para este proyecto+base.
+    pub(super) fn save_reviewed(&self) {
+        let body = json!({
+            "id": "1", "cmd": "review.viewed_set", "cwd": self.cwd, "base": self.base,
+            "paths": self.reviewed.iter().cloned().collect::<Vec<_>>(),
         });
         tokio::spawn(async move {
             let _ = crate::request_data(body).await;
