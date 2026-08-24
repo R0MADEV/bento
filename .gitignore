@@ -32,6 +32,3 @@ src-tauri/target/
 
 # Cloudflare Workers
 .wrangler/
-# Per-developer: ties to one Cloudflare account's KV namespace id — see
-# workers/signaling/wrangler.toml.example for the committed template.
-workers/signaling/wrangler.toml

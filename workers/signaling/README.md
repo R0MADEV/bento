@@ -1,8 +1,8 @@
 # bento-signaling
 
 Signaling relay for Bento's WebRTC remote control (see [`../../WEBRTC_REMOTE.md`](../../WEBRTC_REMOTE.md)).
-It only ever sees one SDP offer and one answer per pairing — no app traffic
-goes through it, and nothing is stored past 5 minutes.
+It only ever relays the SDP offer/answer for a pairing code — no app traffic
+goes through it, and nothing is stored past the code's 24h lifetime.
 
 ## Deploy your own (no terminal needed)
 
@@ -24,11 +24,11 @@ Emparejar sin Tailscale).
 
 ```bash
 cd workers/signaling
-cp wrangler.toml.example wrangler.toml
 npx wrangler login
 npx wrangler deploy
 ```
 
 `wrangler deploy` provisions the KV namespace on first run — no manual
-`wrangler kv namespace create` step needed. `wrangler.toml` is gitignored:
-once deployed it's tied to your Cloudflare account, not something to share.
+`wrangler kv namespace create` step needed. It also rewrites `wrangler.toml`
+with the id it created, tying that file to your Cloudflare account —
+that's a local change, don't commit it back.

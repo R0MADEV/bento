@@ -1,0 +1,12 @@
+name = "bento-signaling"
+main = "src/worker.ts"
+compatibility_date = "2026-08-23"
+
+# No id below on purpose — wrangler >= 4.45 auto-provisions the KV
+# namespace on first `wrangler deploy` (local or via the Deploy to
+# Cloudflare button) and rewrites this file with your own id afterward.
+# That rewrite is a LOCAL change tied to your Cloudflare account — don't
+# commit it back. See:
+# https://developers.cloudflare.com/changelog/post/2025-10-24-automatic-resource-provisioning/
+[[kv_namespaces]]
+binding = "PAIRING"
