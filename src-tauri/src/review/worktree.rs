@@ -1,3 +1,9 @@
+//! El worktree aislado en el que corre una review: crearlo para una rama,
+//! mantenerlo sincronizado con lo que hay sin commitear, y validar que una
+//! ruta señalada por el agente existe de verdad en el repo.
+//!
+//! Sin comandos de Tauri: esto es lo que hacen, no cómo se llaman.
+
 use std::collections::{hash_map::DefaultHasher, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -5,80 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
-use tokio::process::Command as AsyncCommand;
 use uuid::Uuid;
-static BRANCH_CONTEXT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-/// One reviewer's report, for the synthesis prompt.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SynthesisReport {
-    label: String,
-    report: String,
-}
-
-
-/// The review checkpoint store, shared with the daemon and the CLI: a review
-/// saved here shows up in the TUI's history and on the phone. It used to live
-/// in the browser's localStorage, visible to this app alone.
-#[tauri::command]
-pub fn review_checkpoint_save(
-    cwd: String,
-    base: String,
-    content: String,
-    branch: Option<String>,
-    commit: Option<String>,
-    session_id: Option<String>,
-    session_agent: Option<String>,
-) -> Result<(), String> {
-    if content.trim().is_empty() {
-        return Err("empty checkpoint".into());
-    }
-    bento_review::checkpoints::save_checkpoint(&bento_review::checkpoints::Checkpoint {
-        cwd,
-        base,
-        content,
-        saved_at: bento_review::checkpoints::now_iso8601(),
-        session_id,
-        session_agent,
-        branch,
-        commit,
-    })
-}
-
-#[tauri::command]
-pub fn review_checkpoint_get(cwd: String, base: String) -> Option<bento_review::checkpoints::Checkpoint> {
-    bento_review::checkpoints::get_checkpoint(&cwd, &base)
-}
-
-#[tauri::command]
-pub fn review_checkpoints_list(cwd: String) -> Vec<bento_review::checkpoints::CheckpointMeta> {
-    bento_review::checkpoints::list_checkpoint_metas(&cwd)
-}
-
-#[tauri::command]
-pub fn review_checkpoint_delete(cwd: String, base: String) -> Result<(), String> {
-    bento_review::checkpoints::delete_checkpoint(&cwd, &base)
-}
-
-/// The review prompt now lives in `bento-review`, shared with the daemon and
-/// the CLI — these two commands are the frontend's way in, so the prompt has
-/// exactly one definition instead of one per language.
-#[tauri::command]
-pub fn review_build_prompt(input: bento_review::ReviewPromptInput) -> String {
-    bento_review::build_review_prompt(&input)
-}
-
-#[tauri::command]
-pub fn review_build_synthesis_prompt(base_prompt: String, reports: Vec<SynthesisReport>) -> String {
-    let refs: Vec<(&str, &str)> = reports.iter().map(|r| (r.label.as_str(), r.report.as_str())).collect();
-    bento_review::build_synthesis_prompt(&refs, &base_prompt)
-}
-
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReviewBranchContext {
+pub(crate) struct ReviewBranchContext {
     path: String,
     commit: String,
     latest_commit: String,
@@ -86,7 +22,12 @@ pub struct ReviewBranchContext {
     stale: bool,
 }
 
-fn git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
+pub(super) static BRANCH_CONTEXT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+
+
+/// `git` en el repo indicado, con su stderr como error.
+pub(super) fn git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .args(args)
         .current_dir(repo)
@@ -157,7 +98,7 @@ pub(crate) fn is_managed_review_worktree(path: &Path) -> bool {
             .is_some_and(|name| name.starts_with("bento-review-context-"))
 }
 
-fn normalize_review_path(relative: &str) -> Result<String, String> {
+pub(super) fn normalize_review_path(relative: &str) -> Result<String, String> {
     if relative.starts_with('/') || relative.contains('\0') || relative.contains('\\') {
         return Err("finding path must be relative".into());
     }
@@ -180,7 +121,7 @@ fn normalize_review_path(relative: &str) -> Result<String, String> {
     Ok(parts.join("/"))
 }
 
-fn validate_finding_path(repo_root: &Path, relative: &str, allowed_deleted: &HashSet<String>) -> Result<(), String> {
+pub(super) fn validate_finding_path(repo_root: &Path, relative: &str, allowed_deleted: &HashSet<String>) -> Result<(), String> {
     let normalized = normalize_review_path(relative)?;
     let candidate = repo_root.join(&normalized);
     let root = repo_root.canonicalize().map_err(|e| e.to_string())?;
@@ -215,7 +156,7 @@ fn copy_review_worktree_entry(source: &Path, destination: &Path) -> Result<(), S
     Ok(())
 }
 
-fn sync_review_worktree_snapshot(source: &Path, destination: &Path) -> Result<(), String> {
+pub(super) fn sync_review_worktree_snapshot(source: &Path, destination: &Path) -> Result<(), String> {
     let output = Command::new("git")
         .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         .current_dir(source)
@@ -273,7 +214,7 @@ fn sync_review_worktree_snapshot(source: &Path, destination: &Path) -> Result<()
     Ok(())
 }
 
-fn prepare_branch_context(
+pub(super) fn prepare_branch_context(
     repo_path: &str,
     reference: &str,
     pinned_commit: Option<&str>,
@@ -313,50 +254,7 @@ fn prepare_branch_context(
     })
 }
 
-#[tauri::command]
-pub async fn review_branch_context_prepare(
-    repo_path: String,
-    reference: String,
-    commit: Option<String>,
-) -> Result<ReviewBranchContext, String> {
-    tokio::task::spawn_blocking(move || {
-        prepare_branch_context(&repo_path, &reference, commit.as_deref(), false)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
 
-#[tauri::command]
-pub async fn review_branch_context_update(
-    repo_path: String,
-    reference: String,
-) -> Result<ReviewBranchContext, String> {
-    tokio::task::spawn_blocking(move || prepare_branch_context(&repo_path, &reference, None, false))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-pub async fn review_branch_context_check(
-    repo_path: String,
-    reference: String,
-    commit: String,
-) -> Result<ReviewBranchContext, String> {
-    tokio::task::spawn_blocking(move || {
-        prepare_branch_context(&repo_path, &reference, Some(&commit), true)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-pub async fn review_branch_context_release(
-    path: String,
-) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || release_managed_context_path(&PathBuf::from(path)))
-        .await
-        .map_err(|error| error.to_string())?
-}
 
 pub(crate) fn release_managed_context_path(path: &Path) -> Result<(), String> {
     if !is_managed_review_worktree(path) {
@@ -385,26 +283,6 @@ pub(crate) fn release_managed_context_path(path: &Path) -> Result<(), String> {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn review_validate_finding_path(
-    repo_path: String,
-    relative: String,
-    deleted_files: Vec<String>,
-) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let allowed_deleted = deleted_files.into_iter().filter_map(|path| normalize_review_path(&path).ok()).collect::<HashSet<_>>();
-        validate_finding_path(
-            &PathBuf::from(repo_path)
-                .canonicalize()
-                .map_err(|e| e.to_string())?,
-            &relative,
-            &allowed_deleted,
-        )
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -619,46 +497,4 @@ mod tests {
         release_managed_context_path(Path::new(&context.path)).unwrap();
         std::fs::remove_dir_all(repo).unwrap();
     }
-}
-
-#[tauri::command]
-pub async fn review_lexis_context(path: String, question: String) -> Result<String, String> {
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        AsyncCommand::new("lexis")
-            .args([
-                "ask", "--path", &path, "--lang", "en", "--depth", "2", "--topk", "5", &question,
-            ])
-            .output(),
-    )
-    .await
-    .map_err(|_| "lexis context timeout".to_string())?
-    .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Ok(String::new());
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(text.chars().take(12_000).collect())
-}
-
-#[tauri::command]
-pub async fn review_snapshot(repo_path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let repo = PathBuf::from(repo_path)
-            .canonicalize()
-            .map_err(|e| e.to_string())?;
-        let mut input = git_output(&repo, &["diff", "HEAD", "--binary"])?;
-        input.push_str(&git_output(&repo, &["status", "--porcelain"])?);
-        input.push_str(&git_output(&repo, &["ls-files"])?);
-        let untracked = git_output(&repo, &["ls-files", "--others", "--exclude-standard"])?;
-        for file in untracked.lines().filter(|line| !line.is_empty()) {
-            input.push_str(file);
-            input.push_str(&fs::read_to_string(repo.join(file)).unwrap_or_default());
-        }
-        let mut hasher = DefaultHasher::new();
-        input.hash(&mut hasher);
-        Ok(format!("{:016x}", hasher.finish()))
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
