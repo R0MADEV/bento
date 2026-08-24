@@ -1,11 +1,13 @@
 //! bento — CLI client for the bento-daemon. Talks the same line-delimited JSON
 //! protocol over localhost TCP.
 
+mod attach;
+
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
-fn addr() -> String {
+pub(crate) fn addr() -> String {
     std::env::var("BENTO_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:7877".into())
 }
 
@@ -35,13 +37,13 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                 let id = pty_id.get("pty_id").and_then(Value::as_str).unwrap_or("?");
                 println!("agent started: {id}");
                 if flag(rest, "--attach").is_some() || rest.contains(&"--attach".to_string()) {
-                    attach(id).await?;
+                    attach::attach(id).await?;
                 }
                 Ok(())
             }
             Some("list") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
             Some("attach") => match args.get(2) {
-                Some(id) => attach(id).await,
+                Some(id) => attach::attach(id).await,
                 None => { eprintln!("usage: bento agent attach <id>"); Ok(()) }
             },
             _ => { print_help(); Ok(()) }
@@ -55,7 +57,7 @@ async fn run(args: &[String]) -> std::io::Result<()> {
             request(body).await
         }
         Some("attach") => match args.get(1) {
-            Some(id) => attach(id).await,
+            Some(id) => attach::attach(id).await,
             None => {
                 eprintln!("usage: bento attach <pty_id>");
                 Ok(())
@@ -316,45 +318,6 @@ async fn request_data(body: Value) -> std::io::Result<Value> {
         return Ok(v.get("data").cloned().unwrap_or(Value::Null));
     }
     Ok(Value::Null)
-}
-
-/// Attach to a terminal: stream its output to stdout and forward stdin lines as
-/// input. Line-based for now; full raw-mode interactivity comes in a later phase.
-async fn attach(id: &str) -> std::io::Result<()> {
-    let stream = TcpStream::connect(addr()).await?;
-    let (read_half, mut write_half) = stream.into_split();
-    let subscribe = json!({ "id": "1", "cmd": "terminal.subscribe", "pty_id": id }).to_string();
-    write_half.write_all(subscribe.as_bytes()).await?;
-    write_half.write_all(b"\n").await?;
-
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(read_half).lines();
-        let mut stdout = tokio::io::stdout();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let Ok(value) = serde_json::from_str::<Value>(&line) else {
-                continue;
-            };
-            match value.get("event").and_then(Value::as_str) {
-                Some("terminal.output") => {
-                    if let Some(data) = value.get("data").and_then(Value::as_str) {
-                        let _ = stdout.write_all(data.as_bytes()).await;
-                        let _ = stdout.flush().await;
-                    }
-                }
-                Some("terminal.exit") => break,
-                _ => {}
-            }
-        }
-    });
-
-    let mut stdin = BufReader::new(tokio::io::stdin()).lines();
-    while let Some(line) = stdin.next_line().await? {
-        let write =
-            json!({ "cmd": "terminal.write", "pty_id": id, "data": format!("{line}\r") }).to_string();
-        write_half.write_all(write.as_bytes()).await?;
-        write_half.write_all(b"\n").await?;
-    }
-    Ok(())
 }
 
 fn print_help() {
