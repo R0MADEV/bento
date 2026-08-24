@@ -1,9 +1,7 @@
-//! Full-screen panel mode: a navigable list of terminals/agents, with
-//! inline attach (returns to the list when the remote session ends).
+//! Terminals/agents list — the panel's landing view — with inline attach
+//! (returns here when the remote session ends).
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::execute;
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 use serde_json::{json, Value};
@@ -12,93 +10,13 @@ use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 
 #[derive(Clone)]
-struct TerminalInfo {
-    pty_id: String,
+pub(super) struct TerminalInfo {
+    pub(super) pty_id: String,
     title: String,
     cwd: String,
 }
 
-enum Mode {
-    List,
-    Attached { pty_id: String },
-}
-
-pub async fn run() -> std::io::Result<()> {
-    let mut terminal = ratatui::try_init()?;
-    let result = run_app(&mut terminal).await;
-    ratatui::try_restore()?;
-    result
-}
-
-async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()> {
-    let mut events = EventStream::new();
-    let mut mode = Mode::List;
-    let mut items = fetch_terminals().await.unwrap_or_default();
-    let mut selected: usize = 0;
-    let mut refresh = tokio::time::interval(std::time::Duration::from_secs(2));
-
-    loop {
-        match &mode {
-            Mode::List => {
-                terminal.draw(|f| draw_list(f, &items, selected))?;
-                tokio::select! {
-                    _ = refresh.tick() => {
-                        items = fetch_terminals().await.unwrap_or_default();
-                        if selected >= items.len() {
-                            selected = items.len().saturating_sub(1);
-                        }
-                    }
-                    maybe_event = events.next() => {
-                        let Some(Ok(Event::Key(key))) = maybe_event else { continue };
-                        if key.kind != KeyEventKind::Press { continue; }
-                        match key.code {
-                            KeyCode::Up => selected = selected.saturating_sub(1),
-                            KeyCode::Down => {
-                                if selected + 1 < items.len() { selected += 1; }
-                            }
-                            KeyCode::Enter => {
-                                if let Some(item) = items.get(selected) {
-                                    mode = Mode::Attached { pty_id: item.pty_id.clone() };
-                                }
-                            }
-                            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            Mode::Attached { pty_id } => {
-                let id = pty_id.clone();
-                // A remote terminal's own alt-screen use (vim, htop) shares one
-                // non-ref-counted flag with the panel's — leaving the panel's
-                // alt-screen before attaching, and reasserting it after, avoids
-                // desyncing ratatui's belief about screen state from what the
-                // remote program actually left behind.
-                execute!(std::io::stdout(), LeaveAlternateScreen)?;
-                run_attached(&id, &mut events).await?;
-                execute!(std::io::stdout(), EnterAlternateScreen)?;
-                // NOT terminal.clear(): it queries the cursor position by
-                // writing a DSR escape sequence and synchronously reading
-                // the reply off stdin — which races the EventStream's own
-                // background reader for the same fd 0 and can steal or miss
-                // that reply, hanging until crossterm's read timeout fires
-                // ("cursor position could not be read within a normal
-                // duration"). resize() to the current size forces the same
-                // full-repaint-on-next-draw effect via a pure ANSI clear
-                // write, no read involved.
-                let area = terminal.size()?.into();
-                terminal.resize(area)?;
-                mode = Mode::List;
-                items = fetch_terminals().await.unwrap_or_default();
-                if selected >= items.len() {
-                    selected = items.len().saturating_sub(1);
-                }
-            }
-        }
-    }
-}
-
-fn draw_list(frame: &mut ratatui::Frame, items: &[TerminalInfo], selected: usize) {
+pub(super) fn draw_list(frame: &mut ratatui::Frame, items: &[TerminalInfo], selected: usize) {
     let list_items: Vec<ListItem> = if items.is_empty() {
         vec![ListItem::new("No hay terminales abiertos. Abrí uno desde Bento.")]
     } else {
@@ -111,7 +29,7 @@ fn draw_list(frame: &mut ratatui::Frame, items: &[TerminalInfo], selected: usize
             .collect()
     };
     let list = List::new(list_items)
-        .block(Block::default().title("Terminales — ↑/↓ navegar, Enter conectar, q salir").borders(Borders::ALL))
+        .block(Block::default().title("Terminales — ↑/↓ navegar, Enter conectar, Tab review, q salir").borders(Borders::ALL))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
     let mut state = ListState::default();
     if !items.is_empty() {
@@ -120,7 +38,7 @@ fn draw_list(frame: &mut ratatui::Frame, items: &[TerminalInfo], selected: usize
     frame.render_stateful_widget(list, frame.area(), &mut state);
 }
 
-async fn fetch_terminals() -> std::io::Result<Vec<TerminalInfo>> {
+pub(super) async fn fetch_terminals() -> std::io::Result<Vec<TerminalInfo>> {
     let data = crate::request_data(json!({ "id": "1", "cmd": "terminals.list" })).await?;
     let items = data
         .as_array()
@@ -140,7 +58,7 @@ async fn fetch_terminals() -> std::io::Result<Vec<TerminalInfo>> {
 /// as `attach.rs`, but driven off the panel's shared `EventStream` (so it
 /// can return normally instead of hard-exiting) and writing remote output
 /// straight to stdout while ratatui's own drawing is paused.
-async fn run_attached(id: &str, events: &mut EventStream) -> std::io::Result<()> {
+pub(super) async fn run_attached(id: &str, events: &mut EventStream) -> std::io::Result<()> {
     let stream = TcpStream::connect(crate::addr()).await?;
     let (read_half, write_half) = stream.into_split();
 

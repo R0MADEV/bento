@@ -55,6 +55,10 @@ struct Request {
     context: Option<String>,
     #[serde(default)]
     agents: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -324,6 +328,24 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 });
             }
             None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "review.checkpoint_save" => match (&req.cwd, &req.base, &req.content) {
+            (Some(cwd), Some(base), Some(content)) => {
+                let cp = crate::remote::review::Checkpoint {
+                    cwd: cwd.clone(),
+                    base: base.clone(),
+                    content: content.clone(),
+                    saved_at: crate::remote::review::now_iso8601(),
+                    session_id: req.session_id.clone(),
+                    session_agent: req.agent.clone(),
+                };
+                match crate::remote::review::save_checkpoint(&cp) {
+                    Ok(()) => send(ok(&req.id, Value::Null)),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, base and content required".into())),
         },
 
         "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {

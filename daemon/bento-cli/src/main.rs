@@ -2,6 +2,7 @@
 //! protocol over localhost TCP.
 
 mod attach;
+mod review_stream;
 mod tui;
 
 use serde_json::{json, Value};
@@ -420,109 +421,25 @@ async fn request(body: Value) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Send a streaming request (e.g. `review.ask`): print the ack error if any,
-/// then print each `review.output` chunk as it arrives (flushed immediately,
-/// no line buffering — chunks are partial text, not whole lines) until
-/// `review.done`.
+/// Send a streaming request (`review.run`/`review.ask`): drain the shared
+/// `review_stream` connection, printing content to stdout and progress/error
+/// sentinels to stderr, until it signals `Done`.
 async fn stream_review(body: Value) -> std::io::Result<()> {
-    let mut stream = TcpStream::connect(addr()).await?;
-    stream.write_all(body.to_string().as_bytes()).await?;
-    stream.write_all(b"\n").await?;
-    let mut lines = BufReader::new(stream).lines();
-
-    let Some(ack) = lines.next_line().await? else { return Ok(()) };
-    let ack: Value = serde_json::from_str(&ack)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    if ack.get("ok").and_then(Value::as_bool) == Some(false) {
-        let msg = ack.get("error").and_then(Value::as_str).unwrap_or("daemon error");
-        return Err(std::io::Error::other(msg));
-    }
-
     use tokio::io::AsyncWriteExt as _;
+    let mut rx = review_stream::spawn_review_stream(body);
     let mut stdout = tokio::io::stdout();
-    while let Some(line) = lines.next_line().await? {
-        let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
-        match value.get("event").and_then(Value::as_str) {
-            Some("review.output") => {
-                if let Some(chunk) = value.get("data").and_then(Value::as_str) {
-                    print_review_chunk(&mut stdout, chunk).await;
-                }
+    while let Some(event) = rx.recv().await {
+        match event {
+            review_stream::ReviewEvent::Content(text) => {
+                let _ = stdout.write_all(text.as_bytes()).await;
+                let _ = stdout.flush().await;
             }
-            Some("review.done") => break,
-            _ => {}
+            review_stream::ReviewEvent::Progress(msg) => eprintln!("{msg}"),
+            review_stream::ReviewEvent::Done => break,
         }
     }
     println!();
     Ok(())
-}
-
-/// Writes one `review.output` chunk from `review.run`/`review.ask` to stdout,
-/// routing the protocol's own control sentinels (batch/synthesis progress,
-/// the session-id marker, error text) to stderr instead of leaking them as
-/// literal `[BATCH:1/2]`-style text into the middle of the printed report —
-/// mirrors the filtering `review.js` already does for the web panel.
-async fn print_review_chunk(stdout: &mut tokio::io::Stdout, chunk: &str) {
-    use tokio::io::AsyncWriteExt as _;
-    match classify_review_chunk(chunk) {
-        ReviewChunk::Stderr(msg) => eprintln!("{msg}"),
-        ReviewChunk::Stdout(text) => {
-            let _ = stdout.write_all(text.as_bytes()).await;
-            let _ = stdout.flush().await;
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-enum ReviewChunk<'a> {
-    Stderr(String),
-    Stdout(&'a str),
-}
-
-fn classify_review_chunk(chunk: &str) -> ReviewChunk<'_> {
-    let is_batch_or_session_marker = (chunk.starts_with("[BATCH:") || chunk.starts_with("[SESSION:"))
-        && chunk.ends_with(']');
-    if is_batch_or_session_marker || chunk == "[SYNTHESIS]" {
-        return ReviewChunk::Stderr(chunk.trim_start_matches('[').trim_end_matches(']').to_string());
-    }
-    if let Some(msg) = chunk.strip_prefix("[ERROR] ") {
-        return ReviewChunk::Stderr(format!("error: {msg}"));
-    }
-    ReviewChunk::Stdout(chunk)
-}
-
-#[cfg(test)]
-mod review_chunk_tests {
-    use super::*;
-
-    #[test]
-    fn batch_marker_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[BATCH:1/2]"), ReviewChunk::Stderr("BATCH:1/2".into()));
-    }
-
-    #[test]
-    fn session_marker_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[SESSION:claude:abc]"), ReviewChunk::Stderr("SESSION:claude:abc".into()));
-    }
-
-    #[test]
-    fn synthesis_marker_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[SYNTHESIS]"), ReviewChunk::Stderr("SYNTHESIS".into()));
-    }
-
-    #[test]
-    fn error_marker_is_prefixed_and_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[ERROR] algo falló"), ReviewChunk::Stderr("error: algo falló".into()));
-    }
-
-    #[test]
-    fn plain_text_goes_to_stdout() {
-        assert_eq!(classify_review_chunk("## Título"), ReviewChunk::Stdout("## Título"));
-    }
-
-    #[test]
-    fn bracketed_text_that_is_not_a_known_marker_goes_to_stdout() {
-        assert_eq!(classify_review_chunk("[foo]"), ReviewChunk::Stdout("[foo]"));
-    }
 }
 
 /// Send one request and return the `data` field of the response.

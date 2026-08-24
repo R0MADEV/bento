@@ -90,6 +90,46 @@ pub async fn get_checkpoint_handler(
     serde_json::from_str::<Checkpoint>(&raw).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// Writes `cp` to its checkpoint file — shared by the HTTP `PUT
+/// /api/review/checkpoint` handler (the web panel saves incrementally as
+/// batches complete) and the daemon's IPC socket (`review.checkpoint_save`,
+/// called once after a `review.run` finishes so `review.ask` has something
+/// to resume).
+pub(crate) fn save_checkpoint(cp: &Checkpoint) -> Result<(), String> {
+    let dir = checkpoints_dir().ok_or_else(|| "no home dir".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = checkpoint_path(&cp.cwd, &cp.base).ok_or_else(|| "bad checkpoint path".to_string())?;
+    let raw = serde_json::to_string(cp).map_err(|e| e.to_string())?;
+    std::fs::write(path, raw).map_err(|e| e.to_string())
+}
+
+/// A JS-`Date`-parseable UTC timestamp with no extra crate: the daemon
+/// workspace has no date/time dependency, so this hand-rolls the
+/// epoch-seconds → calendar-date conversion (Howard Hinnant's
+/// `civil_from_days`) — used when the IPC caller (the TUI, not a browser)
+/// has no `Date.toISOString()` of its own to send.
+pub(crate) fn now_iso8601() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    iso8601_from_unix_secs(secs)
+}
+
+fn iso8601_from_unix_secs(secs: u64) -> String {
+    let (days, rem) = (secs / 86400, secs % 86400);
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{year:04}-{month:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
 // PUT /api/review/checkpoint  (body: Checkpoint JSON)
 pub async fn put_checkpoint_handler(
     State(state): State<Arc<RemoteState>>,
@@ -102,13 +142,10 @@ pub async fn put_checkpoint_handler(
     if cp.content.trim().is_empty() {
         return StatusCode::BAD_REQUEST;
     }
-    let Some(dir) = checkpoints_dir() else { return StatusCode::INTERNAL_SERVER_ERROR };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return StatusCode::INTERNAL_SERVER_ERROR;
+    match save_checkpoint(&cp) {
+        Ok(()) => StatusCode::OK,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
-    let Some(path) = checkpoint_path(&cp.cwd, &cp.base) else { return StatusCode::INTERNAL_SERVER_ERROR };
-    let Ok(raw) = serde_json::to_string(&cp) else { return StatusCode::INTERNAL_SERVER_ERROR };
-    if std::fs::write(path, raw).is_err() { StatusCode::INTERNAL_SERVER_ERROR } else { StatusCode::OK }
 }
 
 // DELETE /api/review/checkpoint?cwd=…&base=…
@@ -125,4 +162,26 @@ pub async fn delete_checkpoint_handler(
     let Some(path) = checkpoint_path(cwd, base) else { return StatusCode::INTERNAL_SERVER_ERROR };
     let _ = std::fs::remove_file(path);
     StatusCode::OK
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epoch_zero_is_the_unix_epoch_date() {
+        assert_eq!(iso8601_from_unix_secs(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn known_timestamp_round_trips_correctly() {
+        // 1700000000 is a commonly-cited round Unix timestamp.
+        assert_eq!(iso8601_from_unix_secs(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
+    fn end_of_a_leap_year_day_is_february_29() {
+        // 2024-02-29T12:00:00Z (2024 is a leap year).
+        assert_eq!(iso8601_from_unix_secs(1_709_208_000), "2024-02-29T12:00:00Z");
+    }
 }
