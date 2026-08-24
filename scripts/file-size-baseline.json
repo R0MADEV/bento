@@ -1,6 +1,5 @@
 {
   "src/ui/aiChat.ts": 721,
-  "daemon/bento-daemon/src/remote/web/review.js": 640,
   "src/panels/review/ReviewPanel.ts": 535,
   "src/panels/memory/memorySourcesView.ts": 527,
   "src-tauri/src/memory_sources.rs": 527,
@@ -13,6 +12,5 @@
   "daemon/bento-cli/src/main.rs": 441,
   "src/panels/tasks/TaskDockerView.ts": 422,
   "src-tauri/src/agent/mod.rs": 416,
-  "src-tauri/src/main.rs": 413,
-  "daemon/bento-daemon/src/remote/mod.rs": 405
+  "src-tauri/src/main.rs": 413
 }
