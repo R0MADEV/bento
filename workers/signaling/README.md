@@ -6,6 +6,11 @@ goes through it, and nothing is stored past 5 minutes.
 
 ## Deploy your own (no terminal needed)
 
+> The button below points at `main` — it 404s until this feature branch is
+> merged there (GitHub's deploy tool needs the target path to actually
+> exist on that branch). The in-app link in Bento's Phone panel points at
+> the feature branch instead, so it works right now for testing.
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/R0MADEV/bento/tree/main/workers/signaling)
 
 Click the button, log in with (or create) a free Cloudflare account, and

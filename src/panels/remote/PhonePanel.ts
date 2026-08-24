@@ -4,7 +4,9 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { icon } from '../../ui/icons'
 import QRCode from 'qrcode'
 
-const DEPLOY_SIGNALING_URL = 'https://deploy.workers.cloudflare.com/?url=https://github.com/R0MADEV/bento/tree/main/workers/signaling'
+// TODO: point back at .../tree/main/workers/signaling once this branch merges —
+// main doesn't have workers/ yet, so the deploy tool 404s on that path until then.
+const DEPLOY_SIGNALING_URL = 'https://deploy.workers.cloudflare.com/?url=https://github.com/R0MADEV/bento/tree/feat/webrtc-remote-control/workers/signaling'
 
 interface RemoteStatus {
   running: boolean
