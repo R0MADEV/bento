@@ -3,6 +3,7 @@
 //! copy — the prompt existed twice, once in Rust and once in TypeScript
 //! (`src/core/ai/techReview.ts`), and the two had already drifted.
 
+pub mod agents;
 pub mod diff;
 pub mod pr;
 pub mod prompt;

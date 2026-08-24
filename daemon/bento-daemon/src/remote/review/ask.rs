@@ -111,6 +111,8 @@ pub async fn ask_handler(
         .unwrap()
 }
 
+/// Continues the saved review session with a follow-up question. Read-only,
+/// like the review itself.
 async fn resume_agent(
     agent: &str,
     cwd: &str,
@@ -118,135 +120,7 @@ async fn resume_agent(
     question: &str,
     tx: &tokio::sync::mpsc::Sender<String>,
 ) {
-    match agent {
-        "opencode" => resume_opencode(cwd, session_id, question, tx).await,
-        "codex" => resume_codex(cwd, session_id, question, tx).await,
-        _ => resume_claude(cwd, session_id, question, tx).await,
-    }
-}
-
-async fn resume_claude(
-    cwd: &str,
-    session_id: &str,
-    question: &str,
-    tx: &tokio::sync::mpsc::Sender<String>,
-) {
-    let Some(mut child) = tokio::process::Command::new("claude")
-        .current_dir(cwd)
-        .args(["--resume", session_id, "-p", question, "--output-format", "stream-json", "--verbose"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .ok()
-    else { return };
-
-    let Some(stdout) = child.stdout.take() else { return };
-
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        match tokio::time::timeout(std::time::Duration::from_secs(300), lines.next_line()).await {
-            Ok(Ok(Some(line))) => {
-                let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
-                let event_type = val.get("type").and_then(serde_json::Value::as_str).unwrap_or("");
-                if event_type == "system" { continue; }
-                if event_type == "content_block_delta" {
-                    let text = val.get("delta").and_then(|d| d.get("text")).and_then(serde_json::Value::as_str).unwrap_or("");
-                    if !text.is_empty() && tx.send(text.to_string()).await.is_err() {
-                        let _ = child.kill().await;
-                        return;
-                    }
-                }
-            }
-            Ok(Ok(None)) => break,
-            Ok(Err(_)) | Err(_) => { let _ = child.kill().await; return; }
-        }
-    }
-    let _ = child.wait().await;
-}
-
-async fn resume_opencode(
-    cwd: &str,
-    session_id: &str,
-    question: &str,
-    tx: &tokio::sync::mpsc::Sender<String>,
-) {
-    let Some(mut child) = tokio::process::Command::new("opencode")
-        .args(["--session", session_id, "run", "--format", "json", "--dir", cwd, question])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .ok()
-    else { return };
-
-    let Some(stdout) = child.stdout.take() else { return };
-
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        match tokio::time::timeout(std::time::Duration::from_secs(300), lines.next_line()).await {
-            Ok(Ok(Some(line))) => {
-                let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
-                let event_type = val.get("type").and_then(serde_json::Value::as_str).unwrap_or("");
-                if event_type != "text" { continue; }
-                let text = val.get("part").and_then(|p| p.get("text")).and_then(serde_json::Value::as_str).unwrap_or("");
-                if !text.is_empty() && tx.send(text.to_string()).await.is_err() {
-                    let _ = child.kill().await;
-                    return;
-                }
-            }
-            Ok(Ok(None)) => break,
-            Ok(Err(_)) | Err(_) => { let _ = child.kill().await; return; }
-        }
-    }
-    let _ = child.wait().await;
-}
-
-/// Resumes a codex synthesis session — args order confirmed against the
-/// desktop's own codex resume invocation (`src-tauri/src/agent/mod.rs`:
-/// `exec --sandbox read-only --cd <dir> resume --json --skip-git-repo-check
-/// <session_id> <prompt>`). Event parsing mirrors `run_codex_collecting`
-/// (`item.completed`/`agent_message`) since `codex exec`'s `--json` output
-/// shape is the same whether resuming or starting fresh.
-async fn resume_codex(
-    cwd: &str,
-    session_id: &str,
-    question: &str,
-    tx: &tokio::sync::mpsc::Sender<String>,
-) {
-    let Some(mut child) = tokio::process::Command::new("codex")
-        .args(["exec", "--sandbox", "read-only", "--cd", cwd, "resume", "--json", "--skip-git-repo-check", session_id, question])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .ok()
-    else { return };
-
-    let Some(stdout) = child.stdout.take() else { return };
-
-    use tokio::io::{AsyncBufReadExt, BufReader};
-    let mut lines = BufReader::new(stdout).lines();
-    loop {
-        match tokio::time::timeout(std::time::Duration::from_secs(300), lines.next_line()).await {
-            Ok(Ok(Some(line))) => {
-                let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
-                if val.get("type").and_then(serde_json::Value::as_str) != Some("item.completed") { continue; }
-                let Some(item) = val.get("item") else { continue };
-                if item.get("type").and_then(serde_json::Value::as_str) != Some("agent_message") { continue; }
-                let text = item.get("text").and_then(serde_json::Value::as_str).unwrap_or("");
-                if !text.is_empty() && tx.send(text.to_string()).await.is_err() {
-                    let _ = child.kill().await;
-                    return;
-                }
-            }
-            Ok(Ok(None)) => break,
-            Ok(Err(_)) | Err(_) => { let _ = child.kill().await; return; }
-        }
-    }
-    let _ = child.wait().await;
+    bento_review::agents::run_collecting(agent, cwd, question, Some(session_id), true, tx).await;
 }
 
 fn bad_request(msg: &str) -> Response {
