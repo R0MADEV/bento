@@ -45,6 +45,10 @@ struct Request {
     comment_id: Option<u64>,
     #[serde(default)]
     event: Option<String>,
+    #[serde(default)]
+    question: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -267,6 +271,28 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 Err(e) => send(fail(&req.id, e)),
             },
             _ => send(fail(&req.id, "cwd, pr and comment_id required".into())),
+        },
+
+        "review.ask" => match (&req.cwd, &req.question) {
+            (Some(cwd), Some(question)) => {
+                let cwd = cwd.clone();
+                let base = req.base.clone().unwrap_or_else(|| "main".into());
+                let agent = req.agent.clone().unwrap_or_else(|| "claude".into());
+                let question = question.clone();
+                send(ok(&req.id, json!({ "started": true })));
+                let out = out.clone();
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
+                tokio::spawn(async move {
+                    while let Some(chunk) = rx.recv().await {
+                        let _ = out.send(json!({ "event": "review.output", "data": chunk }).to_string());
+                    }
+                    let _ = out.send(json!({ "event": "review.done" }).to_string());
+                });
+                tokio::spawn(async move {
+                    crate::remote::review::ask(&cwd, &base, &agent, &question, tx).await;
+                });
+            }
+            _ => send(fail(&req.id, "cwd and question required".into())),
         },
 
         "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {

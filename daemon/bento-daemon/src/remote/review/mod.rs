@@ -4,6 +4,7 @@ mod parse;
 mod prompt;
 
 pub use ask::ask_handler;
+pub(crate) use ask::ask;
 pub use checkpoints::{
     delete_checkpoint_handler, get_checkpoint_handler,
     list_checkpoints_handler, put_checkpoint_handler,

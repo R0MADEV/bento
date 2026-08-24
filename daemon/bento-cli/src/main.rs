@@ -63,6 +63,17 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                 let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
                 request(json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base })).await
             }
+            Some("ask") => match args.get(2) {
+                Some(question) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                    let agent = flag(args, "--agent").unwrap_or_else(|| "claude".to_string());
+                    stream_review(json!({
+                        "id": "1", "cmd": "review.ask", "cwd": cwd, "base": base, "agent": agent, "question": question,
+                    })).await
+                }
+                None => { eprintln!("usage: bento review ask <question> [--cwd <dir>] [--base <ref>] [--agent claude|codex|opencode]"); Ok(()) }
+            },
             Some("pr") => match args.get(2).map(String::as_str) {
                 Some("diff") => match args.get(3).and_then(|s| s.parse::<u64>().ok()) {
                     Some(pr) => {
@@ -394,6 +405,43 @@ async fn request(body: Value) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Send a streaming request (e.g. `review.ask`): print the ack error if any,
+/// then print each `review.output` chunk as it arrives (flushed immediately,
+/// no line buffering — chunks are partial text, not whole lines) until
+/// `review.done`.
+async fn stream_review(body: Value) -> std::io::Result<()> {
+    let mut stream = TcpStream::connect(addr()).await?;
+    stream.write_all(body.to_string().as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    let mut lines = BufReader::new(stream).lines();
+
+    let Some(ack) = lines.next_line().await? else { return Ok(()) };
+    let ack: Value = serde_json::from_str(&ack)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    if ack.get("ok").and_then(Value::as_bool) == Some(false) {
+        let msg = ack.get("error").and_then(Value::as_str).unwrap_or("daemon error");
+        return Err(std::io::Error::other(msg));
+    }
+
+    use tokio::io::AsyncWriteExt as _;
+    let mut stdout = tokio::io::stdout();
+    while let Some(line) = lines.next_line().await? {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+        match value.get("event").and_then(Value::as_str) {
+            Some("review.output") => {
+                if let Some(chunk) = value.get("data").and_then(Value::as_str) {
+                    let _ = stdout.write_all(chunk.as_bytes()).await;
+                    let _ = stdout.flush().await;
+                }
+            }
+            Some("review.done") => break,
+            _ => {}
+        }
+    }
+    println!();
+    Ok(())
+}
+
 /// Send one request and return the `data` field of the response.
 async fn request_data(body: Value) -> std::io::Result<Value> {
     let mut stream = TcpStream::connect(addr()).await?;
@@ -433,6 +481,7 @@ fn print_help() {
     eprintln!("  bento review pr comment-update <comment_id> <number> <text>   edit a comment (needs gh)");
     eprintln!("  bento review pr comment-delete <comment_id> <number>          delete a comment (needs gh)");
     eprintln!("  bento review pr submit <number> <approve|request-changes|comment> [text]   submit a review (needs gh)");
+    eprintln!("  bento review ask <question> [--cwd <dir>] [--base <ref>] [--agent <name>]   ask about a saved review (runs a real AI agent)");
     eprintln!();
     eprintln!("env: BENTO_DAEMON_ADDR (default 127.0.0.1:7877)");
 }

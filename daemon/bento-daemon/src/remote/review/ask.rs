@@ -20,6 +20,50 @@ pub struct AskQuery {
     pub question: Option<String>,
 }
 
+/// Resolves the saved checkpoint for `(cwd, base)` and either resumes its
+/// synthesis session (full review context) or falls back to a fresh prompt
+/// built from the saved analysis text, streaming the answer through `tx`
+/// chunk by chunk and finishing with a `[DONE]`/`[ERROR] ...` sentinel —
+/// shared by the HTTP `/api/review/ask` handler (SSE) and the daemon's IPC
+/// socket (`review.ask`, plain push events).
+pub(crate) async fn ask(cwd: &str, base: &str, agent: &str, question: &str, tx: tokio::sync::mpsc::Sender<String>) {
+    let Some(path) = checkpoint_path(cwd, base) else {
+        let _ = tx.send("[ERROR] no se pudo resolver la ruta del checkpoint".into()).await;
+        return;
+    };
+    let Some(cp) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
+        .filter(|c: &Checkpoint| !c.content.trim().is_empty())
+    else {
+        let _ = tx.send("[ERROR] no hay análisis guardado para esta rama".into()).await;
+        return;
+    };
+    let review_content = cp.content.clone();
+    let session_id = cp.session_id.clone();
+    let session_agent = cp.session_agent.clone().unwrap_or_else(|| agent.to_string());
+
+    if let Some(sid) = session_id {
+        // Resume the actual synthesis session — it already has full review context
+        resume_agent(&session_agent, cwd, &sid, question, &tx).await;
+    } else {
+        // Fallback: build prompt with review context (no session to resume)
+        let project = std::path::Path::new(cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| cwd.to_string());
+        let prompt = format!(
+            "Eres un revisor de código experto. Acabas de analizar el diff del proyecto \"{project}\" \
+            desde la rama \"{base}\". Tu análisis previo fue:\n\n\
+            <analisis_previo>\n{review_content}\n</analisis_previo>\n\n\
+            El desarrollador tiene la siguiente pregunta. Responde en español, de forma concisa y técnica.\n\n\
+            Pregunta: {question}"
+        );
+        run_agent_collecting(agent, cwd, &prompt, &tx).await;
+    }
+    let _ = tx.send("[DONE]".into()).await;
+}
+
 pub async fn ask_handler(
     State(state): State<Arc<RemoteState>>,
     Query(auth): Query<Auth>,
@@ -45,51 +89,12 @@ pub async fn ask_handler(
         Some("opencode") => "opencode",
         Some("codex") => "codex",
         _ => "claude",
-    };
-
-    let path = match checkpoint_path(&cwd, &base) {
-        Some(p) => p,
-        None => return bad_request("no se pudo resolver la ruta del checkpoint"),
-    };
-    let cp = match std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
-    {
-        Some(c) if !c.content.trim().is_empty() => c,
-        _ => return bad_request("no hay análisis guardado para esta rama"),
-    };
-    let review_content = cp.content.clone();
+    }.to_string();
 
     let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
-    let session_id = cp.session_id.clone();
-    let session_agent = cp.session_agent.clone().unwrap_or_else(|| agent.to_string());
-
-    if let Some(sid) = session_id {
-        // Resume the actual synthesis session — it already has full review context
-        let question_owned = question.clone();
-        tokio::spawn(async move {
-            resume_agent(&session_agent, &cwd, &sid, &question_owned, &tx).await;
-            let _ = tx.send("[DONE]".into()).await;
-        });
-    } else {
-        // Fallback: build prompt with review context (no session to resume)
-        let project = std::path::Path::new(&cwd)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| cwd.clone());
-        let prompt = format!(
-            "Eres un revisor de código experto. Acabas de analizar el diff del proyecto \"{project}\" \
-            desde la rama \"{base}\". Tu análisis previo fue:\n\n\
-            <analisis_previo>\n{review_content}\n</analisis_previo>\n\n\
-            El desarrollador tiene la siguiente pregunta. Responde en español, de forma concisa y técnica.\n\n\
-            Pregunta: {question}"
-        );
-        let agent_owned = agent.to_string();
-        tokio::spawn(async move {
-            run_agent_collecting(&agent_owned, &cwd, &prompt, &tx).await;
-            let _ = tx.send("[DONE]".into()).await;
-        });
-    };
+    tokio::spawn(async move {
+        ask(&cwd, &base, &agent, &question, tx).await;
+    });
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
         .map(|chunk| -> Result<axum::body::Bytes, std::convert::Infallible> {
