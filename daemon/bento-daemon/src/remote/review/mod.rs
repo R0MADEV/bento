@@ -562,29 +562,13 @@ async fn run_claude_collecting(
 
 // ── /api/review/files ─────────────────────────────────────────────────────────
 
-pub async fn review_files_handler(
-    State(state): State<Arc<RemoteState>>,
-    Query(q): Query<ReviewFileQuery>,
-) -> impl IntoResponse {
-    if !authorized(&state, &Auth { token: q.token }) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
-    }
-    let cwd = match q.cwd.filter(|s| !s.is_empty()) {
-        Some(c) => c,
-        None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
-    };
-    let base = q.base.unwrap_or_else(|| "main".into());
-    if !is_safe_branch(&base) {
-        return (StatusCode::BAD_REQUEST, "unsafe base").into_response();
-    }
-
-    let name_status = match git_cmd(&cwd, &["diff", "--name-status", &base]) {
-        Ok(o) => o,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    };
-    let numstat = git_cmd(&cwd, &["diff", "--numstat", &base]).unwrap_or_default();
-
-    let entries = parse_diff_name_status(&name_status);
+/// Pure merge of `git diff --name-status` entries with their `--numstat`
+/// add/delete counts (matched by path — numstat can omit a path entirely,
+/// e.g. for binary files, so entries default to 0/0), plus untracked files
+/// appended as additions. Split out from `list_files` so the merge logic
+/// itself is testable without shelling out to git.
+fn build_file_list(name_status: &str, numstat: &str, untracked: &[String]) -> Vec<serde_json::Value> {
+    let entries = parse_diff_name_status(name_status);
     let stats: std::collections::HashMap<String, (i64, i64)> = numstat
         .lines()
         .filter_map(|l| {
@@ -606,12 +590,44 @@ pub async fn review_files_handler(
         })
         .collect();
 
-    // Append untracked (new) files not visible to `git diff`
-    for path in untracked_files(&cwd) {
+    for path in untracked {
         list.push(json!({ "status": "A", "path": path, "added": 0, "deleted": 0 }));
     }
+    list
+}
 
-    Json(list).into_response()
+/// Shared by the HTTP `/api/review/files` handler and the daemon's IPC
+/// socket (`review.files`). `is_safe_branch` is checked here (not just in
+/// the HTTP handler) so every caller of this shared entry point gets the
+/// same flag-injection protection on `base`, regardless of transport.
+pub(crate) fn list_files(cwd: &str, base: &str) -> Result<Vec<serde_json::Value>, String> {
+    if !is_safe_branch(base) {
+        return Err("unsafe base".into());
+    }
+    let name_status = git_cmd(cwd, &["diff", "--name-status", base])?;
+    let numstat = git_cmd(cwd, &["diff", "--numstat", base]).unwrap_or_default();
+    Ok(build_file_list(&name_status, &numstat, &untracked_files(cwd)))
+}
+
+pub async fn review_files_handler(
+    State(state): State<Arc<RemoteState>>,
+    Query(q): Query<ReviewFileQuery>,
+) -> impl IntoResponse {
+    if !authorized(&state, &Auth { token: q.token }) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let cwd = match q.cwd.filter(|s| !s.is_empty()) {
+        Some(c) => c,
+        None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
+    };
+    let base = q.base.unwrap_or_else(|| "main".into());
+    if !is_safe_branch(&base) {
+        return (StatusCode::BAD_REQUEST, "unsafe base").into_response();
+    }
+    match list_files(&cwd, &base) {
+        Ok(list) => Json(list).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
 }
 
 // ── /api/review/file ──────────────────────────────────────────────────────────
@@ -953,5 +969,36 @@ mod tests {
             "https://api.github.com/repos/acme/widget/issues/423",
             42
         ));
+    }
+
+    // ── build_file_list ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn build_file_list_matches_stats_to_entries_by_path() {
+        let list = build_file_list("M\tfoo.rs\n", "3\t1\tfoo.rs\n", &[]);
+        assert_eq!(list, vec![json!({ "status": "M", "path": "foo.rs", "added": 3, "deleted": 1 })]);
+    }
+
+    #[test]
+    fn build_file_list_includes_old_path_for_renames() {
+        let list = build_file_list("R100\told.rs\tnew.rs\n", "0\t0\tnew.rs\n", &[]);
+        assert_eq!(
+            list,
+            vec![json!({ "status": "R", "path": "new.rs", "added": 0, "deleted": 0, "old_path": "old.rs" })]
+        );
+    }
+
+    #[test]
+    fn build_file_list_defaults_missing_numstat_to_zero() {
+        // Binary files (or a stat line git omits for other reasons) have no
+        // numstat entry — the file should still show up, just with 0/0.
+        let list = build_file_list("M\tfoo.bin\n", "", &[]);
+        assert_eq!(list, vec![json!({ "status": "M", "path": "foo.bin", "added": 0, "deleted": 0 })]);
+    }
+
+    #[test]
+    fn build_file_list_appends_untracked_files_as_added() {
+        let list = build_file_list("", "", &["new_file.rs".to_string()]);
+        assert_eq!(list, vec![json!({ "status": "A", "path": "new_file.rs", "added": 0, "deleted": 0 })]);
     }
 }

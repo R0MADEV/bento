@@ -58,6 +58,11 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                 let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
                 request(json!({ "id": "1", "cmd": "review.prs", "cwd": cwd })).await
             }
+            Some("files") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                request(json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base })).await
+            }
             _ => { print_help(); Ok(()) }
         },
         Some("open") => {
@@ -347,6 +352,8 @@ fn print_help() {
     eprintln!("  bento open [--cwd <dir>]   open a new terminal");
     eprintln!("  bento attach <pty_id>      attach to a terminal (stdin/stdout)");
     eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");
+    eprintln!("  bento review prs [--cwd <dir>]        list open PRs (needs gh)");
+    eprintln!("  bento review files [--cwd <dir>] [--base <ref>]   files changed vs base (default: main)");
     eprintln!();
     eprintln!("env: BENTO_DAEMON_ADDR (default 127.0.0.1:7877)");
 }

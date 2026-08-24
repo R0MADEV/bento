@@ -37,6 +37,8 @@ struct Request {
     title: Option<String>,
     #[serde(default)]
     herdr_socket: Option<String>,
+    #[serde(default)]
+    base: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -191,6 +193,17 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
 
         "review.branches" => match &req.cwd {
             Some(cwd) => send(ok(&req.id, json!(crate::remote::review::list_branches(cwd)))),
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "review.files" => match &req.cwd {
+            Some(cwd) => {
+                let base = req.base.as_deref().unwrap_or("main");
+                match crate::remote::review::list_files(cwd, base) {
+                    Ok(list) => send(ok(&req.id, json!(list))),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
             None => send(fail(&req.id, "cwd required".into())),
         },
 
