@@ -13,7 +13,7 @@ import type { TasksPanelCtx } from './tasksPanelContext'
 import { baseFor, prepareTaskDevcontainer, repositoryFor, selectRow, selectWorktree } from './tasksPanelContext'
 import { note, showDetail } from './tasksPanelHelpers'
 import { renderList, refreshCreateForm } from './tasksListView'
-import { showChanges } from './tasksDetailViews'
+import { showChanges } from './tasksDiffView'
 import { showRebasePaused } from './tasksRebaseView'
 
 // ---- mutations ----

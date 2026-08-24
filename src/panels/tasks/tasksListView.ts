@@ -20,10 +20,8 @@ import {
   selectRow, selectWorktree, selectedRepository,
 } from './tasksPanelContext'
 import { iconBtn, note, showDetail } from './tasksPanelHelpers'
-import {
-  showBackupHistory, showCommitLog, showCommitGraph, showChanges,
-  showOperationHistory, showPrDetails, showResetView, showSyncError, showWorktreeTerminal,
-} from './tasksDetailViews'
+import { showBackupHistory, showCommitLog, showCommitGraph, showOperationHistory, showPrDetails, showResetView, showSyncError, showWorktreeTerminal } from './tasksDetailViews'
+import { showChanges } from './tasksDiffView'
 import { showInteractiveRebase, showRebasePaused } from './tasksRebaseView'
 import { createTask, deleteWorktree, load } from './tasksLifecycle'
 

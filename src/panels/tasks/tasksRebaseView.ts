@@ -12,7 +12,7 @@ import { buildRebaseMergeWarning } from './RebaseMergeWarningView'
 import type { TasksPanelCtx } from './tasksPanelContext'
 import { baseFor, disposeDetail, recordOperation, setDetailLifecycle, stopDiffRefresh } from './tasksPanelContext'
 import { buildSubHead, iconBtn, showDetail } from './tasksPanelHelpers'
-import { buildDiffView, showChanges } from './tasksDetailViews'
+import { buildDiffView, showChanges } from './tasksDiffView'
 import { load } from './tasksLifecycle'
 import { note } from './tasksPanelHelpers'
 

@@ -1,7 +1,6 @@
 {
   "src/ui/aiChat.ts": 721,
-  "src/panels/tasks/tasksDetailViews.ts": 526,
-  "src/panels/tasks/tasksListView.ts": 489,
+  "src/panels/tasks/tasksListView.ts": 487,
   "src/panels/tasks/tasksRebaseView.ts": 486,
   "src/panels/review/ReviewDiffView.ts": 485,
   "src/panels/jira/JiraPanel.ts": 482,
