@@ -16,8 +16,10 @@ mod git;
 mod git_paths;
 mod jira;
 mod memory;
+mod http;
 mod memory_import;
 mod memory_sources;
+mod menu;
 mod notes;
 mod pty;
 mod review;
@@ -36,130 +38,11 @@ use std::sync::{
 };
 use tauri::Manager;
 
-// HTTP download from the Rust backend: avoids the WebView's limits with large
-// files (the iptv-org API weighs tens of MB).
-#[tauri::command]
-async fn http_get(url: String) -> Result<String, String> {
-    let res = reqwest::get(&url).await.map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("HTTP {}", res.status()));
-    }
-    res.text().await.map_err(|e| e.to_string())
-}
-
-#[derive(serde::Serialize)]
-struct HttpResponse {
-    status: u16,
-    status_text: String,
-    headers: Vec<(String, String)>,
-    body: String,
-}
-
 // The E2E runner checks this before touching UI state. This prevents an
 // accidentally supplied production binary from sharing the user's WebView data.
 #[tauri::command]
 fn app_identifier(app: tauri::AppHandle) -> String {
     app.config().identifier.clone()
-}
-
-// General HTTP request for the HTTP-client panel (any method, headers, body).
-#[tauri::command]
-async fn http_request(
-    method: String,
-    url: String,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
-) -> Result<HttpResponse, String> {
-    let m =
-        reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).map_err(|e| e.to_string())?;
-    let mut req = reqwest::Client::new().request(m, &url);
-    for (k, v) in &headers {
-        if !k.is_empty() {
-            req = req.header(k.as_str(), v.as_str());
-        }
-    }
-    if let Some(b) = body {
-        if !b.is_empty() {
-            req = req.body(b);
-        }
-    }
-    let res = req.send().await.map_err(|e| e.to_string())?;
-    let status = res.status().as_u16();
-    let status_text = res.status().canonical_reason().unwrap_or("").to_string();
-    let resp_headers = res
-        .headers()
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-        .collect();
-    let body = res.text().await.map_err(|e| e.to_string())?;
-    Ok(HttpResponse {
-        status,
-        status_text,
-        headers: resp_headers,
-        body,
-    })
-}
-
-// Fetch a URL with auth headers and return the body as a base64-encoded data URL.
-// Used for binary assets (images) that require authentication and can't be loaded
-// via a plain <img src> tag in the WebView.
-#[tauri::command]
-async fn http_fetch_base64(
-    url: String,
-    headers: Vec<(String, String)>,
-) -> Result<String, String> {
-    let mut req = reqwest::Client::new().get(&url);
-    for (k, v) in &headers {
-        if !k.is_empty() {
-            req = req.header(k.as_str(), v.as_str());
-        }
-    }
-    let res = req.send().await.map_err(|e| e.to_string())?;
-    let mime = res.headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/jpeg")
-        .split(';').next().unwrap_or("image/jpeg")
-        .to_string();
-    let bytes = res.bytes().await.map_err(|e| e.to_string())?;
-    use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Ok(format!("data:{};base64,{}", mime, b64))
-}
-
-// macOS binds Cmd+Z to the native Edit > Undo menu item, whose undo is broken in
-// the WebView (collapses all typing). We build a menu WITHOUT Undo/Redo so Cmd+Z
-// falls through to the DOM, where the notes panel handles undo itself.
-#[cfg(target_os = "macos")]
-fn install_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri::menu::{MenuBuilder, SubmenuBuilder};
-    let app_menu = SubmenuBuilder::new(app, "bento")
-        .about(None)
-        .separator()
-        .services()
-        .separator()
-        .hide()
-        .hide_others()
-        .show_all()
-        .separator()
-        .quit()
-        .build()?;
-    let edit_menu = SubmenuBuilder::new(app, "Edit")
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
-        .build()?;
-    let window_menu = SubmenuBuilder::new(app, "Window")
-        .minimize()
-        .fullscreen()
-        .close_window()
-        .build()?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&app_menu, &edit_menu, &window_menu])
-        .build()?;
-    app.set_menu(menu)?;
-    Ok(())
 }
 
 #[cfg(not(test))]
@@ -196,7 +79,7 @@ fn main() {
                 });
             }
             #[cfg(target_os = "macos")]
-            install_menu(app)?;
+            menu::install_menu(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 let manager = app.state::<agent::AgentManager>().inner().clone();
                 let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
@@ -229,9 +112,9 @@ fn main() {
         .manage(system_metrics::SystemMetricsState::default())
         .manage(vault::VaultState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
-            http_get,
-            http_request,
-            http_fetch_base64,
+            http::http_get,
+            http::http_request,
+            http::http_fetch_base64,
             app_identifier,
             system_metrics::app_memory_usage,
             agent::start_agent,
