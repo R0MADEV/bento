@@ -9,7 +9,10 @@ pub use checkpoints::{
     delete_checkpoint_handler, get_checkpoint_handler,
     list_checkpoints_handler, put_checkpoint_handler,
 };
-pub(crate) use checkpoints::{now_iso8601, save_checkpoint, Checkpoint};
+pub(crate) use checkpoints::{
+    delete_checkpoint, get_checkpoint, list_checkpoint_metas, now_iso8601, save_checkpoint,
+    Checkpoint,
+};
 
 pub use parse::parse_diff_name_status;
 #[allow(unused_imports)]

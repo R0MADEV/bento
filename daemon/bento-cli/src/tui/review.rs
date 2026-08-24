@@ -18,6 +18,7 @@ enum ReviewView {
     Branches,
     Prs,
     PrDetail,
+    Checkpoints,
     Output,
 }
 
@@ -28,11 +29,22 @@ enum InputPurpose {
     PrComment,
     /// Submitting a PR review: "APPROVE" | "REQUEST_CHANGES" | "COMMENT".
     PrReview(&'static str),
+    /// Editing the author context injected into the review prompt — purely
+    /// local state, no request fires on Enter.
+    Context,
 }
 
 pub(super) struct ReviewState {
     base: String,
     agent: String,
+    /// When on, `start_run` reviews with all of `AGENTS` and synthesizes
+    /// their reports instead of just `agent` — mirrors desktop's "compare
+    /// agents" toggle (simplified: the TUI has room for an on/off switch,
+    /// not per-agent secondary/tertiary pickers).
+    compare: bool,
+    /// Author-supplied focus notes injected into the review prompt —
+    /// mirrors desktop's "Contexto para la review" textarea.
+    context: String,
     files: Vec<Value>,
     files_selected: usize,
     view: ReviewView,
@@ -61,6 +73,8 @@ pub(super) struct ReviewState {
     pr_status: String,
     file_diff: String,
     file_scroll: u16,
+    checkpoints: Vec<Value>,
+    checkpoints_selected: usize,
 }
 
 impl ReviewState {
@@ -68,6 +82,8 @@ impl ReviewState {
         Self {
             base: "main".to_string(),
             agent: AGENTS[0].to_string(),
+            compare: false,
+            context: String::new(),
             files: Vec::new(),
             files_selected: 0,
             view: ReviewView::Files,
@@ -92,6 +108,8 @@ impl ReviewState {
             pr_status: String::new(),
             file_diff: String::new(),
             file_scroll: 0,
+            checkpoints: Vec::new(),
+            checkpoints_selected: 0,
         }
     }
 
@@ -125,6 +143,7 @@ impl ReviewState {
             ReviewView::Branches => self.handle_branches_key(key.code, cwd).await,
             ReviewView::Prs => self.handle_prs_key(key.code, cwd).await,
             ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
+            ReviewView::Checkpoints => self.handle_checkpoints_key(key.code, cwd).await,
             ReviewView::Output => self.handle_output_key(key.code),
         }
     }
@@ -174,7 +193,68 @@ impl ReviewState {
                 self.agent = next_agent(&self.agent);
                 false
             }
+            KeyCode::Char('x') => {
+                self.compare = !self.compare;
+                false
+            }
+            KeyCode::Char('c') => {
+                self.input_purpose = Some(InputPurpose::Context);
+                self.input = self.context.clone();
+                false
+            }
+            KeyCode::Char('h') => {
+                let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
+                self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                self.checkpoints_selected = 0;
+                self.view = ReviewView::Checkpoints;
+                false
+            }
             KeyCode::Tab | KeyCode::Char('q') | KeyCode::Esc => true,
+            _ => false,
+        }
+    }
+
+    async fn handle_checkpoints_key(&mut self, code: KeyCode, cwd: &str) -> bool {
+        match code {
+            KeyCode::Up => { self.checkpoints_selected = self.checkpoints_selected.saturating_sub(1); false }
+            KeyCode::Down => {
+                if self.checkpoints_selected + 1 < self.checkpoints.len() { self.checkpoints_selected += 1; }
+                false
+            }
+            KeyCode::Enter => {
+                if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
+                    let base = base.to_string();
+                    let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": cwd, "base": base })).await;
+                    if let Ok(cp) = data {
+                        self.base = base;
+                        self.output = cp.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
+                        self.session_id = cp.get("session_id").and_then(Value::as_str).map(String::from);
+                        self.session_agent = cp.get("session_agent").and_then(Value::as_str).map(String::from);
+                        self.scroll = 0;
+                        self.running = false;
+                        self.last_progress.clear();
+                        self.view = ReviewView::Output;
+                    }
+                }
+                false
+            }
+            KeyCode::Char('d') => {
+                if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
+                    let base = base.to_string();
+                    let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": cwd, "base": base })).await;
+                    let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
+                    self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                    if self.checkpoints_selected >= self.checkpoints.len() {
+                        self.checkpoints_selected = self.checkpoints.len().saturating_sub(1);
+                    }
+                }
+                false
+            }
+            KeyCode::Tab => true,
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.view = ReviewView::Files;
+                false
+            }
             _ => false,
         }
     }
@@ -336,6 +416,7 @@ impl ReviewState {
                     }
                     Some(InputPurpose::PrComment) => self.submit_pr_comment(cwd).await,
                     Some(InputPurpose::PrReview(event)) => self.submit_pr_review(cwd, event).await,
+                    Some(InputPurpose::Context) => self.context = std::mem::take(&mut self.input),
                     None => {}
                 }
             }
@@ -378,9 +459,10 @@ impl ReviewState {
         self.output.clear();
         self.session_id = None;
         self.session_agent = None;
+        let agents = if self.compare { AGENTS.join(",") } else { self.agent.clone() };
         let body = json!({
             "id": "1", "cmd": "review.run", "cwd": cwd, "base": self.base,
-            "context": "", "agents": self.agent,
+            "context": self.context, "agents": agents,
         });
         self.begin_stream(body, true);
     }
@@ -483,11 +565,13 @@ pub(super) fn draw(frame: &mut ratatui::Frame, review: &ReviewState) {
         ReviewView::Branches => draw_branches(frame, review),
         ReviewView::Prs => draw_prs(frame, review),
         ReviewView::PrDetail => draw_pr_detail(frame, review),
+        ReviewView::Checkpoints => draw_checkpoints(frame, review),
         ReviewView::Output => draw_output(frame, review),
     }
 }
 
 fn draw_files(frame: &mut ratatui::Frame, review: &ReviewState) {
+    let area = frame.area();
     let items: Vec<ListItem> = if review.files.is_empty() {
         vec![ListItem::new(format!("Sin cambios respecto a {}.", review.base))]
     } else {
@@ -507,12 +591,51 @@ fn draw_files(frame: &mut ratatui::Frame, review: &ReviewState) {
     if !review.files.is_empty() {
         state.select(Some(review.files_selected));
     }
+    let agent_label = if review.compare { "comparar todos".to_string() } else { review.agent.clone() };
+    let context_hint = if review.context.is_empty() { "" } else { " · contexto: sí" };
     let title = format!(
-        "Review ({}) [{}] — Enter: ver diff · r: correr · b: ramas · p: PRs · g: agente · Tab: volver",
-        review.base, review.agent
+        "Review ({}) [{agent_label}]{context_hint} — Enter: ver diff · r: correr · x: comparar · c: contexto · h: historial · b: ramas · p: PRs · g: agente · Tab: volver",
+        review.base,
     );
+    let block = Block::default().title(title).borders(Borders::ALL);
+
+    if matches!(review.input_purpose, Some(InputPurpose::Context)) {
+        let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
+        frame.render_stateful_widget(list, chunks[0], &mut state);
+        let input = Paragraph::new(format!("{}▏", review.input))
+            .block(Block::default().title("Contexto para la review (Enter guardar, Esc cancelar)").borders(Borders::ALL));
+        frame.render_widget(input, chunks[1]);
+    } else {
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
+        frame.render_stateful_widget(list, area, &mut state);
+    }
+}
+
+fn draw_checkpoints(frame: &mut ratatui::Frame, review: &ReviewState) {
+    let items: Vec<ListItem> = if review.checkpoints.is_empty() {
+        vec![ListItem::new("Sin reviews guardadas.")]
+    } else {
+        review
+            .checkpoints
+            .iter()
+            .map(|c| {
+                let base = c.get("base").and_then(Value::as_str).unwrap_or("?");
+                let saved_at = c.get("saved_at").and_then(Value::as_str).unwrap_or("");
+                ListItem::new(format!("{base}  ({saved_at})"))
+            })
+            .collect()
+    };
+    let mut state = ratatui::widgets::ListState::default();
+    if !review.checkpoints.is_empty() {
+        state.select(Some(review.checkpoints_selected));
+    }
     let list = List::new(items)
-        .block(Block::default().title(title).borders(Borders::ALL))
+        .block(Block::default().title("Historial — Enter: abrir · d: borrar · Esc: volver").borders(Borders::ALL))
         .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
     frame.render_stateful_widget(list, frame.area(), &mut state);
 }
@@ -596,7 +719,7 @@ fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
         Some(InputPurpose::PrReview("APPROVE")) => Some("Aprobar — texto opcional (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),
-        Some(InputPurpose::Ask) | None => None,
+        Some(InputPurpose::Ask) | Some(InputPurpose::Context) | None => None,
     }
 }
 

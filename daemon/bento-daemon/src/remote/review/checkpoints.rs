@@ -55,23 +55,38 @@ pub async fn list_checkpoints_handler(
         return Err(StatusCode::UNAUTHORIZED);
     }
     let cwd = params.get("cwd").ok_or(StatusCode::BAD_REQUEST)?;
-    let dir = checkpoints_dir().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(list_checkpoint_metas(cwd)))
+}
+
+/// All saved checkpoints for `cwd` (one per base branch reviewed), newest
+/// first — shared by the HTTP list handler and the daemon's IPC socket
+/// (`review.checkpoints`, for the TUI's history view).
+pub(crate) fn list_checkpoint_metas(cwd: &str) -> Vec<CheckpointMeta> {
+    let Some(dir) = checkpoints_dir() else { return Vec::new() };
     if !dir.exists() {
-        return Ok(Json(vec![]));
+        return Vec::new();
     }
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Ok(Json(vec![]));
+        return Vec::new();
     };
     let mut metas: Vec<CheckpointMeta> = entries
         .flatten()
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
         .filter_map(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
-        .filter(|cp| cp.cwd == *cwd)
+        .filter(|cp| cp.cwd == cwd)
         .map(|cp| CheckpointMeta { base: cp.base, saved_at: cp.saved_at })
         .collect();
     metas.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
-    Ok(Json(metas))
+    metas
+}
+
+/// The full saved checkpoint for `(cwd, base)`, if any — shared by the HTTP
+/// get handler and the daemon's IPC socket (`review.checkpoint_get`).
+pub(crate) fn get_checkpoint(cwd: &str, base: &str) -> Option<Checkpoint> {
+    let path = checkpoint_path(cwd, base)?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Checkpoint>(&raw).ok()
 }
 
 // GET /api/review/checkpoint?cwd=…&base=…
@@ -85,9 +100,7 @@ pub async fn get_checkpoint_handler(
     }
     let cwd = params.get("cwd").ok_or(StatusCode::BAD_REQUEST)?;
     let base = params.get("base").ok_or(StatusCode::BAD_REQUEST)?;
-    let path = checkpoint_path(cwd, base).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    let raw = std::fs::read_to_string(path).map_err(|_| StatusCode::NOT_FOUND)?;
-    serde_json::from_str::<Checkpoint>(&raw).map(Json).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    get_checkpoint(cwd, base).map(Json).ok_or(StatusCode::NOT_FOUND)
 }
 
 /// Writes `cp` to its checkpoint file — shared by the HTTP `PUT
@@ -148,6 +161,13 @@ pub async fn put_checkpoint_handler(
     }
 }
 
+/// Shared by the HTTP delete handler and the daemon's IPC socket
+/// (`review.checkpoint_delete`).
+pub(crate) fn delete_checkpoint(cwd: &str, base: &str) -> Result<(), String> {
+    let path = checkpoint_path(cwd, base).ok_or_else(|| "bad checkpoint path".to_string())?;
+    std::fs::remove_file(path).map_err(|e| e.to_string())
+}
+
 // DELETE /api/review/checkpoint?cwd=…&base=…
 pub async fn delete_checkpoint_handler(
     State(state): State<Arc<RemoteState>>,
@@ -159,8 +179,7 @@ pub async fn delete_checkpoint_handler(
     }
     let Some(cwd) = params.get("cwd") else { return StatusCode::BAD_REQUEST };
     let Some(base) = params.get("base") else { return StatusCode::BAD_REQUEST };
-    let Some(path) = checkpoint_path(cwd, base) else { return StatusCode::INTERNAL_SERVER_ERROR };
-    let _ = std::fs::remove_file(path);
+    let _ = delete_checkpoint(cwd, base);
     StatusCode::OK
 }
 

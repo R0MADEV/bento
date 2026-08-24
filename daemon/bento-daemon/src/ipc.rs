@@ -374,6 +374,27 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             _ => send(fail(&req.id, "cwd, base and content required".into())),
         },
 
+        "review.checkpoints" => match &req.cwd {
+            Some(cwd) => send(ok(&req.id, json!(crate::remote::review::list_checkpoint_metas(cwd)))),
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "review.checkpoint_get" => match (&req.cwd, &req.base) {
+            (Some(cwd), Some(base)) => match crate::remote::review::get_checkpoint(cwd, base) {
+                Some(cp) => send(ok(&req.id, serde_json::to_value(&cp).unwrap_or(Value::Null))),
+                None => send(fail(&req.id, "no hay checkpoint guardado".into())),
+            },
+            _ => send(fail(&req.id, "cwd and base required".into())),
+        },
+
+        "review.checkpoint_delete" => match (&req.cwd, &req.base) {
+            (Some(cwd), Some(base)) => match crate::remote::review::delete_checkpoint(cwd, base) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd and base required".into())),
+        },
+
         "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {
             (Some(cwd), Some(pr), Some(event)) => {
                 match crate::remote::review::submit_review(cwd, pr, event, req.data.as_deref()) {
