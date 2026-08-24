@@ -2,6 +2,7 @@
 //! protocol over localhost TCP.
 
 mod attach;
+mod tui;
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -22,6 +23,7 @@ async fn main() {
 
 async fn run(args: &[String]) -> std::io::Result<()> {
     match args.first().map(String::as_str) {
+        None => tui::run().await,
         Some("daemon") => match args.get(1).map(String::as_str) {
             Some("status")    => request(json!({ "id": "1", "cmd": "daemon.status" })).await,
             Some("start")     => daemon_start().await,
@@ -443,7 +445,7 @@ async fn stream_review(body: Value) -> std::io::Result<()> {
 }
 
 /// Send one request and return the `data` field of the response.
-async fn request_data(body: Value) -> std::io::Result<Value> {
+pub(crate) async fn request_data(body: Value) -> std::io::Result<Value> {
     let mut stream = TcpStream::connect(addr()).await?;
     stream.write_all(body.to_string().as_bytes()).await?;
     stream.write_all(b"\n").await?;
@@ -465,6 +467,7 @@ fn print_help() {
     eprintln!("bento — control terminals through the bento-daemon");
     eprintln!();
     eprintln!("USAGE:");
+    eprintln!("  bento                      open the terminal panel (no args)");
     eprintln!("  bento daemon status        show daemon status");
     eprintln!("  bento daemon start         start the daemon in the background");
     eprintln!("  bento daemon install       register daemon as a login service");
