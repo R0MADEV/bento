@@ -1,6 +1,8 @@
 import { t as i18nT } from '../../i18n'
+import { BASE_SOURCES_TITLE, buildMemorySourcesDom } from './memorySourcesDom'
+import { buildMemorySourcesList } from './memorySourcesList'
+import { buildMemorySourcesPreview } from './memorySourcesPreview'
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/helpers/icons'
 import { confirm as askConfirm, open as pickFolder } from '@tauri-apps/plugin-dialog'
 import type { MemoryEntry } from '../../core/memory/MemoryEntry'
 import { basename, projectName } from '../../core/memory/memoryFormat'
@@ -48,84 +50,27 @@ export function createMemorySourcesView(deps: MemorySourcesViewDeps): MemorySour
 
   const sourcesCollapsedKey = `bento.memory.sources.collapsed:${currentProject || '__global__'}`
   let sourcesCollapsed = localStorage.getItem(sourcesCollapsedKey) !== '0'
-
-  const sourcesPanel = document.createElement('div')
-  sourcesPanel.className = 'memory-sources'
-  const sourcesHead = document.createElement('div')
-  sourcesHead.className = 'memory-sources-head'
-  const sourcesToggle = document.createElement('button')
-  sourcesToggle.className = 'memory-sources-toggle'
-  sourcesToggle.type = 'button'
-  const sourcesTitle = document.createElement('span')
-  sourcesTitle.className = 'memory-sources-title'
-  const baseSourcesTitle = 'Fuentes externas'
-  sourcesTitle.textContent = baseSourcesTitle
-  const sourcesHint = document.createElement('span')
-  sourcesHint.className = 'memory-sources-hint'
-  sourcesHint.textContent = i18nT('memory.importSummariesNotesAndSnapshotsFromExternalFolders')
-  const sourcesChevron = document.createElement('span')
-  sourcesChevron.className = 'memory-sources-chevron'
-  sourcesChevron.innerHTML = icon('chevron')
-  const sourcesGrid = document.createElement('div')
-  sourcesGrid.className = 'memory-sources-grid'
-  const sourcesControl = document.createElement('div')
-  sourcesControl.className = 'memory-sources-control'
-  const sourceForm = document.createElement('div')
-  sourceForm.className = 'memory-source-form'
-  const sourceLabelInput = document.createElement('input')
-  sourceLabelInput.className = 'memory-input'
-  sourceLabelInput.placeholder = i18nT('memory.label')
-  const sourcePathInput = document.createElement('input')
-  sourcePathInput.className = 'memory-input'
-  sourcePathInput.placeholder = i18nT('memory.pathToSummariesOrNotes')
-  const sourceFormActions = document.createElement('div')
-  sourceFormActions.className = 'memory-source-form-actions'
-  const pickSourceBtn = document.createElement('button')
-  pickSourceBtn.className = 'memory-action'
-  pickSourceBtn.textContent = i18nT('memory.selectFolder')
-  const addSourceBtn = document.createElement('button')
-  addSourceBtn.className = 'memory-action'
-  addSourceBtn.textContent = i18nT('memory.registerSource')
-  const sourceList = document.createElement('div')
-  sourceList.className = 'memory-source-list'
-  const sourcePreviewPanel = document.createElement('div')
-  sourcePreviewPanel.className = 'memory-source-preview-panel'
-  const sourceActivity = document.createElement('div')
-  sourceActivity.className = 'memory-source-activity hidden'
-  const sourceActivityText = document.createElement('div')
-  sourceActivityText.className = 'memory-source-activity-text'
-  const sourceActivityBar = document.createElement('div')
-  sourceActivityBar.className = 'memory-source-activity-bar'
-  const sourceActivityBarFill = document.createElement('div')
-  sourceActivityBarFill.className = 'memory-source-activity-bar-fill'
-  sourceActivityBar.appendChild(sourceActivityBarFill)
-  const sourcePreviewActions = document.createElement('div')
-  sourcePreviewActions.className = 'memory-source-preview-actions'
-  const selectVisiblePreviewBtn = document.createElement('button')
-  selectVisiblePreviewBtn.className = 'memory-action'
-  selectVisiblePreviewBtn.textContent = i18nT('memory.selectVisible')
-  const clearVisiblePreviewBtn = document.createElement('button')
-  clearVisiblePreviewBtn.className = 'memory-action'
-  clearVisiblePreviewBtn.textContent = i18nT('memory.clearVisible')
-  const sourceProjectFilter = document.createElement('select')
-  sourceProjectFilter.className = 'memory-filter memory-source-project-filter'
-  const sourcePreview = document.createElement('div')
-  sourcePreview.className = 'memory-source-preview'
-  sourcePreview.textContent = i18nT('memory.noImportPreview')
-  const importSelectedSourceBtn = document.createElement('button')
-  importSelectedSourceBtn.className = 'memory-action'
-  importSelectedSourceBtn.textContent = i18nT('memory.importSelected')
-  importSelectedSourceBtn.disabled = true
-  sourcesToggle.append(sourcesChevron, sourcesTitle)
-  sourcesHead.append(sourcesToggle, sourcesHint)
-  sourceFormActions.append(pickSourceBtn, addSourceBtn)
-  sourceForm.append(sourceLabelInput, sourcePathInput, sourceFormActions)
-  sourcesControl.append(sourceForm, sourceList)
-  sourceActivity.append(sourceActivityText, sourceActivityBar)
-  sourcePreviewActions.append(selectVisiblePreviewBtn, clearVisiblePreviewBtn)
-  sourcePreviewPanel.append(sourceActivity, sourcePreviewActions, sourceProjectFilter, sourcePreview, importSelectedSourceBtn)
-  sourcesGrid.append(sourcesControl, sourcePreviewPanel)
-  sourcesPanel.append(sourcesHead, sourcesGrid)
+  const {
+    addSourceBtn,
+    clearVisiblePreviewBtn,
+    importSelectedSourceBtn,
+    pickSourceBtn,
+    selectVisiblePreviewBtn,
+    sourceActivity,
+    sourceActivityBarFill,
+    sourceLabelInput,
+    sourceList,
+    sourcePathInput,
+    sourcePreview,
+    sourceProjectFilter,
+    sourcesHint,
+    sourcesPanel,
+    sourcesTitle,
+    sourcesToggle,
+    sourcesChevron,
+    sourceActivityText,
+    sourceActivityBar,
+  } = buildMemorySourcesDom()
 
   const currentSource = (): MemorySource | undefined => sources.find(source => source.id === previewSourceId)
   const importSourceLabel = (): string => currentSource()?.label ?? previewLabel()
@@ -171,7 +116,7 @@ export function createMemorySourcesView(deps: MemorySourcesViewDeps): MemorySour
   }
 
   const syncSourcesTitle = (): void => {
-    sourcesTitle.textContent = `${baseSourcesTitle} (${sources.length})`
+    sourcesTitle.textContent = `${BASE_SOURCES_TITLE} (${sources.length})`
   }
 
   const syncSourcesCollapsed = (): void => {
@@ -218,111 +163,26 @@ export function createMemorySourcesView(deps: MemorySourcesViewDeps): MemorySour
     sourceProjectFilter.value = selectedSourceProject
     sourceProjectFilter.disabled = projects.length <= 1
   }
-
-  const renderSourcePreview = (): void => {
-    const label = previewLabel()
-    refreshSourceProjectFilter()
-    const candidates = visiblePreviewCandidates()
-    if (!previewCandidates.length) {
-      sourcePreview.textContent = previewSourceId ? i18nT('memory.noImportableCandidates', { label }) : i18nT('memory.noImportPreview')
-      syncSourceActions()
-      return
-    }
-    if (!candidates.length) {
-      sourcePreview.textContent = i18nT('memory.thereAreNoCandidatesForTheFilteredProject')
-      syncSourceActions()
-      return
-    }
-    sourcePreview.innerHTML = ''
-    const heading = document.createElement('div')
-    heading.className = 'memory-source-preview-title'
-    heading.textContent = i18nT('memory.previewHeading', { label, visible: candidates.length, total: previewCandidates.length })
-    sourcePreview.appendChild(heading)
-    candidates.forEach(candidate => {
-      const state = previewCandidateState.get(candidate.externalId)
-      const row = document.createElement('div')
-      row.className = `memory-source-preview-item${state?.duplicateExternal || state?.duplicateSemantic ? ' duplicate' : ''}`
-      const checkbox = document.createElement('input')
-      checkbox.type = 'checkbox'
-      checkbox.className = 'memory-source-preview-checkbox'
-      checkbox.value = candidate.externalId
-      checkbox.checked = false
-      checkbox.addEventListener('click', event => event.stopPropagation())
-      checkbox.addEventListener('change', syncSourceActions)
-      const text = document.createElement('div')
-      text.className = 'memory-source-preview-copy'
-      const title = document.createElement('div')
-      title.className = 'memory-source-preview-name'
-      title.textContent = candidate.title || i18nT('memory.untitled')
-      const summary = document.createElement('div')
-      summary.className = 'memory-source-preview-summary'
-      summary.textContent = candidate.summary || i18nT('memory.noSummary')
-      const file = document.createElement('div')
-      file.className = 'memory-source-preview-file'
-      file.textContent = candidateProject(candidate)
-      text.append(title, summary, file)
-      if (state?.duplicateExternal || state?.duplicateSemantic) {
-        const badge = document.createElement('div')
-        badge.className = `memory-source-preview-badge ${state.duplicateExternal ? 'existing' : 'merge'}`
-        badge.textContent = state.duplicateExternal
-          ? i18nT('memory.alreadyImported')
-          : state.duplicateTitle ? i18nT('memory.willMergeWith', { title: state.duplicateTitle }) : i18nT('memory.willMerge')
-        text.appendChild(badge)
-      }
-      row.append(checkbox, text)
-      sourcePreview.appendChild(row)
-    })
-    syncSourceActions()
-  }
-
-  const renderSources = (): void => {
-    sourceList.innerHTML = ''
-    syncSourceForm()
-    syncSourcesTitle()
-    if (!sources.length) {
-      const empty = document.createElement('div')
-      empty.className = 'memory-source-empty'
-      empty.textContent = i18nT('memory.thereAreNoRegisteredSourcesYet')
-      sourceList.appendChild(empty)
-      renderSourcePreview()
-      return
-    }
-    sources.forEach(item => {
-      const row = document.createElement('div')
-      row.className = 'memory-source-item'
-      const meta = document.createElement('div')
-      meta.className = 'memory-source-item-meta'
-      const text = document.createElement('div')
-      text.className = 'memory-source-item-text'
-      text.textContent = item.label
-      const path = document.createElement('div')
-      path.className = 'memory-source-item-path'
-      path.textContent = item.path
-      meta.append(text, path)
-      const actions = document.createElement('div')
-      actions.className = 'memory-source-item-actions'
-      const scanBtn = document.createElement('button')
-      scanBtn.className = 'memory-action'
-      scanBtn.textContent = i18nT('memory.scan')
-      scanBtn.addEventListener('click', () => { void scanSource(item) })
-      const importBtn = document.createElement('button')
-      importBtn.className = 'memory-action'
-      importBtn.textContent = i18nT('common.import')
-      importBtn.addEventListener('click', () => { void importSource(item) })
-      const removeBtn = document.createElement('button')
-      removeBtn.className = 'memory-action danger'
-      removeBtn.textContent = i18nT('common.delete2')
-      removeBtn.addEventListener('click', () => { void removeSource(item) })
-      actions.append(scanBtn, importBtn, removeBtn)
-      row.append(meta, actions)
-      row.addEventListener('click', event => {
-        if (event.target instanceof HTMLButtonElement) return
-        void scanSource(item)
-      })
-      sourceList.appendChild(row)
-    })
-    renderSourcePreview()
-  }
+  const renderSourcePreview = buildMemorySourcesPreview({
+    sourcePreview,
+    previewLabel,
+    previewCandidates: () => previewCandidates,
+    visiblePreviewCandidates,
+    previewSourceId: () => previewSourceId,
+    candidateState: previewCandidateState,
+    refreshSourceProjectFilter,
+    syncSourceActions,
+  })
+  const renderSources = buildMemorySourcesList({
+    sourceList,
+    sources: () => sources,
+    syncSourceForm,
+    syncSourcesTitle,
+    renderSourcePreview,
+    scanSource: item => { void scanSource(item) },
+    importSource: item => { void importSource(item) },
+    removeSource: item => { void removeSource(item) },
+  })
 
   const reloadSources = async (): Promise<void> => {
     try {

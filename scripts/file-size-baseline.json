@@ -1,6 +1,5 @@
 {
   "src/ui/aiChat.ts": 721,
-  "src/panels/memory/memorySourcesView.ts": 527,
   "src/panels/tasks/tasksDetailViews.ts": 526,
   "src/panels/tasks/tasksListView.ts": 489,
   "src/panels/tasks/tasksRebaseView.ts": 486,
