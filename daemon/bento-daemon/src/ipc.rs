@@ -194,6 +194,17 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             None => send(fail(&req.id, "cwd required".into())),
         },
 
+        "review.prs" => match &req.cwd {
+            Some(cwd) => match crate::remote::review::list_prs(cwd) {
+                Ok(json_str) => {
+                    let data = serde_json::from_str::<Value>(&json_str).unwrap_or(Value::Null);
+                    send(ok(&req.id, data));
+                }
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
         "remote.start" => {
             let port = req.port.unwrap_or(7879);
             let remote = remote.clone();

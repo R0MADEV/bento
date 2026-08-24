@@ -650,6 +650,13 @@ pub async fn review_file_handler(
 
 // ── /api/review/prs ───────────────────────────────────────────────────────────
 
+/// Shared by the HTTP `/api/review/prs` handler and the daemon's IPC
+/// socket (`review.prs`) — see `list_branches` above for why no
+/// axum/`RemoteState` dependency is needed here.
+pub(crate) fn list_prs(cwd: &str) -> Result<String, String> {
+    gh_cmd(cwd, &["pr", "list", "--state", "open", "--json", "number,title,url,headRefName,author"])
+}
+
 pub async fn review_prs_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<PrQuery>,
@@ -661,7 +668,7 @@ pub async fn review_prs_handler(
         Some(c) => c,
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
-    match gh_cmd(&cwd, &["pr", "list", "--state", "open", "--json", "number,title,url,headRefName,author"]) {
+    match list_prs(&cwd) {
         Ok(json_str) => (StatusCode::OK, [("content-type", "application/json")], json_str).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }

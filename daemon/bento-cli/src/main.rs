@@ -54,6 +54,10 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                 let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
                 request(json!({ "id": "1", "cmd": "review.branches", "cwd": cwd })).await
             }
+            Some("prs") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                request(json!({ "id": "1", "cmd": "review.prs", "cwd": cwd })).await
+            }
             _ => { print_help(); Ok(()) }
         },
         Some("open") => {
