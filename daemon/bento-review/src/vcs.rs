@@ -175,6 +175,32 @@ pub fn list_files(cwd: &str, base: &str) -> Result<Vec<Value>, String> {
     Ok(build_file_list(&name_status, &numstat, &untracked_files(cwd)))
 }
 
+/// The whole change under review: a branch against `base` (committed work
+/// only), or the working tree against `base` plus anything untracked — the
+/// case where you review before committing, which is most of them.
+pub fn review_diff(cwd: &str, base: &str, branch: Option<&str>) -> Result<String, String> {
+    if !is_safe_branch(base) {
+        return Err("rama base inválida".into());
+    }
+    if let Some(branch) = branch {
+        if !is_safe_branch(branch) {
+            return Err("rama inválida".into());
+        }
+        return git_cmd(cwd, &["diff", &format!("{base}..{branch}")]);
+    }
+    let tracked = git_cmd(cwd, &["diff", base])?;
+    let untracked = untracked_files(cwd)
+        .iter()
+        .map(|path| diff_no_index(cwd, path))
+        .filter(|d| !d.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if untracked.is_empty() {
+        return Ok(tracked);
+    }
+    Ok(format!("{tracked}\n{untracked}"))
+}
+
 /// The diff for a single file vs `base` (tracked change, or a fully-added
 /// diff for an untracked file).
 pub fn file_diff(cwd: &str, path: &str, base: &str) -> Result<String, String> {

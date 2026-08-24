@@ -5,6 +5,7 @@
 
 pub mod agents;
 pub mod diff;
+pub mod engine;
 pub mod pr;
 pub mod prompt;
 pub mod vcs;

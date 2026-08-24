@@ -24,14 +24,12 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use super::{Auth, RemoteState, authorized};
-use bento_review::diff::{batch_file_diffs, split_diff_into_file_diffs};
-use bento_review::vcs::{diff_no_index, is_safe_branch, untracked_files};
+use bento_review::vcs::is_safe_branch;
 pub(crate) use bento_review::pr::{
     add_comment, delete_comment, diff as pr_diff, discussion as pr_comments,
     list_open as list_prs, submit_review, update_comment,
 };
 pub(crate) use bento_review::vcs::{file_diff, list_branches, list_files};
-use bento_review::{build_review_prompt, build_synthesis_prompt, ReviewPromptInput};
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
@@ -124,178 +122,39 @@ pub async fn review_handler(
         .unwrap()
 }
 
-fn parse_agents(raw: &str) -> Vec<String> {
-    let filtered: Vec<String> = raw
-        .split(',')
-        .map(str::trim)
-        .filter(|s| matches!(*s, "claude" | "opencode" | "codex"))
-        .map(String::from)
-        .collect();
-    if filtered.is_empty() { vec!["claude".to_string()] } else { filtered }
-}
 
-/// Runs a full (possibly multi-agent, batched) code review and streams
-/// progress/output through `tx`, finishing with `[DONE]`. Shared by the HTTP
-/// `/api/review` SSE handler and the daemon's IPC socket (`review.run`) —
-/// `base`/`branch` are re-validated here (not just at the HTTP layer) so the
-/// IPC caller, which has no query-param validation of its own, gets the same
-/// protection against unsafe git refs.
+/// Runs a full review and forwards it to the client as the flat text stream
+/// this protocol has always spoken: control markers in `[BRACKETS]`, agent
+/// text as-is. The review itself (validation, batching, multi-agent,
+/// synthesis) lives in `bento_review::engine`, shared with the desktop app.
 pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>, context: String, agents_raw: String, tx: tokio::sync::mpsc::Sender<String>) {
-    let send = |msg: String| {
-        let tx = tx.clone();
-        async move { let _ = tx.send(msg).await; }
+    use bento_review::engine::{run_review as engine_run, Agents, ReviewEvent, ReviewRequest};
+
+    let request = ReviewRequest {
+        cwd,
+        base,
+        context,
+        agents: bento_review::engine::parse_agents(&agents_raw),
     };
-
-    if !is_safe_branch(&base) {
-        send("[ERROR] rama base inválida".into()).await;
-        return;
-    }
-    if let Some(ref br) = branch {
-        if !is_safe_branch(br) {
-            send("[ERROR] rama inválida".into()).await;
-            return;
-        }
-    }
-    let agents = parse_agents(&agents_raw);
-
-    // When a specific branch is given, diff that branch vs base (committed changes only).
-    // Otherwise diff the working tree vs base and also include untracked files.
-    let diff_out = if let Some(ref br) = branch {
-        let range = format!("{}..{}", base, br);
-        match tokio::process::Command::new("git")
-            .args(["-C", &cwd, "diff", &range])
-            .output()
-            .await
-        {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-            Ok(o) => {
-                send(format!("[ERROR] git diff falló: {}", String::from_utf8_lossy(&o.stderr).trim())).await;
-                return;
-            }
-            Err(e) => { send(format!("[ERROR] no se pudo ejecutar git: {e}")).await; return; }
-        }
-    } else {
-        let tracked_diff = match tokio::process::Command::new("git")
-            .args(["-C", &cwd, "diff", &base])
-            .output()
-            .await
-        {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-            Ok(o) => {
-                send(format!("[ERROR] git diff falló: {}", String::from_utf8_lossy(&o.stderr).trim())).await;
-                return;
-            }
-            Err(e) => { send(format!("[ERROR] no se pudo ejecutar git: {e}")).await; return; }
-        };
-
-        let cwd_clone = cwd.clone();
-        let untracked_diff = tokio::task::spawn_blocking(move || {
-            untracked_files(&cwd_clone)
-                .into_iter()
-                .map(|p| diff_no_index(&cwd_clone, &p))
-                .filter(|d| !d.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .await
-        .unwrap_or_default();
-
-        if untracked_diff.is_empty() { tracked_diff } else { format!("{tracked_diff}\n{untracked_diff}") }
-    };
-
-    if diff_out.trim().is_empty() {
-        send("[ERROR] No hay cambios respecto a la rama base.".into()).await;
-        return;
-    }
-
-    let is_multi_agent = agents.len() > 1;
-    let mut reports: Vec<(String, String)> = Vec::new();
-
-    if is_multi_agent {
-        let total = agents.len();
-        for (i, agent) in agents.iter().enumerate() {
-            send(format!("[BATCH:{}/{}]", i + 1, total)).await;
-            let review_prompt = build_review_prompt(&ReviewPromptInput::new(&cwd, &base, &diff_out, &context));
-            match run_agent_collecting(agent, &cwd, &review_prompt, &tx).await {
-                Some((report, _)) => reports.push((format!("Agente {}/{} ({})", i + 1, total, agent), report)),
-                None => { send(format!("[ERROR] {} no encontrado o falló", agent)).await; return; }
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<ReviewEvent>(64);
+    let forwarding = tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            let line = match event {
+                ReviewEvent::Content(text) => text,
+                ReviewEvent::Batch { index, total } => format!("[BATCH:{index}/{total}]"),
+                ReviewEvent::Synthesis => "[SYNTHESIS]".to_string(),
+                ReviewEvent::Session { agent, id } => format!("[SESSION:{agent}:{id}]"),
+                ReviewEvent::Error(message) => format!("[ERROR] {message}"),
+                ReviewEvent::Done => "[DONE]".to_string(),
+            };
+            if tx.send(line).await.is_err() {
+                break;
             }
         }
-        if reports.len() >= 2 {
-            send("[SYNTHESIS]".into()).await;
-            let truncated: Vec<(String, String)> = reports.iter()
-                .map(|(l, r)| (l.clone(), r.chars().take(8_000).collect()))
-                .collect();
-            let refs: Vec<(&str, &str)> = truncated.iter().map(|(l, r)| (l.as_str(), r.as_str())).collect();
-            let synthesis = build_synthesis_prompt(
-                &refs,
-                "Escribe el informe final directamente, sin preámbulo. Empieza con:\n\n**Veredicto:**",
-            );
-            let last_agent = agents.last().unwrap();
-            match run_agent_collecting(last_agent, &cwd, &synthesis, &tx).await {
-                None => { send("[ERROR] síntesis falló".into()).await; return; }
-                Some((_, sid)) => {
-                    if let Some(id) = sid {
-                        send(format!("[SESSION:{}:{}]", last_agent, id)).await;
-                    }
-                }
-            }
-        }
-    } else {
-        let agent = &agents[0];
-        let file_diffs = split_diff_into_file_diffs(&diff_out);
-        let batches = batch_file_diffs(file_diffs, 60_000);
-        let total = batches.len();
-        let mut last_session_id: Option<String> = None;
-        for (i, batch_diff) in batches.into_iter().enumerate() {
-            let label = format!("Batch {}/{}", i + 1, total);
-            send(format!("[BATCH:{}/{}]", i + 1, total)).await;
-            let review_prompt = build_review_prompt(&ReviewPromptInput::new(&cwd, &base, &batch_diff, &context));
-            match run_agent_collecting(agent, &cwd, &review_prompt, &tx).await {
-                Some((report, sid)) => {
-                    if let Some(id) = sid { last_session_id = Some(id); }
-                    reports.push((label, report));
-                }
-                None => { send(format!("[ERROR] {} no encontrado o falló", agent)).await; return; }
-            }
-        }
-        if total > 1 {
-            send("[SYNTHESIS]".into()).await;
-            let truncated: Vec<(String, String)> = reports.iter()
-                .map(|(l, r)| (l.clone(), r.chars().take(8_000).collect()))
-                .collect();
-            let refs: Vec<(&str, &str)> = truncated.iter().map(|(l, r)| (l.as_str(), r.as_str())).collect();
-            let synthesis = build_synthesis_prompt(
-                &refs,
-                "Escribe el informe final directamente, sin preámbulo. Empieza con:\n\n**Veredicto:**",
-            );
-            match run_agent_collecting(agent, &cwd, &synthesis, &tx).await {
-                None => { send("[ERROR] síntesis falló".into()).await; return; }
-                Some((_, sid)) => {
-                    if let Some(id) = sid { last_session_id = Some(id); }
-                }
-            }
-        }
-        if let Some(id) = last_session_id {
-            send(format!("[SESSION:{}:{}]", agent, id)).await;
-        }
-    }
-
-    send("[DONE]".into()).await;
-}
-
-
-/// Runs one agent in review mode (read-only) and collects its report.
-/// The spawning/parsing itself lives in `bento_review::agents`, shared with
-/// the desktop app — this used to be three near-identical loops here, one per
-/// agent, none of which restricted Claude's tools the way the desktop did.
-pub(super) async fn run_agent_collecting(
-    agent: &str,
-    cwd: &str,
-    prompt: &str,
-    tx: &tokio::sync::mpsc::Sender<String>,
-) -> Option<(String, Option<String>)> {
-    bento_review::agents::run_collecting(agent, cwd, prompt, None, true, tx).await
+    });
+    engine_run(&request, branch.as_deref(), &Agents, &event_tx).await;
+    drop(event_tx);
+    let _ = forwarding.await;
 }
 
 // ── /api/review/files ─────────────────────────────────────────────────────────

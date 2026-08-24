@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use super::super::{Auth, RemoteState, authorized};
 use super::checkpoints::{checkpoint_path, Checkpoint};
-use super::run_agent_collecting;
 
 #[derive(Deserialize)]
 pub struct AskQuery {
@@ -59,7 +58,7 @@ pub(crate) async fn ask(cwd: &str, base: &str, agent: &str, question: &str, tx: 
             El desarrollador tiene la siguiente pregunta. Responde en español, de forma concisa y técnica.\n\n\
             Pregunta: {question}"
         );
-        run_agent_collecting(agent, cwd, &prompt, &tx).await;
+        bento_review::agents::run_collecting(agent, cwd, &prompt, None, true, &tx).await;
     }
     let _ = tx.send("[DONE]".into()).await;
 }
