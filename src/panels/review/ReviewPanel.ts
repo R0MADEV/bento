@@ -3,16 +3,18 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { icon } from '../../ui/helpers/icons'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
-import { getUiZoom, toLayoutPixels } from '../../ui/helpers/zoom'
 import type { AgentType } from '../../core/ai/config'
 import { loadReviewCheckpoint } from './reviewCheckpoints'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey, techReviewCheckpointKey } from '../../core/ai/chatHistory'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
-import { t as i18nT } from '../../i18n'
 import { buildReviewAgentControls } from './ReviewAgentControls'
 import { buildReviewCommentBubble, buildReviewLineForm } from './ReviewCommentBubble'
 import { buildReviewSidebarLists } from './ReviewSidebarLists'
+import { buildCommentBar, buildEmptyState, buildReviewDrawer } from './ReviewPanelViews'
+import { buildReviewLocalState } from './reviewLocalState'
+import { buildReviewNavigation } from './reviewNavigation'
+import { showReviewCiPopover } from './reviewCiPopover'
 import { buildReviewDiffView } from './ReviewDiffView'
 import { buildReviewDataLoader } from './reviewDataLoader'
 import { buildReviewAiRun } from './reviewAiRun'
@@ -24,7 +26,6 @@ import {
   describeReviewPrState,
   describeReviewNoBranchChanges,
   filterReviewPrs,
-  esc,
 } from './reviewFormat'
 
 export {
@@ -59,8 +60,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   let openPrs: GhPr[] = []
   let fileTypeFilter: FileTypeFilter = 'all'
   let totalFiles = 0
-  let commentNavIdx = -1
-  let focusedFileIdx = -1
   let treeView = false
   let splitView = false
   let lastFiles: ReviewChangeFile[] = []
@@ -174,61 +173,13 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   filterBar.className = 'review-filter-bar hidden'
   const diffView = document.createElement('div')
   diffView.className = 'review-diff-view'
-
-  const commentBar = document.createElement('div')
-  commentBar.className = 'review-comment-bar hidden'
-
-  const prMetaEl = document.createElement('div')
-  prMetaEl.className = 'review-pr-meta'
-  const prBodyEl = Object.assign(document.createElement('div'), { className: 'review-pr-body hidden' })
-  const discussionEl = Object.assign(document.createElement('div'), { className: 'review-discussion hidden' })
-  const commentInput = document.createElement('textarea')
-  commentInput.className = 'review-comment-input'
-  commentInput.placeholder = reviewT('commentPlaceholder')
-  commentInput.rows = 3
-
-  const commentActionsRow = document.createElement('div')
-  commentActionsRow.className = 'review-comment-actions'
-  const commentBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: reviewT('sendComment') })
-  const approveBtn = Object.assign(document.createElement('button'), { className: 'review-approve-btn', textContent: reviewT('approve') })
-  const requestChangesBtn = Object.assign(document.createElement('button'), { className: 'review-request-changes-btn', textContent: reviewT('requestChanges') })
-  const commentStatus = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
-  commentActionsRow.append(commentBtn, approveBtn, requestChangesBtn, commentStatus)
-  commentBar.append(prMetaEl, prBodyEl, discussionEl, commentInput, commentActionsRow)
-
-  const reviewDrawer = document.createElement('aside')
-  reviewDrawer.className = 'review-drawer hidden'
-  const reviewDrawerHeader = document.createElement('div')
-  reviewDrawerHeader.className = 'review-drawer-header'
-  const reviewDrawerTitle = document.createElement('span')
-  reviewDrawerTitle.className = 'review-drawer-title'
-  reviewDrawerTitle.textContent = reviewT('title')
-  const reviewDrawerMeta = document.createElement('span')
-  reviewDrawerMeta.className = 'review-drawer-meta'
-  const reviewDrawerActions = document.createElement('div')
-  reviewDrawerActions.className = 'review-drawer-actions'
-  const reviewDrawerCloseBtn = Object.assign(document.createElement('button'), { className: 'review-drawer-btn', textContent: i18nT('common.close') })
-  reviewDrawerActions.append(reviewDrawerCloseBtn)
-  reviewDrawerHeader.append(reviewDrawerTitle, reviewDrawerMeta, reviewDrawerActions)
-  const reviewDrawerBody = document.createElement('div')
-  reviewDrawerBody.className = 'review-drawer-body'
-  reviewDrawer.append(reviewDrawerHeader, reviewDrawerBody)
+  const { commentBar, prMetaEl, prBodyEl, discussionEl, commentInput, commentBtn, approveBtn, requestChangesBtn, commentStatus } = buildCommentBar()
+  const { reviewDrawer, reviewDrawerMeta, reviewDrawerBody, reviewDrawerCloseBtn } = buildReviewDrawer()
+  const { emptyState, emptyOpenBtn } = buildEmptyState()
 
   detail.append(diffSearchInput, filterBar, diffView, commentBar)
   body.append(cs.element, cs.resizer, detail)
   root.append(body, reviewDrawer)
-
-  // ── Empty state ───────────────────────────────────────────────────────────
-  const emptyState = document.createElement('div')
-  emptyState.className = 'review-empty-state'
-  const emptyOpenBtn = Object.assign(document.createElement('button'), { className: 'review-empty-open-btn', textContent: reviewT('openRepo') })
-  emptyState.append(
-    Object.assign(document.createElement('p'), { className: 'review-empty-title', textContent: reviewT('noRepo') }),
-    Object.assign(document.createElement('p'), { className: 'review-empty-hint', textContent: reviewT('noRepoHint') }),
-    emptyOpenBtn,
-  )
-
-  // Body is always visible — empty state shows inside diffView, never hides the panel
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const showNoRepo = (): void => { diffView.replaceChildren(emptyState) }
@@ -286,126 +237,23 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     commentStatus.className = `review-comment-status ${isError ? 'review-comment-err' : 'review-comment-ok'}`
     setTimeout(() => { commentStatus.textContent = ''; commentStatus.className = 'review-comment-status' }, isError ? 5000 : 3000)
   }
+  // ── Estado local, navegación y checks ─────────────────────────────────────
+  const { getViewedFiles, setFileViewed, updateViewedCounter, getResolvedComments, setCommentResolved } =
+    buildReviewLocalState({
+      repoPath: () => repoPath,
+      selectedBranch: () => selectedBranch,
+      currentPrNumber: () => currentPrNumber,
+      totalFiles: () => totalFiles,
+      viewedCounterEl,
+    })
 
-  // ── Viewed files ──────────────────────────────────────────────────────────
-  const viewedKey = (): string => `bento.review.viewed.${repoPath}.${selectedBranch}`
-  const getViewedFiles = (): Set<string> => {
-    try { return new Set(JSON.parse(localStorage.getItem(viewedKey()) ?? '[]') as string[]) }
-    catch { return new Set() }
-  }
-  const setFileViewed = (file: string, viewed: boolean): void => {
-    const set = getViewedFiles()
-    if (viewed) set.add(file); else set.delete(file)
-    localStorage.setItem(viewedKey(), JSON.stringify([...set]))
-    updateViewedCounter()
-  }
-  const updateViewedCounter = (): void => {
-    if (totalFiles === 0) { viewedCounterEl.classList.add('hidden'); return }
-    const done = getViewedFiles().size
-    viewedCounterEl.textContent = reviewT('reviewedCount', { done, total: totalFiles })
-    viewedCounterEl.classList.remove('hidden')
-  }
+  const { updateCommentNav, resetFocusedFile, navigateComment, handleKeydown } =
+    buildReviewNavigation({ diffView, commentNavWrap, getViewedFiles })
 
-  // ── Resolved comments ─────────────────────────────────────────────────────
-  const resolvedKey = (): string => `bento.review.resolved.${repoPath}.${currentPrNumber ?? ''}`
-  const getResolvedComments = (): Set<number> => {
-    try { return new Set(JSON.parse(localStorage.getItem(resolvedKey()) ?? '[]') as number[]) }
-    catch { return new Set() }
-  }
-  const setCommentResolved = (id: number, resolved: boolean): void => {
-    const set = getResolvedComments()
-    if (resolved) set.add(id); else set.delete(id)
-    localStorage.setItem(resolvedKey(), JSON.stringify([...set]))
-    resolvedComments = set
-  }
+  const onKeydown = (e: KeyboardEvent): void => handleKeydown(e, root.isConnected)
+  document.addEventListener('keydown', onKeydown)
 
-  // ── Comment navigation ────────────────────────────────────────────────────
-  const updateCommentNav = (): void => {
-    commentNavWrap.classList.toggle('hidden', diffView.querySelectorAll('.review-existing-comment').length === 0)
-    commentNavIdx = -1
-  }
-  const navigateComment = (dir: 1 | -1): void => {
-    const comments = [...diffView.querySelectorAll<HTMLElement>('.review-existing-comment')]
-    if (!comments.length) return
-    commentNavIdx = (commentNavIdx + dir + comments.length) % comments.length
-    comments[commentNavIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
-
-  // ── File navigation ───────────────────────────────────────────────────────
-  const navigateFile = (dir: 1 | -1): void => {
-    const files = [...diffView.querySelectorAll<HTMLElement>('.review-file-detail:not(.hidden)')]
-    if (!files.length) return
-    files[focusedFileIdx]?.classList.remove('review-file-focused')
-    focusedFileIdx = (focusedFileIdx + dir + files.length) % files.length
-    files[focusedFileIdx]?.classList.add('review-file-focused')
-    files[focusedFileIdx]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-  const toggleCurrentViewed = (): void => {
-    const files = [...diffView.querySelectorAll<HTMLElement>('.review-file-detail:not(.hidden)')]
-    const el = files[focusedFileIdx]
-    if (!el) return
-    const cb = el.querySelector<HTMLInputElement>('.review-viewed-cb')
-    if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')) }
-  }
-  const navigateUnviewed = (): void => {
-    const viewedSet = getViewedFiles()
-    const files = [...diffView.querySelectorAll<HTMLElement>('.review-file-detail:not(.hidden)')]
-    const target = files.find(el => !viewedSet.has(el.dataset.filename ?? ''))
-    if (!target) return
-    files.forEach(f => f.classList.remove('review-file-focused'))
-    focusedFileIdx = files.indexOf(target)
-    target.classList.add('review-file-focused')
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────
-  const handleKeydown = (e: KeyboardEvent): void => {
-    if (!root.isConnected) return
-    const target = e.target as Element
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
-    if (e.metaKey || e.ctrlKey || e.altKey) return
-    switch (e.key) {
-      case 'n': navigateComment(1); break
-      case 'p': navigateComment(-1); break
-      case 'j': navigateFile(1); break
-      case 'k': navigateFile(-1); break
-      case 'v': toggleCurrentViewed(); break
-      case 'u': navigateUnviewed(); break
-    }
-  }
-  document.addEventListener('keydown', handleKeydown)
-
-  // ── CI checks popover ─────────────────────────────────────────────────────
-  const showCiPopover = (anchor: HTMLElement): void => {
-    root.querySelectorAll('.review-ci-popover').forEach(el => el.remove())
-    if (!lastStatusRollup.length) return
-    const popover = document.createElement('div')
-    popover.className = 'review-ci-popover'
-    popover.append(...lastStatusRollup.map(c => {
-      const name = c.name ?? c.workflowName ?? c.context ?? 'Check'
-      const val = (c.conclusion ?? c.state ?? '').toUpperCase()
-      const ok = val === 'SUCCESS' || val === 'COMPLETED'
-      const fail = ['FAILURE','ERROR','TIMED_OUT','CANCELLED'].includes(val)
-      const item = document.createElement('div')
-      item.className = 'review-ci-check'
-      item.innerHTML = `<span class="review-ci-check-icon ${ok ? 'ci-ok' : fail ? 'ci-fail' : 'ci-pending'}">${ok ? '✓' : fail ? '✗' : '⟳'}</span><span class="review-ci-check-name">${esc(name)}</span>`
-      if (c.targetUrl) {
-        item.style.cursor = 'pointer'
-        item.addEventListener('click', () => openUrl(c.targetUrl!).catch(() => {}))
-      }
-      return item
-    }))
-    const anchorRect = anchor.getBoundingClientRect()
-    const rootRect = root.getBoundingClientRect()
-    const zoom = getUiZoom()
-    popover.style.top = `${toLayoutPixels(anchorRect.bottom - rootRect.top, zoom) + 4}px`
-    popover.style.left = `${toLayoutPixels(anchorRect.left - rootRect.left, zoom)}px`
-    root.append(popover)
-    const close = (e: MouseEvent): void => {
-      if (!popover.contains(e.target as Node)) { popover.remove(); document.removeEventListener('click', close) }
-    }
-    setTimeout(() => document.addEventListener('click', close), 0)
-  }
+  const showCiPopover = (anchor: HTMLElement): void => showReviewCiPopover(root, lastStatusRollup, anchor)
 
   // ── Comment bubble (edit/delete/reply) ────────────────────────────────────
   const commentActions = {
@@ -455,7 +303,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       getExistingComments: () => existingComments,
       getFileTypeFilter: () => fileTypeFilter,
       setFileTypeFilter: value => { fileTypeFilter = value },
-      resetFocusedFileIdx: () => { focusedFileIdx = -1 },
+      resetFocusedFileIdx: resetFocusedFile,
       getViewedFiles,
       setFileViewed,
       repoPath: () => repoPath,
@@ -599,7 +447,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     element: root,
     dispose: () => {
       if (intervalId) clearInterval(intervalId)
-      document.removeEventListener('keydown', handleKeydown)
+      document.removeEventListener('keydown', onKeydown)
     },
     onVisibilityChange: (visible: boolean) => {
       panelVisible = visible
