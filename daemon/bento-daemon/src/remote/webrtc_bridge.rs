@@ -38,7 +38,7 @@ use webrtc::data_channel::{DataChannel, DataChannelEvent};
 use webrtc::peer_connection::{
     register_default_interceptors, MediaEngine, PeerConnection, PeerConnectionBuilder,
     PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer,
-    RTCPeerConnectionState, RTCSessionDescription, Registry,
+    RTCPeerConnectionIceEvent, RTCPeerConnectionState, RTCSessionDescription, Registry,
 };
 
 const STUN_SERVER: &str = "stun:stun.l.google.com:19302";
@@ -54,6 +54,10 @@ const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(5);
 struct OfferHandler {
     gathering_complete: mpsc::Sender<()>,
     pairing_code: String,
+    /// Unsolicited-event channel back to the IPC connection (same one
+    /// `terminal.output`/`terminal.exit` use) — lets the desktop UI show a
+    /// real connected/failed state instead of a static "esperando…" text.
+    events: mpsc::UnboundedSender<String>,
 }
 
 #[async_trait]
@@ -64,8 +68,21 @@ impl PeerConnectionEventHandler for OfferHandler {
         }
     }
 
+    async fn on_ice_candidate(&self, event: RTCPeerConnectionIceEvent) {
+        eprintln!(
+            "[webrtc_bridge] ice candidate: type={} address={} (code={})",
+            event.candidate.typ, event.candidate.address, self.pairing_code
+        );
+    }
+
     async fn on_connection_state_change(&self, state: RTCPeerConnectionState) {
         eprintln!("[webrtc_bridge] connection state -> {state} (code={})", self.pairing_code);
+        let event = serde_json::json!({
+            "event": "webrtc.status",
+            "code": self.pairing_code,
+            "state": state.to_string(),
+        });
+        let _ = self.events.send(event.to_string());
     }
 }
 
@@ -73,8 +90,14 @@ impl PeerConnectionEventHandler for OfferHandler {
 /// via the signaling Worker at `signaling_base`, then bridges the resulting
 /// DataChannel to the existing phone server at `local_addr` (its actual bound
 /// `host:port`, from `RemoteControl::status()` — not `127.0.0.1`). Runs until
-/// the DataChannel closes or the initial handshake fails.
-pub async fn run_offerer(pairing_code: String, signaling_base: String, local_addr: String) -> Result<(), String> {
+/// the DataChannel closes or the initial handshake fails. `events` carries
+/// connection-state updates back to the IPC client (see `OfferHandler`).
+pub async fn run_offerer(
+    pairing_code: String,
+    signaling_base: String,
+    local_addr: String,
+    events: mpsc::UnboundedSender<String>,
+) -> Result<(), String> {
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs().map_err(|e| e.to_string())?;
     let registry = register_default_interceptors(Registry::new(), &mut media_engine).map_err(|e| e.to_string())?;
@@ -84,7 +107,11 @@ pub async fn run_offerer(pairing_code: String, signaling_base: String, local_add
         .build();
 
     let (gathering_complete_tx, mut gathering_complete_rx) = mpsc::channel(1);
-    let handler = Arc::new(OfferHandler { gathering_complete: gathering_complete_tx, pairing_code: pairing_code.clone() });
+    let handler = Arc::new(OfferHandler {
+        gathering_complete: gathering_complete_tx,
+        pairing_code: pairing_code.clone(),
+        events,
+    });
     let runtime = webrtc::runtime::default_runtime().ok_or("no webrtc runtime available")?;
 
     let peer_connection = PeerConnectionBuilder::new()

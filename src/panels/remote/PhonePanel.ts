@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { icon } from '../../ui/icons'
 import QRCode from 'qrcode'
 
@@ -118,7 +119,7 @@ export function createPhonePanel(): { element: HTMLElement } {
 
   // ── WebRTC pairing (no Tailscale, works from any network) ───────────────────
   const webrtcSection = document.createElement('div')
-  webrtcSection.className = 'phone-active hidden'
+  webrtcSection.className = 'phone-active'
 
   const webrtcTitle = document.createElement('p')
   webrtcTitle.className = 'phone-desc'
@@ -165,15 +166,37 @@ export function createPhonePanel(): { element: HTMLElement } {
   body.append(webrtcSection)
 
   let currentToken: string | undefined
+  // Guards against a status event from a previous (now-abandoned) pairing
+  // attempt updating the UI for the one currently shown.
+  let currentPairingCode: string | undefined
+
+  const WEBRTC_STATE_LABELS: Record<string, string> = {
+    connecting: 'Conectando (P2P)…',
+    connected: 'Conectado ✓',
+    disconnected: 'Desconectado.',
+    failed: 'Falló la conexión P2P — generá un código nuevo.',
+    closed: 'Conexión cerrada.',
+  }
+  void listen<{ code: string; state: string }>('webrtc-status', ({ payload }) => {
+    if (payload.code !== currentPairingCode) return
+    const label = WEBRTC_STATE_LABELS[payload.state]
+    if (label) pairStatus.textContent = label
+  })
+
   const generatePairing = async (): Promise<void> => {
     const signalingBase = signalingInput.value.trim().replace(/\/$/, '')
     if (!signalingBase) { pairStatus.textContent = 'Pegá la URL de tu Worker de señalización primero.'; return }
-    if (!currentToken) { pairStatus.textContent = 'Activá el servidor WiFi primero.'; return }
 
     pairBtn.disabled = true
     pairStatus.textContent = 'Generando código…'
     try {
+      if (!currentToken) {
+        pairStatus.textContent = 'Activando servidor WiFi…'
+        await startServer()
+      }
+      if (!currentToken) throw new Error('no se pudo activar el servidor WiFi')
       const code = generatePairingCode()
+      currentPairingCode = code
       await invoke('webrtc_connect', { code, signalingBase })
       const pairUrl = `${signalingBase}/pair?code=${code}&token=${encodeURIComponent(currentToken)}`
       pairUrlCode.textContent = pairUrl

@@ -119,6 +119,14 @@ impl PtyManager {
                                 let _ = app.emit(&format!("pty-exit-{id}"), ());
                             }
                         }
+                        "webrtc.status" => {
+                            if let (Some(code), Some(state)) = (
+                                value.get("code").and_then(Value::as_str),
+                                value.get("state").and_then(Value::as_str),
+                            ) {
+                                let _ = app.emit("webrtc-status", json!({ "code": code, "state": state }));
+                            }
+                        }
                         _ => {}
                     }
                 } else if let Some(id) = value.get("id").and_then(Value::as_str) {
