@@ -44,7 +44,7 @@ struct Instance {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     tx: broadcast::Sender<PtyEvent>,
     // Recent output, replayed to a client that (re)attaches so it isn't blank.
-    scrollback: Arc<Mutex<Vec<u8>>>,
+    scrollback: Arc<Mutex<Scrollback>>,
     title: String,
     cwd: String,
 }
@@ -59,8 +59,57 @@ pub struct PtyManager {
 // Bounded so a slow subscriber can't grow memory without limit; a lagging
 // subscriber loses the oldest output (RecvError::Lagged) rather than blocking.
 const OUTPUT_BUFFER: usize = 2048;
-// Recent output kept per terminal so a reattaching client sees context.
-const SCROLLBACK_CAP: usize = 256 * 1024;
+// A TUI typically paints its whole screen once near the start of a session
+// (entering the alternate screen, drawing its initial layout) and then only
+// sends small incremental updates after. A single ring buffer loses that
+// one-time initial paint the moment a long, chatty session (an agent
+// redrawing a status line continuously) outgrows it — a reattaching client
+// then only ever sees the incremental updates replayed onto a blank screen,
+// since nothing else ever repaints what the app assumes is still correct.
+// `head` preserves that initial paint permanently; `tail` is the ring
+// buffer for everything after, same as before.
+const SCROLLBACK_HEAD_CAP: usize = 64 * 1024;
+const SCROLLBACK_TAIL_CAP: usize = 192 * 1024;
+
+#[derive(Default)]
+struct Scrollback {
+    head: Vec<u8>,
+    tail: Vec<u8>,
+}
+
+impl Scrollback {
+    fn push(&mut self, data: &[u8]) {
+        if self.head.len() < SCROLLBACK_HEAD_CAP {
+            let room = SCROLLBACK_HEAD_CAP - self.head.len();
+            let take = room.min(data.len());
+            self.head.extend_from_slice(&data[..take]);
+            let rest = &data[take..];
+            if !rest.is_empty() {
+                self.push_tail(rest);
+            }
+        } else {
+            self.push_tail(data);
+        }
+    }
+
+    fn push_tail(&mut self, data: &[u8]) {
+        self.tail.extend_from_slice(data);
+        let overflow = self.tail.len().saturating_sub(SCROLLBACK_TAIL_CAP);
+        if overflow > 0 {
+            self.tail.drain(0..overflow);
+            // See push_scrollback's old doc comment: truncating from the
+            // front can cut off mid-redraw, so reset to a clean baseline
+            // before whatever survived.
+            self.tail.splice(0..0, b"\x1bc".iter().copied());
+        }
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        let mut out = self.head.clone();
+        out.extend_from_slice(&self.tail);
+        out
+    }
+}
 
 impl PtyManager {
     pub fn new() -> Self {
@@ -154,7 +203,7 @@ impl PtyManager {
             .filter(|id| !id.is_empty())
             .unwrap_or_else(|| format!("pty-{}", self.counter.fetch_add(1, Ordering::SeqCst) + 1));
         let (tx, _rx) = broadcast::channel(OUTPUT_BUFFER);
-        let scrollback = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let scrollback = Arc::new(Mutex::new(Scrollback::default()));
         let cwd = start_dir.unwrap_or_default();
         let title = opts.title.unwrap_or_else(|| id.clone());
 
@@ -214,7 +263,7 @@ impl PtyManager {
             .lock()
             .unwrap()
             .get(id)
-            .map(|instance| String::from_utf8_lossy(&instance.scrollback.lock().unwrap()).into_owned())
+            .map(|instance| String::from_utf8_lossy(&instance.scrollback.lock().unwrap().as_bytes()).into_owned())
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
@@ -383,22 +432,8 @@ fn terminate_process_tree(root: u32) {
     }
 }
 
-fn push_scrollback(buffer: &Arc<Mutex<Vec<u8>>>, data: &[u8]) {
-    let mut guard = buffer.lock().unwrap();
-    guard.extend_from_slice(data);
-    let overflow = guard.len().saturating_sub(SCROLLBACK_CAP);
-    if overflow > 0 {
-        guard.drain(0..overflow);
-        // A chatty TUI can push the cut past the point where it entered the
-        // alternate screen / last did a full redraw — replaying the
-        // remainder into a fresh terminal (a client reattaching) then
-        // applies cursor-positioned writes onto undefined state, which
-        // often renders as a blank screen. \x1bc (RIS, full reset)
-        // establishes a clean baseline first so whatever survived still
-        // renders as a real screen. Only affects future scrollback reads —
-        // live viewers get the raw `data` above untouched, not this buffer.
-        guard.splice(0..0, b"\x1bc".iter().copied());
-    }
+fn push_scrollback(buffer: &Arc<Mutex<Scrollback>>, data: &[u8]) {
+    buffer.lock().unwrap().push(data);
 }
 
 /// Drains as much valid UTF-8 as possible from `pending`, keeping any incomplete
@@ -432,28 +467,60 @@ mod tests {
     }
 
     #[test]
-    fn push_scrollback_resets_terminal_state_on_truncation() {
+    fn push_scrollback_resets_terminal_state_on_tail_truncation() {
         // A chatty TUI (e.g. an agent redrawing its screen continuously) can
-        // fill SCROLLBACK_CAP well before the session ends. Truncating from
-        // the front can cut off mid-redraw — including the sequence that
-        // entered the alternate screen — leaving a reattaching client to
+        // fill the tail's cap well before the session ends. Truncating from
+        // the front can cut off mid-redraw — leaving a reattaching client to
         // replay cursor-positioned writes onto undefined state, which often
         // renders as a blank/black screen instead of the app's last frame.
-        let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
-        push_scrollback(&buffer, &vec![b'a'; SCROLLBACK_CAP - 10]);
+        let buffer = Arc::new(Mutex::new(Scrollback::default()));
+        // Fill the head first so further writes land in the (truncating) tail.
+        push_scrollback(&buffer, &vec![b'h'; SCROLLBACK_HEAD_CAP]);
+        push_scrollback(&buffer, &vec![b'a'; SCROLLBACK_TAIL_CAP - 10]);
         assert!(
-            !buffer.lock().unwrap().starts_with(b"\x1bc"),
-            "no truncation happened yet, nothing to reset"
+            !buffer.lock().unwrap().tail.starts_with(b"\x1bc"),
+            "no tail truncation happened yet, nothing to reset"
         );
 
         push_scrollback(&buffer, &vec![b'b'; 100]);
         let after = buffer.lock().unwrap();
         assert!(
-            after.starts_with(b"\x1bc"),
-            "truncated buffer should start with a full reset (RIS) so a \
+            after.tail.starts_with(b"\x1bc"),
+            "truncated tail should start with a full reset (RIS) so a \
              fresh terminal replaying it starts from a clean, defined state"
         );
-        assert!(after.len() <= SCROLLBACK_CAP + b"\x1bc".len());
+        assert!(after.tail.len() <= SCROLLBACK_TAIL_CAP + b"\x1bc".len());
+    }
+
+    #[test]
+    fn push_scrollback_keeps_the_initial_paint_no_matter_how_chatty_the_rest_is() {
+        // Reproduces the real report: an agent TUI paints its whole screen
+        // once on startup (entering the alternate screen, drawing chat
+        // history, etc.), then spends the rest of a long session emitting
+        // small, frequent updates to just one status/prompt line — easily
+        // enough raw bytes to blow past a single ring-buffer cap. A plain
+        // ring buffer (the old behavior) drops that one-time initial paint
+        // entirely, so a reattaching client only ever sees the prompt line
+        // update replayed onto a blank screen — everything else stays black,
+        // because nothing else was ever repainted after the app's own
+        // (correctly) incremental redraw only touched its one changed line.
+        let buffer = Arc::new(Mutex::new(Scrollback::default()));
+        let initial_paint = b"\x1b[?1049h\x1b[2Jchat history the user needs to still see";
+        push_scrollback(&buffer, initial_paint);
+
+        // Simulate far more chatty updates than either cap alone.
+        for _ in 0..5000 {
+            push_scrollback(&buffer, b"\x1b[19;1Hstatus line update\r\n");
+        }
+
+        let replayed = buffer.lock().unwrap().as_bytes();
+        let text = String::from_utf8_lossy(&replayed);
+        assert!(
+            text.contains("chat history the user needs to still see"),
+            "the one-time initial paint must survive heavy later traffic, \
+             not just the most recent bytes: {:?}",
+            &text[..text.len().min(200)]
+        );
     }
 
     #[cfg(unix)]

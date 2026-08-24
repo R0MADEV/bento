@@ -286,6 +286,31 @@ ver más arriba) se quedaba pegado con "Listo." para siempre una vez
 cargada la app — nadie lo escondía. Ahora se auto-remueve 2.5s después de
 mostrar "Listo.".
 
+**Causa raíz real de "pantalla negra, solo se ve el prompt" al reconectar**
+(reportado en uso real con un agente opencode corriendo ~5 min; ninguno de
+los dos fixes anteriores — reset RIS, resize-nudge — alcanzaba solos):
+`push_scrollback` era un ring buffer PLANO de 256KB. Un agente chateando
+sin parar redibuja su línea de estado/prompt constantemente — fácil superar
+256KB bastante antes de que termine la sesión — así que el buffer termina
+conteniendo SOLO ese spam reciente, habiendo perdido por completo el
+pintado inicial (entrar a pantalla alternativa + dibujar todo el historial
+de chat, que una TUI normalmente manda UNA vez al arrancar). Reproducido a
+nivel de bytes crudos con un script Python que simula exactamente ese
+patrón (pintado inicial + miles de actualizaciones a una sola línea):
+confirmado que el historial se perdía por completo, dejando solo la última
+actualización de la línea de prompt — exactamente lo reportado ("se
+muestra solo el panel donde se hace el prompt y no todo"). El reset RIS
+evita que se vea basura a medias, pero no puede traer de vuelta contenido
+que ya no está en el buffer. Fix real: `Scrollback` pasa de un buffer
+único a **cabeza fija + cola tipo anillo** — `head` (64KB) guarda para
+siempre los primeros bytes de la sesión (donde casi cualquier TUI manda su
+pintado inicial) sin descartarlos nunca; `tail` (192KB) sigue siendo un
+ring buffer normal para todo lo posterior, con el mismo reset RIS de antes
+en sus propios truncamientos. Cubierto con dos tests unitarios nuevos
+(TDD): uno confirma que el reset sigue aplicando en la cola, otro reproduce
+el escenario completo (pintado inicial + 5000 actualizaciones chatosas) y
+verifica que el pintado inicial sobrevive igual.
+
 **Nota honesta sobre el timing de reconexión real**: el mecanismo en sí
 está confirmado funcionando (el log de Rust muestra la oferta nueva
 publicándose tras cada reload, sin intervención manual). Pero un reload
