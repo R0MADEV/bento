@@ -1,6 +1,7 @@
-//! Review tab: browse files/branches/PRs, run a full AI review, and ask
-//! follow-up questions — all via the same `review.*` IPC commands the
-//! one-shot `bento review` subcommands already use.
+//! Review tab: browse files/branches/PRs, view per-file diffs, comment on
+//! and submit PR reviews, run a full AI review, and ask follow-up questions
+//! — all via the same `review.*` IPC commands the one-shot `bento review`
+//! subcommands already use.
 
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
@@ -13,16 +14,27 @@ const AGENTS: [&str; 3] = ["claude", "codex", "opencode"];
 
 enum ReviewView {
     Files,
+    FileDetail,
     Branches,
     Prs,
     PrDetail,
     Output,
 }
 
+/// What a pending text-input buffer is for — set when entering input mode,
+/// consumed on Enter to decide which `review.*` command to fire.
+enum InputPurpose {
+    Ask,
+    PrComment,
+    /// Submitting a PR review: "APPROVE" | "REQUEST_CHANGES" | "COMMENT".
+    PrReview(&'static str),
+}
+
 pub(super) struct ReviewState {
     base: String,
     agent: String,
     files: Vec<Value>,
+    files_selected: usize,
     view: ReviewView,
     output: String,
     scroll: u16,
@@ -30,7 +42,7 @@ pub(super) struct ReviewState {
     last_progress: String,
     stream_rx: Option<tokio::sync::mpsc::UnboundedReceiver<ReviewEvent>>,
     stream_task: Option<tokio::task::JoinHandle<()>>,
-    asking: bool,
+    input_purpose: Option<InputPurpose>,
     input: String,
     /// `true` while the in-flight stream is a `review.run` (vs. a follow-up
     /// `review.ask`) — only a finished `run` gets checkpointed, since an
@@ -43,8 +55,12 @@ pub(super) struct ReviewState {
     branches_selected: usize,
     prs: Vec<Value>,
     prs_selected: usize,
+    current_pr: Option<u64>,
     pr_detail: String,
     pr_scroll: u16,
+    pr_status: String,
+    file_diff: String,
+    file_scroll: u16,
 }
 
 impl ReviewState {
@@ -53,6 +69,7 @@ impl ReviewState {
             base: "main".to_string(),
             agent: AGENTS[0].to_string(),
             files: Vec::new(),
+            files_selected: 0,
             view: ReviewView::Files,
             output: String::new(),
             scroll: 0,
@@ -60,7 +77,7 @@ impl ReviewState {
             last_progress: String::new(),
             stream_rx: None,
             stream_task: None,
-            asking: false,
+            input_purpose: None,
             input: String::new(),
             is_run_stream: false,
             session_id: None,
@@ -69,8 +86,12 @@ impl ReviewState {
             branches_selected: 0,
             prs: Vec::new(),
             prs_selected: 0,
+            current_pr: None,
             pr_detail: String::new(),
             pr_scroll: 0,
+            pr_status: String::new(),
+            file_diff: String::new(),
+            file_scroll: 0,
         }
     }
 
@@ -83,6 +104,7 @@ impl ReviewState {
             "id": "1", "cmd": "review.files", "cwd": cwd, "base": self.base,
         })).await;
         self.files = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+        self.files_selected = 0;
         self.view = ReviewView::Files;
     }
 
@@ -93,12 +115,13 @@ impl ReviewState {
         if key.kind != KeyEventKind::Press {
             return false;
         }
-        if self.asking {
-            self.handle_ask_input(key.code, cwd);
+        if self.input_purpose.is_some() {
+            self.handle_text_input(key.code, cwd).await;
             return false;
         }
         match self.view {
             ReviewView::Files => self.handle_files_key(key.code, cwd).await,
+            ReviewView::FileDetail => self.handle_file_detail_key(key.code),
             ReviewView::Branches => self.handle_branches_key(key.code, cwd).await,
             ReviewView::Prs => self.handle_prs_key(key.code, cwd).await,
             ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
@@ -108,7 +131,23 @@ impl ReviewState {
 
     async fn handle_files_key(&mut self, code: KeyCode, cwd: &str) -> bool {
         match code {
+            KeyCode::Up => { self.files_selected = self.files_selected.saturating_sub(1); false }
+            KeyCode::Down => {
+                if self.files_selected + 1 < self.files.len() { self.files_selected += 1; }
+                false
+            }
             KeyCode::Enter => {
+                if let Some(path) = self.files.get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str) {
+                    let data = crate::request_data(json!({
+                        "id": "1", "cmd": "review.file", "cwd": cwd, "base": self.base, "path": path,
+                    })).await;
+                    self.file_diff = data.ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
+                    self.file_scroll = 0;
+                    self.view = ReviewView::FileDetail;
+                }
+                false
+            }
+            KeyCode::Char('r') => {
                 self.start_run(cwd);
                 false
             }
@@ -136,6 +175,21 @@ impl ReviewState {
                 false
             }
             KeyCode::Tab | KeyCode::Char('q') | KeyCode::Esc => true,
+            _ => false,
+        }
+    }
+
+    fn handle_file_detail_key(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Up => { self.file_scroll = self.file_scroll.saturating_sub(1); false }
+            KeyCode::Down => { self.file_scroll = self.file_scroll.saturating_add(1); false }
+            KeyCode::PageUp => { self.file_scroll = self.file_scroll.saturating_sub(10); false }
+            KeyCode::PageDown => { self.file_scroll = self.file_scroll.saturating_add(10); false }
+            KeyCode::Tab => true,
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.view = ReviewView::Files;
+                false
+            }
             _ => false,
         }
     }
@@ -200,6 +254,8 @@ impl ReviewState {
             .unwrap_or_default();
         self.pr_detail = format!("{diff}\n\n---\n\n## Comentarios\n\n{comments}");
         self.pr_scroll = 0;
+        self.current_pr = Some(pr);
+        self.pr_status.clear();
         self.view = ReviewView::PrDetail;
     }
 
@@ -209,6 +265,26 @@ impl ReviewState {
             KeyCode::Down => { self.pr_scroll = self.pr_scroll.saturating_add(1); false }
             KeyCode::PageUp => { self.pr_scroll = self.pr_scroll.saturating_sub(10); false }
             KeyCode::PageDown => { self.pr_scroll = self.pr_scroll.saturating_add(10); false }
+            KeyCode::Char('a') => {
+                self.input_purpose = Some(InputPurpose::PrComment);
+                self.input.clear();
+                false
+            }
+            KeyCode::Char('y') => {
+                self.input_purpose = Some(InputPurpose::PrReview("APPROVE"));
+                self.input.clear();
+                false
+            }
+            KeyCode::Char('n') => {
+                self.input_purpose = Some(InputPurpose::PrReview("REQUEST_CHANGES"));
+                self.input.clear();
+                false
+            }
+            KeyCode::Char('m') => {
+                self.input_purpose = Some(InputPurpose::PrReview("COMMENT"));
+                self.input.clear();
+                false
+            }
             KeyCode::Tab => true,
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.view = ReviewView::Prs;
@@ -225,7 +301,7 @@ impl ReviewState {
             KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(10); false }
             KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(10); false }
             KeyCode::Char('a') if !self.running => {
-                self.asking = true;
+                self.input_purpose = Some(InputPurpose::Ask);
                 self.input.clear();
                 false
             }
@@ -245,22 +321,57 @@ impl ReviewState {
         }
     }
 
-    fn handle_ask_input(&mut self, code: KeyCode, cwd: &str) {
+    async fn handle_text_input(&mut self, code: KeyCode, cwd: &str) {
         match code {
             KeyCode::Char(c) => self.input.push(c),
             KeyCode::Backspace => { self.input.pop(); }
             KeyCode::Esc => {
-                self.asking = false;
+                self.input_purpose = None;
                 self.input.clear();
             }
             KeyCode::Enter => {
-                if !self.input.trim().is_empty() {
-                    self.start_ask(cwd);
+                match self.input_purpose.take() {
+                    Some(InputPurpose::Ask) => {
+                        if !self.input.trim().is_empty() { self.start_ask(cwd); }
+                    }
+                    Some(InputPurpose::PrComment) => self.submit_pr_comment(cwd).await,
+                    Some(InputPurpose::PrReview(event)) => self.submit_pr_review(cwd, event).await,
+                    None => {}
                 }
-                self.asking = false;
             }
             _ => {}
         }
+    }
+
+    async fn submit_pr_comment(&mut self, cwd: &str) {
+        let Some(pr) = self.current_pr else { return };
+        let body = std::mem::take(&mut self.input);
+        if body.trim().is_empty() {
+            return;
+        }
+        let result = crate::request_data(json!({
+            "id": "1", "cmd": "review.pr_comment_add", "cwd": cwd, "pr": pr, "data": body,
+        })).await;
+        self.pr_status = match result {
+            Ok(_) => "comentario agregado".to_string(),
+            Err(e) => format!("error: {e}"),
+        };
+        self.load_pr_detail(cwd, pr).await;
+    }
+
+    async fn submit_pr_review(&mut self, cwd: &str, event: &str) {
+        let Some(pr) = self.current_pr else { return };
+        let body = std::mem::take(&mut self.input);
+        let mut req = json!({ "id": "1", "cmd": "review.pr_submit", "cwd": cwd, "pr": pr, "event": event });
+        if !body.trim().is_empty() {
+            req["data"] = json!(body);
+        }
+        let result = crate::request_data(req).await;
+        self.pr_status = match result {
+            Ok(_) => format!("review enviada ({event})"),
+            Err(e) => format!("error: {e}"),
+        };
+        self.load_pr_detail(cwd, pr).await;
     }
 
     fn start_run(&mut self, cwd: &str) {
@@ -368,6 +479,7 @@ fn format_pr_comments(data: &Value) -> String {
 pub(super) fn draw(frame: &mut ratatui::Frame, review: &ReviewState) {
     match review.view {
         ReviewView::Files => draw_files(frame, review),
+        ReviewView::FileDetail => draw_file_detail(frame, review),
         ReviewView::Branches => draw_branches(frame, review),
         ReviewView::Prs => draw_prs(frame, review),
         ReviewView::PrDetail => draw_pr_detail(frame, review),
@@ -391,12 +503,26 @@ fn draw_files(frame: &mut ratatui::Frame, review: &ReviewState) {
             })
             .collect()
     };
+    let mut state = ratatui::widgets::ListState::default();
+    if !review.files.is_empty() {
+        state.select(Some(review.files_selected));
+    }
     let title = format!(
-        "Review ({}) [{}] — Enter: correr · b: ramas · p: PRs · g: agente · Tab: volver",
+        "Review ({}) [{}] — Enter: ver diff · r: correr · b: ramas · p: PRs · g: agente · Tab: volver",
         review.base, review.agent
     );
-    let list = List::new(items).block(Block::default().title(title).borders(Borders::ALL));
-    frame.render_widget(list, frame.area());
+    let list = List::new(items)
+        .block(Block::default().title(title).borders(Borders::ALL))
+        .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
+    frame.render_stateful_widget(list, frame.area(), &mut state);
+}
+
+fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
+    let paragraph = Paragraph::new(review.file_diff.as_str())
+        .wrap(Wrap { trim: false })
+        .scroll((review.file_scroll, 0))
+        .block(Block::default().title("↑/↓ scroll · Esc: volver a la lista de archivos").borders(Borders::ALL));
+    frame.render_widget(paragraph, frame.area());
 }
 
 fn draw_branches(frame: &mut ratatui::Frame, review: &ReviewState) {
@@ -437,11 +563,41 @@ fn draw_prs(frame: &mut ratatui::Frame, review: &ReviewState) {
 }
 
 fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let paragraph = Paragraph::new(review.pr_detail.as_str())
-        .wrap(Wrap { trim: false })
-        .scroll((review.pr_scroll, 0))
-        .block(Block::default().title("↑/↓ scroll · Esc: volver a la lista de PRs").borders(Borders::ALL));
-    frame.render_widget(paragraph, frame.area());
+    let area = frame.area();
+    let title = if review.pr_status.is_empty() {
+        "↑/↓ scroll · a: comentar · y: aprobar · n: pedir cambios · m: comentar review · Esc: volver".to_string()
+    } else {
+        review.pr_status.clone()
+    };
+    let block = Block::default().title(format!("PR — {title}")).borders(Borders::ALL);
+
+    if let Some(label) = pr_input_label(review) {
+        let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
+        let paragraph = Paragraph::new(review.pr_detail.as_str())
+            .wrap(Wrap { trim: false })
+            .scroll((review.pr_scroll, 0))
+            .block(block);
+        frame.render_widget(paragraph, chunks[0]);
+        let input = Paragraph::new(format!("{}▏", review.input))
+            .block(Block::default().title(label).borders(Borders::ALL));
+        frame.render_widget(input, chunks[1]);
+    } else {
+        let paragraph = Paragraph::new(review.pr_detail.as_str())
+            .wrap(Wrap { trim: false })
+            .scroll((review.pr_scroll, 0))
+            .block(block);
+        frame.render_widget(paragraph, area);
+    }
+}
+
+fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
+    match review.input_purpose {
+        Some(InputPurpose::PrComment) => Some("Comentario (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::PrReview("APPROVE")) => Some("Aprobar — texto opcional (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::Ask) | None => None,
+    }
 }
 
 fn draw_output(frame: &mut ratatui::Frame, review: &ReviewState) {
@@ -454,7 +610,7 @@ fn draw_output(frame: &mut ratatui::Frame, review: &ReviewState) {
     };
     let block = Block::default().title(format!("Review — {title}")).borders(Borders::ALL);
 
-    if review.asking {
+    if matches!(review.input_purpose, Some(InputPurpose::Ask)) {
         let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
         let paragraph = Paragraph::new(review.output.as_str())
             .wrap(Wrap { trim: false })

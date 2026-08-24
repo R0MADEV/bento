@@ -59,6 +59,8 @@ struct Request {
     content: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -254,6 +256,17 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 }
             }
             None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "review.file" => match (&req.cwd, &req.path) {
+            (Some(cwd), Some(path)) => {
+                let base = req.base.as_deref().unwrap_or("main");
+                match crate::remote::review::file_diff(cwd, path, base) {
+                    Ok(diff) => send(ok(&req.id, json!(diff))),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd and path required".into())),
         },
 
         "review.prs" => match &req.cwd {

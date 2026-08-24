@@ -299,7 +299,7 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
             let refs: Vec<(&str, &str)> = truncated.iter().map(|(l, r)| (l.as_str(), r.as_str())).collect();
             let synthesis = build_synthesis_prompt(
                 &refs,
-                "Escribe el informe final directamente, sin preámbulo. Empieza con:\n\n## Corrección y lógica",
+                "Escribe el informe final directamente, sin preámbulo. Empieza con:\n\n**Veredicto:**",
             );
             let last_agent = agents.last().unwrap();
             match run_agent_collecting(last_agent, &cwd, &synthesis, &tx).await {
@@ -337,7 +337,7 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
             let refs: Vec<(&str, &str)> = truncated.iter().map(|(l, r)| (l.as_str(), r.as_str())).collect();
             let synthesis = build_synthesis_prompt(
                 &refs,
-                "Escribe el informe final directamente, sin preámbulo. Empieza con:\n\n## Corrección y lógica",
+                "Escribe el informe final directamente, sin preámbulo. Empieza con:\n\n**Veredicto:**",
             );
             match run_agent_collecting(agent, &cwd, &synthesis, &tx).await {
                 None => { send("[ERROR] síntesis falló".into()).await; return; }
@@ -364,7 +364,7 @@ pub(super) async fn run_agent_collecting(
     match agent {
         "opencode" => run_opencode_collecting(cwd, prompt, tx).await,
         "codex" => run_codex_collecting(cwd, prompt, tx).await,
-        _ => run_claude_collecting(prompt, tx).await,
+        _ => run_claude_collecting(cwd, prompt, tx).await,
     }
 }
 
@@ -501,10 +501,12 @@ async fn run_codex_collecting(
 }
 
 async fn run_claude_collecting(
+    cwd: &str,
     prompt: &str,
     tx: &tokio::sync::mpsc::Sender<String>,
 ) -> Option<(String, Option<String>)> {
     let mut child = tokio::process::Command::new("claude")
+        .current_dir(cwd)
         .args(["-p", prompt, "--output-format", "stream-json", "--verbose"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -659,6 +661,25 @@ pub async fn review_files_handler(
 
 // ── /api/review/file ──────────────────────────────────────────────────────────
 
+/// The diff for a single file vs `base` (tracked change, or a fully-added
+/// diff for an untracked file) — shared by the HTTP `/api/review/file`
+/// handler and the daemon's IPC socket (`review.file`, for the TUI's
+/// per-file diff view).
+pub(crate) fn file_diff(cwd: &str, path: &str, base: &str) -> Result<String, String> {
+    if !is_safe_relative_path(path) {
+        return Err("ruta insegura".into());
+    }
+    if !is_safe_branch(base) {
+        return Err("rama insegura".into());
+    }
+    let diff = git_cmd(cwd, &["diff", base, "--", path]).unwrap_or_default();
+    if !diff.is_empty() {
+        return Ok(diff);
+    }
+    // Untracked new file — show as fully-added diff
+    Ok(diff_no_index(cwd, path))
+}
+
 pub async fn review_file_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<ReviewFileQuery>,
@@ -674,21 +695,11 @@ pub async fn review_file_handler(
         Some(p) => p,
         None => return (StatusCode::BAD_REQUEST, "missing path").into_response(),
     };
-    if !is_safe_relative_path(&path) {
-        return (StatusCode::BAD_REQUEST, "unsafe path").into_response();
-    }
     let base = q.base.unwrap_or_else(|| "main".into());
-    if !is_safe_branch(&base) {
-        return (StatusCode::BAD_REQUEST, "unsafe base").into_response();
+    match file_diff(&cwd, &path, &base) {
+        Ok(diff) => (StatusCode::OK, [("content-type", "text/plain")], diff).into_response(),
+        Err(_) => (StatusCode::BAD_REQUEST, "unsafe path or base").into_response(),
     }
-
-    let diff = git_cmd(&cwd, &["diff", &base, "--", &path]).unwrap_or_default();
-    if !diff.is_empty() {
-        return (StatusCode::OK, [("content-type", "text/plain")], diff).into_response();
-    }
-    // Untracked new file — show as fully-added diff
-    let new_diff = diff_no_index(&cwd, &path);
-    (StatusCode::OK, [("content-type", "text/plain")], new_diff).into_response()
 }
 
 // ── /api/review/prs ───────────────────────────────────────────────────────────

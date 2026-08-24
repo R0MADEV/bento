@@ -66,6 +66,16 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                 let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
                 request(json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base })).await
             }
+            Some("file") => match args.get(2) {
+                Some(path) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                    let data = request_data(json!({ "id": "1", "cmd": "review.file", "cwd": cwd, "base": base, "path": path })).await?;
+                    print_text(data.as_str().unwrap_or_default());
+                    Ok(())
+                }
+                None => { eprintln!("usage: bento review file <path> [--cwd <dir>] [--base <ref>]"); Ok(()) }
+            },
             Some("ask") => match args.get(2) {
                 Some(question) => {
                     let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
@@ -476,6 +486,7 @@ fn print_help() {
     eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");
     eprintln!("  bento review prs [--cwd <dir>]        list open PRs (needs gh)");
     eprintln!("  bento review files [--cwd <dir>] [--base <ref>]   files changed vs base (default: main)");
+    eprintln!("  bento review file <path> [--cwd <dir>] [--base <ref>]   diff for a single file vs base");
     eprintln!("  bento review pr diff <number> [--cwd <dir>]       PR diff (needs gh)");
     eprintln!("  bento review pr comments <number> [--cwd <dir>]   PR comments/reviews (needs gh)");
     eprintln!("  bento review pr comment <number> <text>           add a PR comment (needs gh)");

@@ -120,16 +120,18 @@ async fn resume_agent(
 ) {
     match agent {
         "opencode" => resume_opencode(cwd, session_id, question, tx).await,
-        _ => resume_claude(session_id, question, tx).await,
+        _ => resume_claude(cwd, session_id, question, tx).await,
     }
 }
 
 async fn resume_claude(
+    cwd: &str,
     session_id: &str,
     question: &str,
     tx: &tokio::sync::mpsc::Sender<String>,
 ) {
     let Some(mut child) = tokio::process::Command::new("claude")
+        .current_dir(cwd)
         .args(["--resume", session_id, "-p", question, "--output-format", "stream-json", "--verbose"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
