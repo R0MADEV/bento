@@ -4,6 +4,7 @@
 //! (`src/core/ai/techReview.ts`), and the two had already drifted.
 
 pub mod diff;
+pub mod pr;
 pub mod prompt;
 pub mod vcs;
 

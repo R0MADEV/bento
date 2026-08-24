@@ -5,6 +5,9 @@ import { reviewT } from './i18n'
 
 export interface ReviewCommentActions {
   repoPath: () => string
+  // Editing, deleting and replying are scoped to this PR: a comment id alone
+  // would let an id from another PR in the same repo be edited just as well.
+  currentPrNumber: () => number | null
   isResolved: (id: number) => boolean
   setResolved: (id: number, resolved: boolean) => void
   refresh: () => Promise<void>
@@ -100,7 +103,9 @@ export function buildReviewCommentBubble(c: GhComment, actions: ReviewCommentAct
       if (!newBody) return
       saveBtn.disabled = true
       try {
-        await invoke('gh_pr_update_comment', { path: actions.repoPath(), commentId: c.id, body: newBody })
+        const prNumber = actions.currentPrNumber()
+        if (prNumber === null) return
+        await invoke('gh_pr_update_comment', { path: actions.repoPath(), prNumber, commentId: c.id, body: newBody })
         await actions.refresh()
       } catch (err) { console.error(err) } finally { saveBtn.disabled = false }
     })
@@ -109,7 +114,9 @@ export function buildReviewCommentBubble(c: GhComment, actions: ReviewCommentAct
   deleteBtn.addEventListener('click', async () => {
     if (!confirm(reviewT('deleteConfirm'))) return
     try {
-      await invoke('gh_pr_delete_comment', { path: actions.repoPath(), commentId: c.id })
+      const prNumber = actions.currentPrNumber()
+      if (prNumber === null) return
+      await invoke('gh_pr_delete_comment', { path: actions.repoPath(), prNumber, commentId: c.id })
       await actions.refresh()
     } catch (err) { console.error(err) }
   })
@@ -128,7 +135,9 @@ export function buildReviewCommentBubble(c: GhComment, actions: ReviewCommentAct
       if (!body) return
       sendBtn.disabled = true
       try {
-        await invoke('gh_pr_reply_comment', { path: actions.repoPath(), commentId: c.id, body })
+        const prNumber = actions.currentPrNumber()
+        if (prNumber === null) return
+        await invoke('gh_pr_reply_comment', { path: actions.repoPath(), prNumber, commentId: c.id, body })
         await actions.refresh()
       } catch (err) { console.error(err) } finally { sendBtn.disabled = false }
     })

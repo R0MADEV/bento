@@ -663,23 +663,26 @@ fn next_agent(current: &str) -> String {
     AGENTS[(i + 1) % AGENTS.len()].to_string()
 }
 
-/// Renders `{"comments": [...], "reviews": [...]}` (from `gh pr view --json
-/// comments,reviews`, forwarded raw by `review.pr_comments`) as readable
-/// text — reviews first (they carry the approve/request-changes verdict),
-/// then line/general comments, each defaulting to `?`/empty for whatever
-/// fields a given entry happens to lack.
+/// The GitHub REST payload for a comment/review author. Both endpoints nest
+/// it under `user`, unlike `gh pr view --json`, which nests it under `author`.
+fn author_of(entry: &Value) -> &str {
+    entry.get("user").and_then(|u| u.get("login")).and_then(Value::as_str).unwrap_or("?")
+}
+
+/// Renders `{"comments": [...], "reviews": [...]}` (as returned by
+/// `review.pr_comments`) as readable text — reviews first (they carry the
+/// approve/request-changes verdict), then conversation comments, each
+/// defaulting to `?`/empty for whatever fields an entry happens to lack.
 fn format_pr_comments(data: &Value) -> String {
     let mut out = String::new();
     for r in data.get("reviews").and_then(Value::as_array).into_iter().flatten() {
-        let author = r.get("author").and_then(|a| a.get("login")).and_then(Value::as_str).unwrap_or("?");
         let state = r.get("state").and_then(Value::as_str).unwrap_or("");
         let body = r.get("body").and_then(Value::as_str).unwrap_or("");
-        out.push_str(&format!("**{author}** ({state})\n{body}\n\n"));
+        out.push_str(&format!("**{}** ({state})\n{body}\n\n", author_of(r)));
     }
     for c in data.get("comments").and_then(Value::as_array).into_iter().flatten() {
-        let author = c.get("author").and_then(|a| a.get("login")).and_then(Value::as_str).unwrap_or("?");
         let body = c.get("body").and_then(Value::as_str).unwrap_or("");
-        out.push_str(&format!("**{author}**\n{body}\n\n"));
+        out.push_str(&format!("**{}**\n{body}\n\n", author_of(c)));
     }
     if out.is_empty() {
         out.push_str("(sin comentarios)\n");
@@ -924,8 +927,8 @@ mod tests {
     #[test]
     fn format_pr_comments_lists_reviews_before_comments() {
         let data = json!({
-            "reviews": [{ "author": { "login": "ada" }, "state": "APPROVED", "body": "lgtm" }],
-            "comments": [{ "author": { "login": "bob" }, "body": "nit: rename this" }],
+            "reviews": [{ "user": { "login": "ada" }, "state": "APPROVED", "body": "lgtm" }],
+            "comments": [{ "user": { "login": "bob" }, "body": "nit: rename this" }],
         });
         let text = format_pr_comments(&data);
         let review_pos = text.find("ada").unwrap();

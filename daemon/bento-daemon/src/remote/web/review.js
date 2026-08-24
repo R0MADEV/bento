@@ -628,13 +628,14 @@ async function loadPRComments(){
 
     const comments=(data.comments||[]).map(c=>({...c,kind:'comment'}));
     const reviews=(data.reviews||[]).filter(r=>r.body||r.state).map(r=>({...r,kind:'review'}));
-    const all=[...comments,...reviews].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+    const at=c=>c.created_at||c.submitted_at||'';
+    const all=[...comments,...reviews].sort((a,b)=>new Date(at(a))-new Date(at(b)));
 
     if(!all.length){el.innerHTML='<div class="empty">Sin comentarios aún.</div>';return}
 
     el.innerHTML=all.map(c=>{
-      const author=c.author?.login||'unknown';
-      const date=c.createdAt?fmtDate(c.createdAt):'';
+      const author=c.user?.login||'unknown';
+      const date=at(c)?fmtDate(at(c)):'';
       const stateTag=c.kind==='review' && c.state && c.state!=='PENDING'
         ? `<span class="comment-state state-${c.state}">${esc(c.state.replace('_',' '))}</span>` : '';
       return `<div class="comment-item">

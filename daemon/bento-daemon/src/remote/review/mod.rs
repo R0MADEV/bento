@@ -25,7 +25,11 @@ use std::sync::Arc;
 
 use super::{Auth, RemoteState, authorized};
 use bento_review::diff::{batch_file_diffs, split_diff_into_file_diffs};
-use bento_review::vcs::{diff_no_index, gh_cmd, is_safe_branch, untracked_files};
+use bento_review::vcs::{diff_no_index, is_safe_branch, untracked_files};
+pub(crate) use bento_review::pr::{
+    add_comment, delete_comment, diff as pr_diff, discussion as pr_comments,
+    list_open as list_prs, submit_review, update_comment,
+};
 pub(crate) use bento_review::vcs::{file_diff, list_branches, list_files};
 use bento_review::{build_review_prompt, build_synthesis_prompt, ReviewPromptInput};
 
@@ -564,13 +568,6 @@ pub async fn review_file_handler(
 
 // ── /api/review/prs ───────────────────────────────────────────────────────────
 
-/// Shared by the HTTP `/api/review/prs` handler and the daemon's IPC
-/// socket (`review.prs`) — see `list_branches` above for why no
-/// axum/`RemoteState` dependency is needed here.
-pub(crate) fn list_prs(cwd: &str) -> Result<String, String> {
-    gh_cmd(cwd, &["pr", "list", "--state", "open", "--json", "number,title,url,headRefName,author"])
-}
-
 pub async fn review_prs_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<PrQuery>,
@@ -589,11 +586,6 @@ pub async fn review_prs_handler(
 }
 
 // ── /api/review/pr/diff ───────────────────────────────────────────────────────
-
-/// Shared by `/api/review/pr/diff` and the IPC socket's `review.pr_diff`.
-pub(crate) fn pr_diff(cwd: &str, pr: u64) -> Result<String, String> {
-    gh_cmd(cwd, &["pr", "diff", &pr.to_string()])
-}
 
 pub async fn review_pr_diff_handler(
     State(state): State<Arc<RemoteState>>,
@@ -618,11 +610,6 @@ pub async fn review_pr_diff_handler(
 
 // ── /api/review/pr/comments ───────────────────────────────────────────────────
 
-/// Shared by `/api/review/pr/comments` and the IPC socket's `review.pr_comments`.
-pub(crate) fn pr_comments(cwd: &str, pr: u64) -> Result<String, String> {
-    gh_cmd(cwd, &["pr", "view", &pr.to_string(), "--json", "comments,reviews"])
-}
-
 pub async fn review_pr_comments_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<PrQuery>,
@@ -639,18 +626,12 @@ pub async fn review_pr_comments_handler(
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
     match pr_comments(&cwd, pr) {
-        Ok(json_str) => (StatusCode::OK, [("content-type", "application/json")], json_str).into_response(),
+        Ok(value) => Json(value).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
 
 // ── /api/review/pr/comment (POST) ────────────────────────────────────────────
-
-/// Shared by `/api/review/pr/comment` (POST) and the IPC socket's
-/// `review.pr_comment_add`.
-pub(crate) fn add_comment(cwd: &str, pr: u64, body: &str) -> Result<(), String> {
-    gh_cmd(cwd, &["pr", "comment", &pr.to_string(), "--body", body]).map(|_| ())
-}
 
 pub async fn review_pr_add_comment_handler(
     State(state): State<Arc<RemoteState>>,
@@ -669,43 +650,12 @@ pub async fn review_pr_add_comment_handler(
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
     match add_comment(&cwd, pr, &body.body) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
 
-// ── PR comment ownership check ────────────────────────────────────────────────
-
-/// Compares a comment's `issue_url` (as returned by the GitHub API) against the
-/// PR number the client claims to be editing, so a valid token for one PR can't
-/// be used to edit/delete a comment on an unrelated issue/PR in the same repo.
-fn issue_url_matches_pr(issue_url: &str, pr: u64) -> bool {
-    issue_url.trim().ends_with(&format!("/issues/{pr}"))
-}
-
-fn comment_belongs_to_pr(cwd: &str, id: u64, pr: u64) -> Result<bool, String> {
-    let endpoint = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
-    let issue_url = gh_cmd(cwd, &["api", &endpoint, "--jq", ".issue_url"])?;
-    Ok(issue_url_matches_pr(&issue_url, pr))
-}
-
-fn ensure_comment_belongs_to_pr(cwd: &str, id: u64, pr: u64) -> Result<(), String> {
-    if comment_belongs_to_pr(cwd, id, pr)? {
-        Ok(())
-    } else {
-        Err("comment does not belong to pr".into())
-    }
-}
-
 // ── /api/review/pr/comment/:id (PUT) ─────────────────────────────────────────
-
-/// Shared by `/api/review/pr/comment/:id` (PUT) and the IPC socket's
-/// `review.pr_comment_update`.
-pub(crate) fn update_comment(cwd: &str, id: u64, pr: u64, body: &str) -> Result<(), String> {
-    ensure_comment_belongs_to_pr(cwd, id, pr)?;
-    let endpoint = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
-    gh_cmd(cwd, &["api", &endpoint, "-X", "PATCH", "-f", &format!("body={body}")]).map(|_| ())
-}
 
 pub async fn review_pr_update_comment_handler(
     State(state): State<Arc<RemoteState>>,
@@ -724,7 +674,7 @@ pub async fn review_pr_update_comment_handler(
         Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match update_comment(&cwd, id, pr, &body.body) {
+    match update_comment(&cwd, pr, id, &body.body) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) if e == "comment does not belong to pr" => (StatusCode::FORBIDDEN, e).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -732,14 +682,6 @@ pub async fn review_pr_update_comment_handler(
 }
 
 // ── /api/review/pr/comment/:id (DELETE) ──────────────────────────────────────
-
-/// Shared by `/api/review/pr/comment/:id` (DELETE) and the IPC socket's
-/// `review.pr_comment_delete`.
-pub(crate) fn delete_comment(cwd: &str, id: u64, pr: u64) -> Result<(), String> {
-    ensure_comment_belongs_to_pr(cwd, id, pr)?;
-    let endpoint = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
-    gh_cmd(cwd, &["api", &endpoint, "-X", "DELETE"]).map(|_| ())
-}
 
 pub async fn review_pr_delete_comment_handler(
     State(state): State<Arc<RemoteState>>,
@@ -757,7 +699,7 @@ pub async fn review_pr_delete_comment_handler(
         Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match delete_comment(&cwd, id, pr) {
+    match delete_comment(&cwd, pr, id) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) if e == "comment does not belong to pr" => (StatusCode::FORBIDDEN, e).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -782,29 +724,10 @@ pub async fn review_pr_submit_handler(
         Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match submit_review(&cwd, pr, &body.event, body.body.as_deref()) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    match submit_review(&cwd, pr, &body.event, body.body.as_deref().unwrap_or_default()) {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
-}
-
-/// Shared by `/api/review/pr/submit` and the IPC socket's
-/// `review.pr_submit`. `event` is GitHub's review event name
-/// (case-insensitive): `APPROVE`, `REQUEST_CHANGES`, anything else falls
-/// back to a plain comment-only review, matching `gh pr review`'s own
-/// three-way choice.
-pub(crate) fn submit_review(cwd: &str, pr: u64, event: &str, body: Option<&str>) -> Result<(), String> {
-    let event_flag = match event.to_uppercase().as_str() {
-        "APPROVE" => "--approve",
-        "REQUEST_CHANGES" => "--request-changes",
-        _ => "--comment",
-    };
-    let pr_str = pr.to_string();
-    let mut args = vec!["pr", "review", pr_str.as_str(), event_flag];
-    if let Some(b) = body {
-        args.extend_from_slice(&["--body", b]);
-    }
-    gh_cmd(cwd, &args).map(|_| ())
 }
 
 // ── /api/review/branches ──────────────────────────────────────────────────────
@@ -821,33 +744,4 @@ pub async fn review_branches_handler(
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
     Json(list_branches(&cwd)).into_response()
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── issue_url_matches_pr ──────────────────────────────────────────────────
-
-    #[test]
-    fn issue_url_matches_pr_accepts_matching_pr() {
-        assert!(issue_url_matches_pr(
-            "https://api.github.com/repos/acme/widget/issues/42",
-            42
-        ));
-    }
-
-    #[test]
-    fn issue_url_matches_pr_rejects_other_pr() {
-        assert!(!issue_url_matches_pr(
-            "https://api.github.com/repos/acme/widget/issues/42",
-            41
-        ));
-        assert!(!issue_url_matches_pr(
-            "https://api.github.com/repos/acme/widget/issues/423",
-            42
-        ));
-    }
 }

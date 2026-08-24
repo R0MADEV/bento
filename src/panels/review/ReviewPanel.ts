@@ -410,6 +410,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   // ── Comment bubble (edit/delete/reply) ────────────────────────────────────
   const commentActions = {
     repoPath: () => repoPath,
+    currentPrNumber: () => currentPrNumber,
     isResolved: (id: number) => resolvedComments.has(id),
     setResolved: setCommentResolved,
     refresh: async () => { await loadExistingComments(); injectExistingComments() },

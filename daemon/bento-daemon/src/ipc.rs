@@ -292,10 +292,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
 
         "review.pr_comments" => match (&req.cwd, req.pr) {
             (Some(cwd), Some(pr)) => match crate::remote::review::pr_comments(cwd, pr) {
-                Ok(json_str) => {
-                    let data = serde_json::from_str::<Value>(&json_str).unwrap_or(Value::Null);
-                    send(ok(&req.id, data));
-                }
+                Ok(data) => send(ok(&req.id, data)),
                 Err(e) => send(fail(&req.id, e)),
             },
             _ => send(fail(&req.id, "cwd and pr required".into())),
@@ -303,7 +300,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
 
         "review.pr_comment_add" => match (&req.cwd, req.pr, &req.data) {
             (Some(cwd), Some(pr), Some(body)) => match crate::remote::review::add_comment(cwd, pr, body) {
-                Ok(()) => send(ok(&req.id, Value::Null)),
+                Ok(_) => send(ok(&req.id, Value::Null)),
                 Err(e) => send(fail(&req.id, e)),
             },
             _ => send(fail(&req.id, "cwd, pr and data required".into())),
@@ -311,7 +308,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
 
         "review.pr_comment_update" => match (&req.cwd, req.pr, req.comment_id, &req.data) {
             (Some(cwd), Some(pr), Some(id), Some(body)) => {
-                match crate::remote::review::update_comment(cwd, id, pr, body) {
+                match crate::remote::review::update_comment(cwd, pr, id, body) {
                     Ok(()) => send(ok(&req.id, Value::Null)),
                     Err(e) => send(fail(&req.id, e)),
                 }
@@ -320,7 +317,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
         },
 
         "review.pr_comment_delete" => match (&req.cwd, req.pr, req.comment_id) {
-            (Some(cwd), Some(pr), Some(id)) => match crate::remote::review::delete_comment(cwd, id, pr) {
+            (Some(cwd), Some(pr), Some(id)) => match crate::remote::review::delete_comment(cwd, pr, id) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
                 Err(e) => send(fail(&req.id, e)),
             },
@@ -399,8 +396,8 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
 
         "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {
             (Some(cwd), Some(pr), Some(event)) => {
-                match crate::remote::review::submit_review(cwd, pr, event, req.data.as_deref()) {
-                    Ok(()) => send(ok(&req.id, Value::Null)),
+                match crate::remote::review::submit_review(cwd, pr, event, req.data.as_deref().unwrap_or_default()) {
+                    Ok(_) => send(ok(&req.id, Value::Null)),
                     Err(e) => send(fail(&req.id, e)),
                 }
             }
