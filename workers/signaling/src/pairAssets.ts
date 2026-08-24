@@ -138,7 +138,12 @@ export const PAIR_JS = `(function () {
       body: JSON.stringify(pc.localDescription),
     })
 
-    const channel = await withTimeout(dataChannelPromise, 20000, 'Apertura del canal P2P')
+    // Generous on purpose: by this point the offer/answer exchange has
+    // already gone through KV twice (once each direction), each leg
+    // possibly waiting out KV's own eventual-consistency window — a short
+    // timeout here would fire before a perfectly healthy connection had a
+    // real chance to finish.
+    const channel = await withTimeout(dataChannelPromise, 90000, 'Apertura del canal P2P')
     setStatus('Conectado. Cargando la app…')
     installTransport(channel)
     // shared.js reads its auth token from location.search on load — put it there
@@ -273,6 +278,14 @@ export const PAIR_JS = `(function () {
     const html = await (await fetch('/?token=' + encodeURIComponent(authToken))).text()
     const doc = new DOMParser().parseFromString(html, 'text/html')
     document.title = doc.title
+
+    // This pairing page's own <style> (the pairing-form layout: centered,
+    // padded body) would otherwise keep applying to the real app's markup
+    // once it's injected below — e.g. its body align-items:center shrinks
+    // and centers the real app's full-width tabbar instead of letting it
+    // stretch. Drop it now that the real app's own stylesheets are about to
+    // take over.
+    for (const style of document.head.querySelectorAll('style')) style.remove()
 
     for (const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
       const href = link.getAttribute('href')

@@ -244,12 +244,19 @@ camino (no hipotéticos):
   signaling_base}` al daemon por IPC) y arma la URL/QR
   `<worker>/pair?code=XXXXXX&token=YYYY` — el token sale del `remote_start`
   ya en curso, no hace falta pedirlo aparte.
-- [ ] **4.3** Indicador de estado: conectando / P2P activo / falló. Hoy solo
-  hay un texto fijo "Esperando a que el móvil escanee…" sin confirmación de
-  éxito — ver la nota de protocolo IPC más abajo.
-- [ ] **4.4** Llamar `remote.start` automáticamente si no está corriendo
-  antes de `webrtc.connect` (hoy el botón solo avisa con un mensaje si no
-  está activo, no lo arranca solo)
+- [x] **4.3** Indicador de estado real: conectando / P2P activo / falló /
+  desconectado. `on_connection_state_change` (ya existía el hook en
+  `webrtc_bridge.rs`, descartaba el estado) ahora manda un evento no
+  solicitado `{event:"webrtc.status", code, state}` por el mismo canal IPC
+  que usan `terminal.output`/`terminal.exit` — `ipc.rs` lo pasa a
+  `run_offerer` como un `mpsc::UnboundedSender` extra. `src-tauri/src/
+  pty.rs` lo reemite como evento Tauri `webrtc-status`; `PhonePanel.ts` lo
+  escucha con `listen()` (mismo patrón que `TerminalPanel.ts`) y actualiza
+  el texto de estado, filtrando por código para no mezclar un intento viejo
+  con el que se está mostrando.
+- [x] **4.4** `generatePairing()` ahora arranca `remote.start` sola si
+  hace falta (reusa `startServer()`) en vez de solo avisar con un mensaje.
+  La sección WebRTC dejó de estar gateada por `s.running` — siempre visible.
 
 **Ajuste de protocolo IPC descubierto implementando esto**: `PtyManager::
 request` (src-tauri) tiene un timeout fijo de 5s esperando la respuesta del
@@ -261,9 +268,29 @@ terminara del todo antes de responder, el comando Tauri fallaría con
 siguiera progresando bien en segundo plano. Fix: el handler de
 `webrtc.connect` ahora responde `{started: true}` apenas arranca el intento
 (no cuando termina) — `run_offerer` sigue corriendo en su propio
-`tokio::spawn` sin que nadie espere el resultado final por este canal. Por
-eso el estado "conectado" real (4.3) no está resuelto todavía: no hay hoy un
-canal para que el daemon avise "ya conectó" de vuelta a la UI de escritorio.
+`tokio::spawn` sin que nadie espere el resultado final por este canal.
+
+**Bug de layout encontrado probando desde un celular real** (nunca lo
+hubiera visto con Playwright + viewport de escritorio, que fue todo lo que
+se probó hasta este punto): la app real se veía angosta y centrada en vez
+de ocupar todo el ancho de la pantalla. Causa: `loadRealApp()` nunca
+quitaba el `<style>` propio de `PAIR_HTML` (el formulario de "Código de la
+app Bento") al inyectar la app real — ese bloque define `body{align-items:
+center; justify-content:center; padding:24px; ...}`, y como el body de la
+app real también es un flex-container en columna, ese `align-items:center`
+seguía aplicando y encogía/centraba sus hijos (el `#tabbar`, la lista de
+terminales) en vez de dejarlos estirarse a todo el ancho. Fix: `loadRealApp
+()` borra los `<style>` del `<head>` original antes de inyectar las hojas
+de estilo de la app real. Confirmado con Playwright usando `devices['iPhone
+13']` (nunca antes probado — todo el testing previo usaba viewport de
+escritorio) + captura de pantalla real: antes, `#tabbar` medía 249px de 390
+centrado; después, ancho completo.
+
+**Timeout de apertura del DataChannel ampliado** (20s → 90s) por la misma
+razón que la nota de KV más abajo: el intercambio de oferta/respuesta pasa
+dos veces por KV (una por dirección), cada una pudiendo tardar hasta el
+límite de propagación — 20s alcanzaba a cortar conexiones sanas antes de
+que terminaran de establecerse.
 
 **Bug de CSS encontrado y corregido verificando visualmente (captura de
 pantalla real de la app corriendo)**: este proyecto no tiene una clase
