@@ -4,6 +4,7 @@ import { PAIR_HTML, PAIR_JS } from './pairAssets'
 interface KVNamespace {
   get(key: string): Promise<string | null>
   put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>
+  delete(key: string): Promise<void>
 }
 
 interface Env {
@@ -31,6 +32,12 @@ async function handleOfferOrAnswer(request: Request, env: Env, key: string): Pro
     const value = await env.PAIRING.get(key)
     if (value === null) return new Response('not found', { status: 404 })
     return new Response(value)
+  }
+  // Lets the offerer clear a stale answer before renegotiating a fresh SDP
+  // offer under the same reusable pairing code (see run_offerer's retry loop).
+  if (request.method === 'DELETE') {
+    await env.PAIRING.delete(key)
+    return new Response(null, { status: 204 })
   }
   return new Response('method not allowed', { status: 405 })
 }

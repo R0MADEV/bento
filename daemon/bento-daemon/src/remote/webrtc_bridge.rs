@@ -35,24 +35,52 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use webrtc::data_channel::{DataChannel, DataChannelEvent};
+use rtc::ice::mdns::MulticastDnsMode;
 use webrtc::peer_connection::{
     register_default_interceptors, MediaEngine, PeerConnection, PeerConnectionBuilder,
     PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceGatheringState, RTCIceServer,
     RTCPeerConnectionIceEvent, RTCPeerConnectionState, RTCSessionDescription, Registry,
+    SettingEngine,
 };
 
 const STUN_SERVER: &str = "stun:stun.l.google.com:19302";
+// Free public TURN relay (Open Relay Project / Metered.ca) — fallback for
+// when direct P2P can't establish (asymmetric NAT, routers without NAT
+// hairpinning for same-LAN STUN, mDNS/Safari quirks, etc). This project has
+// no VPS/budget for a private TURN server; this is the same static demo
+// credential used by other open-source projects (e.g. Nextcloud Talk) that
+// are in the same position. 20GB/month free, shared across everyone using
+// it — best-effort, not a guarantee, but strictly better than STUN-only.
+const TURN_SERVER: &str = "turn:openrelay.metered.ca:80";
+const TURN_USERNAME: &str = "openrelayproject";
+const TURN_CREDENTIAL: &str = "openrelayproject";
 const SIGNALING_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const SIGNALING_TIMEOUT: Duration = Duration::from_secs(120);
+// Matches the signaling Worker's PAIRING_TTL_SECONDS (workers/signaling/src/
+// pairing.ts) — the code stays answerable for this long, not just once. A
+// phone reloading the pairing page (accidental refresh, Safari backgrounding
+// the tab, losing wifi, closing and reopening the app) re-fetches the same
+// URL and re-answers; run_offerer loops to renegotiate a fresh SDP
+// offer/answer each time instead of the caller needing a brand new code and
+// QR scan every time within the same day.
+const PAIRING_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 // ICE gathering across every local interface can stall indefinitely on one
 // that never gets a STUN reply (observed with a Tailscale interface present:
 // its virtual address never round-trips a STUN request). One usable
 // candidate is enough to attempt a connection, so gathering is not worth
 // blocking on forever — send whatever was gathered once this elapses.
-const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(5);
+// 8s (not 5s): the TURN relay candidate needs its own authenticated
+// ALLOCATE round-trip on top of the plain STUN binding request, so it
+// lands later — 5s was consistently cutting it off before it arrived.
+const ICE_GATHERING_TIMEOUT: Duration = Duration::from_secs(8);
 
 struct OfferHandler {
     gathering_complete: mpsc::Sender<()>,
+    /// Fires once the connection reaches a terminal state (closed, failed,
+    /// or disconnected) — the signal `run_offerer`'s outer loop waits on to
+    /// know this round is over and it's time to renegotiate, if there's
+    /// still time left on the pairing code.
+    round_over: mpsc::Sender<()>,
     pairing_code: String,
     /// Unsolicited-event channel back to the IPC connection (same one
     /// `terminal.output`/`terminal.exit` use) — lets the desktop UI show a
@@ -83,36 +111,86 @@ impl PeerConnectionEventHandler for OfferHandler {
             "state": state.to_string(),
         });
         let _ = self.events.send(event.to_string());
+
+        // Disconnected is excluded on purpose: ICE retries automatically from
+        // there and either recovers back to Connected or moves on to Failed
+        // by itself (see RTCPeerConnectionState docs) — treating it as
+        // terminal here would abandon a connection that was about to heal.
+        let is_terminal = matches!(state, RTCPeerConnectionState::Closed | RTCPeerConnectionState::Failed);
+        if is_terminal {
+            let _ = self.round_over.try_send(());
+        }
     }
 }
 
 /// Opens a P2P connection to the phone using `pairing_code` to find each other
 /// via the signaling Worker at `signaling_base`, then bridges the resulting
 /// DataChannel to the existing phone server at `local_addr` (its actual bound
-/// `host:port`, from `RemoteControl::status()` — not `127.0.0.1`). Runs until
-/// the DataChannel closes or the initial handshake fails. `events` carries
-/// connection-state updates back to the IPC client (see `OfferHandler`).
+/// `host:port`, from `RemoteControl::status()` — not `127.0.0.1`). The code
+/// stays answerable for `PAIRING_TTL`, not just once: each time a round ends
+/// (or nobody answers a given offer in time), a fresh SDP offer is posted
+/// under the same code, so a phone reloading the pairing page later the same
+/// day reconnects without a new QR scan. `events` carries connection-state
+/// updates back to the IPC client (see `OfferHandler`).
 pub async fn run_offerer(
     pairing_code: String,
     signaling_base: String,
     local_addr: String,
     events: mpsc::UnboundedSender<String>,
 ) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let deadline = tokio::time::Instant::now() + PAIRING_TTL;
+
+    while tokio::time::Instant::now() < deadline {
+        run_one_round(&pairing_code, &signaling_base, &local_addr, &events, &client, deadline).await?;
+    }
+    Ok(())
+}
+
+/// One offer→answer→bridge cycle. Returns once that connection ends (or the
+/// deadline is reached first) so the caller can decide whether to loop again.
+async fn run_one_round(
+    pairing_code: &str,
+    signaling_base: &str,
+    local_addr: &str,
+    events: &mpsc::UnboundedSender<String>,
+    client: &reqwest::Client,
+    deadline: tokio::time::Instant,
+) -> Result<(), String> {
     let mut media_engine = MediaEngine::default();
     media_engine.register_default_codecs().map_err(|e| e.to_string())?;
     let registry = register_default_interceptors(Registry::new(), &mut media_engine).map_err(|e| e.to_string())?;
 
     let config = RTCConfigurationBuilder::new()
-        .with_ice_servers(vec![RTCIceServer { urls: vec![STUN_SERVER.to_string()], ..Default::default() }])
+        .with_ice_servers(vec![
+            RTCIceServer { urls: vec![STUN_SERVER.to_string()], ..Default::default() },
+            RTCIceServer {
+                urls: vec![TURN_SERVER.to_string()],
+                username: TURN_USERNAME.to_string(),
+                credential: TURN_CREDENTIAL.to_string(),
+            },
+        ])
         .build();
 
     let (gathering_complete_tx, mut gathering_complete_rx) = mpsc::channel(1);
+    let (round_over_tx, mut round_over_rx) = mpsc::channel(1);
     let handler = Arc::new(OfferHandler {
         gathering_complete: gathering_complete_tx,
-        pairing_code: pairing_code.clone(),
-        events,
+        round_over: round_over_tx,
+        pairing_code: pairing_code.to_string(),
+        events: events.clone(),
     });
     let runtime = webrtc::runtime::default_runtime().ok_or("no webrtc runtime available")?;
+
+    // PeerConnectionBuilder defaults to MulticastDnsMode::Disabled, which
+    // discards remote mDNS candidates outright. Safari obfuscates its own
+    // "host" ICE candidates as `<uuid>.local` mDNS names for privacy — with
+    // mDNS disabled those get thrown away, leaving only the srflx (STUN)
+    // path, which many home routers can't hairpin for two devices on the
+    // same LAN. QueryOnly resolves incoming mDNS candidates without
+    // advertising our own (we don't need to hide the Mac's LAN IP).
+    let mut setting_engine = SettingEngine::default();
+    setting_engine.set_multicast_dns_mode(MulticastDnsMode::QueryOnly);
 
     let peer_connection = PeerConnectionBuilder::new()
         .with_configuration(config)
@@ -120,13 +198,14 @@ pub async fn run_offerer(
         .with_interceptor_registry(registry)
         .with_handler(handler)
         .with_runtime(runtime)
+        .with_setting_engine(setting_engine)
         .with_udp_addrs(vec!["0.0.0.0:0".to_string()])
         .build()
         .await
         .map_err(|e| e.to_string())?;
 
     let data_channel = peer_connection.create_data_channel("bento", None).await.map_err(|e| e.to_string())?;
-    tokio::spawn(bridge_data_channel(data_channel, local_addr));
+    tokio::spawn(bridge_data_channel(data_channel, local_addr.to_string()));
 
     let offer = peer_connection.create_offer(None).await.map_err(|e| e.to_string())?;
     peer_connection.set_local_description(offer).await.map_err(|e| e.to_string())?;
@@ -135,18 +214,33 @@ pub async fn run_offerer(
     let _ = tokio::time::timeout(ICE_GATHERING_TIMEOUT, gathering_complete_rx.recv()).await;
 
     let local_description = peer_connection.local_description().await.ok_or("no local description after gathering")?;
-    let client = reqwest::Client::new();
+    // Clear any answer left over from a previous round under this same code —
+    // otherwise polling below could immediately read a stale answer that
+    // doesn't match this round's fresh SDP (different ICE ufrag/pwd).
+    delete_signaling(client, &format!("{signaling_base}/answer/{pairing_code}")).await;
     eprintln!("[webrtc_bridge] posting offer (code={pairing_code})");
-    post_json(&client, &format!("{signaling_base}/offer/{pairing_code}"), &local_description).await?;
+    post_json(client, &format!("{signaling_base}/offer/{pairing_code}"), &local_description).await?;
 
     // The signaling store (Cloudflare KV) is eventually consistent — a write
     // here can take up to ~60s to become readable from the other side, so a
-    // long wait here is expected, not a hang. poll_until_available has no
-    // internal timeout of its own; SIGNALING_TIMEOUT below bounds it.
-    let answer: RTCSessionDescription = poll_until_available(&client, &format!("{signaling_base}/answer/{pairing_code}")).await?;
+    // long wait here is expected, not a hang. Bounded by whichever is sooner:
+    // SIGNALING_TIMEOUT (one round shouldn't wait forever) or the code's
+    // overall deadline. Nobody answering in time isn't an error — it just
+    // means try again with a fresh offer (the code is still valid).
+    let round_deadline = deadline.min(tokio::time::Instant::now() + SIGNALING_TIMEOUT);
+    let answer_url = format!("{signaling_base}/answer/{pairing_code}");
+    let Some(answer): Option<RTCSessionDescription> = poll_until_deadline(client, &answer_url, round_deadline).await?
+    else {
+        return Ok(());
+    };
     peer_connection.set_remote_description(answer).await.map_err(|e| e.to_string())?;
     eprintln!("[webrtc_bridge] SDP exchange complete, awaiting ICE/DTLS (code={pairing_code})");
 
+    // Hold the connection open until it ends (closed/failed) or the code's
+    // overall deadline passes — dropping `peer_connection` before then would
+    // tear down a session that's still in use.
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    let _ = tokio::time::timeout(remaining, round_over_rx.recv()).await;
     Ok(())
 }
 
@@ -158,17 +252,28 @@ async fn post_json<T: serde::Serialize>(client: &reqwest::Client, url: &str, bod
     Ok(())
 }
 
+/// Best-effort: a stale answer that fails to delete just risks being read
+/// once more next round, not a broken session, so this doesn't propagate
+/// errors — the caller doesn't need to abandon pairing over it.
+async fn delete_signaling(client: &reqwest::Client, url: &str) {
+    let _ = client.delete(url).send().await;
+}
+
 /// Polls `url` until it returns 200 (the peer has posted their side of the
-/// handshake), or gives up after `SIGNALING_TIMEOUT`.
-async fn poll_until_available<T: DeserializeOwned>(client: &reqwest::Client, url: &str) -> Result<T, String> {
-    let deadline = tokio::time::Instant::now() + SIGNALING_TIMEOUT;
+/// handshake) or `deadline` passes — `None` in the latter case, not an
+/// error, since the caller may just retry with a fresh offer.
+async fn poll_until_deadline<T: DeserializeOwned>(
+    client: &reqwest::Client,
+    url: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Option<T>, String> {
     loop {
         let response = client.get(url).send().await.map_err(|e| e.to_string())?;
         if response.status().is_success() {
-            return response.json::<T>().await.map_err(|e| e.to_string());
+            return response.json::<T>().await.map(Some).map_err(|e| e.to_string());
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err(format!("timed out waiting for {url}"));
+            return Ok(None);
         }
         tokio::time::sleep(SIGNALING_POLL_INTERVAL).await;
     }
@@ -185,7 +290,13 @@ enum Envelope {
     HttpResponse { id: String, status: u16, body: Option<String> },
     WsOpen { id: String, path: String },
     WsOpenAck { id: String },
-    WsMessage { id: String, data: String, is_text: bool },
+    // rename needed: rename_all = "kebab-case" above would otherwise turn
+    // this into "is-text" in the JSON, but the browser side (pairAssets.ts)
+    // reads/writes camelCase "isText" — the mismatch silently made every
+    // ws-message look like binary data to the browser (isText read back as
+    // undefined/falsy) and likely failed to deserialize at all in the other
+    // direction (keystrokes), since "is-text" would just be a missing field.
+    WsMessage { id: String, data: String, #[serde(rename = "isText")] is_text: bool },
     WsClose { id: String },
     WsError { id: String },
     SseOpen { id: String, path: String },
