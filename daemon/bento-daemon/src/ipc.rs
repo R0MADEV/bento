@@ -284,6 +284,13 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(64);
                 tokio::spawn(async move {
                     while let Some(chunk) = rx.recv().await {
+                        // "[DONE]" is ask()'s own end-of-stream sentinel (also
+                        // consumed by the HTTP/SSE client) — the IPC side
+                        // already gets an explicit review.done event right
+                        // after this loop ends, so forwarding the sentinel
+                        // text itself would just leak "[DONE]" into the
+                        // user-visible output for no reason.
+                        if chunk == "[DONE]" { continue; }
                         let _ = out.send(json!({ "event": "review.output", "data": chunk }).to_string());
                     }
                     let _ = out.send(json!({ "event": "review.done" }).to_string());
