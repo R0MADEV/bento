@@ -1,8 +1,8 @@
-import { AGENT_PROVIDER_ID, providerById } from '../core/ai/providers'
-import { type AiConfig } from '../core/ai/config'
-import { getAiKey, vaultStatus, type VaultStatus } from '../adapters/aiKeys'
-import { t as i18nT } from '../i18n'
-import type { AiChatDom } from './aiChatDom'
+import { AGENT_PROVIDER_ID, providerById } from '../../core/ai/providers'
+import { type AiConfig } from '../../core/ai/config'
+import { getAiKey, vaultStatus, type VaultStatus } from '../../adapters/aiKeys'
+import { t as i18nT } from '../../i18n'
+import type { AiChatDom } from './dom'
 
 // Los ajustes del chat: volcar la configuración a los campos, leer la clave
 // del Vault y avisar cuando el Vault está bloqueado o sin configurar.

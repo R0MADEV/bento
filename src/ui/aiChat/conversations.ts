@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import { t as i18nT } from '../i18n'
-import { agentLabel, toAgentType, type AiConfig, type ChatMessage } from '../core/ai/config'
-import { AGENT_PROVIDER_ID } from '../core/ai/providers'
-import { GLOBAL_CHAT_CONVERSATION, serializeChatHistory, type ChatHistoryState } from '../core/ai/chatHistory'
-import { setActiveProjectPath } from './state/activeProject'
-import type { AiChatDom } from './aiChatDom'
+import { t as i18nT } from '../../i18n'
+import { agentLabel, toAgentType, type AiConfig, type ChatMessage } from '../../core/ai/config'
+import { AGENT_PROVIDER_ID } from '../../core/ai/providers'
+import { GLOBAL_CHAT_CONVERSATION, serializeChatHistory, type ChatHistoryState } from '../../core/ai/chatHistory'
+import { setActiveProjectPath } from '../state/activeProject'
+import type { AiChatDom } from './dom'
 
 // Las conversaciones guardadas: cómo se llaman, cuál está activa, cuándo se
 // escriben a disco y qué pasa al cambiar de una a otra (que incluye adoptar su

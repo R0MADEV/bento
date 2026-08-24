@@ -1,5 +1,5 @@
-import { clampToViewport } from './helpers/floatingPosition'
-import { getUiZoom, toLayoutPixels } from './helpers/zoom'
+import { clampToViewport } from '../helpers/floatingPosition'
+import { getUiZoom, toLayoutPixels } from '../helpers/zoom'
 
 // Arrastrar la ventana flotante del chat y mantenerla dentro de la pantalla.
 // El estado de la posición vive aquí; el chat solo dice dónde empezó y cuándo

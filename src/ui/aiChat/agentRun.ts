@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import { t as i18nT } from '../i18n'
-import { agentLabel, toAgentType, type AgentType, type ChatMessage } from '../core/ai/config'
-import { expandInput } from '../core/ai/prompts'
-import { redact, startAgent, resolvePersistedSessionId, buildReviewMessage } from '../core/ai/agentClient'
-import { isCapacityError } from '../core/ai/capacityError'
-import { pinnedFollowUpHistory, type ChatConversationContext } from '../core/ai/chatHistory'
+import { t as i18nT } from '../../i18n'
+import { agentLabel, toAgentType, type AgentType, type ChatMessage } from '../../core/ai/config'
+import { expandInput } from '../../core/ai/prompts'
+import { redact, startAgent, resolvePersistedSessionId, buildReviewMessage } from '../../core/ai/agentClient'
+import { isCapacityError } from '../../core/ai/capacityError'
+import { pinnedFollowUpHistory, type ChatConversationContext } from '../../core/ai/chatHistory'
 
 // Mandar un mensaje a un agente de CLI: preparar el worktree si la
 // conversación es de una review, lanzarlo, reintentar con otro si el primero

@@ -6,16 +6,11 @@ export const AI_ASK_EVENT = 'bento:ai-ask'
 // Runs a query the AI has written and returns the element to display
 // (table or text). Provided by the panel that opens the chat (e.g. the DB one), bound
 // to its active connection. This way the chat can execute without knowing the DB.
+import type { AiTool } from '../core/ai/tools'
+
 export type AiQueryRunner = (query: string) => Promise<HTMLElement>
 
-// Tool (function-calling) the AI can invoke: e.g. the DB panel
-// offers get_columns so the AI can query real columns on demand.
-export interface AiTool {
-  name: string
-  // OpenAI tool spec: { type: 'function', function: { name, description, parameters } }
-  schema: Record<string, unknown>
-  run: (args: Record<string, unknown>) => Promise<string>
-}
+export type { AiTool } from '../core/ai/tools'
 
 export interface AiAskDetail {
   text: string

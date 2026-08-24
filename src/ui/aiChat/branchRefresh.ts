@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
-import { t as i18nT } from '../i18n'
-import type { ChatMessage } from '../core/ai/config'
-import type { ChatConversationContext } from '../core/ai/chatHistory'
+import { t as i18nT } from '../../i18n'
+import type { ChatMessage } from '../../core/ai/config'
+import type { ChatConversationContext } from '../../core/ai/chatHistory'
 
 // Actualizar una conversación de Tech Review al último commit de su rama: hay
 // que comprobar si se ha quedado atrás, preguntar, preparar el worktree y

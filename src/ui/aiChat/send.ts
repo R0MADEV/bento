@@ -1,13 +1,13 @@
-import { AGENT_PROVIDER_ID } from '../core/ai/providers'
-import { chatEndpoint, runWithTools, streamChat } from '../core/ai/chatApi'
-import { expandInput } from '../core/ai/prompts'
-import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
-import { getAiKey } from '../adapters/aiKeys'
-import { vaultStatus } from '../adapters/aiKeys'
-import { getActiveProjectPath } from './state/activeProject'
-import type { AiConfig, ChatMessage } from '../core/ai/config'
-import type { MemoryRepository } from '../ports/MemoryRepository'
-import type { AiTool } from './askAi'
+import { AGENT_PROVIDER_ID } from '../../core/ai/providers'
+import { chatEndpoint, runWithTools, streamChat } from '../../core/ai/chatApi'
+import { expandInput } from '../../core/ai/prompts'
+import { buildMemoryContext, selectMemoryForPrompt } from '../../core/memory/aiContext'
+import { getAiKey } from '../../adapters/aiKeys'
+import { vaultStatus } from '../../adapters/aiKeys'
+import { getActiveProjectPath } from '../state/activeProject'
+import type { AiConfig, ChatMessage } from '../../core/ai/config'
+import type { MemoryRepository } from '../../ports/MemoryRepository'
+import type { AiTool } from '../askAi'
 
 // Mandar un mensaje al modelo por HTTP: memoria del proyecto como contexto de
 // sistema, herramientas si el panel las ofrece, y streaming si no.

@@ -1,8 +1,8 @@
-import { icon } from './helpers/icons'
-import { AI_PROVIDERS } from '../core/ai/providers'
-import { t as i18nT } from '../i18n'
-import { showContextMenu } from './contextMenu'
-import { SLASH_COMMANDS } from '../core/ai/prompts'
+import { icon } from '../helpers/icons'
+import { AI_PROVIDERS } from '../../core/ai/providers'
+import { t as i18nT } from '../../i18n'
+import { showContextMenu } from '../contextMenu'
+import { SLASH_COMMANDS } from '../../core/ai/prompts'
 
 // Todo el DOM del chat: el botón flotante, la cabecera con sus selectores, los
 // ajustes, el hilo y la barra de entrada. Solo crea elementos y los engancha

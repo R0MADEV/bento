@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { makeLocalStorage } from '../helpers/localStorage'
+import { makeLocalStorage } from '../../helpers/localStorage'
 
 const mocks = vi.hoisted(() => {
   let emitChunk: ((text: string) => void) | undefined
@@ -66,20 +66,20 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('../../src/adapters/aiKeys', () => ({
+vi.mock('../../../src/adapters/aiKeys', () => ({
   getAiKey: vi.fn(async () => ''),
   setAiKey: vi.fn(async () => true),
   vaultStatus: vi.fn(async () => 'unlocked'),
 }))
-vi.mock('../../src/core/ai/agentClient', async (importOriginal) => ({
+vi.mock('../../../src/core/ai/agentClient', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/core/ai/agentClient')>()),
   startAgent: mocks.startAgent,
   redact: (value: string) => value,
 }))
 
-import { createAiChat } from '../../src/ui/aiChat'
-import { AI_ASK_EVENT } from '../../src/ui/askAi'
-import type { MemoryRepository } from '../../src/ports/MemoryRepository'
+import { createAiChat } from '../../../src/ui/aiChat/index'
+import { AI_ASK_EVENT } from '../../../src/ui/askAi'
+import type { MemoryRepository } from '../../../src/ports/MemoryRepository'
 
 describe('AI chat agent follow-ups', () => {
   beforeEach(() => {

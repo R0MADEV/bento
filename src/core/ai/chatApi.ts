@@ -1,6 +1,6 @@
 import { buildChatBody, type ChatMessage } from './config'
 import { splitLines, deltaFromLine, isDoneLine } from './sseStream'
-import type { AiTool } from '../../ui/askAi'
+import type { AiTool } from './tools'
 
 // Las dos formas de hablar con una API compatible con OpenAI: streaming para
 // una respuesta normal, y un bucle sin streaming cuando el modelo puede pedir
