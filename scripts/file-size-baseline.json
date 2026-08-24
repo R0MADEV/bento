@@ -1,0 +1,19 @@
+{
+  "src/ui/aiChat.ts": 893,
+  "src-tauri/src/memory.rs": 698,
+  "daemon/bento-daemon/src/remote/web/review.js": 640,
+  "src/panels/review/ReviewPanel.ts": 535,
+  "src/panels/memory/memorySourcesView.ts": 527,
+  "src-tauri/src/memory_sources.rs": 527,
+  "src/panels/tasks/tasksDetailViews.ts": 526,
+  "src/panels/tasks/tasksListView.ts": 489,
+  "src/panels/tasks/tasksRebaseView.ts": 486,
+  "src/panels/review/ReviewDiffView.ts": 485,
+  "src/panels/jira/JiraPanel.ts": 482,
+  "src/panels/agents/AgentsPanel.ts": 444,
+  "daemon/bento-cli/src/main.rs": 441,
+  "src/panels/tasks/TaskDockerView.ts": 422,
+  "src-tauri/src/agent/mod.rs": 416,
+  "src-tauri/src/main.rs": 413,
+  "daemon/bento-daemon/src/remote/mod.rs": 405
+}
