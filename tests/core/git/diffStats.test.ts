@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseDiffFiles } from '../../../src/panels/diff/diffStats'
+import { parseDiffFiles } from '../../../src/core/git/diffStats'
 
 const SIMPLE_DIFF = [
   'diff --git a/src/a.ts b/src/a.ts',

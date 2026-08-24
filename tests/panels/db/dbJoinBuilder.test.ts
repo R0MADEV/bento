@@ -2,7 +2,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
 import { createJoinBuilder } from '../../../src/panels/db/dbJoinBuilder'
-import type { ForeignKey } from '../../../src/panels/db/queryBuilders'
+import type { ForeignKey } from '../../../src/core/db/queryBuilders'
 import type { DbServer } from '../../../src/core/db/dbServer'
 
 const server = (over: Partial<DbServer> = {}): DbServer =>

@@ -1,4 +1,4 @@
-import { parseDiffFiles } from '../diff/diffStats'
+import { parseDiffFiles } from '../../core/git/diffStats'
 import type { AgentType } from '../../core/ai/config'
 import type { MultiAgentReviewRun } from '../../core/ai/techReview'
 import { reviewT } from './i18n'

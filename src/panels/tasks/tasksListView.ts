@@ -3,7 +3,7 @@ import { buildRow } from './tasksListRow'
 import { filterWorktrees, groupWorktreesByRepo } from '../../core/git/worktreeList'
 import { icon } from '../../ui/helpers/icons'
 import { taskT } from './i18n'
-import { taskProgress } from './taskProgress'
+import { taskProgress } from '../../core/git/taskProgress'
 import type { TasksPanelCtx } from './tasksPanelContext'
 import {
 

@@ -11,7 +11,7 @@ import type {
   MemorySource, ImportedMemoryCandidate, PreviewCandidateState,
 } from '../../core/memory/memorySource'
 import type { MemoryRepository } from '../../ports/MemoryRepository'
-import { runCandidateImport } from './memoryImportRunner'
+import { runCandidateImport } from '../../core/memory/importRunner'
 
 const SOURCE_PREVIEW_LIMIT = 200
 

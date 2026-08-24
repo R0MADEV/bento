@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { classifyPrCheck, summarisePrChecks } from '../../../src/core/git/prChecks'
-import type { PrCheck } from '../../../src/panels/tasks/gitTypes'
+import type { PrCheck } from '../../../src/core/git/gitTypes'
 
 const check = (over: Partial<PrCheck> = {}): PrCheck =>
   ({ name: 'build', context: null, conclusion: null, state: null, status: null, ...over } as PrCheck)

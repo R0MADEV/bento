@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { CommitEntry, CommitFile, CommitRecommendation, GitStatus, WorktreeInfo } from './gitTypes'
+import type { CommitEntry, CommitFile, CommitRecommendation, GitStatus, WorktreeInfo } from '../../core/git/gitTypes'
 
 const emptyStatus = (): GitStatus => ({ raw: '', staged: 0, unstaged: 0, untracked: 0, total: 0 })
 

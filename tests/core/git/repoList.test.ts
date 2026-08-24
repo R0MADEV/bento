@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { addRepo, removeRepo } from '../../../src/panels/tasks/repoList'
+import { addRepo, removeRepo } from '../../../src/core/git/repoList'
 
 describe('addRepo', () => {
   it('appends new repos, normalizing the trailing slash', () => {

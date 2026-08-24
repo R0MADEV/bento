@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildReviewFiles, reviewSummary } from '../../../src/panels/review/reviewFiles'
+import { buildReviewFiles, reviewSummary } from '../../../src/core/git/reviewFiles'
 
 const DIFF = [
   'diff --git a/src/a.ts b/src/a.ts',

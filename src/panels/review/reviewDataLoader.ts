@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { open as pickFolder } from '@tauri-apps/plugin-dialog'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { parseDiffFiles } from '../diff/diffStats'
+import { parseDiffFiles } from '../../core/git/diffStats'
 import { diffGit } from '../diff/diffGitClient'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { runCandidateImport } from '../../../src/panels/memory/memoryImportRunner'
+import { runCandidateImport } from '../../../src/core/memory/importRunner'
 import type { ImportedMemoryCandidate } from '../../../src/core/memory/memorySource'
 import type { MemoryEntry } from '../../../src/core/memory/MemoryEntry'
 import type { MemoryRepository } from '../../../src/ports/MemoryRepository'

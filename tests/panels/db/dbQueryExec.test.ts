@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 
 import { createQueryRunner } from '../../../src/panels/db/dbQueryExec'
 import type { TableData } from '../../../src/panels/db/dbAccess'
-import type { ForeignKey } from '../../../src/panels/db/queryBuilders'
+import type { ForeignKey } from '../../../src/core/db/queryBuilders'
 import type { DbServer } from '../../../src/core/db/dbServer'
 
 const server = (over: Partial<DbServer> = {}): DbServer =>

@@ -1,6 +1,6 @@
 import { t as i18nT } from '../../i18n'
 import type { DbServer } from '../../core/db/dbServer'
-import { buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from './queryBuilders'
+import { buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from '../../core/db/queryBuilders'
 import { isMongo, isRedis } from '../../core/db/dbEngine'
 import { note } from './dbWidgets'
 

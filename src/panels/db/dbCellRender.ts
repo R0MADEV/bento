@@ -1,5 +1,5 @@
 import { t as i18nT } from '../../i18n'
-import { parseStructuredJson } from './jsonValues'
+import { parseStructuredJson } from '../../core/db/jsonValues'
 import { copyToClipboard } from './dbWidgets'
 
 // Only one expanded JSON/text panel at a time: opening one closes the previous.

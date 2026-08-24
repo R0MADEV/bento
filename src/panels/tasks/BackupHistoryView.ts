@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
-import type { BackupEntry } from './gitTypes'
+import type { BackupEntry } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 
 interface BackupHistoryOptions {

@@ -1,7 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import type { DbServer } from '../../core/db/dbServer'
 import { askAi, type AiQueryRunner, type AiTool } from '../../ui/askAi'
-import type { ForeignKey } from './queryBuilders'
+import type { ForeignKey } from '../../core/db/queryBuilders'
 import { KIND_LABEL, isMongo, isPg, isRedis } from '../../core/db/dbEngine'
 import { note } from './dbWidgets'
 

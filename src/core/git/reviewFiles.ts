@@ -1,5 +1,5 @@
-import { parseDiffFiles, type DiffFileStat } from '../diff/diffStats'
-import { fileStateMap } from '../tasks/TaskCodeView'
+import { parseDiffFiles, type DiffFileStat } from './diffStats'
+import { fileStateMap } from './fileState'
 
 export interface ReviewFile extends DiffFileStat {
   state: string

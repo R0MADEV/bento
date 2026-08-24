@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectAgentCmd, resolveAgentIdentity } from '../../../src/panels/agents/detectAgent'
+import { detectAgentCmd, resolveAgentIdentity } from '../../../src/core/ai/detectAgent'
 
 describe('detectAgentCmd', () => {
   it('detects a bare known agent command', () => {

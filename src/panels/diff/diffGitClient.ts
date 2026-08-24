@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { CommitEntry, CommitFile, GitStatus } from '../tasks/gitTypes'
+import type { CommitEntry, CommitFile, GitStatus } from '../../core/git/gitTypes'
 
 export const diffGit = {
   diff: (path: string): Promise<string> =>

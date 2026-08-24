@@ -1,4 +1,4 @@
-import type { PrStatus } from './gitTypes'
+import type { PrStatus } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 import { classifyPrCheck } from '../../core/git/prChecks'
 

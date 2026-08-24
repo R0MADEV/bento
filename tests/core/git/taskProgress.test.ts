@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { taskProgress } from '../../../src/panels/tasks/taskProgress'
+import { taskProgress } from '../../../src/core/git/taskProgress'
 
 describe('taskProgress', () => {
   it('counts clean (no uncommitted changes) and synced (not behind base) worktrees', () => {

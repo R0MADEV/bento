@@ -1,7 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import type { DbServer } from '../../core/db/dbServer'
 import { buildJoinPath, type Relation } from '../../core/db/joinPath'
-import { buildJoinQuery, type ForeignKey } from './queryBuilders'
+import { buildJoinQuery, type ForeignKey } from '../../core/db/queryBuilders'
 import { isMongo, isRedis } from '../../core/db/dbEngine'
 
 // Unique datalist ids: several DB panels can be open at once.
