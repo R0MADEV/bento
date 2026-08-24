@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildJoinQuery, buildRelationQuery, exampleQuery, groupRelations, quoteIdentifier, type ForeignKey } from '../../src/panels/db/queryBuilders'
-import type { DbServer } from '../../src/core/db/dbServer'
+import { buildJoinQuery, buildRelationQuery, exampleQuery, groupRelations, quoteIdentifier, type ForeignKey } from '../../../src/panels/db/queryBuilders'
+import type { DbServer } from '../../../src/core/db/dbServer'
 
 const server = (kind: DbServer['kind']): DbServer => ({ kind, source: 'local', host: '127.0.0.1', port: 1 })
 

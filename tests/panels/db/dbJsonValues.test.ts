@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseStructuredJson } from '../../src/panels/db/jsonValues'
+import { parseStructuredJson } from '../../../src/panels/db/jsonValues'
 
 describe('database JSON values', () => {
   it('formats JSON objects and provides a compact preview', () => {

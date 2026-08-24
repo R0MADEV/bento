@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterCommands, type Command } from '../../src/core/command/command'
+import { filterCommands, type Command } from '../../../src/core/command/command'
 
 const cmds: Command[] = [
   { id: 'new-session', label: 'Nueva sesión', run: () => {} },

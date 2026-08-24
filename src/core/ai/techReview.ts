@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
 import type { AgentType } from './config'
 
 export type ContextSource = 'lexis' | 'git' | 'direct'
@@ -10,17 +9,6 @@ export interface MultiAgentReviewRun {
   // Markdown report the agent returned (the review no longer round-trips JSON).
   report?: string
   error?: string
-}
-
-export interface ReviewPromptInput {
-  project: string
-  base: string
-  diff: string
-  files: Array<{ path: string; content: string }>
-  contextSources: ContextSource[]
-  lexisContext?: string
-  // Lo que el autor quiere que el revisor mire con lupa (opcional).
-  authorContext?: string
 }
 
 export interface ContextSnippet {
@@ -77,13 +65,6 @@ export function createContextProvider(dependencies: ContextProviderDependencies)
   }
 }
 
-// El prompt vive en Rust (`daemon/bento-review`), compartido con el daemon y el
-// CLI. Antes existía dos veces — aquí y en `prompt.rs` — y las dos copias ya
-// habían divergido.
-export function buildReviewPrompt(input: ReviewPromptInput): Promise<string> {
-  return invoke<string>('review_build_prompt', { input })
-}
-
 export interface ReviewDocumentMeta {
   branch: string
   base: string
@@ -113,44 +94,12 @@ export function buildReviewDocument(meta: ReviewDocumentMeta, runs: MultiAgentRe
   return [header, ...body].join('\n\n')
 }
 
-// Consolidación final: un agente lee los análisis de los demás y produce un
-// único informe. Misma implementación compartida que el prompt de review.
-export function buildReviewSynthesisPrompt(basePrompt: string, reports: Array<{ label: string; report: string }>): Promise<string> {
-  return invoke<string>('review_build_synthesis_prompt', { basePrompt, reports })
-}
-
 export interface ReviewCheckpoint {
   content: string
   commit: string
   branch: string
   sessionId?: string | null
   sessionAgent?: AgentType | null
-}
-
-// The shape the shared Rust store returns (snake_case, as serialized there).
-interface StoredCheckpoint {
-  content: string
-  commit?: string | null
-  branch?: string | null
-  session_id?: string | null
-  session_agent?: string | null
-}
-
-// Reads a saved review from the store shared with the daemon and the CLI,
-// falling back to the browser copy this app used to keep on its own so
-// reviews saved before the move are still there.
-export async function loadReviewCheckpoint(repoPath: string, branch: string, localRaw: string | null): Promise<ReviewCheckpoint | null> {
-  const stored = await invoke<StoredCheckpoint | null>('review_checkpoint_get', { cwd: repoPath, base: branch }).catch(() => null)
-  if (stored?.content) {
-    return {
-      content: stored.content,
-      commit: stored.commit ?? '',
-      branch: stored.branch ?? branch,
-      sessionId: stored.session_id ?? null,
-      sessionAgent: (stored.session_agent ?? null) as AgentType | null,
-    }
-  }
-  return parseReviewCheckpoint(localRaw)
 }
 
 // Guards against corrupt/legacy localStorage so a bad checkpoint never throws

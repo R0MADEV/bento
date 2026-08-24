@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createTerminalAppearanceControls } from '../../src/panels/terminal/appearanceControls'
-import { themeNames } from '../../src/core/terminal/themes'
+import { createTerminalAppearanceControls } from '../../../src/panels/terminal/appearanceControls'
+import { themeNames } from '../../../src/core/terminal/themes'
 
 describe('terminal appearance controls', () => {
   beforeEach(() => {

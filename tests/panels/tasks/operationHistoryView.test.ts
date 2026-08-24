@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { buildOperationHistoryView } from '../../src/panels/tasks/OperationHistoryView'
-import { makeLocalStorage } from '../helpers/localStorage'
+import { buildOperationHistoryView } from '../../../src/panels/tasks/OperationHistoryView'
+import { makeLocalStorage } from '../../helpers/localStorage'
 
 describe('operation history view', () => {
   it('filters the branch, renders failures and exposes accessible controls', () => {

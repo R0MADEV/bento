@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import { HLSPlayer } from '../../src/panels/tv/player'
+import { HLSPlayer } from '../../../src/panels/tv/player'
 
 describe('HLSPlayer embedded playback lifecycle', () => {
   it('unloads a third-party iframe while hidden and restores it when visible', async () => {

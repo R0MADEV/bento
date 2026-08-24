@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createTerminalProfileControls } from '../../src/panels/terminal/profileControls'
+import { createTerminalProfileControls } from '../../../src/panels/terminal/profileControls'
 
 describe('terminal profile controls', () => {
   const storage = new Map<string, string>()

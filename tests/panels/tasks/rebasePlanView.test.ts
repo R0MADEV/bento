@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { buildRebasePlanPreview } from '../../src/panels/tasks/RebasePlanView'
-import { makeLocalStorage } from '../helpers/localStorage'
+import { buildRebasePlanPreview } from '../../../src/panels/tasks/RebasePlanView'
+import { makeLocalStorage } from '../../helpers/localStorage'
 
 describe('rebase plan view', () => {
   it('renders the resulting commit count and integration target', () => {

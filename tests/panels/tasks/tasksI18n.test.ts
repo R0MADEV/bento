@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getTaskLocale, setTaskLocale, taskT } from '../../src/panels/tasks/i18n'
-import { makeLocalStorage } from '../helpers/localStorage'
+import { getTaskLocale, setTaskLocale, taskT } from '../../../src/panels/tasks/i18n'
+import { makeLocalStorage } from '../../helpers/localStorage'
 
 describe('tasks i18n', () => {
   beforeEach(() => vi.stubGlobal('localStorage', makeLocalStorage()))

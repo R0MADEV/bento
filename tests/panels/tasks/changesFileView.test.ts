@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { buildChangesFileView } from '../../src/panels/tasks/ChangesFileView'
-import { makeLocalStorage } from '../helpers/localStorage'
+import { buildChangesFileView } from '../../../src/panels/tasks/ChangesFileView'
+import { makeLocalStorage } from '../../helpers/localStorage'
 
 describe('changes file view', () => {
   it('renders patch content lazily and selects individual hunks', () => {
