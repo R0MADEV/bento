@@ -66,7 +66,7 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('../../src/ui/aiKeys', () => ({
+vi.mock('../../src/adapters/aiKeys', () => ({
   getAiKey: vi.fn(async () => ''),
   setAiKey: vi.fn(async () => true),
   vaultStatus: vi.fn(async () => 'unlocked'),

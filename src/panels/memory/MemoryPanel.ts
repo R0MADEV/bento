@@ -1,6 +1,6 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import type { MemoryEntry, MemoryKind } from '../../core/memory/MemoryEntry'
 import { isArchivedMemory } from '../../core/memory/normalize'

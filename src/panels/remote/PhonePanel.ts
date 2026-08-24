@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import QRCode from 'qrcode'
 
 interface RemoteStatus {

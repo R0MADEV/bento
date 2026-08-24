@@ -1,6 +1,6 @@
 // Non-secret AI chat configuration (provider, endpoint, model) in
 // localStorage. API keys are NOT stored here: they go to the encrypted Vault
-// (see src/ui/aiKeys.ts).
+// (see src/adapters/aiKeys.ts).
 
 export type AgentType = 'claude' | 'opencode' | 'codex' | 'custom'
 
@@ -35,7 +35,7 @@ export interface ChatMessage {
 }
 
 // Non-secret config (localStorage). API keys go to the encrypted Vault,
-// never here — see src/ui/aiKeys.ts.
+// never here — see src/adapters/aiKeys.ts.
 export interface AiConfig {
   providerId: string
   baseUrl: string

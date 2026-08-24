@@ -1,6 +1,6 @@
 import { t as i18nT } from '../../i18n'
 import { getTheme, themeNames, themeLabels } from '../../core/terminal/themes'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 
 export interface TerminalAppearanceControls {
   popover: HTMLDivElement

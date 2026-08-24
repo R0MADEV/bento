@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { reviewT } from './i18n'
 import { t as i18nT } from '../../i18n'
 import { redact, startAgent } from '../../core/ai/agentClient'

@@ -7,7 +7,7 @@ import { noteTitle } from '../../core/notes/noteTitle'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { initUndo, commit, undo, redo, current, type UndoState } from '../../core/notes/undoStack'
 import { showContextMenu } from '../../ui/contextMenu'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 type ViewMode = 'edit' | 'preview' | 'split-h' | 'split-v'

@@ -4,7 +4,7 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import { isRunning, parseContainers, type Container } from '../../core/docker/containers'
 import type { Worktree } from '../../core/git/worktree'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { renderContainerLogs, renderContainerTerminal, type DetailLifecycle } from '../docker/containerDetail'
 import { taskT } from './i18n'
 

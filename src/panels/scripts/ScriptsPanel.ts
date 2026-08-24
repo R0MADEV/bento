@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { scriptCommand } from '../../core/scripts/scriptCommand'
 import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 
 const DIRS_KEY = 'bento.scripts.dirs'

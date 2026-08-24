@@ -1,11 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from './icons'
+import { icon } from './helpers/icons'
 import { AI_PROVIDERS, providerById, AGENT_PROVIDER_ID } from '../core/ai/providers'
 import {
   loadConfig, saveConfig, buildChatBody, agentLabel, toAgentType,
   type AiConfig, type ChatMessage, type AgentType,
 } from '../core/ai/config'
-import { getAiKey, setAiKey, vaultStatus, type VaultStatus } from './aiKeys'
+import { getAiKey, setAiKey, vaultStatus, type VaultStatus } from '../adapters/aiKeys'
 import { splitLines, deltaFromLine, isDoneLine } from '../core/ai/sseStream'
 import { renderMarkdown } from '../core/notes/renderMarkdown'
 import { t as i18nT } from '../i18n'
@@ -13,12 +13,12 @@ import { expandInput, SLASH_COMMANDS } from '../core/ai/prompts'
 import { showContextMenu } from './contextMenu'
 import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from './askAi'
 import type { MemoryRepository } from '../ports/MemoryRepository'
-import { getActiveProjectPath, setActiveProjectPath } from './activeProject'
+import { getActiveProjectPath, setActiveProjectPath } from './state/activeProject'
 import { buildMemoryContext, selectMemoryForPrompt } from '../core/memory/aiContext'
 import { redact, startAgent, resolvePersistedSessionId, buildReviewMessage } from '../core/ai/agentClient'
 import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory, pinnedFollowUpHistory, serializeChatHistory } from '../core/ai/chatHistory'
 import { isCapacityError } from '../core/ai/capacityError'
-import { getUiZoom, toLayoutPixels } from './zoom'
+import { getUiZoom, toLayoutPixels } from './helpers/zoom'
 
 const AI_POSITION_KEY = 'bento.ai.position.v2'
 const MAX_HISTORY = 200

@@ -14,9 +14,6 @@ use tokio::process::{Child, Command};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-#[cfg(test)]
-mod tests;
-
 // How each agent is invoked and how its output is parsed lives in
 // `bento-review`, shared with the daemon (phone remote) and the CLI.
 use bento_review::agents::{invocation as agent_invocation, resolve_executable, AgentEvent, AgentParser};
@@ -441,5 +438,16 @@ async fn kill_process_group(child: &mut Child, force: bool) {
         }
         child.kill().await.ok();
         let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_prefix;
+
+    #[test]
+    fn safe_prefix_never_splits_utf8() {
+        assert_eq!(safe_prefix("aé", 2), "a");
+        assert_eq!(safe_prefix("aé", 3), "aé");
     }
 }

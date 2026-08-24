@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toLayoutPixels } from '../../src/ui/zoom'
+import { toLayoutPixels } from '../../../src/ui/helpers/zoom'
 
 describe('toLayoutPixels', () => {
   it('converts viewport coordinates to coordinates inside a zoomed document', () => {

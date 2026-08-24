@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import { getDecorations, setDecorations } from '../../src/ui/decorationsPreference'
+import { getDecorations, setDecorations } from '../../../src/ui/state/decorationsPreference'
 
 const makeLocalStorage = () => {
   const store = new Map<string, string>()

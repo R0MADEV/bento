@@ -1,7 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { DbServer } from '../../core/db/dbServer'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { parseStructuredJson } from './jsonValues'
 import { sqlCmd, creds, target, type TableData } from '../../core/db/dbEngine'
 import { buildJsonTree, renderCellValue } from './dbCellRender'

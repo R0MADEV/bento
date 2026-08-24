@@ -1,5 +1,5 @@
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { browseUrl } from '../../core/jira/urls'
 import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
 import { statusCategoryClass, type AgileColumn } from '../../core/jira/board'

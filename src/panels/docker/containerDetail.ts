@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { errorLines, isErrorLine } from '../../core/docker/logFilter'
 import { askAi } from '../../ui/askAi'
 import { createTerminalPanel } from '../terminal/TerminalPanel'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import type { Container } from '../../core/docker/containers'
 
 export interface DetailLifecycle {

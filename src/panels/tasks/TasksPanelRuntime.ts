@@ -1,5 +1,5 @@
 import { open as pickFolder } from '@tauri-apps/plugin-dialog'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { taskT } from './i18n'
 import { createTaskDockerView } from './TaskDockerView'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'

@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { reviewT } from './i18n'
 import type { ReviewChangeFile, GhComment, FileTypeFilter } from './reviewFormat'
 import { esc, highlightCode, wordDiff } from './reviewFormat'

@@ -4,7 +4,7 @@ import { parseHeaders, prettyBody, addHeaderLine, urlParams } from '../../core/h
 import { parseOpenApi, specTitle, type OpenApiEndpoint } from '../../core/http/openapi'
 import { addCollection, removeCollection, renameCollection, type Collection } from '../../core/http/collections'
 import { showContextMenu } from '../../ui/contextMenu'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { askAi } from '../../ui/askAi'
 
 const COMMON_HEADERS = [

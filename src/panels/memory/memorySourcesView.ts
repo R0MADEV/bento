@@ -1,6 +1,6 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { confirm as askConfirm, open as pickFolder } from '@tauri-apps/plugin-dialog'
 import type { MemoryEntry } from '../../core/memory/MemoryEntry'
 import { basename, projectName } from '../../core/memory/memoryFormat'

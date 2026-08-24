@@ -1,4 +1,4 @@
-import { icon } from './icons'
+import { icon } from './helpers/icons'
 import { createHorizontalResizablePane } from './resizablePane'
 import { appT } from '../core/i18n'
 

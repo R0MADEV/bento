@@ -8,7 +8,7 @@ import { mergeChannelData } from '../../core/channel/mergeChannelData'
 import { toggleFavorite, isFavorite } from '../../core/channel/favorites'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { PanelInstance } from '../registry'
 

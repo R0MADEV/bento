@@ -1,5 +1,5 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { icon } from './icons'
+import { icon } from './helpers/icons'
 
 // Custom, themed window controls (Windows/Linux, no native title bar).
 export function createWindowControls(): HTMLElement {

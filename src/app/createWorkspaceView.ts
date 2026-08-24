@@ -2,8 +2,8 @@ import { createDockview, type DockviewApi, type AddPanelOptions } from 'dockview
 import type { PanelRegistry } from '../panels/registry'
 import { lowestAvailableNumber } from '../core/terminal/lowestAvailableNumber'
 import { cycleTheme } from '../panels/terminal/themePreference'
-import { icon } from '../ui/icons'
-import { isMac, shortcutLabel } from '../ui/platform'
+import { icon } from '../ui/helpers/icons'
+import { isMac, shortcutLabel } from '../ui/helpers/platform'
 import { currentPanelIndex } from '../core/workspace/currentPanel'
 import { appT } from '../core/i18n'
 
