@@ -63,14 +63,10 @@ fn git_output(repo: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-// Accepts [A-Za-z0-9._/-], rejects `..` and spaces.
-fn is_safe_branch(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains("..")
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
-}
+// Accepts [A-Za-z0-9._/-], rejects `..` and spaces. Shared with the daemon and
+// the CLI (`bento-review`): this used to be a second copy, so hardening it on
+// one side left the other unprotected.
+use bento_review::vcs::is_safe_branch;
 
 fn is_git_repo(path: &str) -> bool {
     git_output(path, &["rev-parse", "--git-dir"]).is_ok()

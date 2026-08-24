@@ -1,6 +1,5 @@
 mod ask;
 mod checkpoints;
-mod parse;
 
 pub use ask::ask_handler;
 pub(crate) use ask::ask;
@@ -13,9 +12,6 @@ pub(crate) use checkpoints::{
     Checkpoint,
 };
 
-pub use parse::parse_diff_name_status;
-#[allow(unused_imports)]
-pub use parse::{DiffEntry, parse_diff_stat};
 
 use axum::{
     body::Body,
@@ -25,10 +21,12 @@ use axum::{
 };
 use futures_util::StreamExt;
 use serde::Deserialize;
-use serde_json::json;
 use std::sync::Arc;
 
 use super::{Auth, RemoteState, authorized};
+use bento_review::diff::{batch_file_diffs, split_diff_into_file_diffs};
+use bento_review::vcs::{diff_no_index, gh_cmd, is_safe_branch, untracked_files};
+pub(crate) use bento_review::vcs::{file_diff, list_branches, list_files};
 use bento_review::{build_review_prompt, build_synthesis_prompt, ReviewPromptInput};
 
 // ── Query param structs ───────────────────────────────────────────────────────
@@ -74,80 +72,6 @@ pub struct PrSubmitBody {
 }
 
 // ── Shell helpers ─────────────────────────────────────────────────────────────
-
-fn git_cmd(cwd: &str, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new("git")
-        .args([&["-C", cwd], args].concat())
-        .output()
-        .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
-}
-
-/// Like git_cmd but accepts exit code 1 (used by `git diff --no-index` which exits 1 when files differ).
-fn git_cmd_exit1_ok(cwd: &str, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new("git")
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())?;
-    let code = out.status.code().unwrap_or(2);
-    if code <= 1 {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
-}
-
-fn untracked_files(cwd: &str) -> Vec<String> {
-    git_cmd(cwd, &["ls-files", "--others", "--exclude-standard"])
-        .unwrap_or_default()
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect()
-}
-
-fn diff_no_index(cwd: &str, path: &str) -> String {
-    git_cmd_exit1_ok(cwd, &["diff", "--no-index", "--", "/dev/null", path])
-        .unwrap_or_default()
-}
-
-fn gh_cmd(cwd: &str, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new("gh")
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .map_err(|e| format!("gh not found: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
-}
-
-/// A client-supplied git ref used as a `git diff` argument. Rejects flag-injection
-/// (`--upload-pack=...`) and range syntax (`..`), matching the desktop equivalent
-/// (`src-tauri/src/git.rs::is_safe_branch`).
-fn is_safe_branch(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains("..")
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
-}
-
-/// A client-supplied file path used to read file contents off disk. Rejects
-/// absolute paths and `..` segments so it can't escape `cwd`.
-fn is_safe_relative_path(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.split('/').any(|seg| seg == "..")
-}
 
 // ── /api/review (SSE) ─────────────────────────────────────────────────────────
 
@@ -315,8 +239,8 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
         }
     } else {
         let agent = &agents[0];
-        let file_diffs = parse::split_diff_into_file_diffs(&diff_out);
-        let batches = parse::batch_file_diffs(file_diffs, 60_000);
+        let file_diffs = split_diff_into_file_diffs(&diff_out);
+        let batches = batch_file_diffs(file_diffs, 60_000);
         let total = batches.len();
         let mut last_session_id: Option<String> = None;
         for (i, batch_diff) in batches.into_iter().enumerate() {
@@ -593,53 +517,6 @@ async fn run_claude_collecting(
 
 // ── /api/review/files ─────────────────────────────────────────────────────────
 
-/// Pure merge of `git diff --name-status` entries with their `--numstat`
-/// add/delete counts (matched by path — numstat can omit a path entirely,
-/// e.g. for binary files, so entries default to 0/0), plus untracked files
-/// appended as additions. Split out from `list_files` so the merge logic
-/// itself is testable without shelling out to git.
-fn build_file_list(name_status: &str, numstat: &str, untracked: &[String]) -> Vec<serde_json::Value> {
-    let entries = parse_diff_name_status(name_status);
-    let stats: std::collections::HashMap<String, (i64, i64)> = numstat
-        .lines()
-        .filter_map(|l| {
-            let mut p = l.splitn(3, '\t');
-            let a: i64 = p.next()?.parse().unwrap_or(0);
-            let d: i64 = p.next()?.parse().unwrap_or(0);
-            let path = p.next()?.trim().to_string();
-            Some((path, (a, d)))
-        })
-        .collect();
-
-    let mut list: Vec<_> = entries
-        .into_iter()
-        .map(|e| {
-            let (added, deleted) = stats.get(&e.path).copied().unwrap_or((0, 0));
-            let mut v = json!({ "status": e.status, "path": e.path, "added": added, "deleted": deleted });
-            if let Some(old) = e.old_path { v["old_path"] = json!(old); }
-            v
-        })
-        .collect();
-
-    for path in untracked {
-        list.push(json!({ "status": "A", "path": path, "added": 0, "deleted": 0 }));
-    }
-    list
-}
-
-/// Shared by the HTTP `/api/review/files` handler and the daemon's IPC
-/// socket (`review.files`). `is_safe_branch` is checked here (not just in
-/// the HTTP handler) so every caller of this shared entry point gets the
-/// same flag-injection protection on `base`, regardless of transport.
-pub(crate) fn list_files(cwd: &str, base: &str) -> Result<Vec<serde_json::Value>, String> {
-    if !is_safe_branch(base) {
-        return Err("unsafe base".into());
-    }
-    let name_status = git_cmd(cwd, &["diff", "--name-status", base])?;
-    let numstat = git_cmd(cwd, &["diff", "--numstat", base]).unwrap_or_default();
-    Ok(build_file_list(&name_status, &numstat, &untracked_files(cwd)))
-}
-
 pub async fn review_files_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<ReviewFileQuery>,
@@ -662,25 +539,6 @@ pub async fn review_files_handler(
 }
 
 // ── /api/review/file ──────────────────────────────────────────────────────────
-
-/// The diff for a single file vs `base` (tracked change, or a fully-added
-/// diff for an untracked file) — shared by the HTTP `/api/review/file`
-/// handler and the daemon's IPC socket (`review.file`, for the TUI's
-/// per-file diff view).
-pub(crate) fn file_diff(cwd: &str, path: &str, base: &str) -> Result<String, String> {
-    if !is_safe_relative_path(path) {
-        return Err("ruta insegura".into());
-    }
-    if !is_safe_branch(base) {
-        return Err("rama insegura".into());
-    }
-    let diff = git_cmd(cwd, &["diff", base, "--", path]).unwrap_or_default();
-    if !diff.is_empty() {
-        return Ok(diff);
-    }
-    // Untracked new file — show as fully-added diff
-    Ok(diff_no_index(cwd, path))
-}
 
 pub async fn review_file_handler(
     State(state): State<Arc<RemoteState>>,
@@ -951,25 +809,6 @@ pub(crate) fn submit_review(cwd: &str, pr: u64, event: &str, body: Option<&str>)
 
 // ── /api/review/branches ──────────────────────────────────────────────────────
 
-/// Shared by the HTTP `/api/review/branches` handler and the daemon's
-/// lightweight IPC socket (`review.branches`), which has no HTTP/axum
-/// layer to go through — the actual work here never touched `RemoteState`
-/// or `authorized()` in the first place (those are the network-exposed
-/// phone-remote server's own concerns).
-pub(crate) fn list_branches(cwd: &str) -> Vec<String> {
-    git_cmd(
-        cwd,
-        &["branch", "--sort=-committerdate", "--format=%(refname:short)"],
-    )
-    .unwrap_or_default()
-    .lines()
-    .map(str::trim)
-    .filter(|s| !s.is_empty())
-    .take(20)
-    .map(String::from)
-    .collect()
-}
-
 pub async fn review_branches_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<PrQuery>,
@@ -989,43 +828,6 @@ pub async fn review_branches_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── is_safe_branch ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn is_safe_branch_accepts_normal_names() {
-        assert!(is_safe_branch("main"));
-        assert!(is_safe_branch("feat/mobile-review-diff"));
-        assert!(is_safe_branch("release-1.2.3"));
-    }
-
-    #[test]
-    fn is_safe_branch_rejects_flag_injection() {
-        assert!(!is_safe_branch("--upload-pack=touch /tmp/pwned"));
-        assert!(!is_safe_branch("-oProxyCommand=x"));
-    }
-
-    #[test]
-    fn is_safe_branch_rejects_range_syntax_and_empty() {
-        assert!(!is_safe_branch("main..evil"));
-        assert!(!is_safe_branch(""));
-    }
-
-    // ── is_safe_relative_path ─────────────────────────────────────────────────
-
-    #[test]
-    fn is_safe_relative_path_accepts_normal_paths() {
-        assert!(is_safe_relative_path("src/main.rs"));
-        assert!(is_safe_relative_path("file.txt"));
-    }
-
-    #[test]
-    fn is_safe_relative_path_rejects_absolute_and_traversal() {
-        assert!(!is_safe_relative_path("/etc/passwd"));
-        assert!(!is_safe_relative_path("../../etc/passwd"));
-        assert!(!is_safe_relative_path("src/../../etc/passwd"));
-        assert!(!is_safe_relative_path(""));
-    }
 
     // ── issue_url_matches_pr ──────────────────────────────────────────────────
 
@@ -1047,36 +849,5 @@ mod tests {
             "https://api.github.com/repos/acme/widget/issues/423",
             42
         ));
-    }
-
-    // ── build_file_list ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn build_file_list_matches_stats_to_entries_by_path() {
-        let list = build_file_list("M\tfoo.rs\n", "3\t1\tfoo.rs\n", &[]);
-        assert_eq!(list, vec![json!({ "status": "M", "path": "foo.rs", "added": 3, "deleted": 1 })]);
-    }
-
-    #[test]
-    fn build_file_list_includes_old_path_for_renames() {
-        let list = build_file_list("R100\told.rs\tnew.rs\n", "0\t0\tnew.rs\n", &[]);
-        assert_eq!(
-            list,
-            vec![json!({ "status": "R", "path": "new.rs", "added": 0, "deleted": 0, "old_path": "old.rs" })]
-        );
-    }
-
-    #[test]
-    fn build_file_list_defaults_missing_numstat_to_zero() {
-        // Binary files (or a stat line git omits for other reasons) have no
-        // numstat entry — the file should still show up, just with 0/0.
-        let list = build_file_list("M\tfoo.bin\n", "", &[]);
-        assert_eq!(list, vec![json!({ "status": "M", "path": "foo.bin", "added": 0, "deleted": 0 })]);
-    }
-
-    #[test]
-    fn build_file_list_appends_untracked_files_as_added() {
-        let list = build_file_list("", "", &["new_file.rs".to_string()]);
-        assert_eq!(list, vec![json!({ "status": "A", "path": "new_file.rs", "added": 0, "deleted": 0 })]);
     }
 }

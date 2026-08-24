@@ -3,6 +3,8 @@
 //! copy — the prompt existed twice, once in Rust and once in TypeScript
 //! (`src/core/ai/techReview.ts`), and the two had already drifted.
 
+pub mod diff;
 pub mod prompt;
+pub mod vcs;
 
 pub use prompt::{build_review_prompt, build_synthesis_prompt, ReviewPromptFile, ReviewPromptInput};
