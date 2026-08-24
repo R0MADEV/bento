@@ -39,6 +39,8 @@ struct Request {
     herdr_socket: Option<String>,
     #[serde(default)]
     base: Option<String>,
+    #[serde(default)]
+    pr: Option<u64>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -216,6 +218,25 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 Err(e) => send(fail(&req.id, e)),
             },
             None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "review.pr_diff" => match (&req.cwd, req.pr) {
+            (Some(cwd), Some(pr)) => match crate::remote::review::pr_diff(cwd, pr) {
+                Ok(diff) => send(ok(&req.id, json!(diff))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd and pr required".into())),
+        },
+
+        "review.pr_comments" => match (&req.cwd, req.pr) {
+            (Some(cwd), Some(pr)) => match crate::remote::review::pr_comments(cwd, pr) {
+                Ok(json_str) => {
+                    let data = serde_json::from_str::<Value>(&json_str).unwrap_or(Value::Null);
+                    send(ok(&req.id, data));
+                }
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd and pr required".into())),
         },
 
         "remote.start" => {

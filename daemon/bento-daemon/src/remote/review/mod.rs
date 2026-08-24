@@ -692,6 +692,11 @@ pub async fn review_prs_handler(
 
 // ── /api/review/pr/diff ───────────────────────────────────────────────────────
 
+/// Shared by `/api/review/pr/diff` and the IPC socket's `review.pr_diff`.
+pub(crate) fn pr_diff(cwd: &str, pr: u64) -> Result<String, String> {
+    gh_cmd(cwd, &["pr", "diff", &pr.to_string()])
+}
+
 pub async fn review_pr_diff_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<PrQuery>,
@@ -704,16 +709,21 @@ pub async fn review_pr_diff_handler(
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
     let pr = match q.pr {
-        Some(n) => n.to_string(),
+        Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match gh_cmd(&cwd, &["pr", "diff", &pr]) {
+    match pr_diff(&cwd, pr) {
         Ok(diff) => (StatusCode::OK, [("content-type", "text/plain")], diff).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
 
 // ── /api/review/pr/comments ───────────────────────────────────────────────────
+
+/// Shared by `/api/review/pr/comments` and the IPC socket's `review.pr_comments`.
+pub(crate) fn pr_comments(cwd: &str, pr: u64) -> Result<String, String> {
+    gh_cmd(cwd, &["pr", "view", &pr.to_string(), "--json", "comments,reviews"])
+}
 
 pub async fn review_pr_comments_handler(
     State(state): State<Arc<RemoteState>>,
@@ -727,10 +737,10 @@ pub async fn review_pr_comments_handler(
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
     let pr = match q.pr {
-        Some(n) => n.to_string(),
+        Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match gh_cmd(&cwd, &["pr", "view", &pr, "--json", "comments,reviews"]) {
+    match pr_comments(&cwd, pr) {
         Ok(json_str) => (StatusCode::OK, [("content-type", "application/json")], json_str).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }

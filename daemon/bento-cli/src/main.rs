@@ -63,6 +63,25 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                 let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
                 request(json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base })).await
             }
+            Some("pr") => match args.get(2).map(String::as_str) {
+                Some("diff") => match args.get(3).and_then(|s| s.parse::<u64>().ok()) {
+                    Some(pr) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        let data = request_data(json!({ "id": "1", "cmd": "review.pr_diff", "cwd": cwd, "pr": pr })).await?;
+                        print_text(data.as_str().unwrap_or_default());
+                        Ok(())
+                    }
+                    None => { eprintln!("usage: bento review pr diff <number>"); Ok(()) }
+                },
+                Some("comments") => match args.get(3).and_then(|s| s.parse::<u64>().ok()) {
+                    Some(pr) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comments", "cwd": cwd, "pr": pr })).await
+                    }
+                    None => { eprintln!("usage: bento review pr comments <number>"); Ok(()) }
+                },
+                _ => { print_help(); Ok(()) }
+            },
             _ => { print_help(); Ok(()) }
         },
         Some("open") => {
@@ -88,6 +107,21 @@ async fn run(args: &[String]) -> std::io::Result<()> {
 
 fn current_dir_string() -> String {
     std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()
+}
+
+/// Prints raw text (as opposed to a JSON value) to stdout. A downstream
+/// pipe closing early (`bento review pr diff N | head`) makes the next
+/// write fail with a broken-pipe error — `println!` panics on that by
+/// default, so write directly and exit quietly instead, matching how
+/// well-behaved Unix text tools handle it.
+fn print_text(s: &str) {
+    use std::io::Write;
+    if let Err(e) = write!(std::io::stdout(), "{s}") {
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("bento: {e}");
+        }
+        std::process::exit(0);
+    }
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {
@@ -354,6 +388,8 @@ fn print_help() {
     eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");
     eprintln!("  bento review prs [--cwd <dir>]        list open PRs (needs gh)");
     eprintln!("  bento review files [--cwd <dir>] [--base <ref>]   files changed vs base (default: main)");
+    eprintln!("  bento review pr diff <number> [--cwd <dir>]       PR diff (needs gh)");
+    eprintln!("  bento review pr comments <number> [--cwd <dir>]   PR comments/reviews (needs gh)");
     eprintln!();
     eprintln!("env: BENTO_DAEMON_ADDR (default 127.0.0.1:7877)");
 }
