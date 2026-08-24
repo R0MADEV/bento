@@ -9,6 +9,29 @@ use tokio::process::Command as AsyncCommand;
 use uuid::Uuid;
 static BRANCH_CONTEXT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+/// One reviewer's report, for the synthesis prompt.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SynthesisReport {
+    label: String,
+    report: String,
+}
+
+/// The review prompt now lives in `bento-review`, shared with the daemon and
+/// the CLI — these two commands are the frontend's way in, so the prompt has
+/// exactly one definition instead of one per language.
+#[tauri::command]
+pub fn review_build_prompt(input: bento_review::ReviewPromptInput) -> String {
+    bento_review::build_review_prompt(&input)
+}
+
+#[tauri::command]
+pub fn review_build_synthesis_prompt(base_prompt: String, reports: Vec<SynthesisReport>) -> String {
+    let refs: Vec<(&str, &str)> = reports.iter().map(|r| (r.label.as_str(), r.report.as_str())).collect();
+    bento_review::build_synthesis_prompt(&refs, &base_prompt)
+}
+
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewBranchContext {

@@ -3,4 +3,4 @@
 # untouched during Phase 1. Phase 2 wires the Tauri app to bento-core.
 [workspace]
 resolver = "2"
-members = ["bento-core", "bento-daemon", "bento-cli"]
+members = ["bento-core", "bento-review", "bento-daemon", "bento-cli"]

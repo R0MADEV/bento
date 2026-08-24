@@ -91,8 +91,11 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
   return { dom, data, state, showReviewDrawer }
 }
 
+const PROMPT_COMMANDS = ['review_build_prompt', 'review_build_synthesis_prompt']
+
 function mockInvoke(map: Record<string, unknown>) {
   mocks.invoke.mockImplementation(async (cmd: string) => {
+    if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
     if (cmd in map) return map[cmd]
     throw new Error(`unmocked invoke: ${cmd}`)
   })
@@ -210,6 +213,7 @@ describe('failure handling', () => {
     setup()
     const h = makeHarness()
     mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (cmd === 'review_branch_context_prepare') throw new Error('worktree busy')
       throw new Error(`unmocked: ${cmd}`)
     })
@@ -226,6 +230,7 @@ describe('failure handling', () => {
     const h = makeHarness()
     let snapshotCalls = 0
     mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (cmd === 'review_branch_context_prepare') return { path: '/wt', commit: 'abc1234', managed: true }
       if (cmd === 'review_snapshot') {
         snapshotCalls += 1

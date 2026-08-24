@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(async () => 'PROMPT') }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 import { buildReviewDocument, buildReviewSynthesisPrompt, parseReviewCheckpoint, isRetryableReviewError, type MultiAgentReviewRun } from '../../../src/core/ai/techReview'
 import { techReviewCheckpointKey } from '../../../src/core/ai/chatHistory'
 
@@ -74,17 +77,11 @@ describe('techReviewCheckpointKey', () => {
 })
 
 describe('buildReviewSynthesisPrompt', () => {
-  it('embeds each reviewer report and the base prompt', () => {
-    const prompt = buildReviewSynthesisPrompt('BASE PROMPT', [
-      { label: 'Claude', report: 'Hallazgo A' },
-      { label: 'Codex', report: 'Hallazgo B' },
-    ])
-    expect(prompt).toContain('2 revisores')
-    expect(prompt).toContain('Análisis de Claude')
-    expect(prompt).toContain('Hallazgo A')
-    expect(prompt).toContain('Análisis de Codex')
-    expect(prompt).toContain('Hallazgo B')
-    expect(prompt).toContain('BASE PROMPT')
+  // El texto lo cubre `daemon/bento-review/src/prompt.rs`; aquí, el paso de datos.
+  it('forwards the base prompt and every reviewer report to the shared builder', async () => {
+    const reports = [{ label: 'Claude', report: 'Hallazgo A' }, { label: 'Codex', report: 'Hallazgo B' }]
+    await expect(buildReviewSynthesisPrompt('BASE PROMPT', reports)).resolves.toBe('PROMPT')
+    expect(mocks.invoke).toHaveBeenCalledWith('review_build_synthesis_prompt', { basePrompt: 'BASE PROMPT', reports })
   })
 })
 

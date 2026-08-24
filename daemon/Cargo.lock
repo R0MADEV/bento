@@ -156,12 +156,20 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bento-core",
+ "bento-review",
  "futures-util",
  "getrandom 0.2.17",
  "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "bento-review"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

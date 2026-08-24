@@ -1,0 +1,10 @@
+[package]
+name = "bento-review"
+version = "0.1.0"
+edition = "2021"
+
+# Deliberately free of tauri/axum: this crate is the review logic the desktop
+# app, the daemon (phone remote) and the CLI all share, so it must not depend
+# on any one of their transports.
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }

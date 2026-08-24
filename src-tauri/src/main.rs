@@ -252,6 +252,8 @@ fn main() {
             review::review_lexis_context,
             review::review_snapshot,
             review::review_validate_finding_path,
+            review::review_build_prompt,
+            review::review_build_synthesis_prompt,
             workspace_io::workspace_load,
             workspace_io::workspace_save,
             workspace_io::workspace_reset,

@@ -225,7 +225,9 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
         direct: async () => lastFiles.map(file => ({ path: file.file, content: file.chunk, reason: 'changed' as const })),
       })
       const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewOverview, changedFiles: reviewChangedFiles })
-      const sharedPrompt = buildReviewPrompt({
+      const sharedPrompt = await buildReviewPrompt({
+        project: reviewProjectName,
+        base: reviewBaseBranch,
         diff: reviewOverview,
         files: [],
         contextSources: context.sources,
@@ -235,7 +237,9 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       // fits inline (large files truncated; the agent reads the rest via its tools).
       const ONE_PASS_CONTENT_BUDGET = 150_000
       const perFileBudget = Math.max(800, Math.floor(ONE_PASS_CONTENT_BUDGET / Math.max(lastFiles.length, 1)))
-      const onePassPrompt = buildReviewPrompt({
+      const onePassPrompt = await buildReviewPrompt({
+        project: reviewProjectName,
+        base: reviewBaseBranch,
         diff: reviewOverview,
         files: lastFiles.map(file => ({
           path: file.file,
@@ -317,7 +321,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       if (!reviewStopped && reportsToSynthesize.length >= 2) {
         progressStatus.textContent = 'Síntesis final…'
         const verifierAgent = reviewAgents.at(-1) ?? reviewAgents[0]
-        const synthesisPrompt = buildReviewSynthesisPrompt(sharedPrompt, reportsToSynthesize)
+        const synthesisPrompt = await buildReviewSynthesisPrompt(sharedPrompt, reportsToSynthesize)
         const synthesisRun = await runReviewAgent(verifierAgent, synthesisPrompt, 'verification')
         synthesisRun.label = 'Síntesis final'
         reviewRuns.push(synthesisRun)

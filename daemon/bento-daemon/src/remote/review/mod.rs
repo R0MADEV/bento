@@ -1,7 +1,6 @@
 mod ask;
 mod checkpoints;
 mod parse;
-mod prompt;
 
 pub use ask::ask_handler;
 pub(crate) use ask::ask;
@@ -30,7 +29,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use super::{Auth, RemoteState, authorized};
-use prompt::{build_review_prompt, build_synthesis_prompt};
+use bento_review::{build_review_prompt, build_synthesis_prompt, ReviewPromptInput};
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
@@ -288,7 +287,7 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
         let total = agents.len();
         for (i, agent) in agents.iter().enumerate() {
             send(format!("[BATCH:{}/{}]", i + 1, total)).await;
-            let review_prompt = build_review_prompt(&cwd, &base, &diff_out, &context);
+            let review_prompt = build_review_prompt(&ReviewPromptInput::new(&cwd, &base, &diff_out, &context));
             match run_agent_collecting(agent, &cwd, &review_prompt, &tx).await {
                 Some((report, _)) => reports.push((format!("Agente {}/{} ({})", i + 1, total, agent), report)),
                 None => { send(format!("[ERROR] {} no encontrado o falló", agent)).await; return; }
@@ -323,7 +322,7 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
         for (i, batch_diff) in batches.into_iter().enumerate() {
             let label = format!("Batch {}/{}", i + 1, total);
             send(format!("[BATCH:{}/{}]", i + 1, total)).await;
-            let review_prompt = build_review_prompt(&cwd, &base, &batch_diff, &context);
+            let review_prompt = build_review_prompt(&ReviewPromptInput::new(&cwd, &base, &batch_diff, &context));
             match run_agent_collecting(agent, &cwd, &review_prompt, &tx).await {
                 Some((report, sid)) => {
                     if let Some(id) = sid { last_session_id = Some(id); }
