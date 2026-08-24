@@ -80,6 +80,45 @@ async fn run(args: &[String]) -> std::io::Result<()> {
                     }
                     None => { eprintln!("usage: bento review pr comments <number>"); Ok(()) }
                 },
+                Some("comment") => match (args.get(3).and_then(|s| s.parse::<u64>().ok()), args.get(4)) {
+                    (Some(pr), Some(text)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comment_add", "cwd": cwd, "pr": pr, "data": text })).await
+                    }
+                    _ => { eprintln!("usage: bento review pr comment <number> <text>"); Ok(()) }
+                },
+                Some("comment-update") => match (
+                    args.get(3).and_then(|s| s.parse::<u64>().ok()),
+                    args.get(4).and_then(|s| s.parse::<u64>().ok()),
+                    args.get(5),
+                ) {
+                    (Some(id), Some(pr), Some(text)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comment_update", "cwd": cwd, "pr": pr, "comment_id": id, "data": text })).await
+                    }
+                    _ => { eprintln!("usage: bento review pr comment-update <comment_id> <pr_number> <text>"); Ok(()) }
+                },
+                Some("comment-delete") => match (
+                    args.get(3).and_then(|s| s.parse::<u64>().ok()),
+                    args.get(4).and_then(|s| s.parse::<u64>().ok()),
+                ) {
+                    (Some(id), Some(pr)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        request(json!({ "id": "1", "cmd": "review.pr_comment_delete", "cwd": cwd, "pr": pr, "comment_id": id })).await
+                    }
+                    _ => { eprintln!("usage: bento review pr comment-delete <comment_id> <pr_number>"); Ok(()) }
+                },
+                Some("submit") => match (args.get(3).and_then(|s| s.parse::<u64>().ok()), args.get(4)) {
+                    (Some(pr), Some(event)) => {
+                        let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                        let mut body = json!({ "id": "1", "cmd": "review.pr_submit", "cwd": cwd, "pr": pr, "event": event });
+                        if let Some(text) = args.get(5) {
+                            body["data"] = json!(text);
+                        }
+                        request(body).await
+                    }
+                    _ => { eprintln!("usage: bento review pr submit <number> <approve|request-changes|comment> [text]"); Ok(()) }
+                },
                 _ => { print_help(); Ok(()) }
             },
             _ => { print_help(); Ok(()) }
@@ -390,6 +429,10 @@ fn print_help() {
     eprintln!("  bento review files [--cwd <dir>] [--base <ref>]   files changed vs base (default: main)");
     eprintln!("  bento review pr diff <number> [--cwd <dir>]       PR diff (needs gh)");
     eprintln!("  bento review pr comments <number> [--cwd <dir>]   PR comments/reviews (needs gh)");
+    eprintln!("  bento review pr comment <number> <text>           add a PR comment (needs gh)");
+    eprintln!("  bento review pr comment-update <comment_id> <number> <text>   edit a comment (needs gh)");
+    eprintln!("  bento review pr comment-delete <comment_id> <number>          delete a comment (needs gh)");
+    eprintln!("  bento review pr submit <number> <approve|request-changes|comment> [text]   submit a review (needs gh)");
     eprintln!();
     eprintln!("env: BENTO_DAEMON_ADDR (default 127.0.0.1:7877)");
 }

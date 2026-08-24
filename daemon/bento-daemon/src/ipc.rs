@@ -41,6 +41,10 @@ struct Request {
     base: Option<String>,
     #[serde(default)]
     pr: Option<u64>,
+    #[serde(default)]
+    comment_id: Option<u64>,
+    #[serde(default)]
+    event: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -237,6 +241,42 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 Err(e) => send(fail(&req.id, e)),
             },
             _ => send(fail(&req.id, "cwd and pr required".into())),
+        },
+
+        "review.pr_comment_add" => match (&req.cwd, req.pr, &req.data) {
+            (Some(cwd), Some(pr), Some(body)) => match crate::remote::review::add_comment(cwd, pr, body) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd, pr and data required".into())),
+        },
+
+        "review.pr_comment_update" => match (&req.cwd, req.pr, req.comment_id, &req.data) {
+            (Some(cwd), Some(pr), Some(id), Some(body)) => {
+                match crate::remote::review::update_comment(cwd, id, pr, body) {
+                    Ok(()) => send(ok(&req.id, Value::Null)),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, pr, comment_id and data required".into())),
+        },
+
+        "review.pr_comment_delete" => match (&req.cwd, req.pr, req.comment_id) {
+            (Some(cwd), Some(pr), Some(id)) => match crate::remote::review::delete_comment(cwd, id, pr) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd, pr and comment_id required".into())),
+        },
+
+        "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {
+            (Some(cwd), Some(pr), Some(event)) => {
+                match crate::remote::review::submit_review(cwd, pr, event, req.data.as_deref()) {
+                    Ok(()) => send(ok(&req.id, Value::Null)),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, pr and event required".into())),
         },
 
         "remote.start" => {

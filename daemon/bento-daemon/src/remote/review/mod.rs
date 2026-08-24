@@ -748,6 +748,12 @@ pub async fn review_pr_comments_handler(
 
 // ── /api/review/pr/comment (POST) ────────────────────────────────────────────
 
+/// Shared by `/api/review/pr/comment` (POST) and the IPC socket's
+/// `review.pr_comment_add`.
+pub(crate) fn add_comment(cwd: &str, pr: u64, body: &str) -> Result<(), String> {
+    gh_cmd(cwd, &["pr", "comment", &pr.to_string(), "--body", body]).map(|_| ())
+}
+
 pub async fn review_pr_add_comment_handler(
     State(state): State<Arc<RemoteState>>,
     Query(q): Query<PrQuery>,
@@ -761,11 +767,11 @@ pub async fn review_pr_add_comment_handler(
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
     let pr = match q.pr {
-        Some(n) => n.to_string(),
+        Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match gh_cmd(&cwd, &["pr", "comment", &pr, "--body", &body.body]) {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+    match add_comment(&cwd, pr, &body.body) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
@@ -785,7 +791,23 @@ fn comment_belongs_to_pr(cwd: &str, id: u64, pr: u64) -> Result<bool, String> {
     Ok(issue_url_matches_pr(&issue_url, pr))
 }
 
+fn ensure_comment_belongs_to_pr(cwd: &str, id: u64, pr: u64) -> Result<(), String> {
+    if comment_belongs_to_pr(cwd, id, pr)? {
+        Ok(())
+    } else {
+        Err("comment does not belong to pr".into())
+    }
+}
+
 // ── /api/review/pr/comment/:id (PUT) ─────────────────────────────────────────
+
+/// Shared by `/api/review/pr/comment/:id` (PUT) and the IPC socket's
+/// `review.pr_comment_update`.
+pub(crate) fn update_comment(cwd: &str, id: u64, pr: u64, body: &str) -> Result<(), String> {
+    ensure_comment_belongs_to_pr(cwd, id, pr)?;
+    let endpoint = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
+    gh_cmd(cwd, &["api", &endpoint, "-X", "PATCH", "-f", &format!("body={body}")]).map(|_| ())
+}
 
 pub async fn review_pr_update_comment_handler(
     State(state): State<Arc<RemoteState>>,
@@ -804,19 +826,22 @@ pub async fn review_pr_update_comment_handler(
         Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match comment_belongs_to_pr(&cwd, id, pr) {
-        Ok(true) => {}
-        Ok(false) => return (StatusCode::FORBIDDEN, "comment does not belong to pr").into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    }
-    let endpoint = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
-    match gh_cmd(&cwd, &["api", &endpoint, "-X", "PATCH", "-f", &format!("body={}", body.body)]) {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+    match update_comment(&cwd, id, pr, &body.body) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) if e == "comment does not belong to pr" => (StatusCode::FORBIDDEN, e).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
 
 // ── /api/review/pr/comment/:id (DELETE) ──────────────────────────────────────
+
+/// Shared by `/api/review/pr/comment/:id` (DELETE) and the IPC socket's
+/// `review.pr_comment_delete`.
+pub(crate) fn delete_comment(cwd: &str, id: u64, pr: u64) -> Result<(), String> {
+    ensure_comment_belongs_to_pr(cwd, id, pr)?;
+    let endpoint = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
+    gh_cmd(cwd, &["api", &endpoint, "-X", "DELETE"]).map(|_| ())
+}
 
 pub async fn review_pr_delete_comment_handler(
     State(state): State<Arc<RemoteState>>,
@@ -834,14 +859,9 @@ pub async fn review_pr_delete_comment_handler(
         Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match comment_belongs_to_pr(&cwd, id, pr) {
-        Ok(true) => {}
-        Ok(false) => return (StatusCode::FORBIDDEN, "comment does not belong to pr").into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    }
-    let endpoint = format!("repos/{{owner}}/{{repo}}/issues/comments/{id}");
-    match gh_cmd(&cwd, &["api", &endpoint, "-X", "DELETE"]) {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+    match delete_comment(&cwd, id, pr) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) if e == "comment does not belong to pr" => (StatusCode::FORBIDDEN, e).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
 }
@@ -861,24 +881,32 @@ pub async fn review_pr_submit_handler(
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
     let pr = match q.pr {
-        Some(n) => n.to_string(),
+        Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    let event_flag = match body.event.to_uppercase().as_str() {
+    match submit_review(&cwd, pr, &body.event, body.body.as_deref()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
+}
+
+/// Shared by `/api/review/pr/submit` and the IPC socket's
+/// `review.pr_submit`. `event` is GitHub's review event name
+/// (case-insensitive): `APPROVE`, `REQUEST_CHANGES`, anything else falls
+/// back to a plain comment-only review, matching `gh pr review`'s own
+/// three-way choice.
+pub(crate) fn submit_review(cwd: &str, pr: u64, event: &str, body: Option<&str>) -> Result<(), String> {
+    let event_flag = match event.to_uppercase().as_str() {
         "APPROVE" => "--approve",
         "REQUEST_CHANGES" => "--request-changes",
         _ => "--comment",
     };
-    let mut args = vec!["pr", "review", &pr, event_flag];
-    let comment_body;
-    if let Some(ref b) = body.body {
-        comment_body = b.clone();
-        args.extend_from_slice(&["--body", &comment_body]);
+    let pr_str = pr.to_string();
+    let mut args = vec!["pr", "review", pr_str.as_str(), event_flag];
+    if let Some(b) = body {
+        args.extend_from_slice(&["--body", b]);
     }
-    match gh_cmd(&cwd, &args) {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    }
+    gh_cmd(cwd, &args).map(|_| ())
 }
 
 // ── /api/review/branches ──────────────────────────────────────────────────────
