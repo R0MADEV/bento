@@ -73,16 +73,26 @@ export const PAIR_JS = `(function () {
     ])
   }
 
-  goButton.addEventListener('click', () => {
-    const code = codeInput.value.trim()
-    if (!/^\\d{6}$/.test(code)) { setError('El código son 6 dígitos.'); return }
+  function tryConnect(code) {
     goButton.disabled = true
     setError('')
     connect(code).catch(err => {
       setError('No se pudo conectar: ' + (err && err.message || err))
       goButton.disabled = false
     })
+  }
+
+  goButton.addEventListener('click', () => {
+    const code = codeInput.value.trim()
+    if (!/^\\d{6}$/.test(code)) { setError('El código son 6 dígitos.'); return }
+    tryConnect(code)
   })
+
+  // A code from the URL (QR scan, or a reload/reopen carrying the code the
+  // previous connect() left there — see history.replaceState below) means
+  // this page doesn't need a human to tap "Conectar": the code is reusable
+  // for a full day, so reconnect straight away.
+  if (codeFromUrl && /^\\d{6}$/.test(codeFromUrl)) tryConnect(codeFromUrl)
 
   async function pollJson(url, signal) {
     while (true) {
@@ -95,8 +105,10 @@ export const PAIR_JS = `(function () {
   // Best-effort, same as the desktop side: gathering across every local
   // interface can stall forever on one that never gets a STUN reply (seen
   // with a Tailscale interface present) — one usable candidate is enough,
-  // so this doesn't wait past ICE_GATHERING_TIMEOUT_MS for the rest.
-  const ICE_GATHERING_TIMEOUT_MS = 5000
+  // so this doesn't wait past ICE_GATHERING_TIMEOUT_MS for the rest. 8s
+  // (not 5s): the TURN relay candidate needs its own authenticated
+  // ALLOCATE round-trip on top of the plain STUN binding request.
+  const ICE_GATHERING_TIMEOUT_MS = 8000
   function waitForIceGatheringComplete(pc) {
     if (pc.iceGatheringState === 'complete') return Promise.resolve()
     return new Promise(resolve => {
@@ -112,7 +124,17 @@ export const PAIR_JS = `(function () {
     const controller = new AbortController()
     setTimeout(() => controller.abort(), 120000)
 
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    // Free public TURN relay (Open Relay Project) alongside STUN — direct P2P
+    // can fail on some routers/NATs (no hairpinning for same-LAN STUN,
+    // asymmetric NAT, Safari's mDNS-obfuscated host candidates) with nothing
+    // to fall back to otherwise. Same static demo credential other
+    // open-source projects use; see webrtc_bridge.rs for the Rust-side twin.
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      ],
+    })
     pc.addEventListener('iceconnectionstatechange', () => setStatus('ICE: ' + pc.iceConnectionState))
     const dataChannelPromise = new Promise(resolve => {
       pc.addEventListener('datachannel', e => {
@@ -148,7 +170,11 @@ export const PAIR_JS = `(function () {
     installTransport(channel)
     // shared.js reads its auth token from location.search on load — put it there
     // before the real app's scripts run, so it authenticates like it always has.
-    history.replaceState(null, '', location.pathname + '?token=' + encodeURIComponent(authToken))
+    // Keep the code in the URL too (not just token): the code is reusable
+    // for a full day now (see run_offerer's retry loop), and dropping it
+    // here used to mean a reload had nothing left to reconnect with,
+    // forcing a fresh QR scan even though the code itself was still valid.
+    history.replaceState(null, '', location.pathname + '?code=' + code + '&token=' + encodeURIComponent(authToken))
     await withTimeout(loadRealApp(), 20000, 'Carga de la app')
     setStatus('Listo.')
   }

@@ -216,9 +216,59 @@ razones técnicas reales descubiertas al construirlo (no por preferencia):
   `review.js`, CSS) se piden con el `fetch` ya parcheado y se inyectan en el
   DOM de la página de emparejamiento — no hay navegación real (eso sí
   requeriría Service Worker). Cero cambios en esos archivos.
-- [ ] **3.4** Reconexión: si el DataChannel se cae, mostrar "reconectando"
-  y reintentar el emparejamiento con el mismo código si sigue vivo en KV —
-  pendiente, no cubierto todavía.
+- [x] **3.4** Reconexión con el mismo código: `run_offerer` (Rust) ahora es
+  un loop acotado por `PAIRING_TTL` (24h, ver Seguridad) en vez de un solo
+  ciclo oferta→respuesta. Cada vez que una ronda termina (el `DataChannel`
+  se cierra, falla, o nadie contesta la oferta a tiempo) vuelve a publicar
+  una oferta SDP **nueva** bajo el mismo código — así que si el móvil
+  recarga la página, Safari descarga la pestaña en segundo plano, o se
+  cierra y reabre la app, alcanza con volver a abrir la misma URL/QR: no
+  hace falta generar un código nuevo desde la Mac. El lado del navegador no
+  necesita lógica de reintento propia — un reload ya vuelve a correr
+  `connect(code)` desde cero, que ahora encuentra una oferta fresca
+  esperando. Antes de cada oferta nueva se borra (`DELETE`) la respuesta
+  vieja en KV — si no, `poll_until_deadline` podía leer instantáneamente
+  la respuesta de la ronda anterior, que no matchea el SDP nuevo (ufrag/pwd
+  distintos) y rompe el handshake.
+
+**Dos bugs reales más encontrados terminando 3.4** (el código de 24h no
+servía de nada sin estos):
+- `history.replaceState` después de conectar dejaba la URL en solo
+  `?token=...`, **borrando el `code`**. Un reload entonces no tenía forma
+  de saber qué código reintentar — pedía escanear el QR de nuevo pese a que
+  el código seguía vivo 24h en el servidor. Fix: la URL ahora conserva
+  `?code=...&token=...` los dos.
+- Aunque el código quedara en la URL, no había nada que lo usara solo: un
+  reload mostraba el formulario con el código prellenado pero exigía tocar
+  "Conectar" a mano. Fix: si la URL trae un código válido al cargar, se
+  llama a `connect()` automáticamente — un reload reconecta sin ningún
+  toque.
+
+**Bug de protocolo separado, encontrado investigando por qué no se veía lo
+que se escribía en una terminal desde el móvil**: `Envelope` usa
+`#[serde(rename_all = "kebab-case")]` a nivel de enum, que también afecta a
+los NOMBRES DE CAMPO — convertía `is_text` en `"is-text"` en el JSON. Pero
+el lado del navegador (`pairAssets.ts`) siempre leyó/escribió `isText`
+(camelCase). Resultado: `envelope.isText` daba `undefined` (falsy) sin
+importar el valor real, así que TODO mensaje de salida de terminal —
+siempre texto plano, nunca binario — se trataba como si fuera base64 y se
+mandaba a `atob()`, que fallaba con cada frame (confirmado con logging
+temporal en ambos lados: Rust clasificando el frame como `text` siempre,
+navegador tomando la rama de `base64ToArrayBuffer` siempre). Probablemente
+rompía también la dirección contraria (pulsaciones de teclado), ya que
+"is-text" faltante haría fallar el `deserialize` del lado Rust. Fix:
+`#[serde(rename = "isText")]` puntual en ese campo, sin tocar el resto del
+`rename_all`. Confirmado sin errores de `atob` tras el fix.
+
+**Nota honesta sobre el timing de reconexión real**: el mecanismo en sí
+está confirmado funcionando (el log de Rust muestra la oferta nueva
+publicándose tras cada reload, sin intervención manual). Pero un reload
+hereda la misma variabilidad de red real que la conexión inicial siempre
+tuvo — en pruebas con Playwright, algunos reloads reconectaron al toque, otros
+tardaron más de 2 minutos por la misma demora de propagación de KV ya
+documentada. No es un bug nuevo del código de reconexión, es el mismo
+trade-off del tier gratis de Cloudflare que ya se aceptó para la conexión
+inicial — solo que ahora también aplica a los reloads.
 
 **Verificado de punta a punta con Chromium real (Playwright), no solo con
 `cargo build`/`tsc`**: `wrangler dev --local` (Worker) + el binario del
@@ -352,19 +402,80 @@ Se agregó también `iceconnectionstatechange` (navegador) y
 estado) como logging — útil para diagnosticar sin necesitar reconstruir la
 instrumentación de nuevo la próxima vez.
 
+**Bug de layout descubierto probando desde un celular real** (nunca se
+hubiera visto con Playwright + viewport de escritorio, que fue todo el
+testing hasta ese punto): la app real se veía angosta y centrada en vez de
+ocupar todo el ancho. Causa: `loadRealApp()` nunca quitaba el `<style>`
+propio de `PAIR_HTML` (el formulario de "Código de la app Bento") al
+inyectar la app real — ese bloque define `body { align-items: center;
+justify-content: center; padding: 24px; ... }`, y como el body de la app
+real también es un flex-container en columna, ese `align-items: center`
+seguía aplicando y encogía/centraba sus hijos (`#tabbar`, la lista de
+terminales) en vez de dejarlos estirarse a todo el ancho. Fix: `loadRealApp
+()` borra los `<style>` del `<head>` original antes de inyectar las hojas
+de estilo de la app real. Confirmado con Playwright usando
+`devices['iPhone 13']` + captura de pantalla real: antes, `#tabbar` medía
+249px de 390 centrado; después, ancho completo.
+
+**"ICE: disconnected" / "ICE FAILED" reproducible solo con Safari real, no
+con Playwright/Chromium** — root cause distinta de la de KV de arriba, esta
+sí era un bug real de configuración:
+
+1. **mDNS deshabilitado**: `PeerConnectionBuilder` (webrtc-rs) trae
+   `mdns_mode: MulticastDnsMode::Disabled` por defecto — descarta cualquier
+   candidato ICE remoto tipo `.local` (mDNS). Safari (y Chrome, confirmado
+   con un test aislado) ofuscan sus candidatos "host" como
+   `<uuid>.local` por privacidad — con mDNS deshabilitado esos candidatos
+   se tiran directo a la basura, dejando solo la ruta `srflx` (vía STUN)
+   disponible. Muchos routers domésticos no soportan "NAT hairpinning"
+   (dos dispositivos de la misma LAN conectándose por su IP pública), así
+   que esa ruta también podía fallar — combinación que explica los
+   "funciona a veces, no otras" de antes. Fix: `SettingEngine::
+   set_multicast_dns_mode(MulticastDnsMode::QueryOnly)` — resuelve
+   candidatos mDNS remotos sin necesidad de anunciar los propios (no hace
+   falta ocultar la IP LAN del Mac). `MulticastDnsMode` no está
+   re-exportado por el crate `webrtc` pese a que `SettingEngine::
+   set_multicast_dns_mode` sí lo necesita como parámetro — hubo que agregar
+   `rtc = "0.20.3"` como dependencia directa (misma versión que usa
+   `webrtc` internamente, para que Cargo las unifique) solo para acceder a
+   `rtc::ice::mdns::MulticastDnsMode`.
+2. **TURN de respaldo** (Open Relay Project / Metered.ca, gratis, mismo
+   credential estático que usan otros proyectos open-source como Nextcloud
+   Talk) agregado junto al STUN existente — mitiga el caso sin salida
+   cuando ni mDNS ni STUN alcanzan. **Nota real**: un test aislado (Playwright
+   + `RTCPeerConnection` directo, sin pasar por nuestro código) confirmó que
+   la credencial estática `openrelayproject`/`openrelayproject` **no
+   devuelve ningún candidato `relay`** ahora mismo — probablemente
+   revocada/reemplazada por un esquema de API key en Metered.ca. Se dejó
+   configurado igual (no hace daño, y podría volver a funcionar), pero **no
+   es lo que arregló la conexión** — fue el fix de mDNS. Si se necesita TURN
+   de verdad en el futuro, hace falta una cuenta propia (gratis) en
+   Metered.ca u otro proveedor.
+3. `ICE_GATHERING_TIMEOUT` subido de 5s a 8s en ambos lados: la solicitud
+   TURN `ALLOCATE` (autenticada) tarda más que un simple STUN binding, 5s
+   la cortaba antes de completarse.
+
 ---
 
 ## Seguridad
 
-- El código de emparejamiento es de un solo uso y expira a los 5 minutos —
-  quien no lo tenga no puede unirse a la señalización.
+- El código de emparejamiento es reutilizable durante 24h (antes: un solo
+  uso, 5 minutos) — `run_offerer` renegocia una oferta SDP nueva bajo el
+  mismo código cada vez que hace falta (reload de la página, la pestaña se
+  descarga en segundo plano, cerrar y reabrir la app), sin pedir un código
+  nuevo cada vez. Trade-off explícito: quien vea el código/QR puede
+  reconectarse durante esa ventana de 24h, no solo una vez — igual necesita
+  estar en una red desde la que alcance al Mac, y el servidor real sigue
+  gateado por su propio token (`remote.start`), independiente de esto.
 - El tráfico real nunca pasa por Cloudflare — solo el handshake SDP/ICE.
 - WebRTC cifra el DataChannel con DTLS-SRTP nativamente, sin configuración.
 - El forwarder del Mac reenvía hacia la IP real que `remote.start` ya tiene
   bindeada (Tailscale o LAN, gateada por token) — no abre ninguna
   superficie nueva, solo un camino más para llegar a la que ya existe.
-- Sin TURN: si el P2P directo falla, no hay relay de respaldo — se informa
-  al usuario en vez de degradar silenciosamente a algo menos seguro.
+- TURN de respaldo (Open Relay Project, gratis) además del STUN — mitiga el
+  caso "sin TURN, P2P directo falla, no hay nada más que intentar", aunque
+  la credencial estática compartida no siempre está disponible (ver nota en
+  Fase 3.4 más abajo).
 
 ---
 
