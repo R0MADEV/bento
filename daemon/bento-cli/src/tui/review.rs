@@ -1,11 +1,14 @@
-//! Review tab: browse files/branches/PRs, view per-file diffs, comment on
-//! and submit PR reviews, run a full AI review, and ask follow-up questions
-//! — all via the same `review.*` IPC commands the one-shot `bento review`
-//! subcommands already use.
+//! Review tab: a persistent split-pane browser (sidebar: base/agent/compare
+//! controls + ramas/PRs/historial tabs; main: changed files with per-file
+//! "reviewed" tracking) mirroring the desktop app's Tech Review panel, plus
+//! full-screen drill-downs for a file's diff, a PR's diff/comments, and a
+//! running/loaded review — all via the same `review.*` IPC commands the
+//! one-shot `bento review` subcommands already use.
 
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use serde_json::{json, Value};
 
 use crate::review_stream::{self, ReviewEvent};
@@ -13,13 +16,60 @@ use crate::review_stream::{self, ReviewEvent};
 const AGENTS: [&str; 3] = ["claude", "codex", "opencode"];
 
 enum ReviewView {
-    Files,
+    Browse,
     FileDetail,
+    PrDetail,
+    Output,
+}
+
+enum SidebarTab {
     Branches,
     Prs,
-    PrDetail,
     Checkpoints,
-    Output,
+}
+
+enum Focus {
+    Sidebar,
+    Files,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum FileFilter {
+    All,
+    Added,
+    Modified,
+    Deleted,
+}
+
+impl FileFilter {
+    fn next(self) -> Self {
+        match self {
+            FileFilter::All => FileFilter::Added,
+            FileFilter::Added => FileFilter::Modified,
+            FileFilter::Modified => FileFilter::Deleted,
+            FileFilter::Deleted => FileFilter::All,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            FileFilter::All => "All",
+            FileFilter::Added => "Added",
+            FileFilter::Modified => "Modified",
+            FileFilter::Deleted => "Deleted",
+        }
+    }
+}
+
+/// Matches the desktop panel's filter chips: Added = `A`, Deleted = `D`,
+/// everything else (M, R, ...) counts as Modified.
+fn file_matches_filter(status: &str, filter: FileFilter) -> bool {
+    match filter {
+        FileFilter::All => true,
+        FileFilter::Added => status == "A",
+        FileFilter::Deleted => status == "D",
+        FileFilter::Modified => status != "A" && status != "D",
+    }
 }
 
 /// What a pending text-input buffer is for — set when entering input mode,
@@ -45,9 +95,16 @@ pub(super) struct ReviewState {
     /// Author-supplied focus notes injected into the review prompt —
     /// mirrors desktop's "Contexto para la review" textarea.
     context: String,
+
+    view: ReviewView,
+    focus: Focus,
+    sidebar_tab: SidebarTab,
+
     files: Vec<Value>,
     files_selected: usize,
-    view: ReviewView,
+    file_filter: FileFilter,
+    reviewed: std::collections::HashSet<String>,
+
     output: String,
     scroll: u16,
     running: bool,
@@ -63,6 +120,7 @@ pub(super) struct ReviewState {
     is_run_stream: bool,
     session_id: Option<String>,
     session_agent: Option<String>,
+
     branches: Vec<String>,
     branches_selected: usize,
     prs: Vec<Value>,
@@ -71,10 +129,11 @@ pub(super) struct ReviewState {
     pr_detail: String,
     pr_scroll: u16,
     pr_status: String,
-    file_diff: String,
-    file_scroll: u16,
     checkpoints: Vec<Value>,
     checkpoints_selected: usize,
+
+    file_diff: String,
+    file_scroll: u16,
 }
 
 impl ReviewState {
@@ -84,9 +143,13 @@ impl ReviewState {
             agent: AGENTS[0].to_string(),
             compare: false,
             context: String::new(),
+            view: ReviewView::Browse,
+            focus: Focus::Files,
+            sidebar_tab: SidebarTab::Branches,
             files: Vec::new(),
             files_selected: 0,
-            view: ReviewView::Files,
+            file_filter: FileFilter::All,
+            reviewed: std::collections::HashSet::new(),
             output: String::new(),
             scroll: 0,
             running: false,
@@ -106,10 +169,10 @@ impl ReviewState {
             pr_detail: String::new(),
             pr_scroll: 0,
             pr_status: String::new(),
-            file_diff: String::new(),
-            file_scroll: 0,
             checkpoints: Vec::new(),
             checkpoints_selected: 0,
+            file_diff: String::new(),
+            file_scroll: 0,
         }
     }
 
@@ -123,7 +186,37 @@ impl ReviewState {
         })).await;
         self.files = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
         self.files_selected = 0;
-        self.view = ReviewView::Files;
+        self.reviewed.clear();
+        self.view = ReviewView::Browse;
+    }
+
+    /// Populates both panes for a fresh entry into the Review tab (List →
+    /// Tab): files, and the sidebar's default tab (branches) — without this,
+    /// the sidebar shows "Ramas" as active but empty until `b` is pressed.
+    pub(super) async fn enter(&mut self, cwd: &str) {
+        self.refresh_files(cwd).await;
+        self.fetch_branches(cwd).await;
+    }
+
+    async fn fetch_branches(&mut self, cwd: &str) {
+        let data = crate::request_data(json!({ "id": "1", "cmd": "review.branches", "cwd": cwd })).await;
+        self.branches = data.ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        self.branches_selected = 0;
+    }
+
+    fn visible_files(&self) -> Vec<&Value> {
+        self.files
+            .iter()
+            .filter(|f| {
+                let status = f.get("status").and_then(Value::as_str).unwrap_or("");
+                file_matches_filter(status, self.file_filter)
+            })
+            .collect()
     }
 
     /// Handles one input event. Returns `true` if the panel should switch
@@ -138,25 +231,150 @@ impl ReviewState {
             return false;
         }
         match self.view {
-            ReviewView::Files => self.handle_files_key(key.code, cwd).await,
+            ReviewView::Browse => self.handle_browse_key(key.code, cwd).await,
             ReviewView::FileDetail => self.handle_file_detail_key(key.code),
-            ReviewView::Branches => self.handle_branches_key(key.code, cwd).await,
-            ReviewView::Prs => self.handle_prs_key(key.code, cwd).await,
             ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
-            ReviewView::Checkpoints => self.handle_checkpoints_key(key.code, cwd).await,
             ReviewView::Output => self.handle_output_key(key.code),
         }
     }
 
+    async fn handle_browse_key(&mut self, code: KeyCode, cwd: &str) -> bool {
+        match code {
+            KeyCode::Left => { self.focus = Focus::Sidebar; false }
+            KeyCode::Right => { self.focus = Focus::Files; false }
+            KeyCode::Char('r') => { self.start_run(cwd); false }
+            KeyCode::Char('g') => { self.agent = next_agent(&self.agent); false }
+            KeyCode::Char('x') => { self.compare = !self.compare; false }
+            KeyCode::Char('c') => {
+                self.input_purpose = Some(InputPurpose::Context);
+                self.input = self.context.clone();
+                false
+            }
+            KeyCode::Char('b') => { self.set_sidebar_tab(SidebarTab::Branches, cwd).await; false }
+            KeyCode::Char('p') => { self.set_sidebar_tab(SidebarTab::Prs, cwd).await; false }
+            KeyCode::Char('h') => { self.set_sidebar_tab(SidebarTab::Checkpoints, cwd).await; false }
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') => {
+                match self.focus {
+                    Focus::Sidebar => self.handle_sidebar_key(code, cwd).await,
+                    Focus::Files => self.handle_files_key(code, cwd).await,
+                }
+            }
+            KeyCode::Tab | KeyCode::Char('q') | KeyCode::Esc => true,
+            _ => false,
+        }
+    }
+
+    async fn set_sidebar_tab(&mut self, tab: SidebarTab, cwd: &str) {
+        match &tab {
+            SidebarTab::Branches => self.fetch_branches(cwd).await,
+            SidebarTab::Prs => {
+                let data = crate::request_data(json!({ "id": "1", "cmd": "review.prs", "cwd": cwd })).await;
+                self.prs = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                self.prs_selected = 0;
+            }
+            SidebarTab::Checkpoints => {
+                let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
+                self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                self.checkpoints_selected = 0;
+            }
+        }
+        self.sidebar_tab = tab;
+        self.focus = Focus::Sidebar;
+    }
+
+    async fn handle_sidebar_key(&mut self, code: KeyCode, cwd: &str) -> bool {
+        match self.sidebar_tab {
+            SidebarTab::Branches => match code {
+                KeyCode::Up => { self.branches_selected = self.branches_selected.saturating_sub(1); false }
+                KeyCode::Down => {
+                    if self.branches_selected + 1 < self.branches.len() { self.branches_selected += 1; }
+                    false
+                }
+                KeyCode::Enter => {
+                    if let Some(b) = self.branches.get(self.branches_selected) {
+                        self.base = b.clone();
+                        self.refresh_files(cwd).await;
+                        self.focus = Focus::Sidebar;
+                    }
+                    false
+                }
+                _ => false,
+            },
+            SidebarTab::Prs => match code {
+                KeyCode::Up => { self.prs_selected = self.prs_selected.saturating_sub(1); false }
+                KeyCode::Down => {
+                    if self.prs_selected + 1 < self.prs.len() { self.prs_selected += 1; }
+                    false
+                }
+                KeyCode::Enter => {
+                    if let Some(pr) = self.prs.get(self.prs_selected).and_then(|p| p.get("number")).and_then(Value::as_u64) {
+                        self.load_pr_detail(cwd, pr).await;
+                    }
+                    false
+                }
+                _ => false,
+            },
+            SidebarTab::Checkpoints => match code {
+                KeyCode::Up => { self.checkpoints_selected = self.checkpoints_selected.saturating_sub(1); false }
+                KeyCode::Down => {
+                    if self.checkpoints_selected + 1 < self.checkpoints.len() { self.checkpoints_selected += 1; }
+                    false
+                }
+                KeyCode::Enter => {
+                    if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
+                        let base = base.to_string();
+                        let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": cwd, "base": base })).await;
+                        if let Ok(cp) = data {
+                            self.base = base;
+                            self.output = cp.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
+                            self.session_id = cp.get("session_id").and_then(Value::as_str).map(String::from);
+                            self.session_agent = cp.get("session_agent").and_then(Value::as_str).map(String::from);
+                            self.scroll = 0;
+                            self.running = false;
+                            self.last_progress.clear();
+                            self.view = ReviewView::Output;
+                        }
+                    }
+                    false
+                }
+                KeyCode::Char('d') => {
+                    if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
+                        let base = base.to_string();
+                        let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": cwd, "base": base })).await;
+                        let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
+                        self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                        if self.checkpoints_selected >= self.checkpoints.len() {
+                            self.checkpoints_selected = self.checkpoints.len().saturating_sub(1);
+                        }
+                    }
+                    false
+                }
+                _ => false,
+            },
+        }
+    }
+
     async fn handle_files_key(&mut self, code: KeyCode, cwd: &str) -> bool {
+        let visible_len = self.visible_files().len();
         match code {
             KeyCode::Up => { self.files_selected = self.files_selected.saturating_sub(1); false }
             KeyCode::Down => {
-                if self.files_selected + 1 < self.files.len() { self.files_selected += 1; }
+                if self.files_selected + 1 < visible_len { self.files_selected += 1; }
+                false
+            }
+            KeyCode::Char(' ') => {
+                if let Some(path) = self.visible_files().get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str).map(String::from) {
+                    if !self.reviewed.remove(&path) { self.reviewed.insert(path); }
+                }
+                false
+            }
+            KeyCode::Char('f') => {
+                self.file_filter = self.file_filter.next();
+                self.files_selected = 0;
                 false
             }
             KeyCode::Enter => {
-                if let Some(path) = self.files.get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str) {
+                if let Some(path) = self.visible_files().get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str).map(String::from) {
                     let data = crate::request_data(json!({
                         "id": "1", "cmd": "review.file", "cwd": cwd, "base": self.base, "path": path,
                     })).await;
@@ -164,95 +382,6 @@ impl ReviewState {
                     self.file_scroll = 0;
                     self.view = ReviewView::FileDetail;
                 }
-                false
-            }
-            KeyCode::Char('r') => {
-                self.start_run(cwd);
-                false
-            }
-            KeyCode::Char('b') => {
-                let data = crate::request_data(json!({ "id": "1", "cmd": "review.branches", "cwd": cwd })).await;
-                self.branches = data.ok()
-                    .and_then(|v| v.as_array().cloned())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect();
-                self.branches_selected = 0;
-                self.view = ReviewView::Branches;
-                false
-            }
-            KeyCode::Char('p') => {
-                let data = crate::request_data(json!({ "id": "1", "cmd": "review.prs", "cwd": cwd })).await;
-                self.prs = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
-                self.prs_selected = 0;
-                self.view = ReviewView::Prs;
-                false
-            }
-            KeyCode::Char('g') => {
-                self.agent = next_agent(&self.agent);
-                false
-            }
-            KeyCode::Char('x') => {
-                self.compare = !self.compare;
-                false
-            }
-            KeyCode::Char('c') => {
-                self.input_purpose = Some(InputPurpose::Context);
-                self.input = self.context.clone();
-                false
-            }
-            KeyCode::Char('h') => {
-                let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
-                self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
-                self.checkpoints_selected = 0;
-                self.view = ReviewView::Checkpoints;
-                false
-            }
-            KeyCode::Tab | KeyCode::Char('q') | KeyCode::Esc => true,
-            _ => false,
-        }
-    }
-
-    async fn handle_checkpoints_key(&mut self, code: KeyCode, cwd: &str) -> bool {
-        match code {
-            KeyCode::Up => { self.checkpoints_selected = self.checkpoints_selected.saturating_sub(1); false }
-            KeyCode::Down => {
-                if self.checkpoints_selected + 1 < self.checkpoints.len() { self.checkpoints_selected += 1; }
-                false
-            }
-            KeyCode::Enter => {
-                if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
-                    let base = base.to_string();
-                    let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": cwd, "base": base })).await;
-                    if let Ok(cp) = data {
-                        self.base = base;
-                        self.output = cp.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
-                        self.session_id = cp.get("session_id").and_then(Value::as_str).map(String::from);
-                        self.session_agent = cp.get("session_agent").and_then(Value::as_str).map(String::from);
-                        self.scroll = 0;
-                        self.running = false;
-                        self.last_progress.clear();
-                        self.view = ReviewView::Output;
-                    }
-                }
-                false
-            }
-            KeyCode::Char('d') => {
-                if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
-                    let base = base.to_string();
-                    let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": cwd, "base": base })).await;
-                    let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
-                    self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
-                    if self.checkpoints_selected >= self.checkpoints.len() {
-                        self.checkpoints_selected = self.checkpoints.len().saturating_sub(1);
-                    }
-                }
-                false
-            }
-            KeyCode::Tab => true,
-            KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = ReviewView::Files;
                 false
             }
             _ => false,
@@ -267,54 +396,7 @@ impl ReviewState {
             KeyCode::PageDown => { self.file_scroll = self.file_scroll.saturating_add(10); false }
             KeyCode::Tab => true,
             KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = ReviewView::Files;
-                false
-            }
-            _ => false,
-        }
-    }
-
-    async fn handle_branches_key(&mut self, code: KeyCode, cwd: &str) -> bool {
-        match code {
-            KeyCode::Up => { self.branches_selected = self.branches_selected.saturating_sub(1); false }
-            KeyCode::Down => {
-                if self.branches_selected + 1 < self.branches.len() { self.branches_selected += 1; }
-                false
-            }
-            KeyCode::Enter => {
-                if let Some(b) = self.branches.get(self.branches_selected) {
-                    self.base = b.clone();
-                    self.refresh_files(cwd).await;
-                } else {
-                    self.view = ReviewView::Files;
-                }
-                false
-            }
-            KeyCode::Tab => true,
-            KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = ReviewView::Files;
-                false
-            }
-            _ => false,
-        }
-    }
-
-    async fn handle_prs_key(&mut self, code: KeyCode, cwd: &str) -> bool {
-        match code {
-            KeyCode::Up => { self.prs_selected = self.prs_selected.saturating_sub(1); false }
-            KeyCode::Down => {
-                if self.prs_selected + 1 < self.prs.len() { self.prs_selected += 1; }
-                false
-            }
-            KeyCode::Enter => {
-                if let Some(pr) = self.prs.get(self.prs_selected).and_then(|p| p.get("number")).and_then(Value::as_u64) {
-                    self.load_pr_detail(cwd, pr).await;
-                }
-                false
-            }
-            KeyCode::Tab => true,
-            KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = ReviewView::Files;
+                self.view = ReviewView::Browse;
                 false
             }
             _ => false,
@@ -367,7 +449,7 @@ impl ReviewState {
             }
             KeyCode::Tab => true,
             KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = ReviewView::Prs;
+                self.view = ReviewView::Browse;
                 false
             }
             _ => false,
@@ -394,7 +476,7 @@ impl ReviewState {
             }
             KeyCode::Tab => true,
             KeyCode::Esc => {
-                self.view = ReviewView::Files;
+                self.view = ReviewView::Browse;
                 false
             }
             _ => false,
@@ -560,129 +642,133 @@ fn format_pr_comments(data: &Value) -> String {
 
 pub(super) fn draw(frame: &mut ratatui::Frame, review: &ReviewState) {
     match review.view {
-        ReviewView::Files => draw_files(frame, review),
+        ReviewView::Browse => draw_browse(frame, review),
         ReviewView::FileDetail => draw_file_detail(frame, review),
-        ReviewView::Branches => draw_branches(frame, review),
-        ReviewView::Prs => draw_prs(frame, review),
         ReviewView::PrDetail => draw_pr_detail(frame, review),
-        ReviewView::Checkpoints => draw_checkpoints(frame, review),
         ReviewView::Output => draw_output(frame, review),
     }
 }
 
-fn draw_files(frame: &mut ratatui::Frame, review: &ReviewState) {
+const FOCUSED: Style = Style::new().fg(Color::Yellow);
+
+fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState) {
     let area = frame.area();
-    let items: Vec<ListItem> = if review.files.is_empty() {
-        vec![ListItem::new(format!("Sin cambios respecto a {}.", review.base))]
+    let cols = Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(area);
+    draw_sidebar(frame, review, cols[0]);
+    draw_file_browser(frame, review, cols[1]);
+
+    if matches!(review.input_purpose, Some(InputPurpose::Context)) {
+        let bottom = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area)[1];
+        let input = Paragraph::new(format!("{}▏", review.input))
+            .block(Block::default().title("Contexto para la review (Enter guardar, Esc cancelar)").borders(Borders::ALL));
+        frame.render_widget(input, bottom);
+    }
+}
+
+fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect) {
+    let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).split(area);
+
+    let agent_line = if review.compare {
+        "Agente: comparar todos (claude+codex+opencode)".to_string()
     } else {
-        review
-            .files
+        format!("Agente: {} (g cambia)", review.agent)
+    };
+    let compare_line = format!("Comparar: {} (x)  Contexto: {} (c)", on_off(review.compare), if review.context.is_empty() { "no" } else { "sí" });
+    let header = Paragraph::new(vec![
+        ratatui::text::Line::from(format!("Base: {}", review.base)),
+        ratatui::text::Line::from(agent_line),
+        ratatui::text::Line::from(compare_line),
+    ])
+    .block(Block::default().title("Tech Review — r: correr").borders(Borders::ALL));
+    frame.render_widget(header, rows[0]);
+
+    let border_style = if matches!(review.focus, Focus::Sidebar) { FOCUSED } else { Style::default() };
+    let (title, items, selected): (String, Vec<ListItem>, usize) = match review.sidebar_tab {
+        SidebarTab::Branches => (
+            format!("[b] Ramas ({}) · p PRs · h historial", review.branches.len()),
+            review.branches.iter().map(|b| ListItem::new(b.as_str())).collect(),
+            review.branches_selected,
+        ),
+        SidebarTab::Prs => (
+            format!("b ramas · [p] PRs ({}) · h historial", review.prs.len()),
+            if review.prs.is_empty() {
+                vec![ListItem::new("No hay PRs abiertos.")]
+            } else {
+                review.prs.iter().map(|pr| {
+                    let number = pr.get("number").and_then(Value::as_u64).unwrap_or(0);
+                    let title = pr.get("title").and_then(Value::as_str).unwrap_or("");
+                    let branch = pr.get("headRefName").and_then(Value::as_str).unwrap_or("");
+                    ListItem::new(format!("#{number}  {title}  ({branch})"))
+                }).collect()
+            },
+            review.prs_selected,
+        ),
+        SidebarTab::Checkpoints => (
+            format!("b ramas · p PRs · [h] historial ({}, d borra)", review.checkpoints.len()),
+            if review.checkpoints.is_empty() {
+                vec![ListItem::new("Sin reviews guardadas.")]
+            } else {
+                review.checkpoints.iter().map(|c| {
+                    let base = c.get("base").and_then(Value::as_str).unwrap_or("?");
+                    let saved_at = c.get("saved_at").and_then(Value::as_str).unwrap_or("");
+                    ListItem::new(format!("{base}  ({saved_at})"))
+                }).collect()
+            },
+            review.checkpoints_selected,
+        ),
+    };
+    let mut state = ListState::default();
+    if !items.is_empty() {
+        state.select(Some(selected));
+    }
+    let list = List::new(items)
+        .block(Block::default().title(title).borders(Borders::ALL).border_style(border_style))
+        .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
+    frame.render_stateful_widget(list, rows[1], &mut state);
+}
+
+fn on_off(v: bool) -> &'static str {
+    if v { "sí" } else { "no" }
+}
+
+fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect) {
+    let visible = review.visible_files();
+    let items: Vec<ListItem> = if visible.is_empty() {
+        vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))]
+    } else {
+        visible
             .iter()
             .map(|f| {
                 let status = f.get("status").and_then(Value::as_str).unwrap_or("?");
                 let path = f.get("path").and_then(Value::as_str).unwrap_or("");
                 let added = f.get("added").and_then(Value::as_i64).unwrap_or(0);
                 let deleted = f.get("deleted").and_then(Value::as_i64).unwrap_or(0);
-                ListItem::new(format!("{status}  {path}  +{added}/-{deleted}"))
+                let checkbox = if review.reviewed.contains(path) { "[x]" } else { "[ ]" };
+                ListItem::new(format!("{checkbox} {status}  {path}  +{added}/-{deleted}"))
             })
             .collect()
     };
-    let mut state = ratatui::widgets::ListState::default();
-    if !review.files.is_empty() {
+    let mut state = ListState::default();
+    if !visible.is_empty() {
         state.select(Some(review.files_selected));
     }
-    let agent_label = if review.compare { "comparar todos".to_string() } else { review.agent.clone() };
-    let context_hint = if review.context.is_empty() { "" } else { " · contexto: sí" };
+    let border_style = if matches!(review.focus, Focus::Files) { FOCUSED } else { Style::default() };
     let title = format!(
-        "Review ({}) [{agent_label}]{context_hint} — Enter: ver diff · r: correr · x: comparar · c: contexto · h: historial · b: ramas · p: PRs · g: agente · Tab: volver",
-        review.base,
+        "Archivos — {}/{} · filtro: {} (f) · {}/{} revisados · espacio: marcar · Enter: diff",
+        visible.len(), review.files.len(), review.file_filter.label(), review.reviewed.len(), review.files.len(),
     );
-    let block = Block::default().title(title).borders(Borders::ALL);
-
-    if matches!(review.input_purpose, Some(InputPurpose::Context)) {
-        let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
-        frame.render_stateful_widget(list, chunks[0], &mut state);
-        let input = Paragraph::new(format!("{}▏", review.input))
-            .block(Block::default().title("Contexto para la review (Enter guardar, Esc cancelar)").borders(Borders::ALL));
-        frame.render_widget(input, chunks[1]);
-    } else {
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
-        frame.render_stateful_widget(list, area, &mut state);
-    }
-}
-
-fn draw_checkpoints(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let items: Vec<ListItem> = if review.checkpoints.is_empty() {
-        vec![ListItem::new("Sin reviews guardadas.")]
-    } else {
-        review
-            .checkpoints
-            .iter()
-            .map(|c| {
-                let base = c.get("base").and_then(Value::as_str).unwrap_or("?");
-                let saved_at = c.get("saved_at").and_then(Value::as_str).unwrap_or("");
-                ListItem::new(format!("{base}  ({saved_at})"))
-            })
-            .collect()
-    };
-    let mut state = ratatui::widgets::ListState::default();
-    if !review.checkpoints.is_empty() {
-        state.select(Some(review.checkpoints_selected));
-    }
     let list = List::new(items)
-        .block(Block::default().title("Historial — Enter: abrir · d: borrar · Esc: volver").borders(Borders::ALL))
-        .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
-    frame.render_stateful_widget(list, frame.area(), &mut state);
+        .block(Block::default().title(title).borders(Borders::ALL).border_style(border_style))
+        .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
     let paragraph = Paragraph::new(review.file_diff.as_str())
         .wrap(Wrap { trim: false })
         .scroll((review.file_scroll, 0))
-        .block(Block::default().title("↑/↓ scroll · Esc: volver a la lista de archivos").borders(Borders::ALL));
+        .block(Block::default().title("↑/↓ scroll · Esc: volver").borders(Borders::ALL));
     frame.render_widget(paragraph, frame.area());
-}
-
-fn draw_branches(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let items: Vec<ListItem> = review.branches.iter().map(|b| ListItem::new(b.as_str())).collect();
-    let mut state = ratatui::widgets::ListState::default();
-    if !review.branches.is_empty() {
-        state.select(Some(review.branches_selected));
-    }
-    let list = List::new(items)
-        .block(Block::default().title("Ramas — Enter: usar como base · Esc: volver").borders(Borders::ALL))
-        .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
-    frame.render_stateful_widget(list, frame.area(), &mut state);
-}
-
-fn draw_prs(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let items: Vec<ListItem> = if review.prs.is_empty() {
-        vec![ListItem::new("No hay PRs abiertos.")]
-    } else {
-        review
-            .prs
-            .iter()
-            .map(|pr| {
-                let number = pr.get("number").and_then(Value::as_u64).unwrap_or(0);
-                let title = pr.get("title").and_then(Value::as_str).unwrap_or("");
-                let branch = pr.get("headRefName").and_then(Value::as_str).unwrap_or("");
-                ListItem::new(format!("#{number}  {title}  ({branch})"))
-            })
-            .collect()
-    };
-    let mut state = ratatui::widgets::ListState::default();
-    if !review.prs.is_empty() {
-        state.select(Some(review.prs_selected));
-    }
-    let list = List::new(items)
-        .block(Block::default().title("Pull requests — Enter: ver diff y comentarios · Esc: volver").borders(Borders::ALL))
-        .highlight_style(ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
-    frame.render_stateful_widget(list, frame.area(), &mut state);
 }
 
 fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
@@ -786,5 +872,27 @@ mod tests {
     fn format_pr_comments_handles_empty_lists() {
         let data = json!({ "reviews": [], "comments": [] });
         assert_eq!(format_pr_comments(&data), "(sin comentarios)\n");
+    }
+
+    #[test]
+    fn file_filter_cycles_all_added_modified_deleted() {
+        assert_eq!(FileFilter::All.next(), FileFilter::Added);
+        assert_eq!(FileFilter::Added.next(), FileFilter::Modified);
+        assert_eq!(FileFilter::Modified.next(), FileFilter::Deleted);
+        assert_eq!(FileFilter::Deleted.next(), FileFilter::All);
+    }
+
+    #[test]
+    fn file_matches_filter_buckets_renamed_as_modified() {
+        assert!(file_matches_filter("R", FileFilter::Modified));
+        assert!(!file_matches_filter("R", FileFilter::Added));
+        assert!(!file_matches_filter("R", FileFilter::Deleted));
+    }
+
+    #[test]
+    fn file_matches_filter_all_accepts_everything() {
+        for status in ["A", "M", "D", "R", "?"] {
+            assert!(file_matches_filter(status, FileFilter::All));
+        }
     }
 }

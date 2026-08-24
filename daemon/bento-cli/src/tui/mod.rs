@@ -59,7 +59,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                 }
                             }
                             KeyCode::Tab => {
-                                review.refresh_files(&cwd).await;
+                                review.enter(&cwd).await;
                                 mode = Mode::Review;
                             }
                             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
