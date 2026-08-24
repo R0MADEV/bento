@@ -430,16 +430,13 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
 
 // ── /api/projects ─────────────────────────────────────────────────────────────
 
-async fn projects_handler(
-    State(state): State<Arc<RemoteState>>,
-    Query(auth): Query<Auth>,
-) -> impl IntoResponse {
-    if !authorized(&state, &auth) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
-    }
+/// Distinct project directories currently in use — derived from open
+/// terminals'/agents' cwds (deduped), each with its current branch. Shared
+/// by the HTTP `/api/projects` handler (phone) and the daemon's IPC socket
+/// (`projects.list`, for the TUI panel's project picker).
+pub(crate) fn list_projects(manager: &PtyManager) -> Vec<serde_json::Value> {
     let mut seen = std::collections::HashSet::new();
-    let list: Vec<_> = state
-        .manager
+    manager
         .list()
         .into_iter()
         .filter(|info| !info.cwd.is_empty())
@@ -448,8 +445,17 @@ async fn projects_handler(
             let branch = git_branch(&info.cwd);
             json!({ "cwd": info.cwd, "branch": branch })
         })
-        .collect();
-    Json(list).into_response()
+        .collect()
+}
+
+async fn projects_handler(
+    State(state): State<Arc<RemoteState>>,
+    Query(auth): Query<Auth>,
+) -> impl IntoResponse {
+    if !authorized(&state, &auth) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    Json(list_projects(&state.manager)).into_response()
 }
 
 // ── /api/fs/dirs ──────────────────────────────────────────────────────────────

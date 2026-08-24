@@ -1,9 +1,10 @@
 //! Review tab: a persistent split-pane browser (sidebar: base/agent/compare
-//! controls + ramas/PRs/historial tabs; main: changed files with per-file
-//! "reviewed" tracking) mirroring the desktop app's Tech Review panel, plus
-//! full-screen drill-downs for a file's diff, a PR's diff/comments, and a
-//! running/loaded review — all via the same `review.*` IPC commands the
-//! one-shot `bento review` subcommands already use.
+//! controls + proyectos/ramas/PRs/historial tabs; main: changed files with
+//! per-file "reviewed" tracking) mirroring the desktop app's Tech Review
+//! panel, plus full-screen drill-downs for a file's diff, a PR's
+//! diff/comments, and a running/loaded review — all via the same
+//! `review.*`/`projects.*` IPC commands the one-shot `bento review`
+//! subcommands already use.
 
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
@@ -23,6 +24,7 @@ enum ReviewView {
 }
 
 enum SidebarTab {
+    Projects,
     Branches,
     Prs,
     Checkpoints,
@@ -85,6 +87,11 @@ enum InputPurpose {
 }
 
 pub(super) struct ReviewState {
+    /// The project being reviewed. Starts as wherever `bento` was launched
+    /// from; the sidebar's Proyectos tab lets you switch it to any other
+    /// directory a currently-open terminal/agent is running in (the same
+    /// "known projects" source `/api/projects` uses for the phone remote).
+    cwd: String,
     base: String,
     agent: String,
     /// When on, `start_run` reviews with all of `AGENTS` and synthesizes
@@ -121,6 +128,12 @@ pub(super) struct ReviewState {
     session_id: Option<String>,
     session_agent: Option<String>,
 
+    /// Last failed daemon call, shown in the sidebar header. Without it an
+    /// old daemon that doesn't know a `review.*`/`projects.*` command is
+    /// indistinguishable from "este proyecto no tiene ramas".
+    status: String,
+    projects: Vec<Value>,
+    projects_selected: usize,
     branches: Vec<String>,
     branches_selected: usize,
     prs: Vec<Value>,
@@ -137,8 +150,9 @@ pub(super) struct ReviewState {
 }
 
 impl ReviewState {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(cwd: String) -> Self {
         Self {
+            cwd,
             base: "main".to_string(),
             agent: AGENTS[0].to_string(),
             compare: false,
@@ -161,6 +175,9 @@ impl ReviewState {
             is_run_stream: false,
             session_id: None,
             session_agent: None,
+            status: String::new(),
+            projects: Vec::new(),
+            projects_selected: 0,
             branches: Vec::new(),
             branches_selected: 0,
             prs: Vec::new(),
@@ -180,11 +197,25 @@ impl ReviewState {
         &mut self.stream_rx
     }
 
-    pub(super) async fn refresh_files(&mut self, cwd: &str) {
-        let data = crate::request_data(json!({
-            "id": "1", "cmd": "review.files", "cwd": cwd, "base": self.base,
+    /// Every list the sidebar/browser shows comes through here so a daemon
+    /// error surfaces in the header instead of rendering as an empty list.
+    async fn fetch_list(&mut self, body: Value) -> Vec<Value> {
+        match crate::request_data(body).await {
+            Ok(v) => {
+                self.status.clear();
+                v.as_array().cloned().unwrap_or_default()
+            }
+            Err(e) => {
+                self.status = format!("error: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    pub(super) async fn refresh_files(&mut self) {
+        self.files = self.fetch_list(json!({
+            "id": "1", "cmd": "review.files", "cwd": self.cwd, "base": self.base,
         })).await;
-        self.files = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
         self.files_selected = 0;
         self.reviewed.clear();
         self.view = ReviewView::Browse;
@@ -193,16 +224,13 @@ impl ReviewState {
     /// Populates both panes for a fresh entry into the Review tab (List →
     /// Tab): files, and the sidebar's default tab (branches) — without this,
     /// the sidebar shows "Ramas" as active but empty until `b` is pressed.
-    pub(super) async fn enter(&mut self, cwd: &str) {
-        self.refresh_files(cwd).await;
-        self.fetch_branches(cwd).await;
+    pub(super) async fn enter(&mut self) {
+        self.refresh_files().await;
+        self.fetch_branches().await;
     }
 
-    async fn fetch_branches(&mut self, cwd: &str) {
-        let data = crate::request_data(json!({ "id": "1", "cmd": "review.branches", "cwd": cwd })).await;
-        self.branches = data.ok()
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default()
+    async fn fetch_branches(&mut self) {
+        self.branches = self.fetch_list(json!({ "id": "1", "cmd": "review.branches", "cwd": self.cwd })).await
             .into_iter()
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
@@ -221,28 +249,28 @@ impl ReviewState {
 
     /// Handles one input event. Returns `true` if the panel should switch
     /// back to the terminals list.
-    pub(super) async fn handle_event(&mut self, event: Event, cwd: &str) -> bool {
+    pub(super) async fn handle_event(&mut self, event: Event) -> bool {
         let Event::Key(key) = event else { return false };
         if key.kind != KeyEventKind::Press {
             return false;
         }
         if self.input_purpose.is_some() {
-            self.handle_text_input(key.code, cwd).await;
+            self.handle_text_input(key.code).await;
             return false;
         }
         match self.view {
-            ReviewView::Browse => self.handle_browse_key(key.code, cwd).await,
+            ReviewView::Browse => self.handle_browse_key(key.code).await,
             ReviewView::FileDetail => self.handle_file_detail_key(key.code),
             ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
             ReviewView::Output => self.handle_output_key(key.code),
         }
     }
 
-    async fn handle_browse_key(&mut self, code: KeyCode, cwd: &str) -> bool {
+    async fn handle_browse_key(&mut self, code: KeyCode) -> bool {
         match code {
             KeyCode::Left => { self.focus = Focus::Sidebar; false }
             KeyCode::Right => { self.focus = Focus::Files; false }
-            KeyCode::Char('r') => { self.start_run(cwd); false }
+            KeyCode::Char('r') => { self.start_run(); false }
             KeyCode::Char('g') => { self.agent = next_agent(&self.agent); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('c') => {
@@ -250,13 +278,14 @@ impl ReviewState {
                 self.input = self.context.clone();
                 false
             }
-            KeyCode::Char('b') => { self.set_sidebar_tab(SidebarTab::Branches, cwd).await; false }
-            KeyCode::Char('p') => { self.set_sidebar_tab(SidebarTab::Prs, cwd).await; false }
-            KeyCode::Char('h') => { self.set_sidebar_tab(SidebarTab::Checkpoints, cwd).await; false }
+            KeyCode::Char('o') => { self.set_sidebar_tab(SidebarTab::Projects).await; false }
+            KeyCode::Char('b') => { self.set_sidebar_tab(SidebarTab::Branches).await; false }
+            KeyCode::Char('p') => { self.set_sidebar_tab(SidebarTab::Prs).await; false }
+            KeyCode::Char('h') => { self.set_sidebar_tab(SidebarTab::Checkpoints).await; false }
             KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') => {
                 match self.focus {
-                    Focus::Sidebar => self.handle_sidebar_key(code, cwd).await,
-                    Focus::Files => self.handle_files_key(code, cwd).await,
+                    Focus::Sidebar => self.handle_sidebar_key(code).await,
+                    Focus::Files => self.handle_files_key(code).await,
                 }
             }
             KeyCode::Tab | KeyCode::Char('q') | KeyCode::Esc => true,
@@ -264,17 +293,19 @@ impl ReviewState {
         }
     }
 
-    async fn set_sidebar_tab(&mut self, tab: SidebarTab, cwd: &str) {
+    async fn set_sidebar_tab(&mut self, tab: SidebarTab) {
         match &tab {
-            SidebarTab::Branches => self.fetch_branches(cwd).await,
+            SidebarTab::Projects => {
+                self.projects = self.fetch_list(json!({ "id": "1", "cmd": "projects.list" })).await;
+                self.projects_selected = 0;
+            }
+            SidebarTab::Branches => self.fetch_branches().await,
             SidebarTab::Prs => {
-                let data = crate::request_data(json!({ "id": "1", "cmd": "review.prs", "cwd": cwd })).await;
-                self.prs = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                self.prs = self.fetch_list(json!({ "id": "1", "cmd": "review.prs", "cwd": self.cwd })).await;
                 self.prs_selected = 0;
             }
             SidebarTab::Checkpoints => {
-                let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
-                self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                self.checkpoints = self.fetch_list(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": self.cwd })).await;
                 self.checkpoints_selected = 0;
             }
         }
@@ -282,8 +313,25 @@ impl ReviewState {
         self.focus = Focus::Sidebar;
     }
 
-    async fn handle_sidebar_key(&mut self, code: KeyCode, cwd: &str) -> bool {
+    async fn handle_sidebar_key(&mut self, code: KeyCode) -> bool {
         match self.sidebar_tab {
+            SidebarTab::Projects => match code {
+                KeyCode::Up => { self.projects_selected = self.projects_selected.saturating_sub(1); false }
+                KeyCode::Down => {
+                    if self.projects_selected + 1 < self.projects.len() { self.projects_selected += 1; }
+                    false
+                }
+                KeyCode::Enter => {
+                    if let Some(cwd) = self.projects.get(self.projects_selected).and_then(|p| p.get("cwd")).and_then(Value::as_str) {
+                        self.cwd = cwd.to_string();
+                        self.enter().await;
+                        self.focus = Focus::Sidebar;
+                        self.sidebar_tab = SidebarTab::Branches;
+                    }
+                    false
+                }
+                _ => false,
+            },
             SidebarTab::Branches => match code {
                 KeyCode::Up => { self.branches_selected = self.branches_selected.saturating_sub(1); false }
                 KeyCode::Down => {
@@ -293,7 +341,7 @@ impl ReviewState {
                 KeyCode::Enter => {
                     if let Some(b) = self.branches.get(self.branches_selected) {
                         self.base = b.clone();
-                        self.refresh_files(cwd).await;
+                        self.refresh_files().await;
                         self.focus = Focus::Sidebar;
                     }
                     false
@@ -308,7 +356,7 @@ impl ReviewState {
                 }
                 KeyCode::Enter => {
                     if let Some(pr) = self.prs.get(self.prs_selected).and_then(|p| p.get("number")).and_then(Value::as_u64) {
-                        self.load_pr_detail(cwd, pr).await;
+                        self.load_pr_detail(pr).await;
                     }
                     false
                 }
@@ -323,7 +371,7 @@ impl ReviewState {
                 KeyCode::Enter => {
                     if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
                         let base = base.to_string();
-                        let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": cwd, "base": base })).await;
+                        let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": self.cwd, "base": base })).await;
                         if let Ok(cp) = data {
                             self.base = base;
                             self.output = cp.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
@@ -340,9 +388,8 @@ impl ReviewState {
                 KeyCode::Char('d') => {
                     if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
                         let base = base.to_string();
-                        let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": cwd, "base": base })).await;
-                        let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd })).await;
-                        self.checkpoints = data.ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
+                        let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": self.cwd, "base": base })).await;
+                        self.checkpoints = self.fetch_list(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": self.cwd })).await;
                         if self.checkpoints_selected >= self.checkpoints.len() {
                             self.checkpoints_selected = self.checkpoints.len().saturating_sub(1);
                         }
@@ -354,7 +401,7 @@ impl ReviewState {
         }
     }
 
-    async fn handle_files_key(&mut self, code: KeyCode, cwd: &str) -> bool {
+    async fn handle_files_key(&mut self, code: KeyCode) -> bool {
         let visible_len = self.visible_files().len();
         match code {
             KeyCode::Up => { self.files_selected = self.files_selected.saturating_sub(1); false }
@@ -376,7 +423,7 @@ impl ReviewState {
             KeyCode::Enter => {
                 if let Some(path) = self.visible_files().get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str).map(String::from) {
                     let data = crate::request_data(json!({
-                        "id": "1", "cmd": "review.file", "cwd": cwd, "base": self.base, "path": path,
+                        "id": "1", "cmd": "review.file", "cwd": self.cwd, "base": self.base, "path": path,
                     })).await;
                     self.file_diff = data.ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
                     self.file_scroll = 0;
@@ -403,13 +450,13 @@ impl ReviewState {
         }
     }
 
-    async fn load_pr_detail(&mut self, cwd: &str, pr: u64) {
-        let diff = crate::request_data(json!({ "id": "1", "cmd": "review.pr_diff", "cwd": cwd, "pr": pr }))
+    async fn load_pr_detail(&mut self, pr: u64) {
+        let diff = crate::request_data(json!({ "id": "1", "cmd": "review.pr_diff", "cwd": self.cwd, "pr": pr }))
             .await
             .ok()
             .and_then(|v| v.as_str().map(String::from))
             .unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
-        let comments = crate::request_data(json!({ "id": "1", "cmd": "review.pr_comments", "cwd": cwd, "pr": pr }))
+        let comments = crate::request_data(json!({ "id": "1", "cmd": "review.pr_comments", "cwd": self.cwd, "pr": pr }))
             .await
             .ok()
             .map(|v| format_pr_comments(&v))
@@ -483,7 +530,7 @@ impl ReviewState {
         }
     }
 
-    async fn handle_text_input(&mut self, code: KeyCode, cwd: &str) {
+    async fn handle_text_input(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char(c) => self.input.push(c),
             KeyCode::Backspace => { self.input.pop(); }
@@ -494,10 +541,10 @@ impl ReviewState {
             KeyCode::Enter => {
                 match self.input_purpose.take() {
                     Some(InputPurpose::Ask) => {
-                        if !self.input.trim().is_empty() { self.start_ask(cwd); }
+                        if !self.input.trim().is_empty() { self.start_ask(); }
                     }
-                    Some(InputPurpose::PrComment) => self.submit_pr_comment(cwd).await,
-                    Some(InputPurpose::PrReview(event)) => self.submit_pr_review(cwd, event).await,
+                    Some(InputPurpose::PrComment) => self.submit_pr_comment().await,
+                    Some(InputPurpose::PrReview(event)) => self.submit_pr_review(event).await,
                     Some(InputPurpose::Context) => self.context = std::mem::take(&mut self.input),
                     None => {}
                 }
@@ -506,26 +553,26 @@ impl ReviewState {
         }
     }
 
-    async fn submit_pr_comment(&mut self, cwd: &str) {
+    async fn submit_pr_comment(&mut self) {
         let Some(pr) = self.current_pr else { return };
         let body = std::mem::take(&mut self.input);
         if body.trim().is_empty() {
             return;
         }
         let result = crate::request_data(json!({
-            "id": "1", "cmd": "review.pr_comment_add", "cwd": cwd, "pr": pr, "data": body,
+            "id": "1", "cmd": "review.pr_comment_add", "cwd": self.cwd, "pr": pr, "data": body,
         })).await;
         self.pr_status = match result {
             Ok(_) => "comentario agregado".to_string(),
             Err(e) => format!("error: {e}"),
         };
-        self.load_pr_detail(cwd, pr).await;
+        self.load_pr_detail(pr).await;
     }
 
-    async fn submit_pr_review(&mut self, cwd: &str, event: &str) {
+    async fn submit_pr_review(&mut self, event: &str) {
         let Some(pr) = self.current_pr else { return };
         let body = std::mem::take(&mut self.input);
-        let mut req = json!({ "id": "1", "cmd": "review.pr_submit", "cwd": cwd, "pr": pr, "event": event });
+        let mut req = json!({ "id": "1", "cmd": "review.pr_submit", "cwd": self.cwd, "pr": pr, "event": event });
         if !body.trim().is_empty() {
             req["data"] = json!(body);
         }
@@ -534,26 +581,26 @@ impl ReviewState {
             Ok(_) => format!("review enviada ({event})"),
             Err(e) => format!("error: {e}"),
         };
-        self.load_pr_detail(cwd, pr).await;
+        self.load_pr_detail(pr).await;
     }
 
-    fn start_run(&mut self, cwd: &str) {
+    fn start_run(&mut self) {
         self.output.clear();
         self.session_id = None;
         self.session_agent = None;
         let agents = if self.compare { AGENTS.join(",") } else { self.agent.clone() };
         let body = json!({
-            "id": "1", "cmd": "review.run", "cwd": cwd, "base": self.base,
+            "id": "1", "cmd": "review.run", "cwd": self.cwd, "base": self.base,
             "context": self.context, "agents": agents,
         });
         self.begin_stream(body, true);
     }
 
-    fn start_ask(&mut self, cwd: &str) {
+    fn start_ask(&mut self) {
         let question = std::mem::take(&mut self.input);
         self.output.push_str(&format!("\n\n---\n\n**Pregunta:** {question}\n\n"));
         let body = json!({
-            "id": "1", "cmd": "review.ask", "cwd": cwd, "base": self.base,
+            "id": "1", "cmd": "review.ask", "cwd": self.cwd, "base": self.base,
             "agent": self.agent, "question": question,
         });
         self.begin_stream(body, false);
@@ -570,7 +617,7 @@ impl ReviewState {
         self.view = ReviewView::Output;
     }
 
-    pub(super) fn handle_stream_event(&mut self, event: ReviewEvent, cwd: &str) {
+    pub(super) fn handle_stream_event(&mut self, event: ReviewEvent) {
         match event {
             ReviewEvent::Content(text) => self.output.push_str(&text),
             ReviewEvent::Progress(msg) => {
@@ -588,7 +635,7 @@ impl ReviewState {
                 self.stream_rx = None;
                 self.stream_task = None;
                 if self.is_run_stream && !self.output.trim().is_empty() {
-                    self.save_checkpoint(cwd);
+                    self.save_checkpoint();
                 }
             }
         }
@@ -600,9 +647,9 @@ impl ReviewState {
     /// checkpoint storage (`review.checkpoint_save`, a thin IPC wrapper
     /// around the same save the web panel's `PUT /api/review/checkpoint`
     /// uses).
-    fn save_checkpoint(&self, cwd: &str) {
+    fn save_checkpoint(&self) {
         let body = json!({
-            "id": "1", "cmd": "review.checkpoint_save", "cwd": cwd, "base": self.base,
+            "id": "1", "cmd": "review.checkpoint_save", "cwd": self.cwd, "base": self.base,
             "content": self.output, "session_id": self.session_id, "agent": self.session_agent,
         });
         tokio::spawn(async move {
@@ -650,6 +697,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame, review: &ReviewState) {
 }
 
 const FOCUSED: Style = Style::new().fg(Color::Yellow);
+const ERROR: Style = Style::new().fg(Color::Red);
 
 fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState) {
     let area = frame.area();
@@ -666,31 +714,50 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState) {
 }
 
 fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect) {
-    let rows = Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).split(area);
-
     let agent_line = if review.compare {
         "Agente: comparar todos (claude+codex+opencode)".to_string()
     } else {
         format!("Agente: {} (g cambia)", review.agent)
     };
     let compare_line = format!("Comparar: {} (x)  Contexto: {} (c)", on_off(review.compare), if review.context.is_empty() { "no" } else { "sí" });
-    let header = Paragraph::new(vec![
+    let mut lines = vec![
+        ratatui::text::Line::from(format!("Proyecto: {} (o cambia)", review.cwd)),
         ratatui::text::Line::from(format!("Base: {}", review.base)),
         ratatui::text::Line::from(agent_line),
         ratatui::text::Line::from(compare_line),
-    ])
-    .block(Block::default().title("Tech Review — r: correr").borders(Borders::ALL));
+    ];
+    if !review.status.is_empty() {
+        lines.push(ratatui::text::Line::from(review.status.as_str()).style(ERROR));
+    }
+    // Sized to the lines it holds (+2 borders): a fixed height silently
+    // clipped the agent/compare lines once "Proyecto" was added.
+    let rows = Layout::vertical([Constraint::Length(lines.len() as u16 + 2), Constraint::Min(1)]).split(area);
+    let header = Paragraph::new(lines)
+        .block(Block::default().title("Tech Review — r: correr").borders(Borders::ALL));
     frame.render_widget(header, rows[0]);
 
     let border_style = if matches!(review.focus, Focus::Sidebar) { FOCUSED } else { Style::default() };
     let (title, items, selected): (String, Vec<ListItem>, usize) = match review.sidebar_tab {
+        SidebarTab::Projects => (
+            format!("[o] Proyectos ({}) · b ramas · p PRs · h historial", review.projects.len()),
+            if review.projects.is_empty() {
+                vec![ListItem::new("Sin otros proyectos abiertos.")]
+            } else {
+                review.projects.iter().map(|p| {
+                    let cwd = p.get("cwd").and_then(Value::as_str).unwrap_or("?");
+                    let branch = p.get("branch").and_then(Value::as_str).unwrap_or("");
+                    ListItem::new(format!("{cwd}  ({branch})"))
+                }).collect()
+            },
+            review.projects_selected,
+        ),
         SidebarTab::Branches => (
-            format!("[b] Ramas ({}) · p PRs · h historial", review.branches.len()),
+            format!("o proyectos · [b] Ramas ({}) · p PRs · h historial", review.branches.len()),
             review.branches.iter().map(|b| ListItem::new(b.as_str())).collect(),
             review.branches_selected,
         ),
         SidebarTab::Prs => (
-            format!("b ramas · [p] PRs ({}) · h historial", review.prs.len()),
+            format!("o proyectos · b ramas · [p] PRs ({}) · h historial", review.prs.len()),
             if review.prs.is_empty() {
                 vec![ListItem::new("No hay PRs abiertos.")]
             } else {
@@ -704,7 +771,7 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
             review.prs_selected,
         ),
         SidebarTab::Checkpoints => (
-            format!("b ramas · p PRs · [h] historial ({}, d borra)", review.checkpoints.len()),
+            format!("o proyectos · b ramas · p PRs · [h] historial ({}, d borra)", review.checkpoints.len()),
             if review.checkpoints.is_empty() {
                 vec![ListItem::new("Sin reviews guardadas.")]
             } else {

@@ -32,7 +32,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
     let mut selected: usize = 0;
     let mut refresh = tokio::time::interval(std::time::Duration::from_secs(2));
     let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
-    let mut review = ReviewState::new();
+    let mut review = ReviewState::new(cwd);
 
     loop {
         match &mode {
@@ -59,7 +59,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                 }
                             }
                             KeyCode::Tab => {
-                                review.enter(&cwd).await;
+                                review.enter().await;
                                 mode = Mode::Review;
                             }
                             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
@@ -100,12 +100,12 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 tokio::select! {
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
-                        if review.handle_event(event, &cwd).await {
+                        if review.handle_event(event).await {
                             mode = Mode::List;
                         }
                     }
                     Some(ev) = recv_optional(review.stream_rx()) => {
-                        review.handle_stream_event(ev, &cwd);
+                        review.handle_stream_event(ev);
                     }
                 }
             }

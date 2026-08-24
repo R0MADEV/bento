@@ -159,6 +159,8 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             send(ok(&req.id, json!(list)));
         }
 
+        "projects.list" => send(ok(&req.id, json!(crate::remote::list_projects(manager)))),
+
         "terminal.open" => {
             let opts = OpenOptions {
                 id: req.pty_id.clone(),
