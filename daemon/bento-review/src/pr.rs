@@ -5,9 +5,10 @@
 //! are here, named for what they are — the two codebases each implemented one
 //! of them under the same name, which is exactly how they drifted apart.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::vcs::gh_cmd;
+use crate::vcs::{current_branch, gh_cmd, git_cmd, is_safe_branch};
 
 /// GitHub rejects comment bodies past this; check locally so an oversized
 /// paste fails fast with a clear message instead of a raw API error.
@@ -80,6 +81,92 @@ pub fn list_open(cwd: &str) -> Result<String, String> {
         "pr", "list", "--state", "open", "--limit", "30",
         "--json", "number,title,url,author,headRefName,baseRefName",
     ])
+}
+
+/// Un check de CI tal y como lo devuelve `statusCheckRollup`: GitHub mezcla
+/// ahí dos formas distintas (checks y commit statuses), de ahí que casi todo
+/// sea opcional.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrCheck {
+    pub name: Option<String>,
+    pub context: Option<String>,
+    pub conclusion: Option<String>,
+    pub state: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrStatus {
+    pub state: String,
+    pub title: String,
+    pub url: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub number: u64,
+    pub base_ref_name: Option<String>,
+    pub is_draft: Option<bool>,
+    pub mergeable: Option<String>,
+    pub review_decision: Option<String>,
+    #[serde(default)]
+    pub status_check_rollup: Vec<PrCheck>,
+}
+
+const STATUS_FIELDS: &str =
+    "state,title,url,number,baseRefName,isDraft,mergeable,reviewDecision,statusCheckRollup";
+
+/// El PR de la rama actual, o `None` si no hay ninguno o `gh` no está: no
+/// tener PR es lo normal, no un error.
+pub fn status(cwd: &str) -> Result<Option<PrStatus>, String> {
+    let Ok(out) = gh_cmd(cwd, &["pr", "view", "--json", STATUS_FIELDS]) else {
+        return Ok(None);
+    };
+    if out.trim().is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str::<PrStatus>(&out)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// El PR de una rama cualquiera, en crudo. Igual que `status`: sin PR, `None`.
+pub fn view_branch(cwd: &str, branch: &str) -> Result<Option<Value>, String> {
+    if !is_safe_branch(branch) {
+        return Err(format!("unsafe branch: {branch}"));
+    }
+    let fields = "number,title,url,body,state,mergedAt,statusCheckRollup,reviewDecision";
+    let Ok(out) = gh_cmd(cwd, &["pr", "view", branch, "--json", fields]) else {
+        return Ok(None);
+    };
+    if out.trim().is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str::<Value>(&out)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// Abre el PR. Si `gh` no puede (sin sesión, sin remoto), devuelve la URL de
+/// comparación para abrirla en el navegador en vez de dejarte sin nada.
+pub fn create(cwd: &str, base: &str) -> Result<String, String> {
+    if !is_safe_branch(base) {
+        return Err(format!("unsafe base branch: {base}"));
+    }
+    let failure = match gh_cmd(cwd, &["pr", "create", "--fill", "--base", base]) {
+        Ok(out) => return Ok(out.trim().to_string()),
+        Err(error) => error,
+    };
+    let remote = git_cmd(cwd, &["remote", "get-url", "origin"]).unwrap_or_default();
+    let remote = remote.trim().trim_end_matches(".git");
+    let branch = current_branch(cwd).unwrap_or_default();
+    if remote.is_empty() || branch.is_empty() {
+        return Err(failure);
+    }
+    Ok(format!("{remote}/compare/{base}...{branch}?expand=1"))
 }
 
 pub fn diff(cwd: &str, pr: u64) -> Result<String, String> {
@@ -174,6 +261,9 @@ pub fn add_review_comment(
 ) -> Result<String, String> {
     if line == 0 {
         return Err("line must be >= 1".into());
+    }
+    if !crate::branches::is_git_repo(cwd) {
+        return Err("not a git repository".into());
     }
     check_body(body)?;
     check_commit_sha(commit_id)?;
@@ -272,5 +362,23 @@ mod tests {
         assert!(check_commit_sha("").is_err());
         assert!(check_commit_sha("../../etc/passwd").is_err());
         assert!(check_commit_sha(&"a".repeat(41)).is_err());
+    }
+
+    #[test]
+    fn a_branch_or_base_that_is_not_a_branch_name_is_refused() {
+        assert!(view_branch(".", "--flag").is_err());
+        assert!(create(".", "main; rm -rf /").is_err());
+    }
+
+    #[test]
+    fn without_github_creating_a_pr_falls_back_to_the_compare_url() {
+        use crate::test_support::{commit_file, repo, run};
+        let repo = repo("pr-create");
+        commit_file(&repo.0, "root\n", "root");
+        run(&repo.0, &["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+        run(&repo.0, &["checkout", "-qb", "feat/x"]);
+
+        let url = create(repo.0.to_str().unwrap(), "main").unwrap();
+        assert_eq!(url, "https://github.com/acme/demo/compare/main...feat/x?expand=1");
     }
 }

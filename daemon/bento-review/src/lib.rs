@@ -5,16 +5,23 @@
 
 pub mod agents;
 pub mod backup;
+pub mod branches;
 pub mod checkpoints;
+pub mod commit;
 pub mod diff;
+pub mod edit;
+pub mod log;
 pub mod engine;
 pub mod pr;
 pub mod prompt;
 pub mod rebase;
+pub mod recommend;
+pub mod status;
 pub mod store;
 #[cfg(test)]
 pub mod test_support;
 
+pub mod sync;
 pub mod tasks;
 pub mod vcs;
 pub mod viewed;

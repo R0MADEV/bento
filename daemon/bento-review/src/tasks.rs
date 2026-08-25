@@ -95,7 +95,7 @@ fn check_task_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn upstream_of(cwd: &str) -> Upstream {
+pub fn upstream_of(cwd: &str) -> Upstream {
     let Ok(name) = git_cmd(cwd, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]) else {
         return Upstream { name: None, state: "unpublished".into(), ahead: 0, behind: 0 };
     };
@@ -126,19 +126,31 @@ pub fn list(cwd: &str) -> Vec<Task> {
 /// del repo. Devuelve dónde ha quedado.
 pub fn create(repo: &str, name: &str, base: &str) -> Result<String, String> {
     check_task_name(name)?;
-    if !is_safe_branch(base) {
-        return Err(format!("rama base inválida: {base}"));
-    }
     let parent = std::path::Path::new(repo)
         .parent()
         .ok_or_else(|| "el repo no tiene carpeta padre".to_string())?;
-    let path = parent.join(name.replace('/', "-"));
-    if path.exists() {
-        return Err(format!("ya existe {}", path.display()));
-    }
-    let path_text = path.to_string_lossy().to_string();
-    git_cmd(repo, &["worktree", "add", "-b", name, &path_text, base])?;
+    let path_text = parent
+        .join(name.replace('/', "-"))
+        .to_string_lossy()
+        .to_string();
+    create_at(repo, &path_text, name, base)?;
     Ok(path_text)
+}
+
+/// Crea una tarea en una ruta concreta: la del panel, que la elige quien la
+/// crea en vez de derivarla del nombre.
+pub fn create_at(repo: &str, path: &str, branch: &str, base: &str) -> Result<(), String> {
+    if !crate::branches::is_git_repo(repo) {
+        return Err("not a git repository".into());
+    }
+    check_task_name(branch)?;
+    if !is_safe_branch(base) {
+        return Err(format!("rama base inválida: {base}"));
+    }
+    if std::path::Path::new(path).exists() {
+        return Err(format!("ya existe {path}"));
+    }
+    git_cmd(repo, &["worktree", "add", path, "-b", branch, base]).map(|_| ())
 }
 
 /// Quita una tarea. Sin `force` git se niega si hay trabajo sin guardar, que
@@ -170,6 +182,21 @@ pub fn remove(repo: &str, path: &str, force: bool) -> Result<(), String> {
 /// reintenta; el segundo es la protección que queremos conservar.
 fn is_broken_link(error: &str) -> bool {
     error.contains("not a working tree") || error.contains("validation failed")
+}
+
+/// Quita la tarea y, si se pide, borra también su rama: quitar el worktree no
+/// la toca, y si nadie la borra se queda ahí para siempre.
+pub fn remove_with_branch(
+    repo: &str,
+    path: &str,
+    force: bool,
+    branch: Option<&str>,
+) -> Result<(), String> {
+    remove(repo, path, force)?;
+    if let Some(branch) = branch.filter(|name| is_safe_branch(name)) {
+        let _ = git_cmd(repo, &["branch", "-D", branch]);
+    }
+    Ok(())
 }
 
 /// Commitea todo lo que hay en la tarea.
@@ -260,6 +287,31 @@ mod tests {
         assert!(check_message("arregla el parseo").is_ok());
         assert!(check_message("   ").is_err());
         assert!(check_message("").is_err());
+    }
+
+    #[test]
+    fn creating_a_task_at_a_chosen_path_refuses_unsafe_names_and_taken_paths() {
+        use crate::test_support::{commit_file, repo};
+        let repo = repo("task-create-at");
+        commit_file(&repo.0, "root\n", "root");
+        let root = repo.0.to_str().unwrap();
+        let base = crate::vcs::current_branch(root).unwrap();
+        let task = repo.0.parent().unwrap().join(format!(
+            "{}-at",
+            repo.0.file_name().unwrap().to_string_lossy()
+        ));
+        let task_path = task.to_str().unwrap();
+
+        assert!(create_at(root, task_path, "--flag", &base).is_err());
+        assert!(create_at(root, task_path, "tarea", "../evil").is_err());
+        create_at(root, task_path, "tarea", &base).unwrap();
+        assert!(task.join(".git").exists());
+        // La segunda vez la ruta ya está ocupada.
+        assert!(create_at(root, task_path, "otra", &base).is_err());
+
+        remove_with_branch(root, task_path, true, Some("tarea")).unwrap();
+        assert!(!task.exists());
+        assert!(!crate::vcs::list_branches(root).contains(&"tarea".to_string()));
     }
 
     #[test]

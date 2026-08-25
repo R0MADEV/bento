@@ -1,89 +1,27 @@
-use super::*;
+//! Comandos de pull request. La lógica vive en `bento_review::pr`, compartida
+//! con el daemon y el CLI.
 
-/// Every `gh` call blocks, so each command runs on the blocking pool. One
-/// helper instead of the same `spawn_blocking` + double `map_err` in each.
+pub use bento_review::pr::PrStatus;
+
+/// Cada llamada a `gh` bloquea, así que todas van al pool de bloqueo. Un
+/// helper en vez del mismo `spawn_blocking` + doble `map_err` en cada una.
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-#[derive(serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "../../src/generated/bindings/")]
-pub struct PrCheck {
-    name: Option<String>,
-    context: Option<String>,
-    conclusion: Option<String>,
-    state: Option<String>,
-    status: Option<String>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "../../src/generated/bindings/")]
-pub struct PrStatus {
-    state: String,
-    title: String,
-    url: String,
-    #[ts(type = "number")]
-    number: u64,
-    base_ref_name: Option<String>,
-    is_draft: Option<bool>,
-    mergeable: Option<String>,
-    review_decision: Option<String>,
-    #[serde(default)]
-    status_check_rollup: Vec<PrCheck>,
-}
-
-// Returns typed PR metadata or null if no PR / gh is unavailable.
 #[tauri::command]
 pub async fn git_pr_status(path: String) -> Result<Option<PrStatus>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let out = Command::new("gh")
-            .current_dir(&path)
-            .args(["pr", "view", "--json", "state,title,url,number,baseRefName,isDraft,mergeable,reviewDecision,statusCheckRollup"])
-            .output();
-        let Ok(out) = out else { return Ok(None); };
-        if !out.status.success() || out.stdout.is_empty() { return Ok(None); }
-        serde_json::from_slice::<PrStatus>(&out.stdout).map(Some).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    blocking(move || bento_review::pr::status(&path)).await
 }
 
-// Returns PR info for any branch via gh CLI.
 #[tauri::command]
 pub async fn gh_pr_view_branch(
     path: String,
     branch: String,
 ) -> Result<Option<serde_json::Value>, String> {
-    if !is_safe_branch(&branch) {
-        return Err(format!("unsafe branch: {branch}"));
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let out = Command::new("gh")
-            .current_dir(&path)
-            .args([
-                "pr",
-                "view",
-                &branch,
-                "--json",
-                "number,title,url,body,state,mergedAt,statusCheckRollup,reviewDecision",
-            ])
-            .output();
-        let Ok(out) = out else {
-            return Ok(None);
-        };
-        if !out.status.success() || out.stdout.is_empty() {
-            return Ok(None);
-        }
-        serde_json::from_slice::<serde_json::Value>(&out.stdout)
-            .map(Some)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    blocking(move || bento_review::pr::view_branch(&path, &branch)).await
 }
 
 #[tauri::command]
@@ -119,9 +57,6 @@ pub async fn gh_pr_inline_comment(
     body: String,
 ) -> Result<String, String> {
     blocking(move || {
-        if !is_git_repo(&path) {
-            return Err("not a git repository".into());
-        }
         bento_review::pr::add_review_comment(&path, pr_number, &commit_id, &file, line, start_line, &body)
     })
     .await
@@ -171,30 +106,5 @@ pub async fn gh_pr_submit_review(path: String, pr_number: u64, event: String, bo
 
 #[tauri::command]
 pub async fn git_create_pr(path: String, base: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        if !is_safe_branch(&base) {
-            return Err(format!("unsafe base branch: {base}"));
-        }
-        let out = Command::new("gh")
-            .current_dir(&path)
-            .args(["pr", "create", "--fill", "--base", &base])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if out.status.success() {
-            return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
-        }
-        // Fallback: return compare URL so the frontend can open it in the browser.
-        if let Ok(remote) = git_output(&path, &["remote", "get-url", "origin"]) {
-            let remote = remote.trim().trim_end_matches(".git").to_string();
-            let branch =
-                git_output(&path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
-            let branch = branch.trim().to_string();
-            if !remote.is_empty() && !branch.is_empty() {
-                return Ok(format!("{remote}/compare/{base}...{branch}?expand=1"));
-            }
-        }
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    blocking(move || bento_review::pr::create(&path, &base)).await
 }

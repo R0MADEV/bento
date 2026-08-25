@@ -1,7 +1,6 @@
 //! Comandos de respaldo. La lógica vive en `bento_review::backup`, compartida
 //! con el daemon y el CLI.
 
-pub(super) use bento_review::backup::{backup_ref_for, create_history_backup};
 pub use bento_review::backup::{BackupEntry, BackupStatus};
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
