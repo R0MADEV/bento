@@ -262,15 +262,9 @@ pub fn status(cwd: &str) -> Result<RebaseStatus, String> {
     let subject = full_msg.lines().next().unwrap_or("").to_string();
     let body = full_msg.lines().skip(2).collect::<Vec<_>>().join("\n");
 
-    // Detect conflicting files: porcelain status lines where both sides are non-clean (UU, AA, DD, AU, UA, DU, UD).
-    let status_out = git_cmd(cwd, &["status", "--porcelain"]).unwrap_or_default();
-    let conflicts: Vec<String> = status_out
-        .lines()
-        .filter(|l| {
-            l.len() >= 2 && matches!(&l[..2], "UU" | "AA" | "DD" | "AU" | "UA" | "DU" | "UD")
-        })
-        .map(|l| l[3..].trim().to_string())
-        .collect();
+    // Qué códigos del porcelain son un conflicto lo dice `status`, que es donde
+    // también lo pregunta el panel.
+    let conflicts = crate::status::conflicted_files(cwd).unwrap_or_default();
 
     Ok(RebaseStatus {
         active: true,

@@ -35,3 +35,10 @@ pub async fn git_branch_diff(path: String, base: String) -> Result<String, Strin
 pub async fn git_review_worktree_diff(path: String, base: String) -> Result<String, String> {
     blocking(move || bento_review::status::review_worktree_diff(&path, &base)).await
 }
+
+/// Los ficheros que quedaron en conflicto. Qué códigos del porcelain cuentan lo
+/// dice `bento_review::status`, que es de donde también sale la lista del rebase.
+#[tauri::command]
+pub async fn git_conflicted_files(path: String) -> Result<Vec<String>, String> {
+    blocking(move || bento_review::status::conflicted_files(&path)).await
+}

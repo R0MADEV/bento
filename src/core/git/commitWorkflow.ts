@@ -6,16 +6,6 @@ export function diffFileNames(raw: string): string[] {
   })
 }
 
-// Parses `git diff-tree --name-status`, including both sides of renames.
-export function changedPaths(raw: string): string[] {
-  return raw.trim().split('\n').filter(Boolean).flatMap(line => line.split('\t').slice(1))
-}
-
-export function matchingPaths(incoming: Iterable<string>, commitPaths: Iterable<string>): string[] {
-  const wanted = new Set(incoming)
-  return [...new Set(commitPaths)].filter(path => wanted.has(path))
-}
-
 export interface FilePatchParts { file: string; header: string; hunks: string[] }
 
 export function parseFilePatch(chunk: string): FilePatchParts {
@@ -47,33 +37,4 @@ export function buildSelectedPatch(
     if (!wanted?.size) return []
     return [parsed.header + parsed.hunks.filter((_, index) => wanted.has(index)).join('')]
   }).join('')
-}
-
-/** What ranking a commit as a fixup target needs to know about it. */
-export interface FixupCandidate {
-  /** Incoming files this commit also touched. */
-  overlap: string[]
-  /** How much `git blame` points at this commit for the incoming lines. */
-  blame: { score: number }
-  /** How often this commit shows up in the history of the incoming files. */
-  history: { score: number }
-}
-
-// Overlapping files dominate; blame breaks their ties; history breaks blame's.
-// The weights keep the three apart without comparing them field by field.
-const OVERLAP_WEIGHT = 10000
-const BLAME_WEIGHT = 100
-
-const fixupScore = (candidate: FixupCandidate): number =>
-  candidate.overlap.length * OVERLAP_WEIGHT + candidate.blame.score * BLAME_WEIGHT + candidate.history.score
-
-/**
- * Commits ordered by how likely the user meant to fix each one up, best first.
- * Candidates that score the same keep the order they came in (newest first).
- */
-export function rankFixupCandidates<T extends FixupCandidate>(candidates: T[]): T[] {
-  return candidates
-    .map((candidate, originalIndex) => ({ candidate, originalIndex }))
-    .sort((a, b) => fixupScore(b.candidate) - fixupScore(a.candidate) || a.originalIndex - b.originalIndex)
-    .map(({ candidate }) => candidate)
 }

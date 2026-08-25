@@ -2,10 +2,6 @@ export type ConflictSegment =
   | { type: 'context'; lines: string[] }
   | { type: 'hunk'; ours: string[]; theirs: string[]; label: string; choice: 'ours' | 'theirs' | 'both' | null }
 
-export function parseConflictFiles(status: string): string[] {
-  return status.split('\n').filter(line => /^(UU|AA|DD|AU|UA|DU|UD) /.test(line)).map(line => line.slice(3))
-}
-
 export function parseConflictHunks(content: string): ConflictSegment[] {
   const lines = content.split('\n')
   const segments: ConflictSegment[] = []

@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
+use crate::log::{rebase_log, show_files, CommitEntry, CommitFile};
 use crate::vcs::{git_cmd, is_safe_branch};
 
 /// Un parche más grande que esto no viene de una revisión: se rechaza antes de
@@ -133,6 +134,89 @@ pub fn blame_recommend(
     Ok(ranked(scores))
 }
 
+/// Un commit de la tarea como candidato a recibir un fixup, con por qué lo es.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
+#[serde(rename_all = "camelCase")]
+pub struct FixupTarget {
+    pub entry: CommitEntry,
+    /// Los ficheros que tocó, para poder abrirlos sin otra consulta.
+    pub files: Vec<CommitFile>,
+    /// Cuáles de esos ficheros toca también el cambio entrante.
+    pub overlap: Vec<String>,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub history: u32,
+    /// En qué ficheros sale este commit al mirar su historial.
+    pub history_files: Vec<String>,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub blame: u32,
+    /// En qué ficheros apunta el blame a este commit.
+    pub blame_files: Vec<String>,
+}
+
+/// Los ficheros que toca el cambio entrante: los que digan, o los que salgan
+/// del propio parche.
+fn incoming_files(patch: &str, files: Option<&[String]>) -> Vec<String> {
+    let mut names = match files {
+        Some(files) if !files.is_empty() => files.to_vec(),
+        _ => crate::diff::file_names(patch),
+    };
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Manda el solape de ficheros; el blame desempata entre ellos, y el historial
+/// desempata al blame. Los pesos los mantienen separados sin tener que comparar
+/// campo a campo.
+const OVERLAP_WEIGHT: u32 = 10_000;
+const BLAME_WEIGHT: u32 = 100;
+
+fn fixup_score(target: &FixupTarget) -> u32 {
+    (target.overlap.len() as u32) * OVERLAP_WEIGHT + target.blame * BLAME_WEIGHT + target.history
+}
+
+/// A qué commit de la tarea le pega mejor el cambio entrante, el más probable
+/// primero. Junta las tres señales —qué ficheros comparten, a quién apunta el
+/// blame de esas líneas y cuánto sale cada commit en el historial de esos
+/// ficheros— que antes se pedían por separado y se combinaban en el panel.
+pub fn fixup_targets(
+    cwd: &str,
+    base: &str,
+    patch: &str,
+    files: Option<&[String]>,
+) -> Result<Vec<FixupTarget>, String> {
+    let incoming = incoming_files(patch, files);
+    let commits = rebase_log(cwd, base)?;
+    let history = score_by_hash(recommend_commits(cwd, base, &incoming)?);
+    let blame = score_by_hash(blame_recommend(cwd, base, patch)?);
+
+    let mut targets: Vec<FixupTarget> = commits
+        .into_iter()
+        .map(|entry| {
+            let files = show_files(cwd, &entry.hash).unwrap_or_default();
+            let overlap = files
+                .iter()
+                .flat_map(|file| file.paths.iter())
+                .filter(|path| incoming.contains(path))
+                .cloned()
+                .collect::<Vec<_>>();
+            let (history, history_files) = history.get(&entry.hash).cloned().unwrap_or_default();
+            let (blame, blame_files) = blame.get(&entry.hash).cloned().unwrap_or_default();
+            FixupTarget { history, history_files, blame, blame_files, overlap, files, entry }
+        })
+        .collect();
+
+    // Estable: a igualdad de puntuación se conserva el orden en que llegaron.
+    targets.sort_by_key(|target| std::cmp::Reverse(fixup_score(target)));
+    Ok(targets)
+}
+
+fn score_by_hash(rows: Vec<CommitRecommendation>) -> HashMap<String, (u32, Vec<String>)> {
+    rows.into_iter().map(|row| (row.hash, (row.score, row.files))).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +268,42 @@ mod tests {
     }
 
     #[test]
+    fn the_incoming_files_come_from_the_patch_unless_they_are_given() {
+        let patch = "diff --git a/a.txt b/a.txt\n@@ -1 +1 @@\ndiff --git a/b.txt b/b.txt\n@@ -1 +1 @@\n";
+        assert_eq!(incoming_files(patch, None), vec!["a.txt".to_string(), "b.txt".to_string()]);
+        assert_eq!(
+            incoming_files(patch, Some(&["solo.txt".to_string()])),
+            vec!["solo.txt".to_string()]
+        );
+        // Una lista vacía es "no me dijeron nada", no "ningún fichero".
+        assert_eq!(incoming_files(patch, Some(&[])).len(), 2);
+    }
+
+    #[test]
+    fn the_commit_that_touched_the_same_file_is_offered_first() {
+        let repo = task_repo("fixup-targets");
+        // El cambio entrante toca two.txt, que es de la segunda tarea.
+        let patch = "diff --git a/two.txt b/two.txt\n@@ -1,1 +1,1 @@\n-two.txt\n+edited\n";
+        let targets = fixup_targets(repo.0.to_str().unwrap(), "main", patch, None).unwrap();
+        assert_eq!(targets.len(), 2, "los dos commits de la tarea son candidatos");
+        assert_eq!(targets[0].entry.subject, "two.txt");
+        assert_eq!(targets[0].overlap, vec!["two.txt".to_string()]);
+        assert!(targets[0].blame > 0 || targets[0].history > 0);
+        // El otro no comparte nada con el cambio entrante.
+        assert!(targets[1].overlap.is_empty());
+        assert!(!targets[1].files.is_empty(), "aun así se sabe qué tocó");
+    }
+
+    #[test]
+    fn without_any_commit_of_its_own_there_is_nothing_to_fix_up() {
+        let repo = repo("fixup-empty");
+        commit_file(&repo.0, "root\n", "root");
+        run(&repo.0, &["branch", "-M", "main"]);
+        run(&repo.0, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        assert!(fixup_targets(repo.0.to_str().unwrap(), "main", "", None).unwrap().is_empty());
+    }
+
+    #[test]
     fn an_unsafe_base_and_an_oversized_patch_are_refused() {
         let repo = task_repo("recommend-guards");
         let cwd = repo.0.to_str().unwrap();
@@ -191,5 +311,6 @@ mod tests {
         assert!(blame_recommend(cwd, "../evil", "").is_err());
         let huge = "x".repeat(MAX_PATCH_BYTES + 1);
         assert!(blame_recommend(cwd, "main", &huge).is_err());
+        assert!(fixup_targets(cwd, "../evil", "", None).is_err());
     }
 }

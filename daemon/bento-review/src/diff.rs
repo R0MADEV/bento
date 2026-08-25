@@ -69,6 +69,18 @@ pub fn split_diff_into_file_diffs(diff: &str) -> Vec<String> {
     files
 }
 
+/// Los ficheros que toca un diff, en el orden en que aparecen.
+pub fn file_names(diff: &str) -> Vec<String> {
+    split_diff_into_file_diffs(diff)
+        .iter()
+        .filter_map(|chunk| {
+            let header = chunk.lines().next()?;
+            let rest = header.strip_prefix("diff --git a/")?;
+            Some(rest.split(" b/").next()?.to_string())
+        })
+        .collect()
+}
+
 /// Groups file diffs into batches where each batch is at most `max_chars` long.
 /// A single file that exceeds `max_chars` on its own is placed in its own batch.
 pub fn batch_file_diffs(file_diffs: Vec<String>, max_chars: usize) -> Vec<String> {

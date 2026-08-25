@@ -273,5 +273,5 @@ export async function showWorktreeTerminal(ctx: TasksPanelCtx, wt: Worktree): Pr
 export function showSyncError(ctx: TasksPanelCtx, mode: string, errorText: string, wt: Worktree): void {
   stopDiffRefresh(ctx)
   disposeDetail(ctx)
-  buildSyncErrorView({ mode, errorText, path: wt.path, showDetail: (...nodes) => showDetail(ctx, ...nodes), iconButton: iconBtn, status: path => taskGit.status(path) })
+  buildSyncErrorView({ mode, errorText, path: wt.path, showDetail: (...nodes) => showDetail(ctx, ...nodes), iconButton: iconBtn })
 }

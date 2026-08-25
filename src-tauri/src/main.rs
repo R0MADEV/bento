@@ -305,6 +305,8 @@ fn main() {
             git::log::git_show_file,
             git::recommend::git_recommend_commits,
             git::recommend::git_blame_recommend,
+            git::recommend::git_fixup_targets,
+            git::status::git_conflicted_files,
             git::edit::git_resolve_conflict,
             git::edit::git_add_files,
             git::edit::git_read_file,

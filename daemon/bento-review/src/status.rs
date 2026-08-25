@@ -81,6 +81,24 @@ pub fn review_worktree_diff(cwd: &str, base: &str) -> Result<String, String> {
     Ok(combined)
 }
 
+/// Los códigos de `git status --porcelain` en los que las dos partes tocaron el
+/// fichero: eso es un conflicto sin resolver.
+const CONFLICT_CODES: [&str; 7] = ["UU", "AA", "DD", "AU", "UA", "DU", "UD"];
+
+/// Los ficheros en conflicto de un porcelain ya leído.
+pub fn parse_conflicted(porcelain: &str) -> Vec<String> {
+    porcelain
+        .lines()
+        .filter(|line| line.len() >= 2 && CONFLICT_CODES.contains(&&line[..2]))
+        .map(|line| line[2..].trim().to_string())
+        .collect()
+}
+
+/// Los ficheros que quedaron en conflicto en el worktree.
+pub fn conflicted_files(cwd: &str) -> Result<Vec<String>, String> {
+    git_cmd(cwd, &["status", "--porcelain"]).map(|raw| parse_conflicted(&raw))
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
@@ -216,6 +234,17 @@ mod tests {
         assert_eq!(report.published_commits, 1);
         assert!(report.signing);
         assert!(report.hooks.contains(&"pre-rebase".to_string()));
+    }
+
+    #[test]
+    fn every_unmerged_porcelain_code_counts_as_a_conflict() {
+        let porcelain = "UU both.txt\nAA added.txt\nDD deleted.txt\nAU a.txt\nUA b.txt\nDU c.txt\nUD d.txt\n M limpio.txt\n?? nuevo.txt\n";
+        assert_eq!(
+            parse_conflicted(porcelain),
+            vec!["both.txt", "added.txt", "deleted.txt", "a.txt", "b.txt", "c.txt", "d.txt"]
+        );
+        assert!(parse_conflicted(" M solo-modificado.txt\n").is_empty());
+        assert!(parse_conflicted("").is_empty());
     }
 
     #[test]

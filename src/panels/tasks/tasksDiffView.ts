@@ -1,13 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import type { Worktree } from '../../core/git/worktree'
-import { diffFileNames, changedPaths, matchingPaths, buildSelectedPatch, rankFixupCandidates } from '../../core/git/commitWorkflow'
+import { buildSelectedPatch } from '../../core/git/commitWorkflow'
 import { parseAheadBehind } from '../../core/git/taskJira'
 import type { RebaseStatus, RewritePreflight } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 import { buildChangesFileView } from './ChangesFileView'
 import { buildCommitFileList, fileStateMap, renderPatchHtml } from './TaskCodeView'
-import { commitFilesRaw, recommendationMap, taskGit } from './taskGitClient'
+import { taskGit } from './taskGitClient'
 import { buildIncomingChangesView } from './IncomingChangesView'
 import type { TasksPanelCtx } from './tasksPanelContext'
 import { baseFor, disposeDetail, recordOperation, setDetailLifecycle, stopDiffRefresh } from './tasksPanelContext'
@@ -209,22 +209,10 @@ export async function showFixupPicker(ctx: TasksPanelCtx, wt: Worktree, files: s
       return
     }
 
-    const incomingFiles = new Set(files ?? diffFileNames(incomingDiff))
-    const [recommendations, blameRecommendations] = await Promise.all([
-      taskGit.recommendations(wt.path, worktreeBase, [...incomingFiles]).catch(() => []),
-      taskGit.blameRecommendations(wt.path, worktreeBase, incomingDiff).catch(() => []),
-    ])
-    const historyScores = recommendationMap(recommendations)
-    const blameScores = recommendationMap(blameRecommendations)
-    const scored = await Promise.all(entries.map(async entry => {
-      const commitFiles = await taskGit.files(wt.path, entry.hash).catch(() => [])
-      const filesRaw = commitFilesRaw(commitFiles)
-      const overlap = matchingPaths(incomingFiles, changedPaths(filesRaw))
-      const history = historyScores.get(entry.hash) ?? { score: 0, files: [] }
-      const blame = blameScores.get(entry.hash) ?? { score: 0, files: [] }
-      return { entry, commitFiles, overlap, history, blame }
-    }))
-    const enriched = rankFixupCandidates(scored)
+    // Qué commit encaja mejor lo decide `bento_review::recommend`: junta el
+    // solape de ficheros, el blame y el historial en una sola consulta.
+    const enriched = await taskGit.fixupTargets(wt.path, worktreeBase, incomingDiff, files)
+    const incomingFiles = new Set(files ?? enriched.flatMap(target => target.overlap))
 
     const wrap = document.createElement('div')
     wrap.className = 'tasks-fixup-wrap'
@@ -241,9 +229,9 @@ export async function showFixupPicker(ctx: TasksPanelCtx, wt: Worktree, files: s
 
     const list = document.createElement('div')
     list.className = 'tasks-fixup-list'
-    for (const { entry, commitFiles, overlap, history, blame } of enriched) {
+    for (const { entry, files: commitFiles, overlap, history, historyFiles, blame, blameFiles } of enriched) {
       const item = document.createElement('div')
-      item.className = `tasks-fixup-item${overlap.length || history.score || blame.score ? ' tasks-fixup-item--match' : ''}`
+      item.className = `tasks-fixup-item${overlap.length || history || blame ? ' tasks-fixup-item--match' : ''}`
       const header = document.createElement('div')
       header.className = 'tasks-fixup-header'
       const filesEl = document.createElement('div')
@@ -273,7 +261,7 @@ export async function showFixupPicker(ctx: TasksPanelCtx, wt: Worktree, files: s
         const publishedWarning = preflight?.publishedCommits
           ? taskT('publishedFixup', { count: preflight.publishedCommits }) : ''
         const ok = await askConfirm(
-          taskT('fixupPreview', { count: incomingFiles.size, target: `${entry.short} ${entry.subject}`, matches: overlap.length ? overlap.join(', ') : taskT('none'), blame: blame.score || taskT('none'), history: history.score ? history.files.join(', ') : taskT('none'), published: publishedWarning }),
+          taskT('fixupPreview', { count: incomingFiles.size, target: `${entry.short} ${entry.subject}`, matches: overlap.length ? overlap.join(', ') : taskT('none'), blame: blame || taskT('none'), history: history ? historyFiles.join(', ') : taskT('none'), published: publishedWarning }),
           { title: taskT('applyFixup'), kind: 'warning' },
         )
         if (!ok) return
@@ -303,15 +291,15 @@ export async function showFixupPicker(ctx: TasksPanelCtx, wt: Worktree, files: s
           textContent: taskT('recommendedMatch', { count: overlap.length }),
           title: overlap.join('\n'),
         })] : []),
-        ...(blame.score ? [Object.assign(document.createElement('span'), {
+        ...(blame ? [Object.assign(document.createElement('span'), {
           className: 'tasks-fixup-blame-badge',
-          textContent: taskT('blameLines', { count: blame.score }),
-          title: taskT('blameHint', { files: blame.files.join(', ') }),
+          textContent: taskT('blameLines', { count: blame }),
+          title: taskT('blameHint', { files: blameFiles.join(', ') }),
         })] : []),
-        ...(!overlap.length && !blame.score && history.score ? [Object.assign(document.createElement('span'), {
+        ...(!overlap.length && !blame && history ? [Object.assign(document.createElement('span'), {
           className: 'tasks-fixup-history-badge',
-          textContent: taskT('historyScore', { count: history.score }),
-          title: taskT('historyHint', { files: history.files.join(', ') }),
+          textContent: taskT('historyScore', { count: history }),
+          title: taskT('historyHint', { files: historyFiles.join(', ') }),
         })] : []),
         statusEl,
         chooseBtn,
