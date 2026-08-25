@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 use crate::{attach, current_dir_string, flag, print_help, print_text, request, request_data, stream_review, tui};
 use crate::service::{daemon_install, daemon_start, daemon_uninstall};
 
+mod docker;
+
 pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
     match args.first().map(String::as_str) {
         None => tui::run().await,
@@ -120,27 +122,7 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
             _ => { print_help(); Ok(()) }
         },
 
-        Some("docker") => match args.get(1).map(String::as_str) {
-            None | Some("ps") | Some("list") => {
-                let data = request_data(json!({ "id": "1", "cmd": "docker.list" })).await?;
-                print_containers(&data);
-                Ok(())
-            }
-            Some("logs") => match args.get(2) {
-                Some(container) => {
-                    let tail = flag(args, "--tail").and_then(|t| t.parse::<u64>().ok()).unwrap_or(200);
-                    let data = request_data(json!({ "id": "1", "cmd": "docker.logs", "data": container, "rows": tail })).await?;
-                    print_text(data.as_str().unwrap_or_default());
-                    Ok(())
-                }
-                None => { eprintln!("usage: bento docker logs <contenedor> [--tail <n>]"); Ok(()) }
-            },
-            Some(action @ ("start" | "stop" | "restart")) => match args.get(2) {
-                Some(container) => request(json!({ "id": "1", "cmd": format!("docker.{action}"), "data": container })).await,
-                None => { eprintln!("usage: bento docker {action} <contenedor>"); Ok(()) }
-            },
-            _ => { print_help(); Ok(()) }
-        },
+        Some("docker") => docker::run(args).await,
 
         Some("terminals") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
         Some("review") => match args.get(1).map(String::as_str) {
@@ -302,22 +284,6 @@ fn build_agent_open_cmd(args: &[String]) -> Value {
 /// Un contenedor por línea, con el proyecto de compose al que pertenece.
 /// Parados y corriendo juntos: saber qué se ha caído es la mitad de la razón
 /// para mirar esto desde fuera.
-fn print_containers(data: &Value) {
-    let containers = data.as_array().map(Vec::as_slice).unwrap_or_default();
-    if containers.is_empty() {
-        println!("(sin contenedores)");
-        return;
-    }
-    for container in containers {
-        let field = |key: &str| container.get(key).and_then(Value::as_str).unwrap_or("");
-        let mark = if field("state") == "running" { "●" } else { "○" };
-        println!(
-            "{mark} {:<26} {:<26} {:<22} {}",
-            field("name"), field("image"), field("status"), field("project"),
-        );
-    }
-}
-
 /// Una tarea por línea: rama, qué lleva sin commitear y cómo va respecto a su
 /// upstream. Lo que quieres ver de un vistazo antes de entrar en ninguna.
 fn print_tasks(data: &Value) {

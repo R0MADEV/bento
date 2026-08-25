@@ -4,6 +4,7 @@ use crate::compose_yaml::*;
 pub mod recipe;
 pub mod json_patch;
 pub mod env_ports;
+pub mod isolate;
 
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]

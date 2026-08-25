@@ -1,3 +1,4 @@
+mod docker;
 mod review;
 
 use crate::remote::RemoteControl;
@@ -67,6 +68,8 @@ pub(crate) struct Request {
     pub(crate) session_id: Option<String>,
     #[serde(default)]
     pub(crate) path: Option<String>,
+    #[serde(default)]
+    pub(crate) recipes_dir: Option<String>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
@@ -267,29 +270,6 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             None => send(fail(&req.id, "cwd required".into())),
         },
 
-        // Docker: listar y leer logs va también por HTTP; arrancar, parar y
-        // reiniciar, solo por este socket — ver docs/remote-exposure.md.
-        "docker.list" => send(ok(&req.id, json!(bento_docker::list()))),
-
-        "docker.logs" => match &req.data {
-            Some(id) => match bento_docker::logs(id, req.rows.unwrap_or(200) as u32) {
-                Ok(logs) => send(ok(&req.id, json!(logs))),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "data (container) required".into())),
-        },
-
-        "docker.start" | "docker.stop" | "docker.restart" => match &req.data {
-            Some(id) => {
-                let action = req.cmd.trim_start_matches("docker.");
-                match bento_docker::action(action, id) {
-                    Ok(()) => send(ok(&req.id, Value::Null)),
-                    Err(e) => send(fail(&req.id, e)),
-                }
-            }
-            None => send(fail(&req.id, "data (container) required".into())),
-        },
-
         "projects.list" => send(ok(&req.id, json!(crate::remote::inventory::list_projects(manager)))),
 
         "terminal.open" => {
@@ -374,6 +354,8 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             },
             None => send(fail(&req.id, "pty_id required".into())),
         },
+
+        cmd if cmd.starts_with("docker.") => docker::dispatch(cmd, &req, &send),
 
         cmd if cmd.starts_with("review.") => review::dispatch(cmd, &req, &send, out, review_tasks),
 

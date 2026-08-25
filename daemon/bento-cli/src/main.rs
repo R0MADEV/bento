@@ -112,6 +112,12 @@ pub(crate) fn print_help() {
     eprintln!("  bento docker               list containers (running and stopped)");
     eprintln!("  bento docker logs <name> [--tail <n>]     read a container's logs");
     eprintln!("  bento docker start|stop|restart <name>    container lifecycle");
+    eprintln!("  bento docker isolate [--cwd <dir>]        give the worktree's compose its own subnet/ports");
+    eprintln!("  bento docker devcontainers [--cwd <dir>]  list the .devcontainer dirs of a worktree");
+    eprintln!("  bento docker prepare [--cwd <dir>] [--project <key>] [--recipes <dir>] [--devcontainer <dir>] [--allow-tracked]");
+    eprintln!("                                            isolate a devcontainer and apply the project recipe");
+    eprintln!("  bento docker urls [--cwd <dir>] [--devcontainer <dir>]     published ports of a prepared devcontainer");
+    eprintln!("  bento docker recipe status|preview [--cwd <dir>] [--project <key>] [--recipes <dir>]");
     eprintln!("  bento tasks                list tasks (worktrees) with their status");
     eprintln!("  bento tasks new <name> [--base <ref>]     create a task in its own worktree");
     eprintln!("  bento tasks rm <path> [--force]           remove a task");

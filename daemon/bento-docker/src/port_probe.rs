@@ -1,7 +1,7 @@
 use crate::*;
 
 
-#[derive(serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ServiceUrl {
     pub service: String,
     pub url: String,
