@@ -135,6 +135,9 @@ pub(crate) fn print_help() {
     eprintln!("  bento tasks restore [<ref>]  swap HEAD with a backup (needs a clean worktree)");
     eprintln!("  bento tasks sync           fetch and rebase onto the upstream");
     eprintln!("  bento tasks push [--force] publish the branch (force uses --force-with-lease)");
+    eprintln!("  bento tasks status         what is uncommitted, with the porcelain below");
+    eprintln!("  bento tasks diff [--base <ref>]   uncommitted diff, or everything since <ref>");
+    eprintln!("  bento tasks log [--limit n]      the branch history");
     eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");
     eprintln!("  bento review prs [--cwd <dir>]        list open PRs (needs gh)");
     eprintln!("  bento review files [--cwd <dir>] [--base <ref>]   files changed vs base (default: main)");

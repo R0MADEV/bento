@@ -12,7 +12,7 @@ que la regla es explícita.
 | Terminales | Es el caso de uso original: seguir un agente desde el móvil. |
 | Review (diff, PRs, comentarios, correr la review) | Revisar es leer y comentar; el agente corre en modo solo lectura y sobre un worktree aislado. |
 | Proyectos abiertos | Solo rutas y rama, para elegir sobre qué proyecto trabajar. |
-| Tareas (worktrees), **solo lectura** | Responder "¿en qué anda cada rama?" desde fuera. |
+| Tareas (worktrees), **solo lectura** | Responder "¿en qué anda cada rama?" desde fuera. Por HTTP va la lista; por el socket IPC va además el estado, el diff y el historial (`tasks.status`, `tasks.diff`, `tasks.log`, `tasks.upstream`), que el CLI usa. |
 | Docker: listar contenedores, **solo lectura** | Saber qué se ha caído es la mitad de la razón para mirar el móvil. |
 
 ## No se expone, y no por ahora

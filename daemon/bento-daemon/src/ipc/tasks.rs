@@ -94,6 +94,46 @@ pub(crate) fn dispatch(cmd: &str, req: &Request, send: &impl Fn(String)) {
             None => send(fail(&req.id, "cwd required".into())),
         },
 
+        // Leer el estado y el historial: sirve igual desde el móvil que desde
+        // el CLI, y no escribe nada.
+        "tasks.status" => match &req.cwd {
+            Some(cwd) => match bento_review::status::status(cwd) {
+                Ok(status) => send(ok(&req.id, json!(status))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.diff" => match &req.cwd {
+            Some(cwd) => {
+                let diff = match &req.base {
+                    Some(base) => bento_review::status::review_worktree_diff(cwd, base),
+                    None => bento_review::status::worktree_diff(cwd),
+                };
+                match diff {
+                    Ok(out) => send(ok(&req.id, json!(out))),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.log" => match &req.cwd {
+            Some(cwd) => match bento_review::log::log(cwd, req.limit.unwrap_or(30), false) {
+                Ok(entries) => send(ok(&req.id, json!(entries))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.upstream" => match &req.cwd {
+            Some(cwd) => match bento_review::sync::upstream_status(cwd) {
+                Ok(status) => send(ok(&req.id, json!(status))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
         "tasks.backups" => match &req.cwd {
             Some(cwd) => match bento_review::backup::list(cwd) {
                 Ok(list) => send(ok(&req.id, json!(list))),

@@ -72,6 +72,8 @@ pub(crate) struct Request {
     pub(crate) path: Option<String>,
     #[serde(default)]
     pub(crate) recipes_dir: Option<String>,
+    #[serde(default)]
+    pub(crate) limit: Option<u32>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {

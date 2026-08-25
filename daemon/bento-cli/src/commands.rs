@@ -114,6 +114,29 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
                 }
                 request(body).await
             }
+            Some("status") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let data = request_data(json!({ "id": "1", "cmd": "tasks.status", "cwd": cwd })).await?;
+                print_status(&data);
+                Ok(())
+            }
+            Some("diff") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let mut body = json!({ "id": "1", "cmd": "tasks.diff", "cwd": cwd });
+                if let Some(base) = flag(args, "--base") {
+                    body["base"] = json!(base);
+                }
+                let data = request_data(body).await?;
+                print_text(data.as_str().unwrap_or_default());
+                Ok(())
+            }
+            Some("log") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let limit = flag(args, "--limit").and_then(|v| v.parse::<u32>().ok()).unwrap_or(20);
+                let data = request_data(json!({ "id": "1", "cmd": "tasks.log", "cwd": cwd, "limit": limit })).await?;
+                print_log(&data);
+                Ok(())
+            }
             Some("push") => {
                 let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
                 let force = args.iter().any(|a| a == "--force");
@@ -321,6 +344,36 @@ fn print_tasks(data: &Value) {
 }
 
 
+
+/// Lo que hay sin commitear, con el porcelain debajo: el recuento dice cuánto
+/// falta y las líneas dicen exactamente qué.
+fn print_status(data: &Value) {
+    let count = |key: &str| data.get(key).and_then(Value::as_u64).unwrap_or(0);
+    if count("total") == 0 {
+        println!("limpio");
+        return;
+    }
+    println!(
+        "{} en el índice, {} sin stagear, {} sin trackear",
+        count("staged"),
+        count("unstaged"),
+        count("untracked")
+    );
+    print_text(data.get("raw").and_then(Value::as_str).unwrap_or_default());
+}
+
+/// Un commit por línea: el corto, el asunto y quién lo hizo.
+fn print_log(data: &Value) {
+    let commits = data.as_array().map(Vec::as_slice).unwrap_or_default();
+    if commits.is_empty() {
+        println!("(sin commits)");
+        return;
+    }
+    for commit in commits {
+        let field = |key: &str| commit.get(key).and_then(Value::as_str).unwrap_or("");
+        println!("{:<10} {:<60} {}", field("short"), field("subject"), field("author"));
+    }
+}
 
 /// Dónde se ha quedado un rebase: el commit, cuántos van y qué está en
 /// conflicto. Es lo primero que quieres saber cuando git para.
