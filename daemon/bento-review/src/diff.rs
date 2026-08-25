@@ -81,6 +81,72 @@ pub fn file_names(diff: &str) -> Vec<String> {
         .collect()
 }
 
+/// Un fichero del diff partido en lo que git necesita para volver a montarlo:
+/// la cabecera y cada trozo por separado. Quien lo pinta y quien arma el parche
+/// tienen que contar los trozos igual: si no, marcas uno y commiteas otro.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
+pub struct FilePatch {
+    pub file: String,
+    pub header: String,
+    pub hunks: Vec<String>,
+}
+
+pub fn parse_file_patch(chunk: &str) -> FilePatch {
+    let file = file_names(chunk).first().cloned().unwrap_or_default();
+    let lines: Vec<&str> = chunk.lines().collect();
+    let Some(first_hunk) = lines.iter().position(|line| line.starts_with("@@")) else {
+        // Sin trozos (un cambio de modo, un binario) todo es cabecera.
+        return FilePatch { file, header: chunk.to_string(), hunks: Vec::new() };
+    };
+    let header = format!("{}\n", lines[..first_hunk].join("\n"));
+    let mut hunks = Vec::new();
+    let mut start = first_hunk;
+    for index in first_hunk + 1..=lines.len() {
+        let is_end = index == lines.len() || lines[index].starts_with("@@");
+        if is_end {
+            hunks.push(format!("{}\n", lines[start..index].join("\n")));
+            start = index;
+        }
+    }
+    FilePatch { file, header, hunks }
+}
+
+/// El parche con solo lo elegido: los ficheros enteros que se marcaron y, del
+/// resto, los trozos sueltos.
+///
+/// Los trozos se copian tal cual vienen del `git diff` original, sin recalcular
+/// las líneas de contexto: por eso quien lo aplica usa `--unidiff-zero`. Armarlo
+/// aquí, al lado de quien lo aplica, es lo que mantiene esa pareja unida.
+pub fn build_selected_patch(
+    diff: &str,
+    whole_files: &[String],
+    selected_hunks: &std::collections::HashMap<String, Vec<usize>>,
+) -> String {
+    split_diff_into_file_diffs(diff)
+        .iter()
+        .filter_map(|chunk| {
+            let parsed = parse_file_patch(chunk);
+            if whole_files.contains(&parsed.file) {
+                return Some(format!("{chunk}\n"));
+            }
+            let wanted = selected_hunks.get(&parsed.file)?;
+            if wanted.is_empty() {
+                return None;
+            }
+            let hunks: String = parsed
+                .hunks
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| wanted.contains(index))
+                .map(|(_, hunk)| hunk.as_str())
+                .collect();
+            Some(format!("{}{hunks}", parsed.header))
+        })
+        .collect()
+}
+
 /// Groups file diffs into batches where each batch is at most `max_chars` long.
 /// A single file that exceeds `max_chars` on its own is placed in its own batch.
 pub fn batch_file_diffs(file_diffs: Vec<String>, max_chars: usize) -> Vec<String> {
@@ -109,6 +175,63 @@ pub fn batch_file_diffs(file_diffs: Vec<String>, max_chars: usize) -> Vec<String
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    const TWO_HUNKS: &str = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old one\n+new one\n@@ -10 +10 @@\n-old two\n+new two\n";
+
+    fn selection(pairs: &[(&str, &[usize])]) -> HashMap<String, Vec<usize>> {
+        pairs.iter().map(|(file, hunks)| (file.to_string(), hunks.to_vec())).collect()
+    }
+
+    #[test]
+    fn a_file_patch_splits_into_its_header_and_its_hunks() {
+        let parsed = super::parse_file_patch(TWO_HUNKS);
+        assert_eq!(parsed.file, "src/a.ts");
+        assert_eq!(parsed.hunks.len(), 2);
+        assert!(parsed.header.starts_with("diff --git a/src/a.ts"), "{}", parsed.header);
+        assert!(parsed.hunks[0].starts_with("@@ -1 +1 @@"), "{}", parsed.hunks[0]);
+        assert!(parsed.hunks[1].contains("new two"), "{}", parsed.hunks[1]);
+    }
+
+    #[test]
+    fn a_change_without_hunks_is_all_header() {
+        let mode_only = "diff --git a/x.sh b/x.sh\nold mode 100644\nnew mode 100755\n";
+        let parsed = super::parse_file_patch(mode_only);
+        assert!(parsed.hunks.is_empty());
+        assert_eq!(parsed.header, mode_only);
+    }
+
+    #[test]
+    fn only_the_chosen_hunks_make_it_into_the_patch() {
+        let built = super::build_selected_patch(TWO_HUNKS, &[], &selection(&[("src/a.ts", &[1])]));
+        assert!(built.contains("diff --git a/src/a.ts"), "{built}");
+        assert!(built.contains("new two"), "{built}");
+        assert!(!built.contains("new one"), "{built}");
+    }
+
+    #[test]
+    fn a_whole_file_goes_in_untouched() {
+        let built = super::build_selected_patch(TWO_HUNKS, &["src/a.ts".to_string()], &HashMap::new());
+        assert!(built.contains("new one") && built.contains("new two"), "{built}");
+        assert!(built.ends_with('\n'), "el parche tiene que acabar en salto de línea");
+    }
+
+    #[test]
+    fn a_file_nobody_chose_does_not_appear() {
+        assert_eq!(super::build_selected_patch(TWO_HUNKS, &[], &HashMap::new()), "");
+        // Elegir el fichero pero ningún trozo tampoco lo mete.
+        assert_eq!(super::build_selected_patch(TWO_HUNKS, &[], &selection(&[("src/a.ts", &[])])), "");
+    }
+
+    #[test]
+    fn each_file_is_decided_on_its_own() {
+        let two_files = format!("{TWO_HUNKS}diff --git a/src/b.ts b/src/b.ts\n--- a/src/b.ts\n+++ b/src/b.ts\n@@ -1 +1 @@\n-b old\n+b new\n");
+        let built = super::build_selected_patch(&two_files, &["src/b.ts".to_string()], &selection(&[("src/a.ts", &[0])]));
+        assert!(built.contains("new one"), "{built}");
+        assert!(!built.contains("new two"), "{built}");
+        assert!(built.contains("b new"), "{built}");
+    }
+
     use super::*;
 
     #[test]

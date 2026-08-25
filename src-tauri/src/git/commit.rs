@@ -45,3 +45,28 @@ pub async fn git_branch_rename(path: String, new_name: String) -> Result<(), Str
         .await
         .map_err(|e| e.to_string())?
 }
+
+/// El parche con solo lo elegido: los ficheros marcados enteros y, del resto,
+/// los trozos sueltos. Vive junto a quien lo aplica (`apply_selected_patch`,
+/// que usa `--unidiff-zero` justo porque los trozos van tal cual): armarlo en
+/// un lenguaje y aplicarlo en otro era media regla a cada lado.
+#[tauri::command]
+pub async fn git_build_patch(
+    diff: String,
+    whole_files: Vec<String>,
+    selected_hunks: std::collections::HashMap<String, Vec<usize>>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(bento_review::diff::build_selected_patch(&diff, &whole_files, &selected_hunks))
+    })
+    .await
+    .map_err(|e: tauri::Error| e.to_string())?
+}
+
+/// Un fichero del diff partido en cabecera y trozos, para pintarlo con una
+/// casilla por trozo. Lo parte el mismo código que luego arma el parche: si
+/// cada lado contara los trozos a su manera, marcarías uno y commitearías otro.
+#[tauri::command]
+pub fn git_parse_file_patch(chunk: String) -> bento_review::diff::FilePatch {
+    bento_review::diff::parse_file_patch(&chunk)
+}

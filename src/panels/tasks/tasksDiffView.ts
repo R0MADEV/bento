@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import type { Worktree } from '../../core/git/worktree'
-import { buildSelectedPatch } from '../../core/git/commitWorkflow'
+import { buildSelectedPatch } from './taskPatch'
 import { parseAheadBehind } from '../../core/git/taskJira'
 import type { RebaseStatus, RewritePreflight } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
@@ -118,8 +118,8 @@ export function buildDiffView(ctx: TasksPanelCtx, raw: string, wt: Worktree, opt
     textContent: taskT('fixupInto'),
     disabled: !raw.trim(),
   })
-  fixupBtn.addEventListener('click', () => {
-    const selectedPatch = buildSelectedPatch(raw, checkedFiles, selectedHunks)
+  fixupBtn.addEventListener('click', async () => {
+    const selectedPatch = await buildSelectedPatch(raw, checkedFiles, selectedHunks)
     void showFixupPicker(ctx, wt, undefined, selectedPatch || raw, selectedPatch || undefined)
   })
 
@@ -140,7 +140,7 @@ export function buildDiffView(ctx: TasksPanelCtx, raw: string, wt: Worktree, opt
     fixupBtn.disabled = true
     commitBtn.textContent = '…'
     try {
-      const selectedPatch = buildSelectedPatch(raw, checkedFiles, selectedHunks)
+      const selectedPatch = await buildSelectedPatch(raw, checkedFiles, selectedHunks)
       await invoke('git_commit', { path: wt.path, message: msg, amend: doAmend || undefined, patch: selectedPatch || undefined })
       recordOperation(ctx, wt, doAmend ? 'commit --amend' : 'commit', 'success', msg || taskT('keptMessage'))
       const wasAmend = doAmend
