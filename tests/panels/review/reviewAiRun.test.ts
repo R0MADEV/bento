@@ -9,10 +9,8 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('../../../src/core/ai/agentClient', () => ({
-  redact: (v: string) => v,
-  startAgent: mocks.startAgent,
-}))
+vi.mock('../../../src/adapters/agentRunner', () => ({ startAgent: mocks.startAgent }))
+vi.mock('../../../src/core/ai/agentClient', () => ({ redact: (v: string) => v }))
 vi.mock('../../../src/ui/askAi', () => ({ askAi: mocks.askAi }))
 
 import { buildReviewAiRun, type ReviewAiRunState } from '../../../src/panels/review/reviewAiRun'
