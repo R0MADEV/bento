@@ -48,6 +48,55 @@ pub(super) fn next_agent(current: &str) -> String {
     AGENTS[(i + 1) % AGENTS.len()].to_string()
 }
 
+/// El estado de los checks de CI, en una línea por check. Sin esto había que
+/// salir a GitHub para saber si el PR pasaba.
+pub(super) fn format_checks(data: &Value) -> String {
+    let checks = data.as_array().map(Vec::as_slice).unwrap_or_default();
+    if checks.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n## Checks\n\n");
+    for check in checks {
+        let name = ["name", "workflowName", "context"]
+            .iter()
+            .find_map(|key| check.get(*key).and_then(Value::as_str))
+            .unwrap_or("check");
+        let state = ["conclusion", "state", "status"]
+            .iter()
+            .find_map(|key| check.get(*key).and_then(Value::as_str))
+            .unwrap_or("")
+            .to_uppercase();
+        let mark = match state.as_str() {
+            "SUCCESS" | "COMPLETED" | "NEUTRAL" => "✓",
+            "FAILURE" | "ERROR" | "TIMED_OUT" | "CANCELLED" => "✗",
+            _ => "⟳",
+        };
+        out.push_str(&format!("- {mark} {name} ({state})\n"));
+    }
+    out
+}
+
+/// Los comentarios anclados a una línea concreta del diff, que son los que de
+/// verdad se responden en una review.
+pub(super) fn format_review_comments(data: &Value) -> String {
+    let comments = data.as_array().map(Vec::as_slice).unwrap_or_default();
+    if comments.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n## Comentarios en línea\n\n");
+    for c in comments {
+        let path = c.get("path").and_then(Value::as_str).unwrap_or("?");
+        let line = c.get("line").or_else(|| c.get("original_line")).and_then(Value::as_u64);
+        let body = c.get("body").and_then(Value::as_str).unwrap_or("");
+        let location = match line {
+            Some(line) => format!("{path}:{line}"),
+            None => path.to_string(),
+        };
+        out.push_str(&format!("**{}** · `{location}`\n{body}\n\n", author_of(c)));
+    }
+    out
+}
+
 /// The GitHub REST payload for a comment/review author. Both endpoints nest
 /// it under `user`, unlike `gh pr view --json`, which nests it under `author`.
 fn author_of(entry: &Value) -> &str {

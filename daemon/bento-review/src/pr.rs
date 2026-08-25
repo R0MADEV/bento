@@ -108,6 +108,13 @@ pub fn discussion(cwd: &str, pr: u64) -> Result<Value, String> {
     Ok(json!({ "comments": comments, "reviews": reviews }))
 }
 
+/// El estado de los checks de CI del PR: nombre, resultado y a dónde ir a
+/// mirarlo cuando falla.
+pub fn checks(cwd: &str, pr: u64) -> Result<Value, String> {
+    gh_json(cwd, &["pr", "view", &pr.to_string(), "--json", "statusCheckRollup"])
+        .map(|v| v.get("statusCheckRollup").cloned().unwrap_or_else(|| json!([])))
+}
+
 /// Submits a review. Returns its URL.
 pub fn submit_review(cwd: &str, pr: u64, event: &str, body: &str) -> Result<String, String> {
     check_body(body)?;

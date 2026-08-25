@@ -11,7 +11,7 @@ mod format;
 mod input;
 
 pub(super) use draw::draw;
-use format::{file_matches_filter, format_pr_comments, FileFilter};
+use format::{file_matches_filter, format_checks, format_pr_comments, format_review_comments, FileFilter};
 
 use serde_json::{json, Value};
 
@@ -254,6 +254,16 @@ impl ReviewState {
             .ok()
             .map(|v| format_pr_comments(&v))
             .unwrap_or_default();
+        let checks = crate::request_data(json!({ "id": "1", "cmd": "review.pr_checks", "cwd": self.cwd, "pr": pr }))
+            .await
+            .ok()
+            .map(|v| format_checks(&v))
+            .unwrap_or_default();
+        let inline = crate::request_data(json!({ "id": "1", "cmd": "review.pr_review_comments", "cwd": self.cwd, "pr": pr }))
+            .await
+            .ok()
+            .map(|v| format_review_comments(&v))
+            .unwrap_or_default();
         // Encabezado con lo que ya trae la lista: sin él, el detalle abría
         // directamente en el diff y no decía ni de qué PR era.
         let header = self
@@ -269,7 +279,9 @@ impl ReviewState {
                 )
             })
             .unwrap_or_else(|| format!("# PR #{pr}\n"));
-        self.pr_detail = format!("{header}\n---\n\n{diff}\n\n---\n\n## Comentarios\n\n{comments}");
+        self.pr_detail = format!(
+            "{header}{checks}{inline}\n---\n\n{diff}\n\n---\n\n## Comentarios\n\n{comments}"
+        );
         self.pr_scroll = 0;
         self.current_pr = Some(pr);
         self.pr_status.clear();

@@ -63,6 +63,22 @@ pub(crate) fn dispatch(
             _ => send(fail(&req.id, "cwd and pr required".into())),
         },
 
+        "review.pr_checks" => match (&req.cwd, req.pr) {
+            (Some(cwd), Some(pr)) => match bento_review::pr::checks(cwd, pr) {
+                Ok(data) => send(ok(&req.id, data)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd and pr required".into())),
+        },
+
+        "review.pr_review_comments" => match (&req.cwd, req.pr) {
+            (Some(cwd), Some(pr)) => match bento_review::pr::list_review_comments(cwd, pr) {
+                Ok(data) => send(ok(&req.id, data)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd and pr required".into())),
+        },
+
         "review.pr_comments" => match (&req.cwd, req.pr) {
             (Some(cwd), Some(pr)) => match crate::remote::review::pr_comments(cwd, pr) {
                 Ok(data) => send(ok(&req.id, data)),
