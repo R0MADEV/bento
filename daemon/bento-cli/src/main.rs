@@ -118,6 +118,10 @@ pub(crate) fn print_help() {
     eprintln!("                                            isolate a devcontainer and apply the project recipe");
     eprintln!("  bento docker urls [--cwd <dir>] [--devcontainer <dir>]     published ports of a prepared devcontainer");
     eprintln!("  bento docker recipe status|preview [--cwd <dir>] [--project <key>] [--recipes <dir>]");
+    eprintln!("  bento notes                list the notes in ~/.config/bento/notes");
+    eprintln!("  bento notes read <name.md> print a note");
+    eprintln!("  bento notes write <name.md> < file   save a note (content from stdin)");
+    eprintln!("  bento notes rm <name.md>   delete a note");
     eprintln!("  bento tasks                list tasks (worktrees) with their status");
     eprintln!("  bento tasks new <name> [--base <ref>]     create a task in its own worktree");
     eprintln!("  bento tasks rm <path> [--force]           remove a task");

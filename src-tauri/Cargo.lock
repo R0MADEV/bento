@@ -230,6 +230,7 @@ dependencies = [
  "argon2",
  "base64 0.22.1",
  "bento-docker",
+ "bento-notes",
  "bento-review",
  "futures",
  "hex",
@@ -261,6 +262,13 @@ dependencies = [
  "serde",
  "serde_json",
  "ts-rs",
+]
+
+[[package]]
+name = "bento-notes"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

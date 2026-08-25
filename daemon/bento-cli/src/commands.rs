@@ -7,6 +7,7 @@ use crate::{attach, current_dir_string, flag, print_help, print_text, request, r
 use crate::service::{daemon_install, daemon_start, daemon_uninstall};
 
 mod docker;
+mod notes;
 
 pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
     match args.first().map(String::as_str) {
@@ -123,6 +124,8 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
         },
 
         Some("docker") => docker::run(args).await,
+
+        Some("notes") => notes::run(args).await,
 
         Some("terminals") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
         Some("review") => match args.get(1).map(String::as_str) {

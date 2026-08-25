@@ -1,5 +1,6 @@
 mod docker;
 mod review;
+mod tasks;
 
 use crate::remote::RemoteControl;
 use bento_core::{OpenOptions, PtyEvent, PtyManager};
@@ -168,106 +169,35 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             send(ok(&req.id, json!(list)));
         }
 
-        // Las tareas: leer va también por HTTP (móvil); escribir, solo por
-        // este socket, que es local — ver docs/remote-exposure.md.
-        "tasks.list" => match &req.cwd {
-            Some(cwd) => send(ok(&req.id, json!(bento_review::tasks::list(cwd)))),
-            None => send(fail(&req.id, "cwd required".into())),
+        // Las notas son ficheros del usuario: se leen y escriben por este
+        // socket, que es local. Por HTTP no van — ver docs/remote-exposure.md.
+        "notes.list" => match bento_notes::list() {
+            Ok(notes) => send(ok(&req.id, json!(notes))),
+            Err(e) => send(fail(&req.id, e)),
         },
 
-        "tasks.create" => match (&req.cwd, &req.base, &req.data) {
-            (Some(cwd), Some(base), Some(name)) => match bento_review::tasks::create(cwd, name, base) {
-                Ok(path) => send(ok(&req.id, json!({ "path": path }))),
+        "notes.read" => match &req.path {
+            Some(name) => match bento_notes::read(name) {
+                Ok(content) => send(ok(&req.id, json!(content))),
                 Err(e) => send(fail(&req.id, e)),
             },
-            _ => send(fail(&req.id, "cwd, base and data (name) required".into())),
+            None => send(fail(&req.id, "path (note name) required".into())),
         },
 
-        "tasks.remove" => match (&req.cwd, &req.path) {
-            (Some(cwd), Some(path)) => match bento_review::tasks::remove(cwd, path, req.force.unwrap_or(false)) {
+        "notes.write" => match (&req.path, &req.data) {
+            (Some(name), Some(content)) => match bento_notes::write(name, content) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
                 Err(e) => send(fail(&req.id, e)),
             },
-            _ => send(fail(&req.id, "cwd and path required".into())),
+            _ => send(fail(&req.id, "path (note name) and data (content) required".into())),
         },
 
-        "tasks.commit" => match (&req.cwd, &req.data) {
-            (Some(cwd), Some(message)) => match bento_review::tasks::commit(cwd, message, req.force.unwrap_or(false)) {
+        "notes.delete" => match &req.path {
+            Some(name) => match bento_notes::delete(name) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
                 Err(e) => send(fail(&req.id, e)),
             },
-            _ => send(fail(&req.id, "cwd and data (message) required".into())),
-        },
-
-        "tasks.sync" => match &req.cwd {
-            Some(cwd) => match bento_review::tasks::sync(cwd) {
-                Ok(out) => send(ok(&req.id, json!(out))),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "tasks.push" => match &req.cwd {
-            Some(cwd) => match bento_review::tasks::push(cwd, req.force.unwrap_or(false)) {
-                Ok(out) => send(ok(&req.id, json!(out))),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "tasks.rebase" => match (&req.cwd, &req.base) {
-            (Some(cwd), Some(base)) => {
-                // Sin plan explícito, todo `pick`: rebasar sin reordenar.
-                let todo = match &req.paths {
-                    Some(lines) if !lines.is_empty() => Ok(lines.clone()),
-                    _ => bento_review::rebase::plain_todo(cwd, base),
-                };
-                match todo.and_then(|todo| bento_review::rebase::start(cwd, base, &todo)) {
-                    Ok(()) => send(ok(&req.id, Value::Null)),
-                    Err(e) => send(fail(&req.id, e)),
-                }
-            }
-            _ => send(fail(&req.id, "cwd and base required".into())),
-        },
-
-        "tasks.rebase_status" => match &req.cwd {
-            Some(cwd) => match bento_review::rebase::status(cwd) {
-                Ok(status) => send(ok(&req.id, json!(status))),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "tasks.rebase_continue" => match &req.cwd {
-            Some(cwd) => match bento_review::rebase::continue_rebase(cwd) {
-                Ok(out) => send(ok(&req.id, json!(out))),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "tasks.rebase_abort" => match &req.cwd {
-            Some(cwd) => match bento_review::rebase::abort(cwd) {
-                Ok(()) => send(ok(&req.id, Value::Null)),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "tasks.backups" => match &req.cwd {
-            Some(cwd) => match bento_review::backup::list(cwd) {
-                Ok(list) => send(ok(&req.id, json!(list))),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
-        },
-
-        "tasks.restore" => match &req.cwd {
-            Some(cwd) => match bento_review::backup::restore(cwd, req.data.clone()) {
-                Ok(()) => send(ok(&req.id, Value::Null)),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            None => send(fail(&req.id, "cwd required".into())),
+            None => send(fail(&req.id, "path (note name) required".into())),
         },
 
         "projects.list" => send(ok(&req.id, json!(crate::remote::inventory::list_projects(manager)))),
@@ -354,6 +284,8 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             },
             None => send(fail(&req.id, "pty_id required".into())),
         },
+
+        cmd if cmd.starts_with("tasks.") => tasks::dispatch(cmd, &req, &send),
 
         cmd if cmd.starts_with("docker.") => docker::dispatch(cmd, &req, &send),
 
