@@ -13,6 +13,7 @@ que la regla es explícita.
 | Review (diff, PRs, comentarios, correr la review) | Revisar es leer y comentar; el agente corre en modo solo lectura y sobre un worktree aislado. |
 | Proyectos abiertos | Solo rutas y rama, para elegir sobre qué proyecto trabajar. |
 | Tareas (worktrees), **solo lectura** | Responder "¿en qué anda cada rama?" desde fuera. |
+| Docker: listar contenedores, **solo lectura** | Saber qué se ha caído es la mitad de la razón para mirar el móvil. |
 
 ## No se expone, y no por ahora
 
@@ -22,6 +23,7 @@ que la regla es explícita.
 | **Bases de datos** | Las credenciales viven en el Vault y las consultas escriben. Un cliente SQL detrás de un token en la LAN es una puerta trasera al dato de producción. |
 | **Escrituras de tareas** (crear, borrar, commitear, rebasear, restaurar) | Son destructivas. Van por el socket IPC, que es local — el CLI las usa —, pero no por HTTP: un token en la LAN no es una confirmación. |
 | **Ajustes y credenciales de Jira** | Mismo motivo que el Vault. |
+| **Arrancar, parar o reiniciar contenedores** | Va por el socket IPC (el CLI lo usa), no por HTTP: parar la base de datos de producción desde el móvil no debería estar a un token de distancia. |
 
 ## Antes de exponer algo nuevo
 

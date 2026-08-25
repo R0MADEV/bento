@@ -156,6 +156,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "bento-core",
+ "bento-docker",
  "bento-review",
  "futures-util",
  "getrandom 0.2.17",
@@ -163,6 +164,15 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "bento-docker"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
 ]
 
 [[package]]

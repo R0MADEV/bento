@@ -3,6 +3,7 @@
 //! caller explicitly calls `RemoteControl::start`.
 
 mod assets;
+pub(crate) mod inventory;
 pub(crate) mod review;
 
 use axum::{
@@ -123,8 +124,9 @@ impl RemoteControl {
             .route("/api/terminals", get(terminals))
             .route("/api/terminals", post(new_terminal))
             .route("/api/terminals/:id", delete(kill_terminal))
-            .route("/api/projects", get(projects_handler))
-            .route("/api/tasks", get(tasks_handler))
+            .route("/api/projects", get(inventory::projects_handler))
+            .route("/api/tasks", get(inventory::tasks_handler))
+            .route("/api/docker", get(inventory::docker_handler))
             .route("/api/fs/dirs", get(fs_dirs_handler))
             .route("/api/review", get(review_handler))
             .route("/api/review/branches", get(review_branches_handler))
@@ -399,54 +401,6 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
     }
     outgoing.abort();
 }
-
-// ── /api/projects ─────────────────────────────────────────────────────────────
-
-/// Distinct project directories currently in use — derived from open
-/// terminals'/agents' cwds (deduped), each with its current branch. Shared
-/// by the HTTP `/api/projects` handler (phone) and the daemon's IPC socket
-/// (`projects.list`, for the TUI panel's project picker).
-pub(crate) fn list_projects(manager: &PtyManager) -> Vec<serde_json::Value> {
-    let mut seen = std::collections::HashSet::new();
-    manager
-        .list()
-        .into_iter()
-        .filter(|info| !info.cwd.is_empty())
-        .filter(|info| seen.insert(info.cwd.clone()))
-        .map(|info| {
-            let branch = git_branch(&info.cwd);
-            json!({ "cwd": info.cwd, "branch": branch })
-        })
-        .collect()
-}
-
-/// Las tareas (worktrees) de un proyecto: en qué rama está cada una y sobre
-/// qué commit. Solo lectura — crear, borrar o rebasear una tarea se queda en
-/// la app, donde hay confirmaciones y deshacer.
-async fn tasks_handler(
-    State(state): State<Arc<RemoteState>>,
-    Query(auth): Query<Auth>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
-    if !authorized(&state, &auth) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
-    }
-    let Some(cwd) = params.get("cwd").filter(|c| !c.is_empty()) else {
-        return (StatusCode::BAD_REQUEST, "missing cwd").into_response();
-    };
-    Json(bento_review::worktrees::list(cwd)).into_response()
-}
-
-async fn projects_handler(
-    State(state): State<Arc<RemoteState>>,
-    Query(auth): Query<Auth>,
-) -> impl IntoResponse {
-    if !authorized(&state, &auth) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
-    }
-    Json(list_projects(&state.manager)).into_response()
-}
-
 // ── /api/fs/dirs ──────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

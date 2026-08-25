@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 bento-core = { path = "../bento-core" }
+bento-docker = { path = "../bento-docker" }
 bento-review = { path = "../bento-review" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "process"] }
 tokio-stream = "0.1"

@@ -229,6 +229,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "base64 0.22.1",
+ "bento-docker",
  "bento-review",
  "futures",
  "hex",
@@ -250,6 +251,15 @@ dependencies = [
  "tokio",
  "ts-rs",
  "uuid",
+]
+
+[[package]]
+name = "bento-docker"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
 ]
 
 [[package]]

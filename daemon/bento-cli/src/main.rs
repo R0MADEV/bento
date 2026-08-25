@@ -109,6 +109,9 @@ pub(crate) fn print_help() {
     eprintln!("  bento terminals            list open terminals");
     eprintln!("  bento open [--cwd <dir>]   open a new terminal");
     eprintln!("  bento attach <pty_id>      attach to a terminal (stdin/stdout)");
+    eprintln!("  bento docker               list containers (running and stopped)");
+    eprintln!("  bento docker logs <name> [--tail <n>]     read a container's logs");
+    eprintln!("  bento docker start|stop|restart <name>    container lifecycle");
     eprintln!("  bento tasks                list tasks (worktrees) with their status");
     eprintln!("  bento tasks new <name> [--base <ref>]     create a task in its own worktree");
     eprintln!("  bento tasks rm <path> [--force]           remove a task");
