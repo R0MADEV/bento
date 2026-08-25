@@ -118,6 +118,10 @@ pub(crate) fn print_help() {
     eprintln!("                                            isolate a devcontainer and apply the project recipe");
     eprintln!("  bento docker urls [--cwd <dir>] [--devcontainer <dir>]     published ports of a prepared devcontainer");
     eprintln!("  bento docker recipe status|preview [--cwd <dir>] [--project <key>] [--recipes <dir>]");
+    eprintln!("  bento memory [--cwd <dir>] list this project's memories");
+    eprintln!("  bento memory all           list every stored memory");
+    eprintln!("  bento memory add <title> [--summary <text>] [--kind decision|fact|task|note]");
+    eprintln!("  bento memory rm <id>       delete a memory");
     eprintln!("  bento notes                list the notes in ~/.config/bento/notes");
     eprintln!("  bento notes read <name.md> print a note");
     eprintln!("  bento notes write <name.md> < file   save a note (content from stdin)");

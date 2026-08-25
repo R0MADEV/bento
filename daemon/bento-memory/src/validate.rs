@@ -3,7 +3,7 @@
 
 use super::{MemoryEntry, MemoryTranscript, MAX_LIST_ITEMS, MAX_LIST_ITEM_LENGTH, MAX_TEXT_LENGTH, MAX_TRANSCRIPT_LENGTH};
 
-pub(super) fn validate_text(field: &str, value: &str, required: bool) -> Result<(), String> {
+pub(crate) fn validate_text(field: &str, value: &str, required: bool) -> Result<(), String> {
     if required && value.trim().is_empty() {
         return Err(format!("{field} es obligatorio"));
     }
@@ -15,7 +15,7 @@ pub(super) fn validate_text(field: &str, value: &str, required: bool) -> Result<
     Ok(())
 }
 
-pub(super) fn validate_list(field: &str, values: &[String]) -> Result<(), String> {
+pub(crate) fn validate_list(field: &str, values: &[String]) -> Result<(), String> {
     if values.len() > MAX_LIST_ITEMS {
         return Err(format!(
             "{field} admite como máximo {MAX_LIST_ITEMS} elementos"
@@ -32,7 +32,7 @@ pub(super) fn validate_list(field: &str, values: &[String]) -> Result<(), String
     Ok(())
 }
 
-pub(super) fn validate_entry(entry: &MemoryEntry) -> Result<(), String> {
+pub(crate) fn validate_entry(entry: &MemoryEntry) -> Result<(), String> {
     if !matches!(entry.kind.as_str(), "decision" | "fact" | "task" | "note") {
         return Err("kind debe ser decision, fact, task o note".to_string());
     }
@@ -57,7 +57,7 @@ pub(super) fn validate_entry(entry: &MemoryEntry) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn validate_transcript(entry: &MemoryTranscript) -> Result<(), String> {
+pub(crate) fn validate_transcript(entry: &MemoryTranscript) -> Result<(), String> {
     validate_text("id", &entry.id, true)?;
     validate_text("projectPath", &entry.project_path, false)?;
     validate_text("agent", &entry.agent, true)?;

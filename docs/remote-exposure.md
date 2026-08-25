@@ -24,6 +24,8 @@ que la regla es explícita.
 | **Escrituras de tareas** (crear, borrar, commitear, rebasear, restaurar) | Son destructivas. Van por el socket IPC, que es local — el CLI las usa —, pero no por HTTP: un token en la LAN no es una confirmación. |
 | **Ajustes y credenciales de Jira** | Mismo motivo que el Vault. |
 | **Arrancar, parar o reiniciar contenedores** | Va por el socket IPC (el CLI lo usa), no por HTTP: parar la base de datos de producción desde el móvil no debería estar a un token de distancia. |
+| **Preparar devcontainers** (aislar el compose, aplicar recetas) | Reescribe ficheros del worktree. Va por el socket IPC (el CLI lo usa), no por HTTP. |
+| **Notas y memorias** | Son apuntes del usuario sobre su trabajo. Se leen y escriben por el socket IPC, que es local; por HTTP no, porque un token en la LAN no es la misma confianza que tu portátil desbloqueado. |
 
 ## Antes de exponer algo nuevo
 

@@ -38,7 +38,7 @@ fn file_timestamp(path: &Path) -> String {
         .unwrap_or_else(now_iso)
 }
 
-pub(super) fn now_iso() -> String {
+pub fn now_iso() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
@@ -276,7 +276,7 @@ fn candidate_from_file(source: &MemorySource, path: &Path) -> Option<ImportedMem
     })
 }
 
-pub(super) fn scan_candidates(
+pub(crate) fn scan_candidates(
     source: &MemorySource,
     limit: Option<usize>,
 ) -> Result<Vec<ImportedMemoryCandidate>, String> {

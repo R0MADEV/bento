@@ -2,7 +2,6 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use tauri::{AppHandle, Manager};
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS memory_entries (
     id TEXT PRIMARY KEY,
@@ -80,14 +79,13 @@ pub struct ImportedMemoryCandidate {
     pub tags: Vec<String>,
 }
 
-mod scan;
+pub mod scan;
 
 use scan::{now_iso, scan_candidates};
 
-fn connection(app: &AppHandle) -> Result<Connection, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let conn = Connection::open(dir.join("memory.sqlite3")).map_err(|e| e.to_string())?;
+fn connection(data_dir: &Path) -> Result<Connection, String> {
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let conn = Connection::open(data_dir.join("memory.sqlite3")).map_err(|e| e.to_string())?;
     conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
     Ok(conn)
 }
@@ -104,7 +102,6 @@ fn row_to_source(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemorySource> {
     })
 }
 
-#[tauri::command]
 pub fn memory_source_scan_path(
     path: String,
     label: Option<String>,
@@ -159,12 +156,11 @@ fn entry_exists(conn: &Connection, project_path: &str, external_id: &str) -> Res
     Ok(count > 0)
 }
 
-#[tauri::command]
 pub fn memory_source_list(
-    app: AppHandle,
+    data_dir: &Path,
     project_path: String,
 ) -> Result<Vec<MemorySource>, String> {
-    let conn = connection(&app)?;
+    let conn = connection(data_dir)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, project_path, kind, label, path, created_at, updated_at
@@ -179,9 +175,8 @@ pub fn memory_source_list(
     Ok(rows)
 }
 
-#[tauri::command]
-pub fn memory_source_create(app: AppHandle, source: MemorySource) -> Result<MemorySource, String> {
-    let conn = connection(&app)?;
+pub fn memory_source_create(data_dir: &Path, source: MemorySource) -> Result<MemorySource, String> {
+    let conn = connection(data_dir)?;
     if source.kind != "filesystem" {
         return Err("kind debe ser filesystem".to_string());
     }
@@ -206,13 +201,12 @@ pub fn memory_source_create(app: AppHandle, source: MemorySource) -> Result<Memo
     Ok(source)
 }
 
-#[tauri::command]
 pub fn memory_source_remove(
-    app: AppHandle,
+    data_dir: &Path,
     project_path: String,
     id: String,
 ) -> Result<bool, String> {
-    let conn = connection(&app)?;
+    let conn = connection(data_dir)?;
     Ok(conn
         .execute(
             "DELETE FROM memory_sources WHERE project_path = ?1 AND id = ?2",
@@ -222,26 +216,24 @@ pub fn memory_source_remove(
         > 0)
 }
 
-#[tauri::command]
 pub fn memory_source_scan(
-    app: AppHandle,
+    data_dir: &Path,
     project_path: String,
     id: String,
     limit: Option<usize>,
 ) -> Result<Vec<ImportedMemoryCandidate>, String> {
-    let conn = connection(&app)?;
+    let conn = connection(data_dir)?;
     let source = find_source(&conn, &project_path, &id)?;
     scan_candidates(&source, limit)
 }
 
-#[tauri::command]
 pub fn memory_source_import(
-    app: AppHandle,
+    data_dir: &Path,
     project_path: String,
     id: String,
     limit: Option<usize>,
 ) -> Result<usize, String> {
-    let conn = connection(&app)?;
+    let conn = connection(data_dir)?;
     let source = find_source(&conn, &project_path, &id)?;
     let candidates = scan_candidates(&source, limit)?;
     let mut imported = 0;

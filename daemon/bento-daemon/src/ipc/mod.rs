@@ -1,4 +1,5 @@
 mod docker;
+mod memory;
 mod review;
 mod tasks;
 
@@ -288,6 +289,8 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
         cmd if cmd.starts_with("tasks.") => tasks::dispatch(cmd, &req, &send),
 
         cmd if cmd.starts_with("docker.") => docker::dispatch(cmd, &req, &send),
+
+        cmd if cmd.starts_with("memory.") => memory::dispatch(cmd, &req, &send),
 
         cmd if cmd.starts_with("review.") => review::dispatch(cmd, &req, &send, out, review_tasks),
 

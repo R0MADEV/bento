@@ -231,6 +231,7 @@ dependencies = [
  "base64 0.22.1",
  "bento-db",
  "bento-docker",
+ "bento-memory",
  "bento-notes",
  "bento-review",
  "futures",
@@ -271,6 +272,17 @@ dependencies = [
  "serde",
  "serde_json",
  "ts-rs",
+]
+
+[[package]]
+name = "bento-memory"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "time",
+ "uuid",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@ use crate::{attach, current_dir_string, flag, print_help, print_text, request, r
 use crate::service::{daemon_install, daemon_start, daemon_uninstall};
 
 mod docker;
+mod memory;
 mod notes;
 
 pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
@@ -124,6 +125,8 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
         },
 
         Some("docker") => docker::run(args).await,
+
+        Some("memory") => memory::run(args).await,
 
         Some("notes") => notes::run(args).await,
 

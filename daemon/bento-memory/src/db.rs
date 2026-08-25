@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use tauri::{AppHandle, Manager};
+use std::path::Path;
 
 use super::validate::validate_entry;
 use super::{MemoryEntry, MemorySummaryJob, MemoryTranscript};
@@ -70,27 +70,26 @@ const MEMORY_SCHEMA: &str = "PRAGMA busy_timeout = 5000;
         PRAGMA user_version = 2;";
 
 
-pub(super) fn connection(app: &AppHandle) -> Result<Connection, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let conn = Connection::open(dir.join("memory.sqlite3")).map_err(|e| e.to_string())?;
+pub(crate) fn connection(data_dir: &Path) -> Result<Connection, String> {
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let conn = Connection::open(data_dir.join("memory.sqlite3")).map_err(|e| e.to_string())?;
     init_schema(&conn)?;
     Ok(conn)
 }
 
-pub(super) fn init_schema(conn: &Connection) -> Result<(), String> {
+pub(crate) fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(MEMORY_SCHEMA).map_err(|e| e.to_string())
 }
 
-pub(super) fn encode(values: &[String]) -> Result<String, String> {
+pub(crate) fn encode(values: &[String]) -> Result<String, String> {
     serde_json::to_string(values).map_err(|e| e.to_string())
 }
 
-pub(super) fn decode(value: String) -> Vec<String> {
+pub(crate) fn decode(value: String) -> Vec<String> {
     serde_json::from_str(&value).unwrap_or_default()
 }
 
-pub(super) fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
+pub(crate) fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEntry> {
     Ok(MemoryEntry {
         id: row.get(0)?,
         project_path: row.get(1)?,
@@ -107,7 +106,7 @@ pub(super) fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryEn
     })
 }
 
-pub(super) fn row_to_transcript(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryTranscript> {
+pub(crate) fn row_to_transcript(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryTranscript> {
     Ok(MemoryTranscript {
         id: row.get(0)?,
         project_path: row.get(1)?,
@@ -123,7 +122,7 @@ pub(super) fn row_to_transcript(row: &rusqlite::Row<'_>) -> rusqlite::Result<Mem
     })
 }
 
-pub(super) fn row_to_summary_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemorySummaryJob> {
+pub(crate) fn row_to_summary_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemorySummaryJob> {
     Ok(MemorySummaryJob {
         id: row.get(0)?,
         project_path: row.get(1)?,
@@ -140,7 +139,7 @@ pub(super) fn row_to_summary_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Me
     })
 }
 
-pub(super) fn find_by_external_id(
+pub(crate) fn find_by_external_id(
     conn: &Connection,
     project_path: &str,
     external_id: &str,
@@ -155,7 +154,7 @@ pub(super) fn find_by_external_id(
     .map_err(|e| e.to_string())
 }
 
-pub(super) fn find_transcript_by_summary_external_id(
+pub(crate) fn find_transcript_by_summary_external_id(
     conn: &Connection,
     project_path: &str,
     external_id: &str,
@@ -181,7 +180,7 @@ pub(super) fn find_transcript_by_summary_external_id(
     .map_err(|e| e.to_string())
 }
 
-pub(super) fn upsert_summary_entry(
+pub(crate) fn upsert_summary_entry(
     conn: &Connection,
     transcript: &MemoryTranscript,
     summary: &str,
@@ -259,7 +258,7 @@ pub(super) fn upsert_summary_entry(
     Ok(entry)
 }
 
-pub(super) fn regenerate_transcript_summary(
+pub(crate) fn regenerate_transcript_summary(
     agent: &str,
     cwd: &str,
     transcript: &str,
