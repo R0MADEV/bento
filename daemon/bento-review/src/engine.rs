@@ -11,6 +11,7 @@ use tokio::sync::mpsc::Sender;
 use crate::diff::{batch_file_diffs, split_diff_into_file_diffs};
 use crate::prompt::{build_review_prompt, build_synthesis_prompt, ReviewPromptInput};
 use crate::vcs::{is_safe_branch, review_diff};
+use crate::worktree::{prepare_branch_context, release_managed_context_path, set_review_worktree_writable};
 
 /// One agent call is at most this much diff. Bigger changes are split so no
 /// single call is asked to hold more than it can actually reason about.
@@ -141,7 +142,39 @@ pub async fn run_review(request: &ReviewRequest, branch: Option<&str>, runner: &
         let _ = tx.send(ReviewEvent::Error("No hay cambios respecto a la rama base.".into())).await;
         return;
     }
-    run_planned(request, &diff, runner, tx).await;
+
+    // Revisar una rama concreta se hace sobre un worktree aparte y de solo
+    // lectura: sin él, el agente lee (y podría tocar) el árbol en el que estás
+    // trabajando, y lo que revisa cambia bajo sus pies mientras escribes.
+    let isolated = branch.and_then(|branch| match prepare_branch_context(&request.cwd, branch, None, false) {
+        Ok(context) if context.managed => {
+            let _ = set_review_worktree_writable(std::path::Path::new(&context.path), false);
+            Some(context)
+        }
+        Ok(_) => None,
+        Err(_) => None,
+    });
+    let review_cwd = isolated.as_ref().map(|c| c.path.clone()).unwrap_or_else(|| request.cwd.clone());
+
+    let scoped = ReviewRequest { cwd: review_cwd, ..clone_request(request) };
+    run_planned(&scoped, &diff, runner, tx).await;
+
+    if let Some(context) = isolated {
+        let path = std::path::Path::new(&context.path);
+        let _ = set_review_worktree_writable(path, true);
+        let _ = release_managed_context_path(path);
+    }
+}
+
+/// `ReviewRequest` no es `Clone` a propósito (lleva el diff entero en algunos
+/// llamantes); esto copia solo lo que necesita la ejecución aislada.
+fn clone_request(request: &ReviewRequest) -> ReviewRequest {
+    ReviewRequest {
+        cwd: request.cwd.clone(),
+        base: request.base.clone(),
+        context: request.context.clone(),
+        agents: request.agents.clone(),
+    }
 }
 
 /// The orchestration itself, over an already-gathered diff.
