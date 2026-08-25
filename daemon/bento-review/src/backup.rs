@@ -10,6 +10,8 @@ use serde::Serialize;
 use crate::vcs::{current_branch, git_cmd, resolve_git_dir};
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
 #[serde(rename_all = "camelCase")]
 pub struct BackupStatus {
     pub available: bool,
@@ -20,12 +22,17 @@ pub struct BackupStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
 #[serde(rename_all = "camelCase")]
 pub struct BackupEntry {
     pub reference: String,
     pub hash: String,
     pub short: String,
     pub subject: String,
+    // u64 en TypeScript sería bigint, y esto es una fecha en milisegundos:
+    // number es lo que espera `new Date(...)`.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub created_at: u64,
 }
 

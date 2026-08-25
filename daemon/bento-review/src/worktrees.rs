@@ -7,6 +7,8 @@ use serde::Serialize;
 use crate::vcs::git_cmd;
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeInfo {
     pub path: String,

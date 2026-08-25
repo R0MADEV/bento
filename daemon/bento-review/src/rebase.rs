@@ -15,6 +15,8 @@ use crate::backup::create_history_backup;
 use crate::vcs::{git_bin, git_cmd, is_safe_branch, resolve_git_dir};
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RebaseStatus {
     pub active: bool,

@@ -40,7 +40,7 @@
     "lint": "eslint src tests scripts",
     "typecheck": "tsc --noEmit",
     "i18n:check": "node scripts/audit-i18n.mjs",
-    "bindings:generate": "cargo test --manifest-path src-tauri/Cargo.toml export_bindings",
+    "bindings:generate": "cargo test --manifest-path src-tauri/Cargo.toml export_bindings && cargo test --manifest-path daemon/bento-review/Cargo.toml --features ts export_bindings",
     "bindings:check": "npm run bindings:generate && node scripts/check-generated-bindings.mjs",
     "build:e2e:app": "node scripts/build-e2e-app.mjs",
     "test:e2e:tasks": "node scripts/e2e-tasks.mjs",
