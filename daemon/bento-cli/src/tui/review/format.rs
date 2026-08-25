@@ -66,10 +66,19 @@ pub(super) fn format_checks(data: &Value) -> String {
             .find_map(|key| check.get(*key).and_then(Value::as_str))
             .unwrap_or("")
             .to_uppercase();
-        let mark = match state.as_str() {
-            "SUCCESS" | "COMPLETED" | "NEUTRAL" => "✓",
-            "FAILURE" | "ERROR" | "TIMED_OUT" | "CANCELLED" => "✗",
-            _ => "⟳",
+        // Qué cuenta como fallo o como pendiente lo decide `bento_review::pr`,
+        // el mismo criterio que usa el panel: aquí había un tercero distinto.
+        let verdict = bento_review::pr::check_verdict(&bento_review::pr::PrCheck {
+            name: None,
+            context: None,
+            conclusion: check.get("conclusion").and_then(Value::as_str).map(str::to_string),
+            state: check.get("state").and_then(Value::as_str).map(str::to_string),
+            status: check.get("status").and_then(Value::as_str).map(str::to_string),
+        });
+        let mark = match verdict {
+            bento_review::pr::CheckVerdict::Passed => "✓",
+            bento_review::pr::CheckVerdict::Failed => "✗",
+            bento_review::pr::CheckVerdict::Pending => "⟳",
         };
         out.push_str(&format!("- {mark} {name} ({state})\n"));
     }

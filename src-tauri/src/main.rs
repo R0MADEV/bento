@@ -260,6 +260,7 @@ fn main() {
             git::log::git_ref_diff,
             git::log::git_rev_parse,
             git::pr::gh_pr_view_branch,
+            git::pr::gh_pr_check_report,
             git::pr::gh_pr_diff_number,
             git::pr::gh_pr_comment,
             git::pr::gh_pr_inline_comment,

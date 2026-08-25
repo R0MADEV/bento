@@ -114,6 +114,88 @@ pub struct PrStatus {
     pub review_decision: Option<String>,
     #[serde(default)]
     pub status_check_rollup: Vec<PrCheck>,
+    /// Cómo van esos checks: se calcula aquí, no viene de GitHub, así que al
+    /// leer el JSON entra vacío y `status()` lo rellena.
+    #[serde(default)]
+    pub checks: ChecksReport,
+}
+
+/// Cómo va un check. GitHub mezcla tres formas de decirlo: el resultado de un
+/// check ya terminado va en `conclusion`, el de un commit status en `state` y el
+/// de uno en marcha en `status`, así que se leen en ese orden.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
+#[serde(rename_all = "lowercase")]
+pub enum CheckVerdict {
+    Failed,
+    Pending,
+    #[default]
+    Passed,
+}
+
+/// Lo que bloquea de verdad: un check que falló o que pide intervención. Un
+/// `action_required` no es "pasa": GitHub no deja mezclar con él.
+const FAILED: [&str; 6] = [
+    "FAILURE",
+    "ERROR",
+    "TIMED_OUT",
+    "CANCELLED",
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+];
+
+const PENDING: [&str; 6] = [
+    "PENDING",
+    "QUEUED",
+    "IN_PROGRESS",
+    "WAITING",
+    "EXPECTED",
+    "REQUESTED",
+];
+
+pub fn check_verdict(check: &PrCheck) -> CheckVerdict {
+    let signal = [&check.conclusion, &check.state, &check.status]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_default()
+        .to_uppercase();
+    if FAILED.iter().any(|needle| signal.contains(needle)) {
+        return CheckVerdict::Failed;
+    }
+    if PENDING.iter().any(|needle| signal.contains(needle)) {
+        return CheckVerdict::Pending;
+    }
+    // Lo que no se reconoce (SUCCESS, NEUTRAL, SKIPPED, vacío) no bloquea: más
+    // vale no pintar un aviso que inventarse uno.
+    CheckVerdict::Passed
+}
+
+/// Cómo van los checks de un PR: uno a uno y en total.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
+pub struct ChecksReport {
+    /// Un veredicto por check, en el mismo orden que llegaron.
+    pub verdicts: Vec<CheckVerdict>,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub failed: u32,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub pending: u32,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub total: u32,
+}
+
+pub fn checks_report(checks: &[PrCheck]) -> ChecksReport {
+    let verdicts: Vec<CheckVerdict> = checks.iter().map(check_verdict).collect();
+    ChecksReport {
+        failed: verdicts.iter().filter(|v| **v == CheckVerdict::Failed).count() as u32,
+        pending: verdicts.iter().filter(|v| **v == CheckVerdict::Pending).count() as u32,
+        total: verdicts.len() as u32,
+        verdicts,
+    }
 }
 
 const STATUS_FIELDS: &str =
@@ -128,9 +210,9 @@ pub fn status(cwd: &str) -> Result<Option<PrStatus>, String> {
     if out.trim().is_empty() {
         return Ok(None);
     }
-    serde_json::from_str::<PrStatus>(&out)
-        .map(Some)
-        .map_err(|e| e.to_string())
+    let mut status = serde_json::from_str::<PrStatus>(&out).map_err(|e| e.to_string())?;
+    status.checks = checks_report(&status.status_check_rollup);
+    Ok(Some(status))
 }
 
 /// El PR de una rama cualquiera, en crudo. Igual que `status`: sin PR, `None`.
@@ -362,6 +444,64 @@ mod tests {
         assert!(check_commit_sha("").is_err());
         assert!(check_commit_sha("../../etc/passwd").is_err());
         assert!(check_commit_sha(&"a".repeat(41)).is_err());
+    }
+
+    fn check(conclusion: Option<&str>, state: Option<&str>, status: Option<&str>) -> PrCheck {
+        PrCheck {
+            name: Some("build".into()),
+            context: None,
+            conclusion: conclusion.map(str::to_string),
+            state: state.map(str::to_string),
+            status: status.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_finished_check_is_read_from_its_conclusion() {
+        assert_eq!(check_verdict(&check(Some("SUCCESS"), None, None)), CheckVerdict::Passed);
+        assert_eq!(check_verdict(&check(Some("NEUTRAL"), None, None)), CheckVerdict::Passed);
+        assert_eq!(check_verdict(&check(Some("SKIPPED"), None, None)), CheckVerdict::Passed);
+        assert_eq!(check_verdict(&check(Some("FAILURE"), None, None)), CheckVerdict::Failed);
+        assert_eq!(check_verdict(&check(Some("TIMED_OUT"), None, None)), CheckVerdict::Failed);
+        assert_eq!(check_verdict(&check(Some("startup_failure"), None, None)), CheckVerdict::Failed);
+    }
+
+    #[test]
+    fn one_that_needs_a_person_is_not_passing() {
+        // GitHub no deja mezclar con un action_required: contarlo como que pasa
+        // es justo lo que no hay que hacer.
+        assert_eq!(check_verdict(&check(Some("ACTION_REQUIRED"), None, None)), CheckVerdict::Failed);
+    }
+
+    #[test]
+    fn one_still_running_is_read_from_the_state_or_the_status() {
+        assert_eq!(check_verdict(&check(None, Some("PENDING"), None)), CheckVerdict::Pending);
+        assert_eq!(check_verdict(&check(None, Some("EXPECTED"), None)), CheckVerdict::Pending);
+        assert_eq!(check_verdict(&check(None, None, Some("IN_PROGRESS"))), CheckVerdict::Pending);
+        // Un conclusion vacío no tapa al status que sí dice algo.
+        assert_eq!(check_verdict(&check(Some(""), None, Some("QUEUED"))), CheckVerdict::Pending);
+    }
+
+    #[test]
+    fn nothing_recognisable_never_blocks_the_badge() {
+        assert_eq!(check_verdict(&check(None, None, None)), CheckVerdict::Passed);
+        assert_eq!(check_verdict(&check(Some("WHATEVER"), None, None)), CheckVerdict::Passed);
+    }
+
+    #[test]
+    fn the_report_counts_each_kind_and_keeps_the_order() {
+        let report = checks_report(&[
+            check(Some("SUCCESS"), None, None),
+            check(Some("FAILURE"), None, None),
+            check(None, None, Some("IN_PROGRESS")),
+        ]);
+        assert_eq!((report.failed, report.pending, report.total), (1, 1, 3));
+        assert_eq!(
+            report.verdicts,
+            vec![CheckVerdict::Passed, CheckVerdict::Failed, CheckVerdict::Pending]
+        );
+        let empty = checks_report(&[]);
+        assert_eq!((empty.failed, empty.pending, empty.total), (0, 0, 0));
     }
 
     #[test]

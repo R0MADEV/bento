@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
 import {
-  computeCiStatus,
   describeReviewNoBranchChanges,
   describeReviewPrState,
   esc,
@@ -68,24 +67,6 @@ describe('getFileState', () => {
 
   it('defaults to modified', () => {
     expect(getFileState('diff --git a/x b/x\n@@ -1 +1 @@\n')).toBe('M')
-  })
-})
-
-describe('computeCiStatus', () => {
-  it('returns none for an empty rollup', () => {
-    expect(computeCiStatus([])).toBe('none')
-  })
-
-  it('flags failure when any check failed', () => {
-    expect(computeCiStatus([{ conclusion: 'SUCCESS' }, { conclusion: 'FAILURE' }])).toBe('failure')
-  })
-
-  it('flags pending when nothing failed but something is in progress', () => {
-    expect(computeCiStatus([{ state: 'PENDING' }])).toBe('pending')
-  })
-
-  it('is success when every check passed', () => {
-    expect(computeCiStatus([{ conclusion: 'SUCCESS' }, { conclusion: 'SUCCESS' }])).toBe('success')
   })
 })
 

@@ -142,14 +142,6 @@ export const getFileState = (chunk: string): 'A' | 'D' | 'M' => {
 }
 
 // ── CI status ─────────────────────────────────────────────────────────────────
-export const computeCiStatus = (rollup: Array<{ conclusion?: string | null; state?: string }>): 'success' | 'failure' | 'pending' | 'none' => {
-  if (!rollup?.length) return 'none'
-  const vals = rollup.map(c => (c.conclusion ?? c.state ?? '').toUpperCase())
-  if (vals.some(v => ['FAILURE','ERROR','TIMED_OUT','CANCELLED'].includes(v))) return 'failure'
-  if (vals.some(v => ['PENDING','IN_PROGRESS','QUEUED','WAITING','ACTION_REQUIRED'].includes(v))) return 'pending'
-  return 'success'
-}
-
 // ── Relative time ─────────────────────────────────────────────────────────────
 export const relativeTime = (iso: string): string => {
   const diff = Date.now() - new Date(iso).getTime()

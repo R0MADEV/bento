@@ -236,6 +236,8 @@ describe('loadPrInfo', () => {
       gh_pr_view_branch: pr,
       gh_pr_list_comments: [{ id: 1, path: 'a.ts', line: 3, body: 'x', user: { login: 'u' }, html_url: '' }],
       gh_pr_list_discussion: { comments: [], reviews: [] },
+      // Cómo van los checks lo cuenta `bento_review::pr`.
+      gh_pr_check_report: { verdicts: ['passed'], failed: 0, pending: 0, total: 1 },
     })
     const loader = buildReviewDataLoader(h.dom, h.state)
     await loader.loadPrInfo()

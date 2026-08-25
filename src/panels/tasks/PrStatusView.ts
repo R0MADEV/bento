@@ -1,6 +1,5 @@
 import type { PrStatus } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
-import { classifyPrCheck } from '../../core/git/prChecks'
 
 interface PrStatusViewOptions {
   pr: PrStatus
@@ -34,9 +33,10 @@ export function buildPrStatusView({ pr, baseBranch, onBack, onOpen }: PrStatusVi
   )
   const checks = document.createElement('div')
   checks.className = 'tasks-backup-list'
-  for (const check of pr.statusCheckRollup ?? []) {
+  for (const [index, check] of (pr.statusCheckRollup ?? []).entries()) {
     const state = check.conclusion ?? check.state ?? check.status ?? 'UNKNOWN'
-    const verdict = classifyPrCheck(check)
+    // Los veredictos vienen con el PR, en el mismo orden que los checks.
+    const verdict = pr.checks.verdicts[index] ?? 'passed'
     const failed = verdict === 'failed'
     const pending = verdict === 'pending'
     const row = document.createElement('div')

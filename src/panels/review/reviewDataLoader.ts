@@ -6,7 +6,8 @@ import { diffGit } from '../diff/diffGitClient'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import type { ReviewChangeFile, GhComment, GhPr, SidebarMode, FileTypeFilter } from './reviewFormat'
-import { renderReviewPrStateBadge, describeReviewNoBranchChanges, getFileState, computeCiStatus, relativeTime } from './reviewFormat'
+import { renderReviewPrStateBadge, describeReviewNoBranchChanges, getFileState, relativeTime } from './reviewFormat'
+import { prCheckReport } from './prChecks'
 
 export type StatusRollupEntry = { name?: string; workflowName?: string; conclusion?: string | null; state?: string; context?: string; targetUrl?: string }
 
@@ -161,7 +162,12 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
         const stateBadge = renderReviewPrStateBadge(pr.state, pr.mergedAt, 'review-pr-state')
         if (stateBadge) prMetaEl.append(stateBadge)
 
-        const ci = computeCiStatus(statusRollup)
+        // Cómo van los checks lo decide `bento_review::pr`; aquí solo se elige
+        // qué se pinta con ese recuento.
+        const report = await prCheckReport(statusRollup)
+        const ci = report.total === 0 ? 'none'
+          : report.failed ? 'failure'
+            : report.pending ? 'pending' : 'success'
         if (ci !== 'none') {
           const ciEl = Object.assign(document.createElement('span'), {
             className: `review-ci review-ci--${ci}`,

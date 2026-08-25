@@ -3,7 +3,6 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import type { Worktree } from '../../core/git/worktree'
 import { applyFilter } from './tasksListView'
-import { summarisePrChecks } from '../../core/git/prChecks'
 import { showContextMenu } from '../../ui/contextMenu'
 import { statusCategoryClass } from '../../core/jira/board'
 import { fetchIssue, fetchTransitions, applyTransition, browseUrl } from './taskJiraClient'
@@ -133,7 +132,8 @@ export function buildRow(ctx: TasksPanelCtx, wt: Worktree, isMain: boolean, chan
       CLOSED: taskT('closedPr'),
     }
     prEl.className = `tasks-pr-badge ${stateMap[pr.state] ?? ''}`
-    const checks = summarisePrChecks(pr.statusCheckRollup ?? [])
+    // El recuento lo trae ya el propio PR, calculado en `bento_review::pr`.
+    const checks = pr.checks
     prEl.textContent = checks.failed ? taskT('failedChecks', { count: checks.failed })
       : checks.pending ? taskT('pendingChecks', { count: checks.pending })
         : labelMap[pr.state] ?? taskT('openPrShort')

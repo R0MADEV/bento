@@ -1,7 +1,7 @@
 //! Comandos de pull request. La lógica vive en `bento_review::pr`, compartida
 //! con el daemon y el CLI.
 
-pub use bento_review::pr::PrStatus;
+pub use bento_review::pr::{ChecksReport, PrStatus};
 
 /// Cada llamada a `gh` bloquea, así que todas van al pool de bloqueo. Un
 /// helper en vez del mismo `spawn_blocking` + doble `map_err` en cada una.
@@ -22,6 +22,14 @@ pub async fn gh_pr_view_branch(
     branch: String,
 ) -> Result<Option<serde_json::Value>, String> {
     blocking(move || bento_review::pr::view_branch(&path, &branch)).await
+}
+
+/// Cómo van los checks de un PR. El criterio vive en `bento_review::pr`, que lo
+/// comparten el panel, el TUI y el daemon: antes había tres distintos y un
+/// mismo PR se veía de tres maneras.
+#[tauri::command]
+pub fn gh_pr_check_report(checks: Vec<bento_review::pr::PrCheck>) -> ChecksReport {
+    bento_review::pr::checks_report(&checks)
 }
 
 #[tauri::command]
