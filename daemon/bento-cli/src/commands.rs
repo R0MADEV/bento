@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 
-use crate::{attach, current_dir_string, flag, print_help, print_text, request, request_data, stream_review, tui};
+use crate::{attach, current_dir_string, flag, positional, print_help, print_text, request, request_data, stream_review, tui};
 use crate::service::{daemon_install, daemon_start, daemon_uninstall};
 
 mod agent;
@@ -119,6 +119,18 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
                 let limit = flag(args, "--limit").and_then(|v| v.parse::<u32>().ok()).unwrap_or(20);
                 let data = request_data(json!({ "id": "1", "cmd": "tasks.log", "cwd": cwd, "limit": limit })).await?;
                 print_log(&data);
+                Ok(())
+            }
+            Some("fixup") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                let mut body = json!({ "id": "1", "cmd": "tasks.fixup", "cwd": cwd, "base": base });
+                let files = positional(args, 2, &["--cwd", "--base"]);
+                if !files.is_empty() {
+                    body["paths"] = json!(files);
+                }
+                let data = request_data(body).await?;
+                print_fixup_targets(&data);
                 Ok(())
             }
             Some("push") => {
@@ -330,6 +342,36 @@ fn print_log(data: &Value) {
     for commit in commits {
         let field = |key: &str| commit.get(key).and_then(Value::as_str).unwrap_or("");
         println!("{:<10} {:<60} {}", field("short"), field("subject"), field("author"));
+    }
+}
+
+/// Los commits a los que pega el cambio que tienes sin commitear, el más
+/// probable primero, y por qué: qué ficheros comparten, a quién apunta el blame
+/// y cuánto sale cada uno en el historial de esos ficheros.
+fn print_fixup_targets(data: &Value) {
+    let targets = data.as_array().map(Vec::as_slice).unwrap_or_default();
+    if targets.is_empty() {
+        println!("(sin commits propios donde integrarlo)");
+        return;
+    }
+    for target in targets {
+        let entry = target.get("entry");
+        let field = |key: &str| entry.and_then(|e| e.get(key)).and_then(Value::as_str).unwrap_or("");
+        let count = |key: &str| target.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let overlap = target.get("overlap").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+        let why = [
+            (!overlap.is_empty()).then(|| format!("{} en común", overlap.len())),
+            (count("blame") > 0).then(|| format!("blame {}", count("blame"))),
+            (count("history") > 0).then(|| format!("historial {}", count("history"))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let why = match why.is_empty() {
+            true => "—".to_string(),
+            false => why.join(" · "),
+        };
+        println!("{:<10} {:<52} {why}", field("short"), field("subject"));
     }
 }
 

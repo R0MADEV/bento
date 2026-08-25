@@ -134,6 +134,22 @@ pub(crate) fn dispatch(cmd: &str, req: &Request, send: &impl Fn(String)) {
             None => send(fail(&req.id, "cwd required".into())),
         },
 
+        // A qué commit de la tarea le pega el cambio que tienes sin commitear.
+        // Sin `data` se usa el diff del worktree, que es el caso normal.
+        "tasks.fixup" => match (&req.cwd, &req.base) {
+            (Some(cwd), Some(base)) => {
+                let patch = match &req.data {
+                    Some(patch) => patch.clone(),
+                    None => bento_review::status::worktree_diff(cwd).unwrap_or_default(),
+                };
+                match bento_review::recommend::fixup_targets(cwd, base, &patch, req.paths.as_deref()) {
+                    Ok(targets) => send(ok(&req.id, json!(targets))),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd and base required".into())),
+        },
+
         "tasks.backups" => match &req.cwd {
             Some(cwd) => match bento_review::backup::list(cwd) {
                 Ok(list) => send(ok(&req.id, json!(list))),

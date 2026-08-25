@@ -50,6 +50,62 @@ pub(crate) fn flag(args: &[String], name: &str) -> Option<String> {
         .cloned()
 }
 
+/// Los argumentos sueltos a partir de `from`. `with_value` dice qué opciones
+/// se llevan por delante lo siguiente: sin esa lista no hay forma de saber si
+/// `--force uno.txt` son dos cosas o una, y el valor de un `--cwd` acababa
+/// colándose como si fuera un fichero.
+pub(crate) fn positional<'a>(args: &'a [String], from: usize, with_value: &[&str]) -> Vec<&'a String> {
+    let mut out = Vec::new();
+    let mut index = from;
+    while index < args.len() {
+        let argument = &args[index];
+        if !argument.starts_with("--") {
+            out.push(argument);
+            index += 1;
+            continue;
+        }
+        index += if with_value.contains(&argument.as_str()) { 2 } else { 1 };
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::positional;
+
+    const VALUE_FLAGS: &[&str] = &["--cwd", "--base"];
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn an_option_takes_its_value_with_it() {
+        // El fallo que esto guarda: `--cwd /repo` dejaba `/repo` como si fuera
+        // un fichero, y el comando lo trataba como tal.
+        let args = args(&["tasks", "fixup", "--cwd", "/repo", "uno.txt"]);
+        assert_eq!(positional(&args, 2, VALUE_FLAGS), vec!["uno.txt"]);
+    }
+
+    #[test]
+    fn a_flag_without_a_value_does_not_eat_the_next_argument() {
+        let args = args(&["tasks", "fixup", "--force", "uno.txt"]);
+        assert_eq!(positional(&args, 2, VALUE_FLAGS), vec!["uno.txt"]);
+    }
+
+    #[test]
+    fn several_loose_arguments_survive_the_options_around_them() {
+        let args = args(&["tasks", "fixup", "--base", "main", "uno.txt", "dos.txt"]);
+        assert_eq!(positional(&args, 2, VALUE_FLAGS), vec!["uno.txt", "dos.txt"]);
+    }
+
+    #[test]
+    fn without_any_loose_argument_the_list_is_empty() {
+        assert!(positional(&args(&["tasks", "fixup", "--cwd", "/repo"]), 2, VALUE_FLAGS).is_empty());
+        assert!(positional(&args(&["tasks", "fixup"]), 2, VALUE_FLAGS).is_empty());
+    }
+}
+
 /// Send one request and print the single response line.
 pub(crate) async fn request(body: Value) -> std::io::Result<()> {
     let response = request_data(body).await?;
@@ -140,6 +196,7 @@ pub(crate) fn print_help() {
     eprintln!("  bento tasks status         what is uncommitted, with the porcelain below");
     eprintln!("  bento tasks diff [--base <ref>]   uncommitted diff, or everything since <ref>");
     eprintln!("  bento tasks log [--limit n]      the branch history");
+    eprintln!("  bento tasks fixup [--base <ref>] [<file>…]   which of your commits the uncommitted change belongs in");
     eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");
     eprintln!("  bento review prs [--cwd <dir>]        list open PRs (needs gh)");
     eprintln!("  bento review files [--cwd <dir>] [--base <ref>]   files changed vs base (default: main)");
