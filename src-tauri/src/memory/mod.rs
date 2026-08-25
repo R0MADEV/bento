@@ -40,6 +40,26 @@ pub fn memory_update(
     bento_memory::memory_update(&data_dir(&app)?, project_path, id, patch, updated_at)
 }
 
+/// Qué hacer con un candidato antes de importarlo: saltarlo, fusionarlo o
+/// crearlo. La regla vive en `bento_memory::dedup`, y la usa también la
+/// importación desde Rust.
+#[tauri::command]
+pub fn memory_plan_import(
+    project_path: String,
+    candidate: bento_memory::sources::ImportedMemoryCandidate,
+    existing: Vec<MemoryEntry>,
+    updated_at: String,
+) -> bento_memory::dedup::ImportDecision {
+    bento_memory::dedup::plan_import(&project_path, &candidate, &existing, &updated_at)
+}
+
+/// Funde varias memorias en una: gana la más reciente y de las demás se queda
+/// lo que añaden.
+#[tauri::command]
+pub fn memory_merge(entries: Vec<MemoryEntry>) -> Option<MemoryEntry> {
+    bento_memory::dedup::merge(&entries)
+}
+
 #[tauri::command]
 pub fn memory_remove(app: AppHandle, project_path: String, id: String) -> Result<bool, String> {
     bento_memory::memory_remove(&data_dir(&app)?, project_path, id)

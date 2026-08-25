@@ -1,5 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(async (_cmd: string, _args?: unknown) => undefined as unknown),
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+
 import { runCandidateImport } from '../../../src/core/memory/importRunner'
+import type { ImportDecision } from '../../../src/core/memory/dedup'
 import type { ImportedMemoryCandidate } from '../../../src/core/memory/memorySource'
 import type { MemoryEntry } from '../../../src/core/memory/MemoryEntry'
 import type { MemoryRepository } from '../../../src/ports/MemoryRepository'
@@ -14,15 +22,32 @@ const entry = (over: Partial<MemoryEntry> = {}): MemoryEntry => ({
   source: 'claude', externalId: 'claude:old', tags: [], files: [], createdAt: '', updatedAt: '', ...over,
 } as MemoryEntry)
 
+// Qué es un duplicado lo decide `bento_memory::dedup`, que tiene sus propios
+// tests. Aquí cada test dicta la decisión y se comprueba qué hace el runner con
+// ella: cuántas cuenta, a quién escribe y en qué orden.
+const decides = (...queue: ImportDecision[]): void => {
+  let next = 0
+  mocks.invoke.mockImplementation(async () => queue[Math.min(next++, queue.length - 1)])
+}
+
+const creates = (payload: Partial<MemoryEntry> = {}): ImportDecision =>
+  ({ action: 'create', payload: entry({ id: 'new', ...payload }) })
+
 function repo(over: Partial<MemoryRepository> = {}): MemoryRepository {
   return {
     list: vi.fn(async () => []),
-    create: vi.fn(async (_p: string, e) => entry({ id: 'created', ...e } as Partial<MemoryEntry>)),
+    // El id lo pone el backend al guardar, no quien manda la entrada.
+    create: vi.fn(async (_p: string, e) => entry({ ...e, id: 'created' } as Partial<MemoryEntry>)),
     update: vi.fn(async (_p: string, id: string) => entry({ id })),
     remove: vi.fn(async () => true),
     ...over,
   } as MemoryRepository
 }
+
+beforeEach(() => {
+  mocks.invoke.mockReset()
+  decides(creates())
+})
 
 describe('counting outcomes', () => {
   it('reports nothing done for no candidates', async () => {
@@ -32,31 +57,34 @@ describe('counting outcomes', () => {
     expect(r.create).not.toHaveBeenCalled()
   })
 
-  it('creates what is new and names the last entry it touched', async () => {
+  it('creates what the planner says to create and names the last entry it touched', async () => {
     const r = repo()
     const out = await runCandidateImport(r, '/p', [candidate()], [])
     expect(out).toMatchObject({ saved: 1, merged: 0, skipped: 0, lastAffectedId: 'created' })
     expect(r.create).toHaveBeenCalledTimes(1)
   })
 
-  it('skips a candidate already imported, without writing', async () => {
+  it('writes nothing for a candidate the planner skips', async () => {
+    decides({ action: 'skip', entryId: 'kept' })
     const r = repo()
-    const out = await runCandidateImport(r, '/p', [candidate({ externalId: 'claude:same' })],
-      [entry({ id: 'kept', externalId: 'claude:same' })])
+    const out = await runCandidateImport(r, '/p', [candidate()], [entry({ id: 'kept' })])
     expect(out).toMatchObject({ saved: 0, merged: 0, skipped: 1, lastAffectedId: 'kept' })
     expect(r.create).not.toHaveBeenCalled()
     expect(r.update).not.toHaveBeenCalled()
   })
 
-  it('merges into a duplicate instead of creating a second copy', async () => {
+  it('updates the duplicate instead of creating a second copy', async () => {
+    const patch = { tags: ['x'], files: [], summary: 'short', details: 'brief' }
+    decides({ action: 'merge', entry: entry({ id: 'dup' }), patch })
     const r = repo()
     const out = await runCandidateImport(r, '/p', [candidate()], [entry({ id: 'dup' })])
     expect(out).toMatchObject({ saved: 0, merged: 1, skipped: 0, lastAffectedId: 'dup' })
-    expect(r.update).toHaveBeenCalledTimes(1)
+    expect(r.update).toHaveBeenCalledWith('/p', 'dup', patch)
     expect(r.create).not.toHaveBeenCalled()
   })
 
   it('falls back to the duplicate id when the update returns nothing', async () => {
+    decides({ action: 'merge', entry: entry({ id: 'dup' }), patch: { tags: [], files: [], summary: '', details: '' } })
     const r = repo({ update: vi.fn(async () => null) })
     const out = await runCandidateImport(r, '/p', [candidate()], [entry({ id: 'dup' })])
     expect(out.lastAffectedId).toBe('dup')
@@ -64,11 +92,14 @@ describe('counting outcomes', () => {
 })
 
 describe('across several candidates', () => {
-  it('sees what it just created, so a repeat is merged rather than duplicated', async () => {
+  it('shows the planner what it just created, so a repeat can be merged', async () => {
+    decides(creates(), { action: 'merge', entry: entry({ id: 'created' }), patch: { tags: [], files: [], summary: '', details: '' } })
     const r = repo()
-    const twice = [candidate({ externalId: 'a' }), candidate({ externalId: 'b' })]
-    const out = await runCandidateImport(r, '/p', twice, [])
+    const out = await runCandidateImport(r, '/p', [candidate({ externalId: 'a' }), candidate({ externalId: 'b' })], [])
     expect(out).toMatchObject({ saved: 1, merged: 1 })
+    // La segunda decisión ya se toma contra la entrada recién creada.
+    const second = mocks.invoke.mock.calls[1][1] as { existing: MemoryEntry[] }
+    expect(second.existing.map(e => e.id)).toContain('created')
   })
 
   it('leaves the caller-supplied list of existing entries alone', async () => {
@@ -79,23 +110,20 @@ describe('across several candidates', () => {
 })
 
 describe('the update stamp', () => {
-  it('stamps each entry with what the resolver says for that candidate', async () => {
-    const r = repo()
+  it('passes on what the resolver says for that candidate', async () => {
     await runCandidateImport(
-      r, '/p',
+      repo(), '/p',
       [candidate({ externalId: 'a', createdAt: '2020-05-05T00:00:00.000Z' })],
       [], undefined, c => c.createdAt,
     )
-    const created = (r.create as ReturnType<typeof vi.fn>).mock.calls[0][1] as { updatedAt: string }
-    expect(created.updatedAt).toBe('2020-05-05T00:00:00.000Z')
+    expect(mocks.invoke.mock.calls[0][1]).toMatchObject({ updatedAt: '2020-05-05T00:00:00.000Z' })
   })
 
-  it('stamps with now when no resolver is given', async () => {
+  it('lets the planner stamp with now when no resolver is given', async () => {
     const before = Date.now()
-    const r = repo()
-    await runCandidateImport(r, '/p', [candidate()], [])
-    const created = (r.create as ReturnType<typeof vi.fn>).mock.calls[0][1] as { updatedAt: string }
-    expect(new Date(created.updatedAt).getTime()).toBeGreaterThanOrEqual(before)
+    await runCandidateImport(repo(), '/p', [candidate()], [])
+    const { updatedAt } = mocks.invoke.mock.calls[0][1] as { updatedAt: string }
+    expect(new Date(updatedAt).getTime()).toBeGreaterThanOrEqual(before)
   })
 })
 

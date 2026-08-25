@@ -1,6 +1,6 @@
 import type { MemoryEntry } from '../../core/memory/MemoryEntry'
 import type { ImportedMemoryCandidate } from '../../core/memory/memorySource'
-import { planCandidateImport } from '../../core/memory/memoryImportPlan'
+import { planCandidateImport } from '../../core/memory/dedup'
 import type { MemoryRepository } from '../../ports/MemoryRepository'
 
 export interface ImportOutcome {
@@ -30,7 +30,7 @@ export async function runCandidateImport(
 
   for (const [index, candidate] of candidates.entries()) {
     onProgress?.(index + 1, candidates.length)
-    const plan = planCandidateImport(projectPath, candidate, known, updatedAt?.(candidate))
+    const plan = await planCandidateImport(projectPath, candidate, known, updatedAt?.(candidate))
 
     if (plan.action === 'skip') {
       outcome.lastAffectedId = plan.entryId

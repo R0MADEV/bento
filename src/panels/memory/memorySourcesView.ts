@@ -108,7 +108,11 @@ export function createMemorySourcesView(deps: MemorySourcesViewDeps): MemorySour
     previewCandidateState.clear()
     if (!previewCandidates.length) return
     const existing = await targetProjectEntries()
-    previewCandidates.forEach(candidate => previewCandidateState.set(candidate.externalId, computePreviewCandidateState(currentProject, candidate, existing)))
+    // Cada estado es una consulta a la regla compartida: se piden en paralelo.
+    const states = await Promise.all(
+      previewCandidates.map(candidate => computePreviewCandidateState(currentProject, candidate, existing)),
+    )
+    previewCandidates.forEach((candidate, index) => previewCandidateState.set(candidate.externalId, states[index]))
   }
 
   const syncSourceForm = (): void => {

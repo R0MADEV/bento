@@ -1,5 +1,5 @@
-import type { MemoryEntry, NewMemoryEntry } from './MemoryEntry'
-import { findSemanticallyDuplicate, normalizeNewMemoryEntry } from './normalize'
+import type { MemoryEntry } from './MemoryEntry'
+import { planCandidateImport } from './dedup'
 import { detailProject, lexisProjectFolder, projectName } from './memoryFormat'
 import type { ImportedMemoryCandidate, PreviewCandidateState } from './memorySource'
 
@@ -34,30 +34,20 @@ export const candidateProject = (candidate: ImportedMemoryCandidate): string => 
   return 'Proyecto desconocido'
 }
 
-/** Whether importing this candidate would duplicate something already stored. */
-export const computePreviewCandidateState = (
+/** Si importar este candidato duplicaría algo que ya está guardado. */
+export const computePreviewCandidateState = async (
   projectPath: string, candidate: ImportedMemoryCandidate, existing: MemoryEntry[],
-): PreviewCandidateState => {
-  const payload: NewMemoryEntry = {
-    kind: 'note',
-    title: candidate.title,
-    summary: candidate.summary,
-    details: candidate.details,
-    source: candidate.source,
-    externalId: candidate.externalId,
-    files: candidate.files,
-    tags: candidate.tags,
-    createdAt: candidate.createdAt,
-    updatedAt: candidate.createdAt,
+): Promise<PreviewCandidateState> => {
+  const decision = await planCandidateImport(projectPath, candidate, existing, candidate.createdAt)
+  if (decision.action === 'skip') {
+    return {
+      duplicateExternal: true,
+      duplicateSemantic: false,
+      duplicateTitle: existing.find(entry => entry.id === decision.entryId)?.title || undefined,
+    }
   }
-  const normalized = normalizeNewMemoryEntry(projectPath, payload)
-  const duplicateExternal = existing.some(entry => entry.externalId === normalized.externalId)
-  const duplicate = duplicateExternal
-    ? existing.find(entry => entry.externalId === normalized.externalId)
-    : findSemanticallyDuplicate(existing, normalized)
-  return {
-    duplicateExternal,
-    duplicateSemantic: !duplicateExternal && Boolean(duplicate),
-    duplicateTitle: duplicate?.title || undefined,
+  if (decision.action === 'merge') {
+    return { duplicateExternal: false, duplicateSemantic: true, duplicateTitle: decision.entry.title || undefined }
   }
+  return { duplicateExternal: false, duplicateSemantic: false }
 }

@@ -2,8 +2,9 @@ import { t as i18nT } from '../../i18n'
 import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import type { MemoryEntry, NewMemoryEntry } from '../../core/memory/MemoryEntry'
 import {
-  MEMORY_ARCHIVED_TAG, archiveMemoryTags, mergeMemoryEntries, toggleMemoryTag,
+  MEMORY_ARCHIVED_TAG, archiveMemoryTags, toggleMemoryTag,
 } from '../../core/memory/normalize'
+import { mergeMemoryEntries } from '../../core/memory/dedup'
 import type { MemoryRepository } from '../../ports/MemoryRepository'
 
 export interface MemoryEntryActionsDeps {
@@ -77,7 +78,8 @@ export function createMemoryEntryActions(deps: MemoryEntryActionsDeps): MemoryEn
   const mergeSelected = async (): Promise<void> => {
     const rows = selectedRows()
     if (rows.length < 2) return
-    const merged = mergeMemoryEntries(rows)
+    const merged = await mergeMemoryEntries(rows)
+    if (!merged) return
     const open = selectedEntry()
     const isOpenEntryPartOfTheMerge = Boolean(open) && selectedIds.has(open!.id)
     const target = isOpenEntryPartOfTheMerge ? open! : rows[0]

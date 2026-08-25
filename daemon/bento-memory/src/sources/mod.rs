@@ -145,17 +145,6 @@ fn find_source(conn: &Connection, project_path: &str, id: &str) -> Result<Memory
     .map_err(|e| e.to_string())
 }
 
-fn entry_exists(conn: &Connection, project_path: &str, external_id: &str) -> Result<bool, String> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(1) FROM memory_entries WHERE project_path = ?1 AND external_id = ?2",
-            params![project_path.trim(), external_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-    Ok(count > 0)
-}
-
 pub fn memory_source_list(
     data_dir: &Path,
     project_path: String,
@@ -227,39 +216,65 @@ pub fn memory_source_scan(
     scan_candidates(&source, limit)
 }
 
+/// Importa lo que encuentre la fuente, decidiendo cada candidato contra lo que
+/// el proyecto ya tiene: lo ya importado se salta, lo que dice lo mismo se
+/// fusiona y el resto se crea. Antes esto solo miraba el `external_id` y el
+/// panel además fusionaba: la misma operación dejaba resultados distintos según
+/// por dónde entrara.
 pub fn memory_source_import(
     data_dir: &Path,
     project_path: String,
     id: String,
     limit: Option<usize>,
 ) -> Result<usize, String> {
-    let conn = connection(data_dir)?;
-    let source = find_source(&conn, &project_path, &id)?;
+    let source = {
+        let conn = connection(data_dir)?;
+        find_source(&conn, &project_path, &id)?
+    };
     let candidates = scan_candidates(&source, limit)?;
+    let mut known = crate::memory_list(data_dir, project_path.clone())?;
     let mut imported = 0;
+
     for candidate in candidates {
-        if entry_exists(&conn, &project_path, &candidate.external_id)? {
-            continue;
+        let now = now_iso();
+        match crate::dedup::plan_import(&project_path, &candidate, &known, &now) {
+            crate::dedup::ImportDecision::Skip { .. } => continue,
+            crate::dedup::ImportDecision::Merge { entry, patch } => {
+                let updated = crate::memory_update(
+                    data_dir,
+                    project_path.clone(),
+                    entry.id.clone(),
+                    crate::MemoryPatch {
+                        tags: Some(patch.tags),
+                        files: Some(patch.files),
+                        summary: Some(patch.summary),
+                        details: Some(patch.details),
+                        kind: None,
+                        title: None,
+                        source: None,
+                        external_id: None,
+                    },
+                    now,
+                )?;
+                if let Some(updated) = updated {
+                    replace_known(&mut known, updated);
+                }
+            }
+            crate::dedup::ImportDecision::Create { payload } => {
+                let created = crate::memory_create(data_dir, payload)?;
+                known.insert(0, created);
+                imported += 1;
+            }
         }
-        conn.execute(
-            "INSERT INTO memory_entries (id, project_path, kind, title, summary, details, tags_json, files_json, source, external_id, created_at, updated_at)
-             VALUES (?1, ?2, 'note', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                uuid::Uuid::new_v4().to_string(),
-                project_path.trim(),
-                candidate.title,
-                candidate.summary,
-                candidate.details,
-                serde_json::to_string(&candidate.tags).map_err(|e| e.to_string())?,
-                serde_json::to_string(&candidate.files).map_err(|e| e.to_string())?,
-                candidate.source,
-                candidate.external_id,
-                candidate.created_at,
-                now_iso(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        imported += 1;
     }
     Ok(imported)
+}
+
+/// Deja en `known` la versión recién guardada, para que el siguiente candidato
+/// se decida contra lo que ya hay de verdad.
+fn replace_known(known: &mut Vec<crate::MemoryEntry>, updated: crate::MemoryEntry) {
+    match known.iter().position(|entry| entry.id == updated.id) {
+        Some(index) => known[index] = updated,
+        None => known.insert(0, updated),
+    }
 }

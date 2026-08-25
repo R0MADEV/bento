@@ -207,6 +207,8 @@ fn main() {
             memory::memory_list_all,
             memory::memory_create,
             memory::memory_update,
+            memory::memory_plan_import,
+            memory::memory_merge,
             memory::memory_remove,
             memory::memory_migrate,
             memory::memory_transcript_list,

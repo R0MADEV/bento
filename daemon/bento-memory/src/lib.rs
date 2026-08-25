@@ -2,6 +2,7 @@
 //! La validación vive en `validate` y el acceso a datos en `db`.
 
 mod db;
+pub mod dedup;
 pub mod import;
 pub mod sources;
 mod validate;
@@ -68,7 +69,7 @@ pub(crate) const MAX_LIST_ITEMS: usize = 100;
 pub(crate) const MAX_LIST_ITEM_LENGTH: usize = 500;
 pub(crate) const MAX_TRANSCRIPT_LENGTH: usize = 200_000;
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryEntry {
     pub id: String,
