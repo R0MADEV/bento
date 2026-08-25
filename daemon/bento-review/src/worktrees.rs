@@ -87,6 +87,27 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_repo_entry_is_not_a_worktree() {
+        let raw = "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\nworktree /bare\nHEAD def456\nbare\n";
+        let list = parse_worktrees(raw);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].path, "/repo");
+        assert!(!list[0].bare);
+    }
+
+    #[test]
+    fn windows_crlf_records_parse_too() {
+        // Git for Windows escribe CRLF aunque la salida vaya por una tubería,
+        // y una ruta puede llevar espacios.
+        let raw = "worktree C:\\repo\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\nworktree C:\\repo task\r\nHEAD def456\r\nbranch refs/heads/task/e2e\r\n";
+        let list = parse_worktrees(raw);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].path, "C:\\repo");
+        assert_eq!(list[1].path, "C:\\repo task");
+        assert_eq!(list[1].branch.as_deref(), Some("task/e2e"));
+    }
+
+    #[test]
     fn empty_output_is_no_worktrees() {
         assert!(parse_worktrees("").is_empty());
     }

@@ -53,33 +53,7 @@ pub async fn git_sync(
 #[tauri::command]
 pub async fn git_push(path: String, force_with_lease: Option<bool>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let bin = git_bin().ok_or_else(|| "git not found".to_string())?;
-
-        let branch = git_output(&path, &["rev-parse", "--abbrev-ref", "HEAD"])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        if branch.is_empty() || branch == "HEAD" {
-            return Err("cannot push: detached HEAD".into());
-        }
-
-        let has_upstream = git_output(
-            &path,
-            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-        )
-        .is_ok();
-
-        let mut cmd = Command::new(&bin);
-        cmd.arg("-C").arg(&path).arg("push");
-        if !has_upstream {
-            cmd.args(["-u", "origin", &branch]);
-        } else if force_with_lease.unwrap_or(false) {
-            cmd.arg("--force-with-lease");
-        }
-        let out = cmd.output().map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        bento_review::tasks::push(&path, force_with_lease.unwrap_or(false))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -121,24 +95,8 @@ pub async fn git_upstream_status(path: String) -> Result<UpstreamStatus, String>
             &path,
             &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
         )?;
-        let mut parts = counts.split_whitespace();
-        let behind = parts
-            .next()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(0);
-        let ahead = parts
-            .next()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(0);
-        let state = if ahead > 0 && behind > 0 {
-            "diverged"
-        } else if behind > 0 {
-            "behind"
-        } else if ahead > 0 {
-            "ahead"
-        } else {
-            "synced"
-        };
+        let (ahead, behind) = bento_review::tasks::parse_ahead_behind(&counts);
+        let state = bento_review::tasks::sync_state(ahead, behind);
         Ok(UpstreamStatus {
             branch,
             upstream: Some(upstream),

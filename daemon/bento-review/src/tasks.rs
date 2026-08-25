@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-use crate::vcs::{git_cmd, is_safe_branch};
+use crate::vcs::{current_branch, git_cmd, is_safe_branch};
 use crate::worktrees::{self, WorktreeInfo};
 
 /// Lo que hay sin commitear en un worktree.
@@ -143,13 +143,33 @@ pub fn create(repo: &str, name: &str, base: &str) -> Result<String, String> {
 
 /// Quita una tarea. Sin `force` git se niega si hay trabajo sin guardar, que
 /// es exactamente lo que queremos: aquí no hay deshacer.
+///
+/// Si el `.git` de dentro del worktree se ha roto o se ha ido, git dice "not a
+/// working tree" y se planta: entonces se repara el enlace y se reintenta, o
+/// la carpeta se queda ahí para siempre.
 pub fn remove(repo: &str, path: &str, force: bool) -> Result<(), String> {
-    let mut args = vec!["worktree", "remove"];
-    if force {
-        args.push("--force");
+    let attempt = |force: bool| {
+        let mut args = vec!["worktree", "remove"];
+        if force {
+            args.push("--force");
+        }
+        args.push(path);
+        git_cmd(repo, &args).map(|_| ())
+    };
+    match attempt(force) {
+        Err(e) if is_broken_link(&e) => {
+            let _ = git_cmd(repo, &["worktree", "repair", path]);
+            attempt(true)
+        }
+        result => result,
     }
-    args.push(path);
-    git_cmd(repo, &args).map(|_| ())
+}
+
+/// Git se niega por dos motivos muy distintos: porque el enlace del worktree
+/// está roto, o porque hay trabajo sin guardar. Solo el primero se repara y se
+/// reintenta; el segundo es la protección que queremos conservar.
+fn is_broken_link(error: &str) -> bool {
+    error.contains("not a working tree") || error.contains("validation failed")
 }
 
 /// Commitea todo lo que hay en la tarea.
@@ -171,14 +191,15 @@ pub fn sync(cwd: &str) -> Result<String, String> {
 }
 
 /// Publica la rama. `--force-with-lease` nunca pisa lo que no hayas visto.
+/// La primera vez se publica con el nombre de la rama, no con HEAD, para que
+/// el upstream quede apuntando a algo con nombre.
 pub fn push(cwd: &str, force: bool) -> Result<String, String> {
+    let branch = current_branch(cwd).map_err(|_| "cannot push: detached HEAD".to_string())?;
     let mut args = vec!["push"];
-    if force {
+    if upstream_of(cwd).name.is_none() {
+        args.extend(["--set-upstream", "origin", &branch]);
+    } else if force {
         args.push("--force-with-lease");
-    }
-    let upstream = upstream_of(cwd);
-    if upstream.name.is_none() {
-        args.extend(["--set-upstream", "origin", "HEAD"]);
     }
     git_cmd(cwd, &args)
 }
@@ -239,6 +260,34 @@ mod tests {
         assert!(check_message("arregla el parseo").is_ok());
         assert!(check_message("   ").is_err());
         assert!(check_message("").is_err());
+    }
+
+    #[test]
+    fn a_task_whose_git_link_broke_can_still_be_removed() {
+        use crate::test_support::{commit_file, repo, run};
+        let repo = repo("task-remove");
+        commit_file(&repo.0, "root\n", "root");
+        let root = repo.0.to_str().unwrap();
+        let task = repo.0.parent().unwrap().join(format!("{}-task", repo.0.file_name().unwrap().to_string_lossy()));
+        run(&repo.0, &["worktree", "add", "-b", "tarea", task.to_str().unwrap()]);
+        // Se rompe el enlace: git dirá "not a working tree".
+        std::fs::remove_file(task.join(".git")).unwrap();
+        remove(root, task.to_str().unwrap(), false).unwrap();
+        assert!(!task.exists());
+    }
+
+    #[test]
+    fn unsaved_work_still_blocks_removing_a_task() {
+        use crate::test_support::{commit_file, repo, run};
+        let repo = repo("task-dirty");
+        commit_file(&repo.0, "root\n", "root");
+        let root = repo.0.to_str().unwrap();
+        let task = repo.0.parent().unwrap().join(format!("{}-dirty", repo.0.file_name().unwrap().to_string_lossy()));
+        run(&repo.0, &["worktree", "add", "-b", "sucia", task.to_str().unwrap()]);
+        std::fs::write(task.join("nuevo.txt"), "sin guardar").unwrap();
+        assert!(remove(root, task.to_str().unwrap(), false).is_err());
+        assert!(task.exists(), "no se borra lo que tiene trabajo sin guardar");
+        let _ = remove(root, task.to_str().unwrap(), true);
     }
 
     #[test]

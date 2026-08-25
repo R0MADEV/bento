@@ -12,33 +12,17 @@ pub struct GitStatus {
     total: u32,
 }
 
+/// El recuento lo hace `bento_review::tasks::parse_status`, compartido con el
+/// CLI; aquí solo se le añade el porcelain crudo, que el panel usa para
+/// pintar la lista de archivos.
 fn parse_status(raw: String) -> GitStatus {
-    let mut staged = 0;
-    let mut unstaged = 0;
-    let mut untracked = 0;
-    let mut total = 0;
-    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
-        total += 1;
-        let bytes = line.as_bytes();
-        let x = bytes.first().copied().unwrap_or(b' ');
-        let y = bytes.get(1).copied().unwrap_or(b' ');
-        if x == b'?' && y == b'?' {
-            untracked += 1;
-        } else {
-            if x != b' ' {
-                staged += 1;
-            }
-            if y != b' ' {
-                unstaged += 1;
-            }
-        }
-    }
+    let counts = bento_review::tasks::parse_status(&raw);
     GitStatus {
         raw,
-        staged,
-        unstaged,
-        untracked,
-        total,
+        staged: counts.staged,
+        unstaged: counts.unstaged,
+        untracked: counts.untracked,
+        total: counts.total,
     }
 }
 
