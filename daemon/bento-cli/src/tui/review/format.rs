@@ -2,7 +2,6 @@
 
 use serde_json::Value;
 
-use super::AGENTS;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum FileFilter {
@@ -44,8 +43,7 @@ pub(super) fn file_matches_filter(status: &str, filter: FileFilter) -> bool {
 }
 
 pub(super) fn next_agent(current: &str) -> String {
-    let i = AGENTS.iter().position(|a| *a == current).unwrap_or(0);
-    AGENTS[(i + 1) % AGENTS.len()].to_string()
+    bento_review::agents::next_id(current).to_string()
 }
 
 /// El estado de los checks de CI, en una línea por check. Sin esto había que

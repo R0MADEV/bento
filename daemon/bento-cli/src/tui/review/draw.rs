@@ -37,7 +37,7 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState) {
 
 fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect) {
     let agent_line = if review.compare {
-        "Agente: comparar todos (claude+codex+opencode)".to_string()
+        format!("Agente: comparar todos ({})", bento_review::agents::ids().join("+"))
     } else {
         format!("Agente: {} (g cambia)", review.agent)
     };

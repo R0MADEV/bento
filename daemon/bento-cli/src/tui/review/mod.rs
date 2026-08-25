@@ -17,7 +17,9 @@ use serde_json::{json, Value};
 
 use crate::review_stream::{self, ReviewEvent};
 
-const AGENTS: [&str; 3] = ["claude", "codex", "opencode"];
+/// Los agentes que ofrece el TUI. La lista vive en `bento_review::agents`:
+/// tenerla aquí otra vez era pedir que se separaran.
+use bento_review::agents::AGENTS;
 
 enum ReviewView {
     Browse,
@@ -130,7 +132,7 @@ impl ReviewState {
             cwd,
             base: "main".to_string(),
             branch: None,
-            agent: AGENTS[0].to_string(),
+            agent: AGENTS[0].id.to_string(),
             compare: false,
             context: String::new(),
             view: ReviewView::Browse,
@@ -331,7 +333,7 @@ impl ReviewState {
         self.output.clear();
         self.session_id = None;
         self.session_agent = None;
-        let agents = if self.compare { AGENTS.join(",") } else { self.agent.clone() };
+        let agents = if self.compare { bento_review::agents::ids().join(",") } else { self.agent.clone() };
         let mut body = json!({
             "id": "1", "cmd": "review.run", "cwd": self.cwd, "base": self.base,
             "context": self.context, "agents": agents,

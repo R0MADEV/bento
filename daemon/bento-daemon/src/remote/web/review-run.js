@@ -8,11 +8,29 @@ function toggleProgressStream(){
   t.textContent=collapsed?'▶':'▼';
 }
 
-const AGENT_LABELS={claude:'Claude',opencode:'OpenCode',codex:'Codex'};
+// La lista de agentes la sirve el daemon en /agents.js, generada desde
+// `bento_review::agents`: aquí estaba escrita otra vez, y en el HTML tres más.
+const AGENTS=window.BENTO_AGENTS||[];
 
-const AGENT_TYPES=['claude','opencode','codex'];
+const AGENT_TYPES=AGENTS.map(a=>a.id);
 
-function agentLabel(a){return AGENT_LABELS[a]||a;}
+function agentLabel(a){const found=AGENTS.find(x=>x.id===a);return found?found.label:a;}
+
+// Rellena los tres selectores; los opcionales conservan su "Ninguno".
+function fillAgentSelects(){
+  for(const id of ['rv-agent','rv-agent-secondary','rv-agent-tertiary']){
+    const select=document.getElementById(id);
+    if(!select)continue;
+    for(const agent of AGENTS){
+      const option=document.createElement('option');
+      option.value=agent.id;
+      option.textContent=agent.label;
+      select.appendChild(option);
+    }
+  }
+}
+
+fillAgentSelects();
 
 function selectedAgents(){
   const primary=document.getElementById('rv-agent').value||'claude';

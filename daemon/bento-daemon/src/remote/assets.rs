@@ -25,6 +25,16 @@ const REVIEW_ASK_JS: &str = include_str!("web/review-ask.js");
 const REVIEW_RUN_JS: &str = include_str!("web/review-run.js");
 const REVIEW_PR_JS: &str = include_str!("web/review-pr.js");
 
+/// La lista de agentes, generada desde `bento_review::agents` en vez de
+/// escrita otra vez en el bundle del móvil. Se arma una sola vez.
+fn agents_js() -> &'static str {
+    static AGENTS_JS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    AGENTS_JS.get_or_init(|| {
+        let agents = serde_json::to_string(&bento_review::agents::AGENTS).unwrap_or_else(|_| "[]".into());
+        format!("window.BENTO_AGENTS={agents};\n")
+    })
+}
+
 /// Las rutas estáticas, para engancharlas al router del servidor.
 pub(super) fn routes() -> Router<Arc<RemoteState>> {
     Router::new()
@@ -38,6 +48,7 @@ pub(super) fn routes() -> Router<Arc<RemoteState>> {
         .route("/review-ask.js", get(|| asset("text/javascript", REVIEW_ASK_JS)))
         .route("/review-run.js", get(|| asset("text/javascript", REVIEW_RUN_JS)))
         .route("/review-pr.js", get(|| asset("text/javascript", REVIEW_PR_JS)))
+        .route("/agents.js", get(|| asset("text/javascript", agents_js())))
 }
 
 async fn index(State(state): State<Arc<RemoteState>>, Query(auth): Query<Auth>) -> impl IntoResponse {
@@ -59,6 +70,28 @@ async fn asset(content_type: &'static str, body: &'static str) -> impl IntoRespo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_agent_list_is_served_from_the_catalog_and_not_written_again() {
+        let served = agents_js();
+        for agent in bento_review::agents::AGENTS {
+            assert!(served.contains(agent.id), "falta {} en /agents.js", agent.id);
+            assert!(served.contains(agent.label), "falta la etiqueta de {}", agent.id);
+        }
+        assert!(served.starts_with("window.BENTO_AGENTS="));
+
+        // El bundle del móvil ya no puede tener su propia lista: es lo que hacía
+        // que se separaran.
+        assert!(MOBILE_HTML.contains(r#"src="/agents.js""#));
+        for agent in bento_review::agents::AGENTS {
+            assert!(
+                !MOBILE_HTML.contains(&format!("<option value=\"{}\"", agent.id)),
+                "{} sigue escrito a mano en el HTML",
+                agent.id
+            );
+        }
+        assert!(!REVIEW_RUN_JS.contains("const AGENT_LABELS={claude:"));
+    }
 
     #[test]
     fn mobile_html_references_split_assets() {

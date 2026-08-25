@@ -10,6 +10,65 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+/// Los agentes que hay, como tipo. Existe para que TypeScript lo herede
+/// generado: si aquí aparece uno nuevo, el panel deja de compilar hasta que le
+/// dé una etiqueta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../src/generated/bindings/"))]
+#[serde(rename_all = "lowercase")]
+pub enum AgentId {
+    Claude,
+    Codex,
+    Opencode,
+    /// Un ejecutable propio que configura quien lo usa.
+    Custom,
+}
+
+/// Un agente que Bento sabe lanzar: su identificador y cómo se llama en la
+/// interfaz.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Agent {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+/// Los agentes soportados, en el orden en que se ofrecen. Es la única lista:
+/// el panel, el TUI y el móvil la sacan de aquí, y `invocation` tiene que saber
+/// lanzar a todos (lo comprueba un test).
+pub const AGENTS: [Agent; 3] = [
+    Agent { id: "claude", label: "Claude" },
+    Agent { id: "codex", label: "Codex" },
+    Agent { id: "opencode", label: "OpenCode" },
+];
+
+/// Los identificadores, para quien solo necesite elegir uno.
+pub fn ids() -> Vec<&'static str> {
+    AGENTS.iter().map(|agent| agent.id).collect()
+}
+
+/// Si es un agente de la lista. Lo que no lo es puede seguir lanzándose como
+/// ejecutable propio, pero no se ofrece.
+pub fn is_known(id: &str) -> bool {
+    AGENTS.iter().any(|agent| agent.id == id)
+}
+
+/// Cómo se llama en la interfaz. Lo desconocido se queda con su propio id, que
+/// dice más que un nombre inventado.
+pub fn label(id: &str) -> &str {
+    AGENTS
+        .iter()
+        .find(|agent| agent.id == id)
+        .map(|agent| agent.label)
+        .unwrap_or(id)
+}
+
+/// El siguiente de la lista, para ir rotando con una tecla.
+pub fn next_id(current: &str) -> &'static str {
+    let index = AGENTS.iter().position(|agent| agent.id == current).unwrap_or(0);
+    AGENTS[(index + 1) % AGENTS.len()].id
+}
+
 /// What one line of an agent's output means.
 #[derive(Debug, PartialEq)]
 pub enum AgentEvent {
@@ -596,6 +655,37 @@ mod tests {
         assert!(is_retryable("Error 529 overloaded"));
         assert!(is_retryable("socket hang up"));
         assert!(is_retryable("agent exited with an error"));
+    }
+
+    #[test]
+    fn every_agent_on_the_list_can_actually_be_launched() {
+        // La lista y el `match` de `invocation` no pueden separarse: ofrecer un
+        // agente que luego no se sabe lanzar es peor que no ofrecerlo.
+        for agent in AGENTS {
+            let built = invocation(agent.id, "prompt", "/tmp", None, false);
+            assert!(built.is_ok(), "{} no se sabe lanzar", agent.id);
+            assert_eq!(built.unwrap().program, agent.id);
+        }
+        assert!(invocation("gemini", "prompt", "/tmp", None, false).is_err());
+    }
+
+    #[test]
+    fn the_label_falls_back_to_the_id_and_the_list_knows_its_own() {
+        assert_eq!(label("claude"), "Claude");
+        assert_eq!(label("opencode"), "OpenCode");
+        assert_eq!(label("gemini"), "gemini");
+        assert!(is_known("codex"));
+        assert!(!is_known("gemini"));
+        assert_eq!(ids(), vec!["claude", "codex", "opencode"]);
+    }
+
+    #[test]
+    fn cycling_goes_round_the_list_and_comes_back() {
+        assert_eq!(next_id("claude"), "codex");
+        assert_eq!(next_id("codex"), "opencode");
+        assert_eq!(next_id("opencode"), "claude");
+        // Algo que no está en la lista empieza por el principio.
+        assert_eq!(next_id("gemini"), "codex");
     }
 
     #[test]

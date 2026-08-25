@@ -1,4 +1,4 @@
-import type { ChatMessage } from './config'
+import { isAgentType, type AgentType, type ChatMessage } from './config'
 
 export const GLOBAL_CHAT_CONVERSATION = 'global'
 const MAX_CONVERSATIONS = 50
@@ -20,7 +20,7 @@ export interface ChatConversationContext {
   commit?: string
   worktreePath?: string
   sessionId?: string
-  sessionAgent?: 'claude' | 'opencode' | 'codex' | 'custom'
+  sessionAgent?: AgentType
   sessionCommit?: string
   evidence?: string[]
 }
@@ -74,7 +74,7 @@ export function parseChatHistory(raw: string): ChatHistoryState {
         && (value.commit === undefined || (typeof value.commit === 'string' && /^[0-9a-f]{40,64}$/i.test(value.commit)))
         && (value.worktreePath === undefined || (typeof value.worktreePath === 'string' && value.worktreePath.length <= 2_000))
         && (value.sessionId === undefined || (typeof value.sessionId === 'string' && /^[A-Za-z0-9._:-]{1,500}$/.test(value.sessionId)))
-        && (value.sessionAgent === undefined || ['claude', 'opencode', 'codex', 'custom'].includes(String(value.sessionAgent)))
+        && (value.sessionAgent === undefined || isAgentType(value.sessionAgent))
         && (value.sessionCommit === undefined || (typeof value.sessionCommit === 'string' && /^[0-9a-f]{40,64}$/i.test(value.sessionCommit)))
         && (value.evidence === undefined || (Array.isArray(value.evidence) && value.evidence.length <= 100 && value.evidence.every(item => typeof item === 'string' && item.length <= 1_000)))
     }))
