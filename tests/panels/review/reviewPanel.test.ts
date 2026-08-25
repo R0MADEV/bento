@@ -99,6 +99,9 @@ describe('ReviewPanel', () => {
   })
 
   it('describes merged branches without the generic no-changes copy', () => {
+    // Comprueba la copia en inglés, así que fija el idioma en vez de heredar el
+    // que dejara el test anterior.
+    setup()
     expect(describeReviewNoBranchChanges('MERGED', 'origin/main')).toBe('Merged PR has no remaining changes vs origin/main')
   })
 
