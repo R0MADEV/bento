@@ -73,6 +73,43 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
                 print_text(data.as_str().unwrap_or_default());
                 Ok(())
             }
+            Some("rebase") => match args.get(2).map(String::as_str) {
+                Some("status") => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let data = request_data(json!({ "id": "1", "cmd": "tasks.rebase_status", "cwd": cwd })).await?;
+                    print_rebase_status(&data);
+                    Ok(())
+                }
+                Some("continue") => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let data = request_data(json!({ "id": "1", "cmd": "tasks.rebase_continue", "cwd": cwd })).await?;
+                    print_text(data.as_str().unwrap_or_default());
+                    Ok(())
+                }
+                Some("abort") => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    request(json!({ "id": "1", "cmd": "tasks.rebase_abort", "cwd": cwd })).await
+                }
+                Some(base) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    request(json!({ "id": "1", "cmd": "tasks.rebase", "cwd": cwd, "base": base })).await
+                }
+                None => { eprintln!("usage: bento tasks rebase <rama base>|status|continue|abort"); Ok(()) }
+            },
+            Some("backups") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let data = request_data(json!({ "id": "1", "cmd": "tasks.backups", "cwd": cwd })).await?;
+                print_backups(&data);
+                Ok(())
+            }
+            Some("restore") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let mut body = json!({ "id": "1", "cmd": "tasks.restore", "cwd": cwd });
+                if let Some(reference) = args.get(2).filter(|a| !a.starts_with("--")) {
+                    body["data"] = json!(reference);
+                }
+                request(body).await
+            }
             Some("push") => {
                 let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
                 let force = args.iter().any(|a| a == "--force");
@@ -267,6 +304,46 @@ fn print_tasks(data: &Value) {
             _ => format!("{state} ↑{ahead} ↓{behind}"),
         };
         println!("{branch:<34} {pending:<14} {sync:<20} {path}");
+    }
+}
+
+
+
+/// Dónde se ha quedado un rebase: el commit, cuántos van y qué está en
+/// conflicto. Es lo primero que quieres saber cuando git para.
+fn print_rebase_status(data: &Value) {
+    if data.get("active").and_then(Value::as_bool) != Some(true) {
+        println!("(sin rebase en curso)");
+        return;
+    }
+    let field = |key: &str| data.get(key).and_then(Value::as_str).unwrap_or("");
+    let num = |key: &str| data.get(key).and_then(Value::as_u64);
+    match (num("current"), num("total")) {
+        (Some(current), Some(total)) => println!("rebase {current}/{total} sobre {}", field("branch")),
+        _ => println!("rebase en curso sobre {}", field("branch")),
+    }
+    println!("parado en {} {}", field("short"), field("subject"));
+    let conflicts = data.get("conflicts").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    if conflicts.is_empty() {
+        println!("sin conflictos — `bento tasks rebase continue` para seguir");
+        return;
+    }
+    println!("en conflicto:");
+    for file in conflicts {
+        println!("  {}", file.as_str().unwrap_or(""));
+    }
+}
+
+/// Los respaldos automáticos de la rama, del más reciente al más viejo.
+fn print_backups(data: &Value) {
+    let entries = data.as_array().map(Vec::as_slice).unwrap_or_default();
+    if entries.is_empty() {
+        println!("(sin respaldos)");
+        return;
+    }
+    for entry in entries {
+        let field = |key: &str| entry.get(key).and_then(Value::as_str).unwrap_or("");
+        println!("{:<10} {:<52} {}", field("short"), field("subject"), field("reference"));
     }
 }
 

@@ -113,6 +113,9 @@ pub(crate) fn print_help() {
     eprintln!("  bento tasks new <name> [--base <ref>]     create a task in its own worktree");
     eprintln!("  bento tasks rm <path> [--force]           remove a task");
     eprintln!("  bento tasks commit <msg> [--amend]        stage everything and commit");
+    eprintln!("  bento tasks rebase <base>|status|continue|abort   rebase onto origin/<base> (backs up first)");
+    eprintln!("  bento tasks backups        list the automatic history backups");
+    eprintln!("  bento tasks restore [<ref>]  swap HEAD with a backup (needs a clean worktree)");
     eprintln!("  bento tasks sync           fetch and rebase onto the upstream");
     eprintln!("  bento tasks push [--force] publish the branch (force uses --force-with-lease)");
     eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");

@@ -20,7 +20,7 @@ que la regla es explícita.
 |---|---|
 | **Vault** | Son secretos cifrados con la contraseña maestra. Exponerlos por HTTP cambia el modelo de amenaza entero: pasa de "quien tenga tu portátil desbloqueado" a "quien tenga el token". |
 | **Bases de datos** | Las credenciales viven en el Vault y las consultas escriben. Un cliente SQL detrás de un token en la LAN es una puerta trasera al dato de producción. |
-| **Escrituras de tareas** (crear, borrar, rebasear un worktree) | Son destructivas y en la app tienen confirmación, historial y backup. Sin esa red, no. |
+| **Escrituras de tareas** (crear, borrar, commitear, rebasear, restaurar) | Son destructivas. Van por el socket IPC, que es local — el CLI las usa —, pero no por HTTP: un token en la LAN no es una confirmación. |
 | **Ajustes y credenciales de Jira** | Mismo motivo que el Vault. |
 
 ## Antes de exponer algo nuevo

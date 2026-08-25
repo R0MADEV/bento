@@ -4,12 +4,17 @@
 //! (`src/core/ai/techReview.ts`), and the two had already drifted.
 
 pub mod agents;
+pub mod backup;
 pub mod checkpoints;
 pub mod diff;
 pub mod engine;
 pub mod pr;
 pub mod prompt;
+pub mod rebase;
 pub mod store;
+#[cfg(test)]
+pub mod test_support;
+
 pub mod tasks;
 pub mod vcs;
 pub mod viewed;

@@ -36,7 +36,7 @@ fn resolve_bin(name: &'static str, cache: &'static OnceLock<Option<String>>) -> 
         .clone()
 }
 
-fn git_bin() -> Result<String, String> {
+pub fn git_bin() -> Result<String, String> {
     static GIT: OnceLock<Option<String>> = OnceLock::new();
     resolve_bin("git", &GIT).ok_or_else(|| "git not found".to_string())
 }
@@ -120,6 +120,30 @@ pub fn untracked_files(cwd: &str) -> Vec<String> {
 /// A whole-file diff for a path git doesn't track yet.
 pub fn diff_no_index(cwd: &str, path: &str) -> String {
     git_cmd_exit1_ok(cwd, &["diff", "--no-index", "--", "/dev/null", path]).unwrap_or_default()
+}
+
+/// La rama actual, o un error si estás en detached HEAD: casi nada de lo que
+/// hacemos (respaldar, rebasear, publicar) tiene sentido sin rama.
+pub fn current_branch(cwd: &str) -> Result<String, String> {
+    let branch = git_cmd(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+    if branch.is_empty() || branch == "HEAD" || !is_safe_branch(&branch) {
+        return Err("cannot operate on detached HEAD".into());
+    }
+    Ok(branch)
+}
+
+/// El directorio `.git` real. En un worktree `.git` es un fichero que apunta a
+/// otro sitio, y ahí es donde git deja el estado de un rebase a medias.
+pub fn resolve_git_dir(cwd: &str) -> std::path::PathBuf {
+    let git_path = std::path::Path::new(cwd).join(".git");
+    if git_path.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&git_path) {
+            if let Some(gitdir) = content.trim().strip_prefix("gitdir: ") {
+                return std::path::PathBuf::from(gitdir.trim());
+            }
+        }
+    }
+    git_path
 }
 
 /// The most recently committed-to branches, newest first.

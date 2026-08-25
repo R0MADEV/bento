@@ -212,6 +212,61 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             None => send(fail(&req.id, "cwd required".into())),
         },
 
+        "tasks.rebase" => match (&req.cwd, &req.base) {
+            (Some(cwd), Some(base)) => {
+                // Sin plan explícito, todo `pick`: rebasar sin reordenar.
+                let todo = match &req.paths {
+                    Some(lines) if !lines.is_empty() => Ok(lines.clone()),
+                    _ => bento_review::rebase::plain_todo(cwd, base),
+                };
+                match todo.and_then(|todo| bento_review::rebase::start(cwd, base, &todo)) {
+                    Ok(()) => send(ok(&req.id, Value::Null)),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd and base required".into())),
+        },
+
+        "tasks.rebase_status" => match &req.cwd {
+            Some(cwd) => match bento_review::rebase::status(cwd) {
+                Ok(status) => send(ok(&req.id, json!(status))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.rebase_continue" => match &req.cwd {
+            Some(cwd) => match bento_review::rebase::continue_rebase(cwd) {
+                Ok(out) => send(ok(&req.id, json!(out))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.rebase_abort" => match &req.cwd {
+            Some(cwd) => match bento_review::rebase::abort(cwd) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.backups" => match &req.cwd {
+            Some(cwd) => match bento_review::backup::list(cwd) {
+                Ok(list) => send(ok(&req.id, json!(list))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.restore" => match &req.cwd {
+            Some(cwd) => match bento_review::backup::restore(cwd, req.data.clone()) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
         "projects.list" => send(ok(&req.id, json!(crate::remote::list_projects(manager)))),
 
         "terminal.open" => {
