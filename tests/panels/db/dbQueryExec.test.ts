@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
+import { expectSqlBuilt, fakeDbSql } from '../../helpers/dbSql'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => undefined as unknown),
@@ -19,28 +20,44 @@ const server = (over: Partial<DbServer> = {}): DbServer =>
 const runner = (over: { s?: DbServer; names?: string[]; rels?: ForeignKey[] } = {}) =>
   createQueryRunner(over.s ?? server(), 'app', over.names ?? ['users'], Promise.resolve(over.rels ?? []))
 
-const sqlOf = (call: number): string => (mocks.invoke.mock.calls[call][1] as { sql: string }).sql
+// Las llamadas que ejecutan SQL, sin contar las que solo lo construyen.
+const sqlOf = (call: number): string =>
+  (mocks.invoke.mock.calls.filter(([cmd]) => String(cmd).startsWith('db_docker_'))[call][1] as { sql: string }).sql
 
 const rows = (over: Partial<TableData> = {}): TableData =>
   ({ columns: ['id', 'name'], rows: [['1', 'ana']], ...over })
+
+// Las respuestas de los comandos que ejecutan de verdad, en orden (la última se
+// repite). Un `Error` en la cola es un fallo del backend. Los `db_sql_*` van
+// aparte: los atiende el doble compartido.
+const respond = (...queue: unknown[]): void => {
+  let next = 0
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    const built = fakeDbSql(cmd, args as Record<string, unknown>)
+    if (built !== undefined) return built
+    const answer = queue[Math.min(next++, queue.length - 1)]
+    if (answer instanceof Error) throw answer
+    return answer
+  })
+}
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', makeLocalStorage())
   localStorage.setItem('bento.locale', 'en')
   mocks.invoke.mockReset()
-  mocks.invoke.mockResolvedValue(rows())
+  respond(rows())
 })
 
 describe('executeQuery dispatch', () => {
   it('runs a mongosh script and shows the raw output', async () => {
-    mocks.invoke.mockResolvedValue('  two docs  ')
+    respond('  two docs  ')
     const el = await runner({ s: server({ kind: 'mongodb' }) }).executeQuery('db.users.find()')
     expect(mocks.invoke).toHaveBeenCalledWith('db_docker_mongo_query', expect.objectContaining({ script: 'db.users.find()' }))
     expect(el.textContent).toBe('two docs')
   })
 
   it('runs a redis-cli command and shows the raw output', async () => {
-    mocks.invoke.mockResolvedValue('OK')
+    respond('OK')
     const el = await runner({ s: server({ kind: 'redis', password: 'pw' }) }).executeQuery('GET k')
     expect(mocks.invoke).toHaveBeenCalledWith('db_docker_redis_command', expect.objectContaining({ command: 'GET k', password: 'pw' }))
     expect(el.textContent).toBe('OK')
@@ -48,16 +65,18 @@ describe('executeQuery dispatch', () => {
 })
 
 describe('executeQuery for SQL', () => {
-  it('caps the row count and pins the MySQL planner to a greedy plan', async () => {
+  // El LIMIT, las comillas de Postgres y el prefijo de MySQL los pone
+  // `bento_db::query`; aquí lo que importa es que se le pida y se mande lo que
+  // devuelva, sin retocarlo por el camino.
+  it('has the backend prepare the query and runs exactly what it returns', async () => {
     await runner().executeQuery('SELECT * FROM users')
-    expect(sqlOf(0)).toContain('optimizer_search_depth=1')
-    expect(sqlOf(0).toLowerCase()).toContain('limit')
+    expectSqlBuilt(mocks.invoke, 'db_sql_prepare', { kind: 'mysql', sql: 'SELECT * FROM users', names: ['users'] })
+    expect(sqlOf(0)).toBe('PREPARED SELECT * FROM users')
   })
 
-  it('rewrites identifiers instead of pinning the planner on Postgres', async () => {
+  it('tells the backend which engine and which names it is dealing with', async () => {
     await runner({ s: server({ kind: 'postgres' }), names: ['public.Client'] }).executeQuery('SELECT * FROM public.Client')
-    expect(sqlOf(0)).not.toContain('optimizer_search_depth')
-    expect(sqlOf(0)).toContain('"public"."Client"')
+    expectSqlBuilt(mocks.invoke, 'db_sql_prepare', { kind: 'postgres', names: ['public.Client'] })
   })
 
   it('returns a grid of the rows', async () => {
@@ -68,9 +87,7 @@ describe('executeQuery for SQL', () => {
 
 describe('editable results', () => {
   it('makes a plain SELECT * of a known table editable', async () => {
-    mocks.invoke
-      .mockResolvedValueOnce(rows())
-      .mockResolvedValueOnce(['id'])
+    respond(rows(), ['id'])
     const el = await runner().executeQuery('SELECT * FROM users')
     expect(el.querySelector('.db-editable')).not.toBeNull()
   })
@@ -86,9 +103,7 @@ describe('editable results', () => {
   })
 
   it('offers no delete column when the primary key lookup fails', async () => {
-    mocks.invoke
-      .mockResolvedValueOnce(rows())
-      .mockRejectedValueOnce(new Error('denied'))
+    respond(rows(), new Error('denied'))
     const el = await runner().executeQuery('SELECT * FROM users')
     // Without a primary key there is no way to address a row; the backend
     // rejects an UPDATE with no WHERE, so only the delete column is dropped.
@@ -100,17 +115,17 @@ describe('pagination of a capped query', () => {
   const page = (n: number): TableData => ({ columns: ['id'], rows: Array.from({ length: n }, (_, i) => [String(i)]) })
 
   it('pages a query the runner had to cap', async () => {
-    mocks.invoke.mockResolvedValue(page(200))
+    respond(page(200))
     const el = await runner({ names: ['ghosts'] }).executeQuery('SELECT id FROM ghosts')
     const btn = el.querySelector('.db-load-more') as HTMLButtonElement
     expect(btn).not.toBeNull()
     btn.click()
     await new Promise(r => setTimeout(r, 0))
-    expect(sqlOf(1)).toContain('OFFSET 200')
+    expectSqlBuilt(mocks.invoke, 'db_sql_prepare', { sql: 'SELECT id FROM ghosts LIMIT 200 OFFSET 200' })
   })
 
   it('does not page a query that already had its own LIMIT', async () => {
-    mocks.invoke.mockResolvedValue(page(200))
+    respond(page(200))
     const el = await runner({ names: ['ghosts'] }).executeQuery('SELECT id FROM ghosts LIMIT 200')
     expect(el.querySelector('.db-load-more')).toBeNull()
   })
@@ -119,22 +134,21 @@ describe('pagination of a capped query', () => {
 describe('explain', () => {
   it('asks the engine for the plan without running the query', async () => {
     await runner().explain('SELECT * FROM users')
-    expect(sqlOf(0)).toContain('EXPLAIN SELECT * FROM users')
+    expect(sqlOf(0)).toBe('PREPARED EXPLAIN SELECT * FROM users')
   })
 
   it('drops a trailing semicolon before prefixing EXPLAIN', async () => {
     await runner().explain('SELECT 1;')
-    expect(sqlOf(0)).toContain('EXPLAIN SELECT 1')
-    expect(sqlOf(0)).not.toContain('SELECT 1;')
+    expect(sqlOf(0)).toBe('PREPARED EXPLAIN SELECT 1')
   })
 
-  it('fixes identifiers on Postgres and pins the planner on MySQL', async () => {
+  it('prepares the EXPLAIN for the engine too, names included', async () => {
     await runner({ s: server({ kind: 'postgres' }), names: ['public.Client'] }).explain('SELECT * FROM public.Client')
-    expect(sqlOf(0)).toBe('EXPLAIN SELECT * FROM "public"."Client"')
-
-    mocks.invoke.mockClear()
-    await runner().explain('SELECT * FROM users')
-    expect(sqlOf(0)).toContain('optimizer_search_depth=1')
+    expectSqlBuilt(mocks.invoke, 'db_sql_prepare', {
+      kind: 'postgres',
+      sql: 'EXPLAIN SELECT * FROM public.Client',
+      names: ['public.Client'],
+    })
   })
 
   it('shows the plan under a hint on how to read it', async () => {

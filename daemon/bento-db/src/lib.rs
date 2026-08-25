@@ -15,6 +15,7 @@ use std::time::Duration;
 
 pub mod mysql;
 pub mod mongo;
+pub mod query;
 pub mod postgres;
 pub mod redis;
 
@@ -174,7 +175,7 @@ pub struct TableData {
 }
 
 // Foreign-key relation: table.column → ref_table.ref_column.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ForeignKey {
     pub table: String,
     pub column: String,

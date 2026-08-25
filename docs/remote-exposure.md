@@ -20,7 +20,7 @@ que la regla es explícita.
 | qué | por qué |
 |---|---|
 | **Vault** | Son secretos cifrados con la contraseña maestra. Exponerlos por HTTP cambia el modelo de amenaza entero: pasa de "quien tenga tu portátil desbloqueado" a "quien tenga el token". |
-| **Bases de datos** | Las credenciales viven en el Vault y las consultas escriben. Un cliente SQL detrás de un token en la LAN es una puerta trasera al dato de producción. La lógica vive en `bento-db` (reutilizable), pero no se enchufa ni al socket IPC ni al HTTP. |
+| **Bases de datos** | Las credenciales viven en el Vault y las consultas escriben. Un cliente SQL detrás de un token en la LAN es una puerta trasera al dato de producción. La lógica vive en `bento-db` (reutilizable), pero no se enchufa ni al socket IPC ni al HTTP. Construir el SQL también vive ahí (`bento_db::query`): entrecomillar un nombre o escapar un literal no puede estar escrito dos veces, una por lenguaje. |
 | **Escrituras de tareas** (crear, borrar, commitear, rebasear, restaurar) | Son destructivas. Van por el socket IPC, que es local — el CLI las usa —, pero no por HTTP: un token en la LAN no es una confirmación. |
 | **Ajustes y credenciales de Jira** | Mismo motivo que el Vault. |
 | **Arrancar, parar o reiniciar contenedores** | Va por el socket IPC (el CLI lo usa), no por HTTP: parar la base de datos de producción desde el móvil no debería estar a un token de distancia. |

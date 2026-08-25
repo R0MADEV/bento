@@ -7,7 +7,7 @@ import { sqlCmd, creds, target, type TableData } from '../../core/db/dbEngine'
 import { buildJsonTree, renderCellValue } from './dbCellRender'
 import { note, makeFilterInput, makeCsvBtn, makeResultWrap, copyToClipboard } from './dbWidgets'
 import { editCell, deleteRow } from './dbRowEdit'
-import { ident, qualifiedTable, quoteValue } from '../../core/db/sqlQuote'
+import { insertStatement } from '../../core/db/sql'
 import type { DbDetailHost } from './dbDetailHost'
 
 export const renderGrid = (
@@ -195,12 +195,10 @@ export const renderGrid = (
           else if (inp.value !== '') vals.push([data.columns[i], inp.value])
         })
         if (!vals.length) { alert(i18nT('db.insertNeedValue')); return }
-        const colSql = vals.map(([c]) => ident(s, c)).join(', ')
-        const valSql = vals.map(([, v]) => v === null ? 'NULL' : quoteValue(s, v)).join(', ')
-        const tblQ = qualifiedTable(s, db, table)
         okBtn.disabled = true
         try {
-          await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `INSERT INTO ${tblQ} (${colSql}) VALUES (${valSql})`, ...creds(s) })
+          const sql = await insertStatement(s, db, table, vals)
+          await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) })
           onRefresh?.()
         } catch (e) { okBtn.disabled = false; alert(String(e)) }
       })

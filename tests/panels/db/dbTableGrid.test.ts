@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
+import { builtSql, expectSqlBuilt, fakeDbSql } from '../../helpers/dbSql'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => undefined as unknown),
@@ -61,7 +62,8 @@ beforeEach(() => {
   vi.stubGlobal('confirm', () => confirmed)
   vi.stubGlobal('alert', (m: string) => { alerts.push(String(m)) })
   mocks.invoke.mockReset()
-  mocks.invoke.mockResolvedValue(undefined)
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+    fakeDbSql(cmd, args as Record<string, unknown>))
   vi.useRealTimers()
 })
 
@@ -193,15 +195,20 @@ describe('insert row', () => {
     expect(alerts).toHaveLength(1)
   })
 
-  it('inserts only the filled columns and refreshes', async () => {
+  // El INSERT lo escribe `bento_db::query`; aquí importa qué columnas se le
+  // mandan y que se ejecute tal cual vuelve.
+  it('sends only the filled columns and runs the statement it gets back', async () => {
     const onRefresh = vi.fn()
     grid({ onRefresh })
     const itr = openInsert()
     ;(itr.querySelectorAll('input')[1] as HTMLInputElement).value = 'eva'
     ;(itr.querySelector('.db-connect') as HTMLButtonElement).click()
     await flush()
-    const sql = (mocks.invoke.mock.calls[0][1] as { sql: string }).sql
-    expect(sql).toContain('INSERT INTO `app`.`users` (`name`) VALUES (\'eva\')')
+    expectSqlBuilt(mocks.invoke, 'db_sql_insert', {
+      kind: 'mysql', db: 'app', table: 'users', values: [['name', 'eva']],
+    })
+    const run = mocks.invoke.mock.calls.find(([cmd]) => cmd === 'db_docker_mysql_query')
+    expect(run![1]).toMatchObject({ sql: builtSql('db_sql_insert') })
     expect(onRefresh).toHaveBeenCalled()
   })
 
@@ -211,16 +218,16 @@ describe('insert row', () => {
     ;(itr.querySelectorAll('.db-null-btn')[1] as HTMLButtonElement).click()
     ;(itr.querySelector('.db-connect') as HTMLButtonElement).click()
     await flush()
-    expect((mocks.invoke.mock.calls[0][1] as { sql: string }).sql).toContain('VALUES (NULL)')
+    expectSqlBuilt(mocks.invoke, 'db_sql_insert', { values: [['name', null]] })
   })
 
-  it('quotes the table the Postgres way', async () => {
+  it('tells the backend which engine the table belongs to', async () => {
     grid({ s: server({ kind: 'postgres' }), onRefresh: () => {} })
     const itr = openInsert()
     ;(itr.querySelectorAll('input')[1] as HTMLInputElement).value = 'eva'
     ;(itr.querySelector('.db-connect') as HTMLButtonElement).click()
     await flush()
-    expect((mocks.invoke.mock.calls[0][1] as { sql: string }).sql).toContain('INSERT INTO "users" ("name")')
+    expectSqlBuilt(mocks.invoke, 'db_sql_insert', { kind: 'postgres', table: 'users' })
   })
 
   it('re-enables the button and reports the error when the insert fails', async () => {

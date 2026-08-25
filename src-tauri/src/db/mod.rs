@@ -2,6 +2,8 @@
 //! trabajo con los clientes (mysql, psql, mongosh, redis-cli) viven en
 //! `bento_db`, que comparten el desktop y quien haga falta después.
 
+pub(crate) mod query;
+
 pub(crate) mod mongo;
 pub(crate) mod mysql;
 pub(crate) mod postgres;
