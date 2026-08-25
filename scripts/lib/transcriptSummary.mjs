@@ -15,10 +15,25 @@ export const isNoMemorySummary = summary => SUMMARY_SENTINEL_RE.test(String(summ
 // Los resumidores en marcha, para poder matarlos si hay que salir de golpe.
 const running = new Set()
 
-/// Mata al agente y a lo que haya lanzado él. Va en su propio grupo de
-/// procesos (`detached`), así que el negativo se lleva el árbol entero: un
-/// agente suele lanzar hijos, y matar solo al padre los deja sueltos.
+/// Cómo se mata al agente y a lo que haya lanzado él, según el sistema. En
+/// Unix el hijo va en su propio grupo de procesos y el pid negativo se lleva el
+/// árbol entero; Windows no tiene grupos así, y para eso está `taskkill /t`.
+/// Matar solo al padre deja a los nietos sueltos en los dos.
+export function killTreeCommand(pid, platform = process.platform) {
+  if (platform !== 'win32') return null
+  return { command: 'taskkill', args: ['/pid', String(pid), '/t', '/f'] }
+}
+
+/// Solo en Unix: el hijo en su propio grupo, para poder matarlo entero. En
+/// Windows `detached` abre una consola nueva y no aporta nada aquí.
+export const detachedForPlatform = (platform = process.platform) => platform !== 'win32'
+
 const endGroup = (child, signal) => {
+  const viaCommand = killTreeCommand(child.pid)
+  if (viaCommand) {
+    try { spawn(viaCommand.command, viaCommand.args, { stdio: 'ignore' }) } catch { /* ya no está */ }
+    return
+  }
   try {
     process.kill(-child.pid, signal)
   } catch {
@@ -38,8 +53,8 @@ const run = (command, args, cwd, prompt) => new Promise(resolve => {
     cwd,
     env: { ...process.env, BENTO_MEMORY_FINALIZER: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
-    // Su propio grupo de procesos, para poder matar el árbol entero.
-    detached: true,
+    // Su propio grupo de procesos, para poder matar el árbol entero (Unix).
+    detached: detachedForPlatform(),
   })
   let output = ''
   let settled = false

@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import { coverageConfigDefaults } from 'vitest/config'
 
 export default defineConfig({
   build: {
@@ -21,6 +22,11 @@ export default defineConfig({
       reporter: ['text', 'json-summary'],
       reportsDirectory: 'coverage',
       include: ['src/core/**/*.ts'],
+      // `all: true` recorre el proyecto para poder listar lo que ningún test
+      // toca, y se metía en target/ — 80 GB de artefactos de cargo en cuanto
+      // has compilado la parte Rust. Reventaba con 6 GB de heap. En CI no se
+      // veía porque allí target/ está vacío.
+      exclude: [...coverageConfigDefaults.exclude, '**/target/**'],
       thresholds: { lines: 85, functions: 80, statements: 85, branches: 75 },
     },
   },
