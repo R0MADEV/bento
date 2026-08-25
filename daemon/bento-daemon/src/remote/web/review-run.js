@@ -169,6 +169,12 @@ function startReview(){
       return;
     }
 
+    // Las herramientas son progreso: se ven en la cabecera, no en el informe.
+    if(data.startsWith('[TOOL] ')){
+      progressStatus.textContent=data.slice(7).slice(0,120);
+      return;
+    }
+
     const batchMatch=data.match(/^\[BATCH:(\d+)\/(\d+)\]$/);
     if(batchMatch){
       const n=parseInt(batchMatch[1]),total=parseInt(batchMatch[2]);

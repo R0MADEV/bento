@@ -286,6 +286,21 @@ const MAX_OUTPUT: usize = 8 << 20;
 /// How long to wait for the next line before giving the run up for dead.
 const LINE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Un fallo transitorio (límite de peticiones, red, el proceso muriéndose) se
+/// puede reintentar; un timeout no, porque significa que el trabajo no cabía
+/// en la ventana y repetirlo quema otra. Misma regla que usa el desktop en
+/// `isRetryableReviewError`.
+pub fn is_retryable(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        return false;
+    }
+    ["rate limit", "rate-limit", "too many requests", "429", "overloaded", "529", "503", "502",
+     "connection", "econnreset", "network", "socket hang up", "temporar", "exited with an error"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
 /// Runs an agent to completion, streaming its text through `tx` as it
 /// arrives, and returns the whole text plus the session id for resuming.
 /// `None` means the agent could not be launched, failed, or the receiver
@@ -302,6 +317,21 @@ pub async fn run_collecting(
     session_id: Option<&str>,
     review: bool,
     tx: &tokio::sync::mpsc::Sender<String>,
+) -> Option<(String, Option<String>)> {
+    run_collecting_with_tools(agent, cwd, prompt, session_id, review, tx, &mut |_| {}).await
+}
+
+/// Igual, pero avisando de cada herramienta que usa el agente: es lo único que
+/// se ve mientras piensa, y la evidencia de qué miró para decir lo que dice.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_collecting_with_tools(
+    agent: &str,
+    cwd: &str,
+    prompt: &str,
+    session_id: Option<&str>,
+    review: bool,
+    tx: &tokio::sync::mpsc::Sender<String>,
+    on_tool: &mut (dyn FnMut(String) + Send),
 ) -> Option<(String, Option<String>)> {
     let inv = invocation(agent, prompt, cwd, session_id, review).ok()?;
     let program = resolve_executable(&inv.program)
@@ -355,7 +385,8 @@ pub async fn run_collecting(
                 let _ = child.kill().await;
                 return None;
             }
-            AgentEvent::ToolUse(_) | AgentEvent::Done | AgentEvent::Ignore => {}
+            AgentEvent::ToolUse(tool) => on_tool(tool),
+            AgentEvent::Done | AgentEvent::Ignore => {}
         }
     }
     let _ = child.wait().await;
@@ -558,6 +589,28 @@ mod tests {
     }
 
     // ── Ejecutables desconocidos ──────────────────────────────────────────────
+
+    #[test]
+    fn a_transient_failure_is_worth_retrying() {
+        assert!(is_retryable("rate limit exceeded"));
+        assert!(is_retryable("Error 529 overloaded"));
+        assert!(is_retryable("socket hang up"));
+        assert!(is_retryable("agent exited with an error"));
+    }
+
+    #[test]
+    fn a_timeout_is_not() {
+        // Un timeout significa que el trabajo no cabía en la ventana:
+        // repetirlo quema otra igual.
+        assert!(!is_retryable("agent timeout"));
+        assert!(!is_retryable("request timed out"));
+    }
+
+    #[test]
+    fn an_unknown_failure_is_not_retried_either() {
+        assert!(!is_retryable("invalid api key"));
+        assert!(!is_retryable(""));
+    }
 
     #[test]
     fn a_custom_agent_treats_every_non_empty_line_as_text() {

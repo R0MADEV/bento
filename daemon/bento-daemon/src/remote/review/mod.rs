@@ -141,6 +141,7 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
         while let Some(event) = event_rx.recv().await {
             let line = match event {
                 ReviewEvent::Content(text) => text,
+                ReviewEvent::Tool(tool) => format!("[TOOL] {tool}"),
                 ReviewEvent::Batch { index, total } => format!("[BATCH:{index}/{total}]"),
                 ReviewEvent::Synthesis => "[SYNTHESIS]".to_string(),
                 ReviewEvent::Session { agent, id } => format!("[SESSION:{agent}:{id}]"),

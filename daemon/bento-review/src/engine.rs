@@ -26,6 +26,9 @@ const SYNTHESIS_TAIL: &str = "Escribe el informe final directamente, sin preámb
 pub enum ReviewEvent {
     /// Report text, as the agent produces it.
     Content(String),
+    /// La herramienta que el agente acaba de usar. Es lo único visible mientras
+    /// piensa, y la evidencia de qué miró.
+    Tool(String),
     /// Starting stage `index` of `total`.
     Batch { index: usize, total: usize },
     /// Consolidating the reports into one.
@@ -116,7 +119,13 @@ pub struct Agents;
 impl AgentRunner for Agents {
     fn run(&self, agent: &str, cwd: &str, prompt: &str, tx: Sender<String>) -> BoxFuture<'_, Option<(String, Option<String>)>> {
         let (agent, cwd, prompt) = (agent.to_string(), cwd.to_string(), prompt.to_string());
-        Box::pin(async move { crate::agents::run_collecting(&agent, &cwd, &prompt, None, true, &tx).await })
+        Box::pin(async move {
+            let tools = tx.clone();
+            // El mismo canal que el texto, con marca: el cliente decide si lo
+            // enseña como progreso o lo guarda como evidencia.
+            let mut on_tool = move |tool: String| { let _ = tools.try_send(format!("[TOOL] {tool}")); };
+            crate::agents::run_collecting_with_tools(&agent, &cwd, &prompt, None, true, &tx, &mut on_tool).await
+        })
     }
 }
 
@@ -200,7 +209,15 @@ async fn run_planned(request: &ReviewRequest, diff: &str, runner: &dyn AgentRunn
     for (i, stage) in plan.stages.iter().enumerate() {
         let _ = tx.send(ReviewEvent::Batch { index: i + 1, total }).await;
         let prompt = build_review_prompt(&ReviewPromptInput::new(&request.cwd, &request.base, &stage.diff, &request.context));
-        match runner.run(&stage.agent, &request.cwd, &prompt, text_tx.clone()).await {
+        // Un fallo pasajero (límite de peticiones, red) se reintenta una vez:
+        // perder veinte minutos de review por un 429 es absurdo. Un timeout no
+        // se reintenta — ver `agents::is_retryable`.
+        let mut attempt = runner.run(&stage.agent, &request.cwd, &prompt, text_tx.clone()).await;
+        if attempt.is_none() {
+            let _ = tx.send(ReviewEvent::Tool(format!("reintentando {}", stage.agent))).await;
+            attempt = runner.run(&stage.agent, &request.cwd, &prompt, text_tx.clone()).await;
+        }
+        match attempt {
             Some((report, sid)) => {
                 if let Some(id) = sid {
                     session = Some((stage.agent.clone(), id));
@@ -356,13 +373,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_stage_is_retried_once_before_giving_up() {
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![None, report("a la segunda", None)];
+        let (events, runner) = collect("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()], runner).await;
+        assert_eq!(runner.calls.lock().unwrap().len(), 2, "reintenta la misma etapa");
+        assert!(events.iter().any(|e| matches!(e, ReviewEvent::Content(t) if t == "a la segunda")));
+        assert!(matches!(events.last(), Some(ReviewEvent::Done)));
+    }
+
+    #[tokio::test]
     async fn a_failing_agent_reports_the_error_and_stops() {
         let runner = FakeRunner::default();
-        *runner.reports.lock().unwrap() = vec![None];
+        *runner.reports.lock().unwrap() = vec![None, None];
         let (events, runner) = collect("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()], runner).await;
         assert!(events.iter().any(|e| matches!(e, ReviewEvent::Error(m) if m.contains("claude"))));
         assert!(!events.iter().any(|e| matches!(e, ReviewEvent::Done)), "no se anuncia un final que no hubo");
-        assert_eq!(runner.calls.lock().unwrap().len(), 1, "no sigue con más etapas");
+        assert_eq!(runner.calls.lock().unwrap().len(), 2, "solo el reintento, y para");
     }
 
     #[tokio::test]

@@ -89,6 +89,11 @@ fn classify_review_chunk(chunk: &str) -> ReviewChunk<'_> {
     if let Some(msg) = chunk.strip_prefix("[ERROR] ") {
         return ReviewChunk::Stderr(format!("error: {msg}"));
     }
+    // Las herramientas son progreso, no informe: enseñan qué está mirando el
+    // agente sin ensuciar el texto de la review.
+    if let Some(tool) = chunk.strip_prefix("[TOOL] ") {
+        return ReviewChunk::Stderr(tool.to_string());
+    }
     ReviewChunk::Stdout(chunk)
 }
 
