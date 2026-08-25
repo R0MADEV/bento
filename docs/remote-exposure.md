@@ -25,6 +25,7 @@ que la regla es explícita.
 | **Ajustes y credenciales de Jira** | Mismo motivo que el Vault. |
 | **Arrancar, parar o reiniciar contenedores** | Va por el socket IPC (el CLI lo usa), no por HTTP: parar la base de datos de producción desde el móvil no debería estar a un token de distancia. |
 | **Preparar devcontainers** (aislar el compose, aplicar recetas) | Reescribe ficheros del worktree. Va por el socket IPC (el CLI lo usa), no por HTTP. |
+| **Sesiones de los agentes** | Se leen del disco de quien lanzó el agente (`~/.claude`, `~/.codex`, la base de OpenCode). El CLI las lee en local y retomar una abre un PTY por el socket IPC; por HTTP no van. |
 | **Notas y memorias** | Son apuntes del usuario sobre su trabajo. Se leen y escriben por el socket IPC, que es local; por HTTP no, porque un token en la LAN no es la misma confianza que tu portátil desbloqueado. |
 
 ## Antes de exponer algo nuevo

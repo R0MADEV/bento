@@ -234,6 +234,7 @@ dependencies = [
  "bento-memory",
  "bento-notes",
  "bento-review",
+ "bento-sessions",
  "futures",
  "hex",
  "libc",
@@ -300,6 +301,15 @@ dependencies = [
  "serde_json",
  "tokio",
  "ts-rs",
+]
+
+[[package]]
+name = "bento-sessions"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

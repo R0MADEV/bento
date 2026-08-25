@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use crate::{attach, current_dir_string, flag, print_help, print_text, request, request_data, stream_review, tui};
 use crate::service::{daemon_install, daemon_start, daemon_uninstall};
 
+mod agent;
 mod docker;
 mod memory;
 mod notes;
@@ -20,25 +21,8 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
             Some("uninstall") => daemon_uninstall(),
             _ => { print_help(); Ok(()) }
         },
-        Some("agent") => match args.get(1).map(String::as_str) {
-            Some("run") => {
-                let rest = &args[2..];
-                let cmd = build_agent_open_cmd(rest);
-                let pty_id = request_data(cmd).await?;
-                let id = pty_id.get("pty_id").and_then(Value::as_str).unwrap_or("?");
-                println!("agent started: {id}");
-                if flag(rest, "--attach").is_some() || rest.contains(&"--attach".to_string()) {
-                    attach::attach(id).await?;
-                }
-                Ok(())
-            }
-            Some("list") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
-            Some("attach") => match args.get(2) {
-                Some(id) => attach::attach(id).await,
-                None => { eprintln!("usage: bento agent attach <id>"); Ok(()) }
-            },
-            _ => { print_help(); Ok(()) }
-        },
+        Some("agent") => agent::run(args).await,
+
         Some("tasks") => match args.get(1).map(String::as_str) {
             // `bento tasks --cwd X` es listar con opciones, no un subcomando.
             None | Some("list") | Some("--cwd") => {
@@ -283,36 +267,10 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
     }
 }
 
-/// Build a `terminal.open` IPC command for a given agent and flags.
-/// - `claude --message <msg>` → `["claude", "-p", "<msg>"]`
-/// - `codex  --message <msg>` → `["codex", "-a", "full-auto", "-q", "<msg>"]`
-/// - other   --message <msg>` → `["<agent>", "<msg>"]`
-fn build_agent_open_cmd(args: &[String]) -> Value {
-    let agent = args.first().map(String::as_str).unwrap_or("claude");
-    let cwd = flag(args, "--cwd");
-    let message = flag(args, "--message");
-
-    let command: Vec<String> = match (agent, message.as_deref()) {
-        ("claude", Some(msg)) => vec!["claude".into(), "-p".into(), msg.into()],
-        ("codex",  Some(msg)) => vec!["codex".into(), "-a".into(), "full-auto".into(), "-q".into(), msg.into()],
-        (name,     Some(msg)) => vec![name.into(), msg.into()],
-        (name,     None)      => vec![name.into()],
-    };
-
-    let mut body = json!({ "id": "1", "cmd": "terminal.open", "command": command });
-    if let Some(c) = cwd {
-        body["cwd"] = json!(c);
-    }
-    body
-}
-
 // ── IPC helpers ───────────────────────────────────────────────────────────────
 
 
 
-/// Un contenedor por línea, con el proyecto de compose al que pertenece.
-/// Parados y corriendo juntos: saber qué se ha caído es la mitad de la razón
-/// para mirar esto desde fuera.
 /// Una tarea por línea: rama, qué lleva sin commitear y cómo va respecto a su
 /// upstream. Lo que quieres ver de un vistazo antes de entrar en ninguna.
 fn print_tasks(data: &Value) {
@@ -410,58 +368,5 @@ fn print_backups(data: &Value) {
     for entry in entries {
         let field = |key: &str| entry.get(key).and_then(Value::as_str).unwrap_or("");
         println!("{:<10} {:<52} {}", field("short"), field("subject"), field("reference"));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn agent_run_claude_interactive() {
-        let args = ["claude".to_string(), "--cwd".to_string(), "/home/x".to_string()];
-        let cmd = build_agent_open_cmd(&args);
-        assert_eq!(cmd["cmd"].as_str(), Some("terminal.open"));
-        assert_eq!(cmd["command"], json!(["claude"]));
-        assert_eq!(cmd["cwd"].as_str(), Some("/home/x"));
-    }
-
-    #[test]
-    fn agent_run_claude_with_message_uses_print_flag() {
-        let args = [
-            "claude".to_string(), "--cwd".to_string(), "/proj".to_string(),
-            "--message".to_string(), "fix the bug".to_string(),
-        ];
-        let cmd = build_agent_open_cmd(&args);
-        assert_eq!(cmd["command"], json!(["claude", "-p", "fix the bug"]));
-        assert_eq!(cmd["cwd"].as_str(), Some("/proj"));
-    }
-
-    #[test]
-    fn agent_run_codex_with_message_uses_full_auto() {
-        let args = [
-            "codex".to_string(),
-            "--message".to_string(), "add tests".to_string(),
-        ];
-        let cmd = build_agent_open_cmd(&args);
-        assert_eq!(cmd["command"], json!(["codex", "-a", "full-auto", "-q", "add tests"]));
-        assert!(cmd["cwd"].is_null());
-    }
-
-    #[test]
-    fn agent_run_unknown_agent_passes_message_as_arg() {
-        let args = [
-            "opencode".to_string(),
-            "--message".to_string(), "hello".to_string(),
-        ];
-        let cmd = build_agent_open_cmd(&args);
-        assert_eq!(cmd["command"], json!(["opencode", "hello"]));
-    }
-
-    #[test]
-    fn agent_run_no_cwd_omits_field() {
-        let args = ["claude".to_string()];
-        let cmd = build_agent_open_cmd(&args);
-        assert!(cmd["cwd"].is_null());
     }
 }

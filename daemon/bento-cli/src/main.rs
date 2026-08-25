@@ -126,6 +126,8 @@ pub(crate) fn print_help() {
     eprintln!("  bento notes read <name.md> print a note");
     eprintln!("  bento notes write <name.md> < file   save a note (content from stdin)");
     eprintln!("  bento notes rm <name.md>   delete a note");
+    eprintln!("  bento agent sessions [--cwd <dir>]        agent sessions you can resume here");
+    eprintln!("  bento agent resume <agent> <id> [--attach]  reopen one of them in a PTY");
     eprintln!("  bento tasks                list tasks (worktrees) with their status");
     eprintln!("  bento tasks new <name> [--base <ref>]     create a task in its own worktree");
     eprintln!("  bento tasks rm <path> [--force]           remove a task");
