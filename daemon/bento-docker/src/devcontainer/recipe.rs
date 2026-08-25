@@ -1,6 +1,7 @@
+use crate::*;
 use super::*;
 
-pub(super) fn recipe_files(recipes_dir: &str, project_key: &str) -> Result<Vec<(PathBuf, String)>, String> {
+pub fn recipe_files(recipes_dir: &str, project_key: &str) -> Result<Vec<(PathBuf, String)>, String> {
     if !valid_project_key(project_key) {
         return Err("invalid project key".into());
     }
@@ -38,7 +39,7 @@ pub(super) fn recipe_files(recipes_dir: &str, project_key: &str) -> Result<Vec<(
     Ok(files)
 }
 
-pub(super) fn git_file_is_tracked(worktree: &str, relative: &str) -> bool {
+pub fn git_file_is_tracked(worktree: &str, relative: &str) -> bool {
     Command::new("git")
         .args(["ls-files", "--error-unmatch", "--", relative])
         .current_dir(worktree)
@@ -47,7 +48,7 @@ pub(super) fn git_file_is_tracked(worktree: &str, relative: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn recipe_preview(recipes_dir: Option<&str>, project_key: &str, worktree: &str) -> RecipePreview {
+pub fn recipe_preview(recipes_dir: Option<&str>, project_key: &str, worktree: &str) -> RecipePreview {
     let devcontainer_dirs = find_devcontainer_dirs(worktree);
     let mut warnings = Vec::new();
     if devcontainer_dirs.len() > 1 {
@@ -127,7 +128,7 @@ fn overlay_recipe(recipes_dir: &str, project_key: &str, worktree: &str) -> Vec<S
     applied
 }
 
-pub(super) fn overlay_recipe_detailed(
+pub fn overlay_recipe_detailed(
     recipes_dir: &str,
     project_key: &str,
     worktree: &str,
@@ -174,7 +175,7 @@ pub(super) fn overlay_recipe_detailed(
     result
 }
 
-pub(super) fn write_recipe_state(worktree_path: &str, devcontainer_dir: &str, result: &RecipeApplyResult) {
+pub fn write_recipe_state(worktree_path: &str, devcontainer_dir: &str, result: &RecipeApplyResult) {
     let env_path = Path::new(worktree_path).join(devcontainer_dir).join(".env");
     let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
     let mut lines: Vec<&str> = existing
@@ -187,7 +188,7 @@ pub(super) fn write_recipe_state(worktree_path: &str, devcontainer_dir: &str, re
     let _ = std::fs::write(env_path, lines.join("\n") + "\n");
 }
 
-pub(super) fn read_recipe_state(worktree_path: &str, devcontainer_dir: &str) -> Option<RecipeApplyResult> {
+pub fn read_recipe_state(worktree_path: &str, devcontainer_dir: &str) -> Option<RecipeApplyResult> {
     let env_path = Path::new(worktree_path).join(devcontainer_dir).join(".env");
     let content = std::fs::read_to_string(env_path).ok()?;
     let encoded = content.lines().find_map(|line| line.strip_prefix("BENTO_RECIPE_STATE_HEX="))?;
@@ -195,7 +196,7 @@ pub(super) fn read_recipe_state(worktree_path: &str, devcontainer_dir: &str) -> 
     serde_json::from_slice(&raw).ok()
 }
 
-pub(super) fn create_recipe_dir(recipes_dir: &str, project_key: &str) -> Result<String, String> {
+pub fn create_recipe_dir(recipes_dir: &str, project_key: &str) -> Result<String, String> {
     if recipes_dir.trim().is_empty() || !valid_project_key(project_key) {
         return Err("invalid recipe path".into());
     }
@@ -206,7 +207,7 @@ pub(super) fn create_recipe_dir(recipes_dir: &str, project_key: &str) -> Result<
     Ok(project_dir.to_string_lossy().into_owned())
 }
 
-pub(super) fn run_recipe_git(recipes_dir: &str, action: &str, message: Option<&str>) -> Result<String, String> {
+pub fn run_recipe_git(recipes_dir: &str, action: &str, message: Option<&str>) -> Result<String, String> {
     let root = Path::new(recipes_dir);
     if !root.is_dir() {
         return Err("recipes directory does not exist".into());
@@ -240,7 +241,9 @@ pub(super) fn run_recipe_git(recipes_dir: &str, action: &str, message: Option<&s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docker::test_support::*;
+    use crate::*;
+use crate::compose_yaml::*;
+    use crate::test_support::*;
 
     #[test]
     fn recipe_overlay_mirrors_files_and_creates_parent_directories() {

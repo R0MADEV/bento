@@ -1,3 +1,4 @@
+use crate::*;
 use super::*;
 
 /// Extracts published `(containerPort, hostPort)` pairs from a compose's `ports:`.
@@ -44,7 +45,7 @@ fn referenced_bento_hosts(content: &str) -> Vec<u16> {
 /// the base compose's remapped ports and allocates a fresh host port for any
 /// `${BENTO_HOST_<N>}` the override references but the base doesn't publish (e.g.
 /// keycloak). Reuses prior allocations (idempotent) and preserves non-BENTO lines.
-pub(super) fn write_bento_env(
+pub fn write_bento_env(
     worktree_path: &str,
     devcontainer_dir: &str,
     compose: &str,
@@ -100,7 +101,9 @@ pub(super) fn write_bento_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docker::test_support::*;
+    use crate::*;
+use crate::compose_yaml::*;
+    use crate::test_support::*;
 
     #[test]
     fn published_port_pairs_reads_ports() {

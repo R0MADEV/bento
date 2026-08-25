@@ -1,7 +1,7 @@
-use super::*;
+use crate::*;
 
 
-pub(super) fn get_docker_used_subnets() -> Vec<String> {
+pub fn get_docker_used_subnets() -> Vec<String> {
     let bin = match docker_bin() {
         Some(b) => b,
         None => return vec![],
@@ -35,7 +35,7 @@ pub(super) fn get_docker_used_subnets() -> Vec<String> {
 
 // Scan sibling directories for existing override files to avoid assigning the
 // same subnet to two worktrees that haven't started their Docker stack yet.
-pub(super) fn get_sibling_override_subnets(worktree_path: &str) -> Vec<String> {
+pub fn get_sibling_override_subnets(worktree_path: &str) -> Vec<String> {
     let parent = match std::path::Path::new(worktree_path).parent() {
         Some(p) => p,
         None => return vec![],
@@ -61,7 +61,7 @@ pub(super) fn get_sibling_override_subnets(worktree_path: &str) -> Vec<String> {
     subnets
 }
 
-pub(super) fn find_free_subnet_prefix(base_prefix: &str, worktree_path: &str) -> Option<String> {
+pub fn find_free_subnet_prefix(base_prefix: &str, worktree_path: &str) -> Option<String> {
     let parts: Vec<&str> = base_prefix.split('.').collect();
     if parts.len() != 3 {
         return None;
@@ -87,7 +87,7 @@ pub(super) fn find_free_subnet_prefix(base_prefix: &str, worktree_path: &str) ->
     None
 }
 
-pub(super) fn ensure_global_gitignore(pattern: &str) {
+pub fn ensure_global_gitignore(pattern: &str) {
     let path = login_shell_output("git config --global core.excludesFile")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())

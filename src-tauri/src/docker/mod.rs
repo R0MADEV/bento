@@ -3,22 +3,18 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
-pub(crate) mod compose_yaml;
-pub(crate) mod port_probe;
-pub(crate) mod subnet;
-pub(crate) mod isolate;
 pub(crate) mod devcontainer;
-#[cfg(test)]
-pub(crate) mod test_support;
+pub(crate) mod isolate;
 
 
 
-pub use bento_docker::{docker_bin, docker_output, is_safe_container, login_shell_output};
+
+pub use bento_docker::{docker_bin, docker_output, is_safe_container};
 
 // These shell out to docker, which can take seconds (restart stops + starts the
 // container). They're `async` + run on a blocking pool so the UI thread never

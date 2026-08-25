@@ -1,16 +1,16 @@
-use super::*;
+use crate::*;
 use super::port_probe::ServiceUrl;
 
 
-pub(super) struct ComposeService {
-    pub(super) name: String,
-    pub(super) ip: String,
-    pub(super) container_name: Option<String>,
+pub struct ComposeService {
+    pub name: String,
+    pub ip: String,
+    pub container_name: Option<String>,
 }
 
 // Parse a docker-compose.yml and return (network_name, subnet_prefix, services).
 // subnet_prefix: "10.189.4" (without the .0/24 part).
-pub(super) fn parse_compose_info(content: &str) -> Option<(String, String, Vec<ComposeService>)> {
+pub fn parse_compose_info(content: &str) -> Option<(String, String, Vec<ComposeService>)> {
 
     #[derive(PartialEq)]
     enum Section {
@@ -105,7 +105,7 @@ pub(super) fn parse_compose_info(content: &str) -> Option<(String, String, Vec<C
 /// Editing the base (vs a `docker-compose.override.yml`) is required because
 /// compose-merge only *appends* `ports:`, so it can never move a project's fixed
 /// host ports. Returns the new YAML and the remapped host URLs.
-pub(super) fn isolate_compose_yaml(
+pub fn isolate_compose_yaml(
     content: &str,
     project_name: &str,
     subnet: Option<(&str, &str)>,
@@ -218,7 +218,7 @@ pub(super) fn isolate_compose_yaml(
 /// Parses a compose `ports:` list item like `- "8108:8108"` into
 /// `(host_port, container_port, was_quoted)`. Returns `None` for anything that is
 /// not a plain `HOST:CONTAINER` numeric mapping (e.g. `host_ip:host:container`).
-pub(super) fn parse_port_mapping(item: &str) -> Option<(u16, String, bool)> {
+pub fn parse_port_mapping(item: &str) -> Option<(u16, String, bool)> {
     let rest = item.strip_prefix('-')?.trim();
     let quoted = rest.starts_with('"');
     let inner = rest.trim_matches('"');
@@ -236,7 +236,7 @@ pub(super) fn parse_port_mapping(item: &str) -> Option<(u16, String, bool)> {
 
 /// First `/24` subnet prefix declared in a compose (`10.189.20` from
 /// `10.189.20.0/24`), or `None` when it relies on the default network.
-pub(super) fn first_subnet_prefix(content: &str) -> Option<String> {
+pub fn first_subnet_prefix(content: &str) -> Option<String> {
     content.lines().find_map(|line| {
         let t = line.trim();
         let s = t
@@ -248,7 +248,7 @@ pub(super) fn first_subnet_prefix(content: &str) -> Option<String> {
     })
 }
 
-pub(super) fn relative_path_string(path: &Path) -> String {
+pub fn relative_path_string(path: &Path) -> String {
     path.components()
         .filter_map(|component| match component {
             Component::Normal(part) => part.to_str(),
@@ -258,7 +258,7 @@ pub(super) fn relative_path_string(path: &Path) -> String {
         .join("/")
 }
 
-pub(super) fn valid_project_key(project_key: &str) -> bool {
+pub fn valid_project_key(project_key: &str) -> bool {
     let key = Path::new(project_key);
     !project_key.is_empty()
         && key.components().count() == 1
@@ -269,7 +269,8 @@ pub(super) fn valid_project_key(project_key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docker::test_support::*;
+    use crate::*;
+    use crate::test_support::*;
 
     #[test]
     fn isolates_name_subnet_ips_and_ports() {

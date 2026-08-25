@@ -4,11 +4,21 @@
 //! Compartido por la app de escritorio, el daemon (móvil) y el CLI: hasta
 //! ahora vivía solo dentro de la app.
 
-use std::process::Command;
+pub use std::collections::HashMap;
+pub use std::io::{BufRead, BufReader, Read};
+pub use std::path::{Component, Path, PathBuf};
+pub use std::process::{Child, Command, Stdio};
 
 use serde::Serialize;
 
 pub mod compose;
+pub mod compose_yaml;
+pub mod devcontainer;
+pub mod isolate;
+pub mod port_probe;
+pub mod subnet;
+#[cfg(test)]
+pub mod test_support;
 
 /// Un contenedor tal y como lo cuenta `docker ps`.
 #[derive(Debug, Clone, PartialEq, Serialize)]

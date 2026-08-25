@@ -1,4 +1,4 @@
-use super::*;
+use crate::*;
 
 
 #[derive(serde::Serialize)]
@@ -11,7 +11,7 @@ pub struct ServiceUrl {
 // Tries ExposedPorts first; falls back to /proc/net/tcp6 + /proc/net/tcp
 // Query docker inspect for the actual host port bound to an internal port of a
 // running container. Returns None if the container is not running or has no binding.
-pub(super) fn get_actual_host_port(container_name: &str, internal_port: u16) -> Option<u16> {
+pub fn get_actual_host_port(container_name: &str, internal_port: u16) -> Option<u16> {
     let bin = docker_bin()?;
     let format = "{{json .HostConfig.PortBindings}}";
     let out = Command::new(&bin)
@@ -33,7 +33,7 @@ pub(super) fn get_actual_host_port(container_name: &str, internal_port: u16) -> 
 }
 
 // for images that listen on ports without declaring EXPOSE in their Dockerfile.
-pub(super) fn get_exposed_ports(container_name: &str) -> Vec<u16> {
+pub fn get_exposed_ports(container_name: &str) -> Vec<u16> {
     let bin = match docker_bin() {
         Some(b) => b,
         None => return vec![],
@@ -109,7 +109,7 @@ pub(super) fn get_exposed_ports(container_name: &str) -> Vec<u16> {
 // Finds the Vite process working directory via /proc/<pid>/cwd, then reads
 // vite.config.{ts,js} from there and extracts the `base` option.
 // Returns Some("/brand/") etc. when found, None otherwise.
-pub(super) fn get_vite_base_path(container_name: &str) -> Option<String> {
+pub fn get_vite_base_path(container_name: &str) -> Option<String> {
     let bin = docker_bin()?;
     // Find the PID of the running Vite process.
     let pgrep_out = Command::new(&bin)
@@ -183,7 +183,7 @@ pub(super) fn get_vite_base_path(container_name: &str) -> Option<String> {
 //   - 3xx + Location → the redirect path
 //   - anything else (timeout, 404, hang) → ""
 // Used as fallback when no Vite process is detected.
-pub(super) fn probe_http_path(host_port: u16) -> String {
+pub fn probe_http_path(host_port: u16) -> String {
     use std::io::{BufRead, BufReader, Write};
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
@@ -248,7 +248,7 @@ pub(super) fn probe_http_path(host_port: u16) -> String {
 
 /// Builds browsable localhost URLs from `(containerPort, hostPort)` pairs — every
 /// isolated port (base compose + override), so bento lists the frontend/backend/etc.
-pub(super) fn pairs_to_urls(pairs: &[(u16, u16)]) -> Vec<ServiceUrl> {
+pub fn pairs_to_urls(pairs: &[(u16, u16)]) -> Vec<ServiceUrl> {
     pairs
         .iter()
         .map(|(c, h)| ServiceUrl {
@@ -260,7 +260,7 @@ pub(super) fn pairs_to_urls(pairs: &[(u16, u16)]) -> Vec<ServiceUrl> {
 
 /// Deterministic per-worktree port offset (1..=90) for projects without a custom
 /// subnet — FNV-1a so it's stable across runs without Date/random.
-pub(super) fn stable_port_offset(seed: &str) -> u16 {
+pub fn stable_port_offset(seed: &str) -> u16 {
     let mut h: u32 = 2166136261;
     for b in seed.bytes() {
         h = (h ^ b as u32).wrapping_mul(16777619);
@@ -272,7 +272,8 @@ pub(super) fn stable_port_offset(seed: &str) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docker::test_support::*;
+    use crate::*;
+    use crate::test_support::*;
 
     #[test]
     fn stable_port_offset_is_deterministic_and_bounded() {

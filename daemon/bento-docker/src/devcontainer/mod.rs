@@ -1,15 +1,10 @@
-use super::*;
-use super::compose_yaml::*;
-use super::port_probe::*;
-use super::subnet::*;
-use super::isolate::IsolateResult;
+use crate::*;
+use crate::compose_yaml::*;
 
-pub(crate) mod recipe;
-pub(crate) mod json_patch;
-pub(crate) mod env_ports;
-pub(crate) mod commands;
+pub mod recipe;
+pub mod json_patch;
+pub mod env_ports;
 
-pub use commands::*;
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,7 +39,7 @@ pub struct RecipeApplyResult {
 
 /// Finds every `.devcontainer` containing a `devcontainer.json`, ordered by depth
 /// and then lexically. Paths are relative to the worktree.
-fn find_devcontainer_dirs(worktree: &str) -> Vec<String> {
+pub fn find_devcontainer_dirs(worktree: &str) -> Vec<String> {
     let root = Path::new(worktree);
     let mut pending = vec![root.to_path_buf()];
     let mut found = Vec::<PathBuf>::new();
@@ -82,13 +77,13 @@ fn find_devcontainer_dirs(worktree: &str) -> Vec<String> {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-fn find_devcontainer_dir(worktree: &str) -> Option<String> {
+pub fn find_devcontainer_dir(worktree: &str) -> Option<String> {
     find_devcontainer_dirs(worktree).into_iter().next()
 }
 
 /// Marks a file as `--skip-worktree` in the worktree's git index so local edits
 /// (our compose rewrite) never show up in status or land in the branch.
-fn skip_worktree(worktree_path: &str, file: &str) {
+pub fn skip_worktree(worktree_path: &str, file: &str) {
     let git = login_shell_output("command -v git")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -102,7 +97,8 @@ fn skip_worktree(worktree_path: &str, file: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docker::test_support::*;
+    use crate::*;
+    use crate::test_support::*;
 
     #[test]
     fn finds_root_devcontainer_directory() {
@@ -142,5 +138,41 @@ mod tests {
             ".devcontainer", "apps/api/.devcontainer", "apps/web/.devcontainer",
         ]);
         let _ = std::fs::remove_dir_all(worktree);
+    }
+
+    #[test]
+    fn recipe_pipeline_is_idempotent_for_nested_devcontainer() {
+        let root = temporary_directory("pipeline");
+        let worktree = root.join("worktree");
+        let recipes = root.join("recipes");
+        let devcontainer = worktree.join("apps/api/.devcontainer");
+        init_test_git_repo(&worktree);
+        std::fs::create_dir_all(&devcontainer).unwrap();
+        std::fs::write(devcontainer.join("devcontainer.json"), r#"{
+  "dockerComposeFile": "docker-compose.yml",
+  "postCreateCommand": "bash setup.sh"
+}"#).unwrap();
+        let (isolated, _) = isolate_compose_yaml(SAMPLE_NO_SUBNET, "task-1", None, 2, None);
+        std::fs::write(devcontainer.join("docker-compose.yml"), &isolated).unwrap();
+        let recipe_devcontainer = recipes.join("project/apps/api/.devcontainer");
+        std::fs::create_dir_all(&recipe_devcontainer).unwrap();
+        std::fs::write(recipe_devcontainer.join("docker-compose.override.yml"), "services:\n  web:\n    environment:\n      LOCAL: 1\n").unwrap();
+        std::fs::write(recipe_devcontainer.join("bento-postcreate.sh"), "#!/bin/sh\ntrue\n").unwrap();
+
+        let mut first = recipe::overlay_recipe_detailed(recipes.to_str().unwrap(), "project", worktree.to_str().unwrap(), false);
+        first.devcontainer_dir = "apps/api/.devcontainer".into();
+        assert!(json_patch::wire_recipe_into_devcontainer(worktree.to_str().unwrap(), &first.devcontainer_dir, &first.applied).is_empty());
+        env_ports::write_bento_env(worktree.to_str().unwrap(), &first.devcontainer_dir, &isolated);
+        recipe::write_recipe_state(worktree.to_str().unwrap(), &first.devcontainer_dir, &first);
+
+        let json = std::fs::read_to_string(devcontainer.join("devcontainer.json")).unwrap();
+        assert!(json.contains("docker-compose.override.yml"), "{json}");
+        assert!(json.contains("bash apps/api/.devcontainer/bento-postcreate.sh"), "{json}");
+        assert_eq!(recipe::read_recipe_state(worktree.to_str().unwrap(), &first.devcontainer_dir).unwrap().project_key, "project");
+
+        let second = recipe::overlay_recipe_detailed(recipes.to_str().unwrap(), "project", worktree.to_str().unwrap(), false);
+        assert!(second.applied.is_empty());
+        assert_eq!(second.skipped.len(), 2);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

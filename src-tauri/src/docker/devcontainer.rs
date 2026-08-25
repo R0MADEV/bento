@@ -1,10 +1,26 @@
-use super::*;
-use super::recipe::{
+//! Los comandos del devcontainer. Las recetas, el parcheo de JSON y el
+//! descubrimiento de puertos viven en `bento_docker::devcontainer`.
+
+pub use bento_docker::devcontainer::*;
+
+use crate::docker::*;
+use bento_docker::devcontainer::skip_worktree;
+use bento_docker::subnet::ensure_global_gitignore;
+use bento_docker::subnet::find_free_subnet_prefix;
+use bento_docker::port_probe::pairs_to_urls;
+use bento_docker::compose_yaml::isolate_compose_yaml;
+use bento_docker::compose_yaml::first_subnet_prefix;
+use bento_docker::devcontainer::find_devcontainer_dirs;
+use bento_docker::port_probe::ServiceUrl;
+use bento_docker::port_probe::stable_port_offset;
+use bento_docker::compose_yaml::valid_project_key;
+use bento_docker::isolate::IsolateResult;
+use bento_docker::devcontainer::recipe::{
     create_recipe_dir, git_file_is_tracked, overlay_recipe_detailed, read_recipe_state,
     recipe_files, recipe_preview, run_recipe_git, write_recipe_state,
 };
-use super::json_patch::wire_recipe_into_devcontainer;
-use super::env_ports::write_bento_env;
+use bento_docker::devcontainer::json_patch::wire_recipe_into_devcontainer;
+use bento_docker::devcontainer::env_ports::write_bento_env;
 
 #[tauri::command]
 pub async fn devcontainer_recipe_preview(
@@ -253,46 +269,4 @@ pub async fn devcontainer_urls(
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::docker::test_support::*;
-
-    #[test]
-    fn recipe_pipeline_is_idempotent_for_nested_devcontainer() {
-        let root = temporary_directory("pipeline");
-        let worktree = root.join("worktree");
-        let recipes = root.join("recipes");
-        let devcontainer = worktree.join("apps/api/.devcontainer");
-        init_test_git_repo(&worktree);
-        std::fs::create_dir_all(&devcontainer).unwrap();
-        std::fs::write(devcontainer.join("devcontainer.json"), r#"{
-  "dockerComposeFile": "docker-compose.yml",
-  "postCreateCommand": "bash setup.sh"
-}"#).unwrap();
-        let (isolated, _) = isolate_compose_yaml(SAMPLE_NO_SUBNET, "task-1", None, 2, None);
-        std::fs::write(devcontainer.join("docker-compose.yml"), &isolated).unwrap();
-        let recipe_devcontainer = recipes.join("project/apps/api/.devcontainer");
-        std::fs::create_dir_all(&recipe_devcontainer).unwrap();
-        std::fs::write(recipe_devcontainer.join("docker-compose.override.yml"), "services:\n  web:\n    environment:\n      LOCAL: 1\n").unwrap();
-        std::fs::write(recipe_devcontainer.join("bento-postcreate.sh"), "#!/bin/sh\ntrue\n").unwrap();
-
-        let mut first = overlay_recipe_detailed(recipes.to_str().unwrap(), "project", worktree.to_str().unwrap(), false);
-        first.devcontainer_dir = "apps/api/.devcontainer".into();
-        assert!(wire_recipe_into_devcontainer(worktree.to_str().unwrap(), &first.devcontainer_dir, &first.applied).is_empty());
-        write_bento_env(worktree.to_str().unwrap(), &first.devcontainer_dir, &isolated);
-        write_recipe_state(worktree.to_str().unwrap(), &first.devcontainer_dir, &first);
-
-        let json = std::fs::read_to_string(devcontainer.join("devcontainer.json")).unwrap();
-        assert!(json.contains("docker-compose.override.yml"), "{json}");
-        assert!(json.contains("bash apps/api/.devcontainer/bento-postcreate.sh"), "{json}");
-        assert_eq!(read_recipe_state(worktree.to_str().unwrap(), &first.devcontainer_dir).unwrap().project_key, "project");
-
-        let second = overlay_recipe_detailed(recipes.to_str().unwrap(), "project", worktree.to_str().unwrap(), false);
-        assert!(second.applied.is_empty());
-        assert_eq!(second.skipped.len(), 2);
-        let _ = std::fs::remove_dir_all(root);
-    }
 }

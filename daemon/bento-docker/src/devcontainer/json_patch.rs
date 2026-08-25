@@ -1,3 +1,4 @@
+use crate::*;
 use super::*;
 
 /// Appends `&& <hook>` to a devcontainer.json `postCreateCommand` string, so bento's
@@ -65,7 +66,7 @@ fn add_override_to_devcontainer_json(json: &str, override_file: &str) -> Result<
 }
 
 /// Wires recipe files belonging to the discovered devcontainer into its JSON.
-pub(super) fn wire_recipe_into_devcontainer(
+pub fn wire_recipe_into_devcontainer(
     worktree_path: &str,
     devcontainer_dir: &str,
     applied: &[String],
@@ -104,6 +105,8 @@ pub(super) fn wire_recipe_into_devcontainer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::*;
+use crate::compose_yaml::*;
 
     #[test]
     fn override_json_string_to_array() {
