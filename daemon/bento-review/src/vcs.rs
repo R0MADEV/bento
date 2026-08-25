@@ -87,9 +87,14 @@ pub fn gh_cmd(cwd: &str, args: &[&str]) -> Result<String, String> {
 }
 
 /// A client-supplied git ref used as a `git diff` argument. Rejects
-/// flag-injection (`--upload-pack=...`) and range syntax (`..`).
+/// flag-injection and range syntax (`..`).
+///
+/// El guion inicial es la parte que importa: `--upload-pack=…` ya caía por el
+/// `=`, pero `--force` o `-n` pasaban el filtro y git los lee como opciones,
+/// no como el nombre de una rama.
 pub fn is_safe_branch(name: &str) -> bool {
     !name.is_empty()
+        && !name.starts_with('-')
         && !name.contains("..")
         && name
             .chars()
@@ -233,6 +238,14 @@ mod tests {
     fn is_safe_branch_rejects_flag_injection() {
         assert!(!is_safe_branch("--upload-pack=touch /tmp/pwned"));
         assert!(!is_safe_branch("-oProxyCommand=x"));
+    }
+
+    #[test]
+    fn is_safe_branch_rejects_a_bare_flag() {
+        // Sin `=` ni espacios pasaban el filtro, y git los lee como opciones.
+        assert!(!is_safe_branch("--force"));
+        assert!(!is_safe_branch("-n"));
+        assert!(!is_safe_branch("--all"));
     }
 
     #[test]

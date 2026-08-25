@@ -28,6 +28,8 @@ pub(crate) struct Request {
     #[serde(default)]
     pub(crate) paths: Option<Vec<String>>,
     #[serde(default)]
+    pub(crate) force: Option<bool>,
+    #[serde(default)]
     pub(crate) rows: Option<u16>,
     #[serde(default)]
     pub(crate) cols: Option<u16>,
@@ -163,8 +165,50 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             send(ok(&req.id, json!(list)));
         }
 
+        // Las tareas: leer va también por HTTP (móvil); escribir, solo por
+        // este socket, que es local — ver docs/remote-exposure.md.
         "tasks.list" => match &req.cwd {
-            Some(cwd) => send(ok(&req.id, json!(bento_review::worktrees::list(cwd)))),
+            Some(cwd) => send(ok(&req.id, json!(bento_review::tasks::list(cwd)))),
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.create" => match (&req.cwd, &req.base, &req.data) {
+            (Some(cwd), Some(base), Some(name)) => match bento_review::tasks::create(cwd, name, base) {
+                Ok(path) => send(ok(&req.id, json!({ "path": path }))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd, base and data (name) required".into())),
+        },
+
+        "tasks.remove" => match (&req.cwd, &req.path) {
+            (Some(cwd), Some(path)) => match bento_review::tasks::remove(cwd, path, req.force.unwrap_or(false)) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd and path required".into())),
+        },
+
+        "tasks.commit" => match (&req.cwd, &req.data) {
+            (Some(cwd), Some(message)) => match bento_review::tasks::commit(cwd, message, req.force.unwrap_or(false)) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd and data (message) required".into())),
+        },
+
+        "tasks.sync" => match &req.cwd {
+            Some(cwd) => match bento_review::tasks::sync(cwd) {
+                Ok(out) => send(ok(&req.id, json!(out))),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
+        "tasks.push" => match &req.cwd {
+            Some(cwd) => match bento_review::tasks::push(cwd, req.force.unwrap_or(false)) {
+                Ok(out) => send(ok(&req.id, json!(out))),
+                Err(e) => send(fail(&req.id, e)),
+            },
             None => send(fail(&req.id, "cwd required".into())),
         },
 

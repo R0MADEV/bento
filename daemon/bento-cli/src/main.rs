@@ -109,6 +109,12 @@ pub(crate) fn print_help() {
     eprintln!("  bento terminals            list open terminals");
     eprintln!("  bento open [--cwd <dir>]   open a new terminal");
     eprintln!("  bento attach <pty_id>      attach to a terminal (stdin/stdout)");
+    eprintln!("  bento tasks                list tasks (worktrees) with their status");
+    eprintln!("  bento tasks new <name> [--base <ref>]     create a task in its own worktree");
+    eprintln!("  bento tasks rm <path> [--force]           remove a task");
+    eprintln!("  bento tasks commit <msg> [--amend]        stage everything and commit");
+    eprintln!("  bento tasks sync           fetch and rebase onto the upstream");
+    eprintln!("  bento tasks push [--force] publish the branch (force uses --force-with-lease)");
     eprintln!("  bento review branches [--cwd <dir>]   list recent branches (default: cwd)");
     eprintln!("  bento review prs [--cwd <dir>]        list open PRs (needs gh)");
     eprintln!("  bento review files [--cwd <dir>] [--base <ref>]   files changed vs base (default: main)");

@@ -35,6 +35,54 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
             },
             _ => { print_help(); Ok(()) }
         },
+        Some("tasks") => match args.get(1).map(String::as_str) {
+            // `bento tasks --cwd X` es listar con opciones, no un subcomando.
+            None | Some("list") | Some("--cwd") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let data = request_data(json!({ "id": "1", "cmd": "tasks.list", "cwd": cwd })).await?;
+                print_tasks(&data);
+                Ok(())
+            }
+            Some("new") => match args.get(2) {
+                Some(name) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let base = flag(args, "--base").unwrap_or_else(|| "main".to_string());
+                    request(json!({ "id": "1", "cmd": "tasks.create", "cwd": cwd, "base": base, "data": name })).await
+                }
+                None => { eprintln!("usage: bento tasks new <nombre> [--base <rama>]"); Ok(()) }
+            },
+            Some("rm") => match args.get(2) {
+                Some(path) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let force = args.iter().any(|a| a == "--force");
+                    request(json!({ "id": "1", "cmd": "tasks.remove", "cwd": cwd, "path": path, "force": force })).await
+                }
+                None => { eprintln!("usage: bento tasks rm <ruta> [--force]"); Ok(()) }
+            },
+            Some("commit") => match args.get(2) {
+                Some(message) => {
+                    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                    let amend = args.iter().any(|a| a == "--amend");
+                    request(json!({ "id": "1", "cmd": "tasks.commit", "cwd": cwd, "data": message, "force": amend })).await
+                }
+                None => { eprintln!("usage: bento tasks commit <mensaje> [--amend]"); Ok(()) }
+            },
+            Some("sync") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let data = request_data(json!({ "id": "1", "cmd": "tasks.sync", "cwd": cwd })).await?;
+                print_text(data.as_str().unwrap_or_default());
+                Ok(())
+            }
+            Some("push") => {
+                let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+                let force = args.iter().any(|a| a == "--force");
+                let data = request_data(json!({ "id": "1", "cmd": "tasks.push", "cwd": cwd, "force": force })).await?;
+                print_text(data.as_str().unwrap_or_default());
+                Ok(())
+            }
+            _ => { print_help(); Ok(()) }
+        },
+
         Some("terminals") => request(json!({ "id": "1", "cmd": "terminals.list" })).await,
         Some("review") => match args.get(1).map(String::as_str) {
             Some("branches") => {
@@ -189,6 +237,38 @@ fn build_agent_open_cmd(args: &[String]) -> Value {
 }
 
 // ── IPC helpers ───────────────────────────────────────────────────────────────
+
+
+
+/// Una tarea por línea: rama, qué lleva sin commitear y cómo va respecto a su
+/// upstream. Lo que quieres ver de un vistazo antes de entrar en ninguna.
+fn print_tasks(data: &Value) {
+    let tasks = data.as_array().map(Vec::as_slice).unwrap_or_default();
+    if tasks.is_empty() {
+        println!("(sin tareas)");
+        return;
+    }
+    for task in tasks {
+        let branch = task.get("branch").and_then(Value::as_str).unwrap_or("(sin rama)");
+        let path = task.get("path").and_then(Value::as_str).unwrap_or("");
+        let status = task.get("status");
+        let count = |key: &str| status.and_then(|s| s.get(key)).and_then(Value::as_u64).unwrap_or(0);
+        let pending = match count("total") {
+            0 => "limpio".to_string(),
+            _ => format!("{}±  {}?", count("staged") + count("unstaged"), count("untracked")),
+        };
+        let upstream = task.get("upstream");
+        let state = upstream.and_then(|u| u.get("state")).and_then(Value::as_str).unwrap_or("");
+        let ahead = upstream.and_then(|u| u.get("ahead")).and_then(Value::as_u64).unwrap_or(0);
+        let behind = upstream.and_then(|u| u.get("behind")).and_then(Value::as_u64).unwrap_or(0);
+        let sync = match state {
+            "synced" => "al día".to_string(),
+            "unpublished" => "sin publicar".to_string(),
+            _ => format!("{state} ↑{ahead} ↓{behind}"),
+        };
+        println!("{branch:<34} {pending:<14} {sync:<20} {path}");
+    }
+}
 
 #[cfg(test)]
 mod tests {

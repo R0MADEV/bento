@@ -10,6 +10,7 @@ pub mod engine;
 pub mod pr;
 pub mod prompt;
 pub mod store;
+pub mod tasks;
 pub mod vcs;
 pub mod viewed;
 pub mod worktree;
