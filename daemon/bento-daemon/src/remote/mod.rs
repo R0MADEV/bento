@@ -124,6 +124,7 @@ impl RemoteControl {
             .route("/api/terminals", post(new_terminal))
             .route("/api/terminals/:id", delete(kill_terminal))
             .route("/api/projects", get(projects_handler))
+            .route("/api/tasks", get(tasks_handler))
             .route("/api/fs/dirs", get(fs_dirs_handler))
             .route("/api/review", get(review_handler))
             .route("/api/review/branches", get(review_branches_handler))
@@ -417,6 +418,23 @@ pub(crate) fn list_projects(manager: &PtyManager) -> Vec<serde_json::Value> {
             json!({ "cwd": info.cwd, "branch": branch })
         })
         .collect()
+}
+
+/// Las tareas (worktrees) de un proyecto: en qué rama está cada una y sobre
+/// qué commit. Solo lectura — crear, borrar o rebasear una tarea se queda en
+/// la app, donde hay confirmaciones y deshacer.
+async fn tasks_handler(
+    State(state): State<Arc<RemoteState>>,
+    Query(auth): Query<Auth>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    if !authorized(&state, &auth) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let Some(cwd) = params.get("cwd").filter(|c| !c.is_empty()) else {
+        return (StatusCode::BAD_REQUEST, "missing cwd").into_response();
+    };
+    Json(bento_review::worktrees::list(cwd)).into_response()
 }
 
 async fn projects_handler(

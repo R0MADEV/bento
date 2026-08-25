@@ -163,6 +163,11 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             send(ok(&req.id, json!(list)));
         }
 
+        "tasks.list" => match &req.cwd {
+            Some(cwd) => send(ok(&req.id, json!(bento_review::worktrees::list(cwd)))),
+            None => send(fail(&req.id, "cwd required".into())),
+        },
+
         "projects.list" => send(ok(&req.id, json!(crate::remote::list_projects(manager)))),
 
         "terminal.open" => {

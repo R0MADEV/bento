@@ -13,5 +13,6 @@ pub mod store;
 pub mod vcs;
 pub mod viewed;
 pub mod worktree;
+pub mod worktrees;
 
 pub use prompt::{build_review_prompt, build_synthesis_prompt, ReviewPromptFile, ReviewPromptInput};

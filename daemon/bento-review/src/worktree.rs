@@ -18,11 +18,15 @@ use std::sync::{Mutex, OnceLock};
 /// pueden compartir carpeta. Nanosegundos + el id del proceso basta y evita
 /// arrastrar `uuid` a esta crate.
 fn unique_suffix() -> String {
+    // El reloj no basta: dos llamadas seguidas pueden caer en el mismo
+    // nanosegundo y acabar peleándose por la misma carpeta.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or_default();
-    format!("{nanos:x}-{}", std::process::id())
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{nanos:x}-{}-{n}", std::process::id())
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
