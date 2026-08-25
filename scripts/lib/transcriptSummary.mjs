@@ -12,24 +12,65 @@ export const buildSummaryPrompt = (cwd, transcript, metadata = '') => `Resume es
 export const isUsefulSummary = summary => Boolean(summary && !SUMMARY_SENTINEL_RE.test(summary) && !LOGIN_ERROR_RE.test(summary))
 export const isNoMemorySummary = summary => SUMMARY_SENTINEL_RE.test(String(summary ?? '').trim())
 
+// Los resumidores en marcha, para poder matarlos si hay que salir de golpe.
+const running = new Set()
+
+/// Mata al agente y a lo que haya lanzado él. Va en su propio grupo de
+/// procesos (`detached`), así que el negativo se lleva el árbol entero: un
+/// agente suele lanzar hijos, y matar solo al padre los deja sueltos.
+const endGroup = (child, signal) => {
+  try {
+    process.kill(-child.pid, signal)
+  } catch {
+    try { child.kill(signal) } catch { /* ya no está */ }
+  }
+}
+
+/// Corta todos los resumidores en marcha. La llama el hook antes de salir por
+/// su propio temporizador: sin esto, `process.exit` mataba a node y dejaba al
+/// agente vivo por su cuenta.
+export function terminateSummarizers() {
+  for (const stop of [...running]) stop()
+}
+
 const run = (command, args, cwd, prompt) => new Promise(resolve => {
   const child = spawn(command, args, {
     cwd,
     env: { ...process.env, BENTO_MEMORY_FINALIZER: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
+    // Su propio grupo de procesos, para poder matar el árbol entero.
+    detached: true,
   })
   let output = ''
+  let settled = false
+  let grace
+
+  const finish = value => {
+    if (settled) return
+    settled = true
+    clearTimeout(timeout)
+    clearTimeout(grace)
+    running.delete(stop)
+    resolve(value)
+  }
+
+  // Un SIGTERM que el agente ignora deja el `close` sin llegar nunca, y con él
+  // la promesa sin resolver: el proceso node se quedaba vivo días. Se escala a
+  // SIGKILL y se resuelve pase lo que pase.
+  const stop = () => {
+    endGroup(child, 'SIGTERM')
+    grace = setTimeout(() => {
+      endGroup(child, 'SIGKILL')
+      finish('')
+    }, Math.max(500, Number(process.env.BENTO_MEMORY_SUMMARY_KILL_GRACE_MS) || 5_000))
+  }
+  running.add(stop)
+
   child.stdout.on('data', chunk => { output += chunk })
   child.stdin.end(prompt)
-  const timeout = setTimeout(() => child.kill('SIGTERM'), Math.max(10_000, Number(process.env.BENTO_MEMORY_SUMMARY_TIMEOUT_MS) || 180_000))
-  child.on('close', code => {
-    clearTimeout(timeout)
-    resolve(code === 0 ? output : '')
-  })
-  child.on('error', () => {
-    clearTimeout(timeout)
-    resolve('')
-  })
+  const timeout = setTimeout(stop, Math.max(10_000, Number(process.env.BENTO_MEMORY_SUMMARY_TIMEOUT_MS) || 180_000))
+  child.on('close', code => finish(code === 0 ? output : ''))
+  child.on('error', () => finish(''))
 })
 
 const configuredArgs = (name, fallback) => {

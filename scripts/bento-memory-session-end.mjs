@@ -14,7 +14,7 @@ import {
   upsertTranscriptSql,
   updateSummaryJobSql,
 } from './lib/memoryStore.mjs'
-import { generateTranscriptSummary, isNoMemorySummary, isUsefulSummary } from './lib/transcriptSummary.mjs'
+import { generateTranscriptSummary, isNoMemorySummary, isUsefulSummary, terminateSummarizers } from './lib/transcriptSummary.mjs'
 import { collectSessionMetadata, extractTranscript, extractVerification, metadataPrompt, transcriptHash } from './lib/sessionCapture.mjs'
 import { defaultMemoryDbPath, sqliteBinary } from './lib/memoryPaths.mjs'
 
@@ -24,7 +24,14 @@ if (process.env.BENTO_MEMORY_FINALIZER === '1') process.exit(0)
 // that never closes, a stuck sqlite or summarizer child) force-exit, so we don't
 // leak long-lived node processes (this previously piled up hundreds of zombies).
 // .unref() so it never keeps the process alive when the work finishes early.
-setTimeout(() => process.exit(0), Number(process.env.BENTO_MEMORY_HOOK_TIMEOUT_MS) || 300_000).unref()
+//
+// Salir a secas mataba a node y dejaba al agente resumidor vivo por su cuenta,
+// que es medio proceso huérfano por cada vez que esto salta: primero se corta a
+// los hijos, y luego se sale.
+setTimeout(() => {
+  terminateSummarizers()
+  process.exit(0)
+}, Number(process.env.BENTO_MEMORY_HOOK_TIMEOUT_MS) || 300_000).unref()
 
 const payload = await new Promise(resolve => {
   let input = ''
