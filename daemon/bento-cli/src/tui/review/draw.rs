@@ -81,8 +81,11 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
             review.projects_selected,
         ),
         SidebarTab::Branches => (
-            format!("o proyectos · [b] Ramas ({}) · v: revisar rama · p PRs · h historial", review.branches.len()),
-            review.branches.iter().map(|b| ListItem::new(b.as_str())).collect(),
+            format!(
+                "o proyectos · [b] Ramas ({}) · v: revisar rama · / filtrar · p PRs · h historial",
+                review.visible_branches().len(),
+            ),
+            review.visible_branches().into_iter().map(|b| ListItem::new(b.as_str())).collect(),
             review.branches_selected,
         ),
         SidebarTab::Prs => (
@@ -160,7 +163,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
 }
 
 fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let paragraph = Paragraph::new(review.file_diff.as_str())
+    let paragraph = Paragraph::new(review.filtered(&review.file_diff))
         .wrap(Wrap { trim: false })
         .scroll((review.file_scroll, 0))
         .block(Block::default().title("↑/↓ scroll · Esc: volver").borders(Borders::ALL));
@@ -178,7 +181,7 @@ fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
 
     if let Some(label) = pr_input_label(review) {
         let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
-        let paragraph = Paragraph::new(review.pr_detail.as_str())
+        let paragraph = Paragraph::new(review.filtered(&review.pr_detail))
             .wrap(Wrap { trim: false })
             .scroll((review.pr_scroll, 0))
             .block(block);
@@ -187,7 +190,7 @@ fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
             .block(Block::default().title(label).borders(Borders::ALL));
         frame.render_widget(input, chunks[1]);
     } else {
-        let paragraph = Paragraph::new(review.pr_detail.as_str())
+        let paragraph = Paragraph::new(review.filtered(&review.pr_detail))
             .wrap(Wrap { trim: false })
             .scroll((review.pr_scroll, 0))
             .block(block);
@@ -201,6 +204,7 @@ fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
         Some(InputPurpose::PrReview("APPROVE")) => Some("Aprobar — texto opcional (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::Search) => Some("Buscar en el diff (Enter aplicar, Esc cancelar)"),
         Some(InputPurpose::Ask) | Some(InputPurpose::Context) | None => None,
     }
 }

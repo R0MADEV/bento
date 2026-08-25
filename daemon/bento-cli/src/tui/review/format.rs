@@ -213,4 +213,38 @@ mod tests {
     fn short_path_handles_a_width_smaller_than_the_ellipsis() {
         assert_eq!(short_path("/a/b/c", 0), "");
     }
+
+    #[test]
+    fn checks_are_listed_with_their_result() {
+        let data = json!([
+            { "name": "build", "conclusion": "SUCCESS" },
+            { "name": "test", "conclusion": "FAILURE" },
+            { "workflowName": "deploy", "status": "IN_PROGRESS" },
+        ]);
+        let text = format_checks(&data);
+        assert!(text.contains("✓ build"));
+        assert!(text.contains("✗ test"));
+        assert!(text.contains("⟳ deploy"));
+    }
+
+    #[test]
+    fn checks_say_nothing_when_the_pr_has_none() {
+        assert_eq!(format_checks(&json!([])), "");
+    }
+
+    #[test]
+    fn inline_comments_show_where_they_are_anchored() {
+        let data = json!([{ "user": { "login": "ada" }, "path": "src/a.rs", "line": 42, "body": "esto sobra" }]);
+        let text = format_review_comments(&data);
+        assert!(text.contains("ada"));
+        assert!(text.contains("src/a.rs:42"));
+        assert!(text.contains("esto sobra"));
+    }
+
+    #[test]
+    fn an_inline_comment_on_deleted_code_falls_back_to_the_file() {
+        // GitHub deja `line` a null cuando la línea comentada ya no existe.
+        let data = json!([{ "user": { "login": "ada" }, "path": "src/a.rs", "line": null, "body": "x" }]);
+        assert!(format_review_comments(&data).contains("`src/a.rs`"));
+    }
 }

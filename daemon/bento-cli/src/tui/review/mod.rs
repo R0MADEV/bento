@@ -48,6 +48,9 @@ enum InputPurpose {
     /// Editing the author context injected into the review prompt — purely
     /// local state, no request fires on Enter.
     Context,
+    /// Filtering what is on screen: the branch list, or the lines of a diff.
+    /// Local too — nothing is fetched.
+    Search,
 }
 
 pub(super) struct ReviewState {
@@ -102,6 +105,10 @@ pub(super) struct ReviewState {
     status: String,
     projects: Vec<Value>,
     projects_selected: usize,
+    /// Lo que se ha escrito con `/`. Filtra la lista de ramas y las líneas del
+    /// diff que estés mirando: en un diff de mil líneas, buscar es la
+    /// diferencia entre revisar y rendirse.
+    search: String,
     branches: Vec<String>,
     branches_selected: usize,
     prs: Vec<Value>,
@@ -147,6 +154,7 @@ impl ReviewState {
             status: String::new(),
             projects: Vec::new(),
             projects_selected: 0,
+            search: String::new(),
             branches: Vec::new(),
             branches_selected: 0,
             prs: Vec::new(),
@@ -417,5 +425,67 @@ impl ReviewState {
         self.refresh_files().await;
         let tab = std::mem::replace(&mut self.sidebar_tab, SidebarTab::Branches);
         self.set_sidebar_tab(tab).await;
+    }
+}
+
+impl ReviewState {
+    /// Las ramas que pasan el filtro escrito con `/`.
+    pub(super) fn visible_branches(&self) -> Vec<&String> {
+        let needle = self.search.to_lowercase();
+        self.branches.iter().filter(|b| needle.is_empty() || b.to_lowercase().contains(&needle)).collect()
+    }
+
+    /// El texto con solo las líneas que contienen la búsqueda. Se aplica al
+    /// diff de un archivo, al de un PR y a la salida de la review.
+    pub(super) fn filtered(&self, text: &str) -> String {
+        if self.search.is_empty() {
+            return text.to_string();
+        }
+        let needle = self.search.to_lowercase();
+        text.lines().filter(|l| l.to_lowercase().contains(&needle)).collect::<Vec<_>>().join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with(branches: &[&str], search: &str) -> ReviewState {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.branches = branches.iter().map(|b| b.to_string()).collect();
+        state.search = search.to_string();
+        state
+    }
+
+    #[test]
+    fn without_a_search_every_branch_is_visible() {
+        let state = state_with(&["main", "feat/a"], "");
+        assert_eq!(state.visible_branches().len(), 2);
+    }
+
+    #[test]
+    fn the_search_filters_branches_ignoring_case() {
+        let state = state_with(&["main", "feat/Cache", "fix/cachear"], "CACHE");
+        assert_eq!(state.visible_branches().len(), 2);
+    }
+
+    #[test]
+    fn a_search_with_no_matches_leaves_the_list_empty() {
+        let state = state_with(&["main"], "no-existe");
+        assert!(state.visible_branches().is_empty());
+    }
+
+    #[test]
+    fn the_diff_keeps_only_the_matching_lines() {
+        let state = state_with(&[], "todo");
+        let diff = "+ hecho\n+ TODO: esto no\n- otra cosa\n";
+        assert_eq!(state.filtered(diff), "+ TODO: esto no");
+    }
+
+    #[test]
+    fn without_a_search_the_diff_is_untouched() {
+        let state = state_with(&[], "");
+        let diff = "+ a\n- b";
+        assert_eq!(state.filtered(diff), diff);
     }
 }

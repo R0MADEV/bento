@@ -8,6 +8,12 @@ use super::format::next_agent;
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
 
 impl ReviewState {
+    /// Abre el buscador con lo que ya hubiera escrito, para poder afinarlo.
+    fn start_search(&mut self) {
+        self.input_purpose = Some(InputPurpose::Search);
+        self.input = self.search.clone();
+    }
+
     /// Handles one input event. Returns `true` if the panel should switch
     /// back to the terminals list.
     pub(crate) async fn handle_event(&mut self, event: Event) -> bool {
@@ -34,6 +40,7 @@ impl ReviewState {
             KeyCode::Char('r') => { self.start_run(); false }
             KeyCode::Char('g') => { self.agent = next_agent(&self.agent); false }
             KeyCode::F(5) => { self.refresh().await; false }
+            KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('c') => {
                 self.input_purpose = Some(InputPurpose::Context);
@@ -186,6 +193,10 @@ impl ReviewState {
     }
 
     fn handle_file_detail_key(&mut self, code: KeyCode) -> bool {
+        if code == KeyCode::Char('/') {
+            self.start_search();
+            return false;
+        }
         match code {
             KeyCode::Up => { self.file_scroll = self.file_scroll.saturating_sub(1); false }
             KeyCode::Down => { self.file_scroll = self.file_scroll.saturating_add(1); false }
@@ -201,6 +212,10 @@ impl ReviewState {
     }
 
     fn handle_pr_detail_key(&mut self, code: KeyCode) -> bool {
+        if code == KeyCode::Char('/') {
+            self.start_search();
+            return false;
+        }
         match code {
             KeyCode::Up => { self.pr_scroll = self.pr_scroll.saturating_sub(1); false }
             KeyCode::Down => { self.pr_scroll = self.pr_scroll.saturating_add(1); false }
@@ -236,6 +251,10 @@ impl ReviewState {
     }
 
     fn handle_output_key(&mut self, code: KeyCode) -> bool {
+        if code == KeyCode::Char('/') {
+            self.start_search();
+            return false;
+        }
         match code {
             KeyCode::Up => { self.scroll = self.scroll.saturating_sub(1); false }
             KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); false }
@@ -278,6 +297,10 @@ impl ReviewState {
                     Some(InputPurpose::PrComment) => self.submit_pr_comment().await,
                     Some(InputPurpose::PrReview(event)) => self.submit_pr_review(event).await,
                     Some(InputPurpose::Context) => self.context = std::mem::take(&mut self.input),
+                    Some(InputPurpose::Search) => {
+                        self.search = std::mem::take(&mut self.input);
+                        self.branches_selected = 0;
+                    }
                     None => {}
                 }
             }
