@@ -101,8 +101,7 @@ pub fn write_bento_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::*;
-use crate::compose_yaml::*;
+    
     use crate::test_support::*;
 
     #[test]

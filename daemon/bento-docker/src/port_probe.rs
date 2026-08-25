@@ -272,8 +272,8 @@ pub fn stable_port_offset(seed: &str) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::*;
-    use crate::test_support::*;
+    
+    
 
     #[test]
     fn stable_port_offset_is_deterministic_and_bounded() {

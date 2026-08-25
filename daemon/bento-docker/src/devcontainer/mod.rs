@@ -98,7 +98,7 @@ pub fn skip_worktree(worktree_path: &str, file: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::*;
+    
     use crate::test_support::*;
 
     #[test]

@@ -16,6 +16,7 @@ bench = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+bento-db = { path = "../daemon/bento-db" }
 bento-docker = { path = "../daemon/bento-docker", features = ["ts"] }
 bento-notes = { path = "../daemon/bento-notes" }
 bento-review = { path = "../daemon/bento-review", features = ["ts"] }

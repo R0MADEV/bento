@@ -168,6 +168,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bento-db"
+version = "0.1.0"
+dependencies = [
+ "bento-docker",
+ "serde",
+]
+
+[[package]]
 name = "bento-docker"
 version = "0.1.0"
 dependencies = [

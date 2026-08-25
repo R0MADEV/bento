@@ -229,6 +229,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "base64 0.22.1",
+ "bento-db",
  "bento-docker",
  "bento-notes",
  "bento-review",
@@ -252,6 +253,14 @@ dependencies = [
  "tokio",
  "ts-rs",
  "uuid",
+]
+
+[[package]]
+name = "bento-db"
+version = "0.1.0"
+dependencies = [
+ "bento-docker",
+ "serde",
 ]
 
 [[package]]

@@ -241,8 +241,7 @@ pub fn run_recipe_git(recipes_dir: &str, action: &str, message: Option<&str>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::*;
-use crate::compose_yaml::*;
+    
     use crate::test_support::*;
 
     #[test]
