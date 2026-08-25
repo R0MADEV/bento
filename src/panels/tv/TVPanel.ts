@@ -195,7 +195,7 @@ export function createTVPanel(
       await player.pip()
     } catch {
       const prev = pipButton.title
-      pipButton.title = 'Reproduce un canal primero'
+      pipButton.title = i18nT('tv.playAChannelFirst')
       pipButton.style.opacity = '0.4'
       setTimeout(() => { pipButton.title = prev; pipButton.style.opacity = '' }, 1500)
     }

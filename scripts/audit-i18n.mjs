@@ -96,6 +96,11 @@ for (const file of files) {
 
 // La deuda que ya existe está anotada en i18n-baseline.json: no bloquea, pero
 // no puede crecer. Al traducir un fichero, baja su número (o bórralo).
+//
+// Lo que queda anotado no es prosa y no se traduce: el nombre del producto, el
+// literal SQL `NULL`, los valores de un filtro (`all`, `commented`), una rama
+// por defecto (`origin/main`) y un árbol de ficheros en ASCII. Si algo de eso
+// se "traduce", se rompe.
 const baselineFile = 'scripts/i18n-baseline.json'
 const byFile = missing.reduce((counts, entry) => {
   const file = entry.split(':')[0]

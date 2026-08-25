@@ -22,11 +22,11 @@ export function createJiraPanel(): { element: HTMLElement } {
   const root = document.createElement('div')
   root.className = 'jira-panel'
 
-  const addBtn = mkBtn('plus', 'Añadir cuenta', () => showConfig())
+  const addBtn = mkBtn('plus', i18nT('jira.addAccount'), () => showConfig())
 
   const cs = createCollapsibleSidebar({
     storageKey: 'bento.jira.sidebar',
-    title: 'Jira',
+    title: i18nT('jira.panelTitle'),
     defaultWidth: 220,
     minWidth: 180,
     minRemaining: 420,
@@ -109,7 +109,7 @@ export function createJiraPanel(): { element: HTMLElement } {
 
     const toggleBtn = mkBtn(
       viewMode === 'list' ? 'kanban' : 'list',
-      viewMode === 'list' ? 'Vista tablero' : 'Vista lista',
+      viewMode === 'list' ? i18nT('jira.boardView') : i18nT('jira.listView'),
       () => { viewMode = viewMode === 'list' ? 'board' : 'list'; showIssues(search.value) },
     )
 
@@ -118,7 +118,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     boardWrap.className = 'jira-board-search-wrap'
     const boardInput = document.createElement('input')
     boardInput.className = 'jira-board-select'
-    boardInput.placeholder = 'Buscar tablero…'
+    boardInput.placeholder = i18nT('jira.searchBoard')
     const boardDropdown = document.createElement('div')
     boardDropdown.className = 'jira-board-dropdown'
     boardWrap.append(boardInput, boardDropdown)
@@ -126,14 +126,14 @@ export function createJiraPanel(): { element: HTMLElement } {
     const search = document.createElement('input')
     search.className = 'jira-search'
     search.value = jql
-    search.placeholder = 'JQL…'
+    search.placeholder = i18nT('jira.jqlPlaceholder')
 
     const headerEl = detailHeader(
       activeAccount.id,
-      mkBtn('plus', 'Nueva tarjeta', () => showCreate()),
-      mkBtn('refresh', 'Recargar', () => load()),
+      mkBtn('plus', i18nT('jira.newIssue'), () => showCreate()),
+      mkBtn('refresh', i18nT('jira.reloadBoard'), () => load()),
       toggleBtn,
-      mkBtn('settings', 'Editar cuenta', () => showConfig(activeAccount!)),
+      mkBtn('settings', i18nT('jira.editAccount'), () => showConfig(activeAccount!)),
     )
 
     const renderContent = (issues: JiraIssue[]): void => {
@@ -149,7 +149,7 @@ export function createJiraPanel(): { element: HTMLElement } {
 
     const loadBoard = async (boardId: number): Promise<void> => {
       activeAssigneeId = ''
-      content.replaceChildren(note('Cargando tablero…'))
+      content.replaceChildren(note(i18nT('jira.loadingBoard')))
       try {
         agileColumns = await fetchBoardColumns(boardId)
         renderContent(await fetchBoardIssues(boardId))
@@ -159,7 +159,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     }
 
     const loadList = async (q: string): Promise<void> => {
-      content.replaceChildren(note('Cargando…'))
+      content.replaceChildren(note(i18nT('common.loading')))
       try {
         renderContent(await searchIssues(q))
       } catch (e) {
@@ -194,11 +194,11 @@ export function createJiraPanel(): { element: HTMLElement } {
     }
 
     const initBoardSearch = async (): Promise<void> => {
-      boardInput.placeholder = 'Cargando tableros…'
+      boardInput.placeholder = i18nT('jira.loadingBoards')
       if (!agileBoards.length) {
         agileBoards = await fetchAgileBoards().catch(() => [])
       }
-      boardInput.placeholder = 'Buscar tablero…'
+      boardInput.placeholder = i18nT('jira.searchBoard')
       const current = agileBoards.find(b => b.id === selectedBoardId)
       if (current) boardInput.value = current.name
 
@@ -218,7 +218,7 @@ export function createJiraPanel(): { element: HTMLElement } {
       boardInput.addEventListener('blur', () => setTimeout(() => boardDropdown.classList.remove('open'), 150))
 
       if (selectedBoardId) loadBoard(selectedBoardId)
-      else content.replaceChildren(note('Busca y selecciona un tablero.'))
+      else content.replaceChildren(note(i18nT('jira.pickABoard')))
     }
 
     search.addEventListener('keydown', e => { if (e.key === 'Enter') loadList(search.value) })
@@ -233,7 +233,7 @@ export function createJiraPanel(): { element: HTMLElement } {
   }
 
   const renderList = (issues: JiraIssue[], container: HTMLElement): void => {
-    if (!issues.length) { container.append(note('Sin resultados.')); return }
+    if (!issues.length) { container.append(note(i18nT('jira.noResults'))); return }
     const list = document.createElement('div')
     list.className = 'jira-list'
     issues.forEach(it => {
@@ -358,10 +358,10 @@ export function createJiraPanel(): { element: HTMLElement } {
 
   // ---- issue detail (drawer — shown on top of the board, board state preserved) ----
   const showCreate = (): void => {
-    const project = field('Proyecto (clave, ej. BEN)')
-    const type = field('Tipo', 'Task')
-    const summary = field('Resumen')
-    const assignee = field('Asignar a (email, opcional)', activeAccount?.email ?? '')
+    const project = field(i18nT('jira.projectKeyEGBen'))
+    const type = field(i18nT('common.type'), 'Task')
+    const summary = field(i18nT('common.summary'))
+    const assignee = field(i18nT('jira.assignToEmailOptional'), activeAccount?.email ?? '')
     const descLabel = document.createElement('label')
     descLabel.className = 'jira-field'
     descLabel.textContent = i18nT('jira.description')
@@ -389,19 +389,19 @@ export function createJiraPanel(): { element: HTMLElement } {
     })
     const bulkLink = document.createElement('a')
     bulkLink.className = 'jira-hint-link'
-    bulkLink.textContent = 'Importar varias →'
+    bulkLink.textContent = i18nT('jira.importMultiple')
     bulkLink.addEventListener('click', () => showBulk())
     const body = document.createElement('div')
     body.className = 'jira-config'
     body.append(project.row, type.row, summary.row, assignee.row, descLabel, create, bulkLink, status)
-    showDetail(detailHeader('Nueva tarjeta', mkBtn('arrow-left', 'Volver', () => showIssues())), body)
+    showDetail(detailHeader('Nueva tarjeta', mkBtn('arrow-left', i18nT('common.back'), () => showIssues())), body)
   }
 
   // ---- bulk import ----
   const showBulk = (): void => {
-    const project = field('Proyecto (clave, ej. KAN)')
-    const type = field('Tipo', 'Task')
-    const assignee = field('Asignar a (email, opcional)', activeAccount?.email ?? '')
+    const project = field(i18nT('jira.projectKeyEGKan'))
+    const type = field(i18nT('common.type'), 'Task')
+    const assignee = field(i18nT('jira.assignToEmailOptional'), activeAccount?.email ?? '')
     const taLabel = document.createElement('label')
     taLabel.className = 'jira-field'
     taLabel.textContent = i18nT('jira.oneIssuePerLineFormatSummaryDescription')
@@ -437,7 +437,7 @@ export function createJiraPanel(): { element: HTMLElement } {
     const body = document.createElement('div')
     body.className = 'jira-config'
     body.append(project.row, type.row, assignee.row, taLabel, create, status)
-    showDetail(detailHeader('Importar tarjetas', mkBtn('arrow-left', 'Volver', () => showCreate())), body)
+    showDetail(detailHeader('Importar tarjetas', mkBtn('arrow-left', i18nT('common.back'), () => showCreate())), body)
   }
 
   // ---- boot ----

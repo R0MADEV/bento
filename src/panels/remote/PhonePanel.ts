@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { icon } from '../../ui/helpers/icons'
 import QRCode from 'qrcode'
+import { t as i18nT } from '../../i18n'
 
 interface RemoteStatus {
   running: boolean
@@ -39,7 +40,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   const toggleInput = document.createElement('input')
   toggleInput.type = 'checkbox'
   const toggleText = document.createElement('span')
-  toggleText.textContent = 'Activar servidor WiFi'
+  toggleText.textContent = i18nT('remote.enableWifiServer')
   toggleLabel.append(toggleInput, toggleText)
 
   // Tailscale toggle (hidden until tailscale_detect confirms it's available)
@@ -50,7 +51,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   // Opt-out: checked unless user explicitly set to 'false'
   tsToggle.checked = localStorage.getItem(TAILSCALE_KEY) !== 'false'
   const tsText = document.createElement('span')
-  tsText.textContent = 'Usar Tailscale (fuera de casa)'
+  tsText.textContent = i18nT('remote.useTailscale')
   tsLabel.append(tsToggle, tsText)
   tsToggle.onchange = async () => {
     // Store 'false' explicitly when disabled; absence or 'true' means enabled
@@ -75,7 +76,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   const portRow = document.createElement('div')
   portRow.className = 'phone-port-row'
   const portLabel = document.createElement('span')
-  portLabel.textContent = 'Puerto'
+  portLabel.textContent = i18nT('remote.port')
   const portInput = document.createElement('input')
   portInput.type = 'number'
   portInput.className = 'phone-port-input'
@@ -121,7 +122,7 @@ export function createPhonePanel(): { element: HTMLElement } {
   // ── Desc ──────────────────────────────────────────────────────────────────
   const desc = document.createElement('p')
   desc.className = 'phone-desc'
-  desc.textContent = 'Tu Mac actúa como servidor. El móvil se conecta directamente por WiFi sin instalar ninguna app.'
+  desc.textContent = i18nT('remote.howItWorks')
   body.append(desc)
 
   const showError = (msg: string): void => {
@@ -134,15 +135,15 @@ export function createPhonePanel(): { element: HTMLElement } {
   const render = async (s: RemoteStatus): Promise<void> => {
     toggleInput.checked = s.running
     portInput.disabled = s.running
-    toggleText.textContent = s.running ? 'Servidor activo' : 'Activar servidor WiFi'
+    toggleText.textContent = s.running ? i18nT('remote.serverRunning') : i18nT('remote.enableWifiServer')
     if (s.running && s.url) {
       urlCode.textContent = s.url
       try {
         qrImg.src = await QRCode.toDataURL(s.url, { width: 220, margin: 2, color: { dark: '#e2e8f8', light: '#0e0e1c' } })
       } catch { /* ignore */ }
       warn.textContent = tsToggle.checked
-        ? 'Accesible vía Tailscale desde cualquier red.'
-        : 'Solo en tu red WiFi local — nunca exponer a internet.'
+        ? i18nT('remote.reachableViaTailscale')
+        : i18nT('remote.localWifiOnly')
       activeSection.classList.remove('hidden')
     } else {
       activeSection.classList.add('hidden')
@@ -177,7 +178,7 @@ export function createPhonePanel(): { element: HTMLElement } {
 
   const init = async (attempt = 0): Promise<void> => {
     if (userInteracted) return
-    toggleText.textContent = 'Comprobando…'
+    toggleText.textContent = i18nT('remote.checking')
     toggleInput.disabled = true
     try {
       const [s, tsIp] = await Promise.all([
@@ -213,7 +214,7 @@ export function createPhonePanel(): { element: HTMLElement } {
     cancelRetries()
     clearError()
     toggleInput.disabled = true
-    toggleText.textContent = toggleInput.checked ? 'Activando…' : 'Desactivando…'
+    toggleText.textContent = toggleInput.checked ? i18nT('remote.starting') : i18nT('remote.stopping')
     try {
       if (toggleInput.checked) {
         await startServer()
@@ -223,7 +224,7 @@ export function createPhonePanel(): { element: HTMLElement } {
     } catch (e) {
       showError(`Error: ${String(e)}`)
       toggleInput.checked = !toggleInput.checked
-      toggleText.textContent = toggleInput.checked ? 'Servidor activo' : 'Activar servidor WiFi'
+      toggleText.textContent = toggleInput.checked ? i18nT('remote.serverRunning') : i18nT('remote.enableWifiServer')
     } finally {
       toggleInput.disabled = false
     }

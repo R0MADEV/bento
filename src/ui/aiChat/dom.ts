@@ -133,10 +133,10 @@ export function buildAiChatDom(root: HTMLElement): AiChatDom {
   systemInput.placeholder = i18nT('common.aiSystemPlaceholder')
   const agentExecutableInput = document.createElement('input')
   agentExecutableInput.className = 'ai-field ai-agent-config hidden'
-  agentExecutableInput.placeholder = 'Custom executable'
+  agentExecutableInput.placeholder = i18nT('common.customExecutable')
   const agentArgsInput = document.createElement('input')
   agentArgsInput.className = 'ai-field ai-agent-config hidden'
-  agentArgsInput.placeholder = 'Arguments (space-separated)'
+  agentArgsInput.placeholder = i18nT('common.argumentsSpaceSeparated')
   const vaultNotice = document.createElement('div')
   vaultNotice.className = 'ai-vault-notice hidden'
   settings.append(

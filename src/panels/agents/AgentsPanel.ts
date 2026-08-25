@@ -237,7 +237,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       const closeBtn = document.createElement('button')
       closeBtn.className = 'agents-sidebar-close'
       closeBtn.textContent = '×'
-      closeBtn.title = 'Close agent'
+      closeBtn.title = i18nT('agents.closeAgent')
       closeBtn.addEventListener('click', e => {
         e.stopPropagation()
         removeAgent(i)
