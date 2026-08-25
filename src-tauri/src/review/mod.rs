@@ -63,6 +63,37 @@ pub fn review_build_prompt(input: bento_review::ReviewPromptInput) -> String {
     bento_review::build_review_prompt(&input)
 }
 
+/// El documento de la review, con quién falló y con quién se sigue hablando.
+/// Todo vive en `bento_review::report`, compartido con el daemon y el CLI.
+#[tauri::command]
+pub fn review_build_document(
+    meta: bento_review::report::ReviewDocumentMeta,
+    runs: Vec<bento_review::report::ReviewRun>,
+) -> String {
+    bento_review::report::build_document(&meta, &runs)
+}
+
+#[tauri::command]
+pub fn review_follow_up_session(
+    runs: Vec<bento_review::report::ReviewRun>,
+    count: usize,
+) -> bento_review::report::FollowUpSession {
+    bento_review::report::follow_up_session(&runs, count)
+}
+
+/// Lo primero que lee el agente: de dónde sale el cambio y qué ficheros toca.
+#[tauri::command]
+pub fn review_build_overview(input: bento_review::report::OverviewInput) -> String {
+    bento_review::report::build_overview(&input)
+}
+
+/// Si un fallo del agente merece un reintento. La lista de fallos pasajeros
+/// estaba duplicada en TypeScript y ya había divergido.
+#[tauri::command]
+pub fn review_is_retryable(message: String) -> bool {
+    bento_review::agents::is_retryable(&message)
+}
+
 /// El informe de un revisor, para el prompt de síntesis.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

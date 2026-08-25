@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
-import { buildReviewFileBatches, buildReviewFileManifest, createReviewPanel, describeReviewNoBranchChanges, describeReviewPrState, filterReviewPrs, resolveReviewFollowUpSession } from '../../../src/panels/review/ReviewPanel'
+import { createReviewPanel, describeReviewNoBranchChanges, describeReviewPrState, filterReviewPrs } from '../../../src/panels/review/ReviewPanel'
 
 function setup() {
   vi.stubGlobal('localStorage', makeLocalStorage())
@@ -89,24 +89,6 @@ describe('ReviewPanel', () => {
     setup()
     const { element } = createReviewPanel()
     expect(element.querySelector('.review-agent-hint')?.textContent).toContain('Single agent mode')
-  })
-
-  it('keeps follow-up sessions attached to the last real review agent', () => {
-    expect(resolveReviewFollowUpSession([
-      { label: 'Orchestrator', sessionId: 's1' },
-      { label: 'Synthesis', sessionId: 's2' },
-      { label: 'Verification', sessionId: 'verifier-session' },
-    ].map(run => ({ ...run, agent: 'claude' as const })), 2)).toEqual({ sessionId: 's2', sessionAgent: 'claude' })
-  })
-
-  it('builds a complete manifest before batching review files', () => {
-    const files = [
-      { file: 'src/a.ts', additions: 3, deletions: 1, chunk: 'a'.repeat(6), state: 'M' as const },
-      { file: 'src/b.ts', additions: 1, deletions: 0, chunk: 'b'.repeat(6), state: 'D' as const },
-    ]
-
-    expect(buildReviewFileManifest(files)).toBe('M src/a.ts (+3/-1)\nD src/b.ts (+1/-0)')
-    expect(buildReviewFileBatches(files, 6)).toHaveLength(2)
   })
 
   it('describes merged PRs explicitly', () => {

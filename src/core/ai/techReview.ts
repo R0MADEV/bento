@@ -65,35 +65,6 @@ export function createContextProvider(dependencies: ContextProviderDependencies)
   }
 }
 
-export interface ReviewDocumentMeta {
-  branch: string
-  base: string
-  commit: string
-  compareAgents: boolean
-  fallbackAgentLabel: string
-}
-
-// The full review markdown (header + each agent's report). Extracted so it can be
-// rebuilt from partial runs too — a crashed/stopped review still yields a document.
-export function buildReviewDocument(meta: ReviewDocumentMeta, runs: MultiAgentReviewRun[]): string {
-  const agentsLine = meta.compareAgents
-    ? `Agents: ${runs.map(run => run.label).join(' + ')}`
-    : `Agent: ${runs[0]?.label ?? meta.fallbackAgentLabel}`
-  const header = [
-    `## Revisión: ${meta.branch}`,
-    `Base: \`${meta.base}\` · Commit: \`${meta.commit.slice(0, 7)}\``,
-    agentsLine,
-  ].join('\n')
-  const body = runs
-    .filter(run => run.report || run.error)
-    .map(run => {
-      if (run.error) return `### ${run.label}\n⚠️ ${run.error}`
-      // With one agent the report stands alone; with several, label each section.
-      return meta.compareAgents ? `### ${run.label}\n${run.report}` : (run.report ?? '')
-    })
-  return [header, ...body].join('\n\n')
-}
-
 export interface ReviewCheckpoint {
   content: string
   commit: string
@@ -121,12 +92,4 @@ export function parseReviewCheckpoint(raw: string | null): ReviewCheckpoint | nu
   } catch {
     return null
   }
-}
-
-// Transient infra failures worth one retry. Deliberately NOT timeouts: a timeout
-// means the work didn't fit the time window, so retrying just burns another one.
-export function isRetryableReviewError(message: string): boolean {
-  if (!message) return false
-  if (/timeout|timed out/i.test(message)) return false
-  return /rate.?limit|too many requests|\b429\b|overloaded|\b529\b|\b503\b|\b502\b|connection|econnreset|network|socket hang up|temporar|exited with an error/i.test(message)
 }

@@ -5,12 +5,13 @@ import { t as i18nT } from '../../i18n'
 import { redact } from '../../core/ai/agentClient'
 import { startAgent } from '../../adapters/agentRunner'
 import { agentLabel, type AgentType } from '../../core/ai/config'
-import { buildReviewDocument, isRetryableReviewError, createContextProvider, type MultiAgentReviewRun } from '../../core/ai/techReview'
+import { createContextProvider, type MultiAgentReviewRun } from '../../core/ai/techReview'
+import { buildReviewDocument, buildReviewOverview, isRetryableReviewError, resolveReviewFollowUpSession, type FollowUpSession } from './reviewDocument'
 import { buildReviewPrompt, buildReviewSynthesisPrompt } from './reviewPrompts'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey } from '../../core/ai/chatHistory'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
-import { resolveReviewFollowUpSession, buildReviewFileManifest, type ReviewChangeFile } from './reviewFormat'
+import type { ReviewChangeFile } from './reviewFormat'
 
 export interface ReviewAiRunDom {
   aiReviewBtn: HTMLButtonElement
@@ -104,12 +105,15 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     const reviewAgent = reviewAgents.at(-1) ?? reviewAgents[0]
     const reviewConversationKey = techReviewConversationKey(reviewRepoPath, reviewBranch)
     const reviewProjectName = reviewRepoPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? reviewRepoPath
-    const currentPrNumber = state.getCurrentPrNumber()
-    const prLine = currentPrNumber ? `PR #${currentPrNumber}: ${state.getCurrentPrTitle()}` : `Branch: ${reviewBranch}`
-    const descSection = state.getCurrentPrBody().trim() ? `\nDescription:\n${state.getCurrentPrBody().trim()}\n` : ''
-    const authorContext = reviewContext.trim() ? `\nContexto del autor (qué hace la rama / en qué fijarse):\n${reviewContext.trim()}\n` : ''
-    const reviewFileManifest = buildReviewFileManifest(lastFiles)
-    const reviewOverview = `${prLine}\nBase: ${reviewBaseBranch} <- ${reviewBranch}\n${descSection}${authorContext}Files:\n${reviewFileManifest}\n\nReview the files in the current batch first. If a file is not included below, read it directly from the worktree before deciding.`
+    const reviewOverview = await buildReviewOverview({
+      branch: reviewBranch,
+      base: reviewBaseBranch,
+      prNumber: state.getCurrentPrNumber(),
+      prTitle: state.getCurrentPrTitle(),
+      prBody: state.getCurrentPrBody(),
+      authorContext: reviewContext,
+      files: lastFiles.map(file => ({ state: file.state, file: file.file, additions: file.additions, deletions: file.deletions })),
+    })
     const reviewChangedFiles = lastFiles.map(file => file.file)
     aiReviewBtn.disabled = true
     aiReviewBtn.title = reviewT('reviewing')
@@ -158,15 +162,18 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       await Promise.all([...activeReviewHandles].map(handle => handle.cancel().catch(() => {})))
     })
 
-    const showResult = (content: string, reviewCommit: string, followUpSession: { sessionId: string | null; sessionAgent: AgentType | null }): void => {
+    const showResult = (content: string, reviewCommit: string, followUpSession: FollowUpSession): void => {
+      // El agente de la sesión llega como texto desde Rust; aquí solo vale si es
+      // uno de los que la UI sabe pintar.
+      const sessionAgent = followUpSession.sessionAgent as AgentType | null
       reviewDrawerMeta.textContent = `${reviewBranch} · ${reviewCommit.slice(0, 7)}`
       reviewDrawerBody.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'review-drawer-result',
         innerHTML: renderMarkdown(content),
       }))
       state.showReviewDrawer()
-      const followUpAgent = followUpSession.sessionAgent ?? reviewAgent
-      askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, followUpAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, followUpSession.sessionId ?? undefined, followUpSession.sessionAgent ?? undefined, reviewEvidence)
+      const followUpAgent = sessionAgent ?? reviewAgent
+      askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, followUpAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, followUpSession.sessionId ?? undefined, sessionAgent ?? undefined, reviewEvidence)
     }
     let worktree = ''
     let managedWorktree = false
@@ -185,22 +192,27 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     })
     const outputRuns = (): MultiAgentReviewRun[] => (reviewRuns.length ? reviewRuns : lastBatchRuns)
     // Persist the document after every stage so a crash/reload never loses findings.
-    const saveReviewCheckpoint = (): void => {
+    const saveReviewCheckpoint = async (): Promise<void> => {
       const runs = outputRuns().filter(run => run.report || run.error)
       if (!runs.length || !reviewCommit) return
-      const followUpSession = resolveReviewFollowUpSession(runs, runs.length)
+      const [content, followUpSession] = await Promise.all([
+        buildReviewDocument(reviewMeta(), runs),
+        resolveReviewFollowUpSession(runs, runs.length),
+      ])
       // Saved to the store shared with the daemon and the CLI, so the review
       // also shows up in the TUI's history and on the phone.
-      invoke('review_checkpoint_save', {
+      await invoke('review_checkpoint_save', {
         cwd: reviewRepoPath,
         base: reviewBranch,
-        content: buildReviewDocument(reviewMeta(), runs),
+        content,
         branch: reviewBranch,
         commit: reviewCommit,
-        sessionId: followUpSession.sessionId ?? null,
-        sessionAgent: followUpSession.sessionAgent ?? null,
-      }).catch(() => { /* the on-screen salvage still applies */ })
+        sessionId: followUpSession.sessionId,
+        sessionAgent: followUpSession.sessionAgent,
+      })
     }
+    // Persistir es de fondo: si falla, en pantalla sigue estando todo.
+    const persistReviewCheckpoint = (): void => { void saveReviewCheckpoint().catch(() => {}) }
     try {
       progressStatus.textContent = reviewT('creatingWorktree')
       const branchContext = await invoke<{ path: string; commit: string; managed: boolean }>('review_branch_context_prepare', {
@@ -303,7 +315,8 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
             activeReviewHandles.delete(handle)
             if (!activeReviewHandles.size) stopReviewBtn.disabled = true
           }
-          const shouldRetry = attempt < MAX_REVIEW_ATTEMPTS && !reviewStopped && !run.report && !!run.error && isRetryableReviewError(run.error)
+          const worthAnotherAttempt = attempt < MAX_REVIEW_ATTEMPTS && !reviewStopped && !run.report && !!run.error
+          const shouldRetry = worthAnotherAttempt && await isRetryableReviewError(run.error as string)
           if (!shouldRetry) break
           await new Promise<void>(resolve => setTimeout(resolve, 3_000 * attempt))
         }
@@ -317,7 +330,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       const agentRuns = await Promise.all(reviewAgents.map(agent => runReviewAgent(agent, onePassPrompt, 'analysis')))
       lastBatchRuns = agentRuns
       reviewRuns.push(...agentRuns.filter(run => run.report || run.error))
-      saveReviewCheckpoint()
+      persistReviewCheckpoint()
 
       // With ≥2 agents, one of them consolidates everyone's analysis into a final
       // report (the pipeline: each agent analyses, the last one synthesizes).
@@ -329,7 +342,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
         const synthesisRun = await runReviewAgent(verifierAgent, synthesisPrompt, 'verification')
         synthesisRun.label = 'Síntesis final'
         reviewRuns.push(synthesisRun)
-        saveReviewCheckpoint()
+        persistReviewCheckpoint()
       }
 
       if (reviewStopped) throw new Error('Review stopped')
@@ -337,9 +350,11 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       if (!successfulRuns.length) throw new Error('No valid review responses')
 
       const snapshotAfter = await invoke<string>('review_snapshot', { repoPath: worktree })
-      const content = buildReviewDocument(reviewMeta(), reviewRuns)
-      const followUpSession = resolveReviewFollowUpSession(reviewRuns, reviewRuns.length)
-      saveReviewCheckpoint()
+      const [content, followUpSession] = await Promise.all([
+        buildReviewDocument(reviewMeta(), reviewRuns),
+        resolveReviewFollowUpSession(reviewRuns, reviewRuns.length),
+      ])
+      persistReviewCheckpoint()
       showResult(content, reviewCommit, followUpSession)
       if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
     } catch (error) {
@@ -347,8 +362,12 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       // we have and show the error as a note, instead of wiping the drawer.
       const salvaged = outputRuns().filter(run => run.report)
       if (salvaged.length) {
-        saveReviewCheckpoint()
-        showResult(buildReviewDocument(reviewMeta(), salvaged), reviewCommit, resolveReviewFollowUpSession(salvaged, salvaged.length))
+        persistReviewCheckpoint()
+        const [content, followUpSession] = await Promise.all([
+          buildReviewDocument(reviewMeta(), salvaged),
+          resolveReviewFollowUpSession(salvaged, salvaged.length),
+        ])
+        showResult(content, reviewCommit, followUpSession)
         const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: reviewT('incompleteReview', { error: String(error) }) })
         reviewDrawerBody.prepend(note)
         note.scrollIntoView({ block: 'start', behavior: 'smooth' })

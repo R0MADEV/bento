@@ -15,6 +15,7 @@ pub mod engine;
 pub mod pr;
 pub mod prompt;
 pub mod rebase;
+pub mod report;
 pub mod recommend;
 pub mod status;
 pub mod store;

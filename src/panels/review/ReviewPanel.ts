@@ -20,18 +20,12 @@ import { buildReviewDataLoader } from './reviewDataLoader'
 import { buildReviewAiRun } from './reviewAiRun'
 import type { GhComment, GhPr, SidebarMode, FileTypeFilter, ReviewChangeFile } from './reviewFormat'
 import {
-  resolveReviewFollowUpSession,
-  buildReviewFileManifest,
-  buildReviewFileBatches,
   describeReviewPrState,
   describeReviewNoBranchChanges,
   filterReviewPrs,
 } from './reviewFormat'
 
 export {
-  resolveReviewFollowUpSession,
-  buildReviewFileManifest,
-  buildReviewFileBatches,
   describeReviewPrState,
   describeReviewNoBranchChanges,
   filterReviewPrs,

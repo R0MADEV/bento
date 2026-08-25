@@ -92,10 +92,33 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
 const PROMPT_COMMANDS = ['review_build_prompt', 'review_build_synthesis_prompt']
 const CHECKPOINT_COMMANDS = ['review_checkpoint_save', 'review_checkpoint_get']
 
+interface FakeRun { label: string; agent?: string | null; sessionId?: string | null; report?: string | null; error?: string | null }
+
+// El formato de la review vive en Rust (`bento_review::report`); aquí se imita
+// lo justo para que el flujo del panel se pueda seguir probando sin backend.
+function fakeReportCommand(cmd: string, args: Record<string, unknown> | undefined): unknown {
+  if (cmd === 'review_build_overview') return 'OVERVIEW'
+  if (cmd === 'review_is_retryable') return false
+  if (cmd === 'review_build_document') {
+    const runs = (args?.runs ?? []) as FakeRun[]
+    return runs.map(run => (run.error ? `⚠️ ${run.error}` : run.report ?? '')).join('\n\n')
+  }
+  if (cmd === 'review_follow_up_session') {
+    const runs = (args?.runs ?? []) as FakeRun[]
+    const scoped = runs.slice(0, (args?.count as number) ?? runs.length).reverse()
+    const found = scoped.find(run => run.sessionId)
+    return { sessionId: found?.sessionId ?? null, sessionAgent: found?.agent ?? null }
+  }
+  return undefined
+}
+
+const REPORT_COMMANDS = ['review_build_overview', 'review_build_document', 'review_follow_up_session', 'review_is_retryable']
+
 function mockInvoke(map: Record<string, unknown>) {
-  mocks.invoke.mockImplementation(async (cmd: string) => {
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
     if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
     if (CHECKPOINT_COMMANDS.includes(cmd)) return null
+    if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
     if (cmd in map) return map[cmd]
     throw new Error(`unmocked invoke: ${cmd}`)
   })
@@ -215,9 +238,10 @@ describe('failure handling', () => {
   it('shows an error with no salvage when the worktree cannot be prepared', async () => {
     setup()
     const h = makeHarness()
-    mocks.invoke.mockImplementation(async (cmd: string) => {
+    mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (CHECKPOINT_COMMANDS.includes(cmd)) return null
+      if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
       if (cmd === 'review_branch_context_prepare') throw new Error('worktree busy')
       throw new Error(`unmocked: ${cmd}`)
     })
@@ -233,9 +257,10 @@ describe('failure handling', () => {
     setup()
     const h = makeHarness()
     let snapshotCalls = 0
-    mocks.invoke.mockImplementation(async (cmd: string) => {
+    mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (CHECKPOINT_COMMANDS.includes(cmd)) return null
+      if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
       if (cmd === 'review_branch_context_prepare') return { path: '/wt', commit: 'abc1234', managed: true }
       if (cmd === 'review_snapshot') {
         snapshotCalls += 1
