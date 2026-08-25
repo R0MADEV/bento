@@ -254,7 +254,7 @@ describe('failure handling', () => {
     await loader.handleAiReviewClick()
     h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
     await vi.waitFor(() => expect(h.dom.reviewDrawerBody.querySelector('.review-drawer-result')).toBeTruthy())
-    expect(h.dom.reviewDrawerBody.textContent).toContain('Review incompleto')
+    expect(h.dom.reviewDrawerBody.textContent).toContain('Incomplete review')
   })
 })
 

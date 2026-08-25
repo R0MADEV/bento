@@ -132,7 +132,7 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
     nameEl.addEventListener('click', e => {
       e.stopPropagation()
       navigator.clipboard.writeText(f.file).then(() => {
-        nameEl.textContent = '✓ copied'
+        nameEl.textContent = reviewT('copied')
         setTimeout(() => { nameEl.textContent = f.file }, 1500)
       }).catch(() => {})
     })
@@ -154,7 +154,7 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
     const commentBadge = Object.assign(document.createElement('span'), {
       className: `review-comment-badge${fileCommentCount === 0 ? ' hidden' : ''}`,
       textContent: fileCommentCount > 0 ? `💬 ${fileCommentCount}` : '',
-      title: `${fileCommentCount} comment${fileCommentCount !== 1 ? 's' : ''}`,
+      title: reviewT('commentCount', { count: fileCommentCount }),
     })
     commentBadge.addEventListener('click', e => {
       e.stopPropagation()
@@ -286,7 +286,7 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
       if (!badge) return
       if (count > 0) {
         badge.textContent = `💬 ${count}`
-        badge.title = `${count} comment${count !== 1 ? 's' : ''}`
+        badge.title = reviewT('commentCount', { count })
         badge.classList.remove('hidden')
       } else {
         badge.classList.add('hidden')
@@ -326,7 +326,7 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
         const bubble = state.buildCommentBubble(c)
         const lineNote = Object.assign(document.createElement('div'), {
           className: 'review-orphan-line-note',
-          textContent: `Line ${c.line} · ${c.path.split('/').pop()}`,
+          textContent: reviewT('lineRange', { line: c.line ?? '', file: c.path.split('/').pop() ?? '' }),
         })
         bubble.prepend(lineNote)
         section.append(bubble)

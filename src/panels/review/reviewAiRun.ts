@@ -48,13 +48,13 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
   const showReviewContextForm = (): void => {
     const form = document.createElement('div')
     form.className = 'review-context-form'
-    const label = Object.assign(document.createElement('label'), { className: 'review-context-label', textContent: 'Contexto para la review (opcional): ¿qué hace esta rama y en qué fijarse?' })
+    const label = Object.assign(document.createElement('label'), { className: 'review-context-label', textContent: reviewT('contextLabel') })
     const ta = Object.assign(document.createElement('textarea'), {
       className: 'review-context-input',
       value: (() => { try { return localStorage.getItem(reviewContextKey()) ?? '' } catch { return '' } })(),
-      placeholder: 'Ej: añade tests de contrato de la API; comprueba que no rompa el refactor de la BD…',
+      placeholder: reviewT('contextPlaceholder'),
     })
-    const runBtn = Object.assign(document.createElement('button'), { className: 'review-context-run', textContent: 'Revisar' })
+    const runBtn = Object.assign(document.createElement('button'), { className: 'review-context-run', textContent: reviewT('review') })
     runBtn.addEventListener('click', () => {
       const value = ta.value.trim()
       try { if (value) localStorage.setItem(reviewContextKey(), value); else localStorage.removeItem(reviewContextKey()) } catch { /* storage full */ }
@@ -112,7 +112,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     const reviewOverview = `${prLine}\nBase: ${reviewBaseBranch} <- ${reviewBranch}\n${descSection}${authorContext}Files:\n${reviewFileManifest}\n\nReview the files in the current batch first. If a file is not included below, read it directly from the worktree before deciding.`
     const reviewChangedFiles = lastFiles.map(file => file.file)
     aiReviewBtn.disabled = true
-    aiReviewBtn.title = 'Reviewing...'
+    aiReviewBtn.title = reviewT('reviewing')
     const reviewEvidence: string[] = []
 
     // Progress box visible desde el principio
@@ -120,11 +120,11 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     progressBox.className = 'review-ai-progress'
     const progressHeader = document.createElement('div')
     progressHeader.className = 'review-ai-progress-header'
-    const progressStatus = Object.assign(document.createElement('span'), { className: 'review-ai-progress-status', textContent: 'Preparing review…' })
+    const progressStatus = Object.assign(document.createElement('span'), { className: 'review-ai-progress-status', textContent: reviewT('preparingReview') })
     const progressMeta = Object.assign(document.createElement('span'), { className: 'review-ai-progress-meta' })
     const stopReviewBtn = Object.assign(document.createElement('button'), {
       className: 'review-ai-stop-btn',
-      textContent: 'Stop',
+      textContent: reviewT('stop'),
       disabled: true,
     })
     const progressStream = Object.assign(document.createElement('pre'), { className: 'review-ai-progress-stream' })
@@ -144,7 +144,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     const timer = setInterval(() => {
       const secs = Math.floor((Date.now() - startedAt) / 1000)
       const chars = progressStream.textContent?.length ?? 0
-      progressMeta.textContent = chars ? `${chars} chars · ${secs}s` : `${secs}s`
+      progressMeta.textContent = chars ? reviewT('progressMeta', { chars, seconds: secs }) : `${secs}s`
     }, 500)
     // Agents run in parallel, so track every in-flight handle (not just one) to
     // cancel them all on Stop.
@@ -154,7 +154,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       if (reviewStopped || !activeReviewHandles.size) return
       reviewStopped = true
       stopReviewBtn.disabled = true
-      progressStatus.textContent = 'Stopping review…'
+      progressStatus.textContent = reviewT('stoppingReview')
       await Promise.all([...activeReviewHandles].map(handle => handle.cancel().catch(() => {})))
     })
 
@@ -202,7 +202,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       }).catch(() => { /* the on-screen salvage still applies */ })
     }
     try {
-      progressStatus.textContent = 'Creating isolated worktree…'
+      progressStatus.textContent = reviewT('creatingWorktree')
       const branchContext = await invoke<{ path: string; commit: string; managed: boolean }>('review_branch_context_prepare', {
         repoPath: reviewRepoPath,
         reference: reviewBranch,
@@ -212,7 +212,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       managedWorktree = branchContext.managed
       reviewCommit = branchContext.commit
       const snapshotBefore = await invoke<string>('review_snapshot', { repoPath: worktree })
-      progressStatus.textContent = 'Gathering context…'
+      progressStatus.textContent = reviewT('gatheringContext')
       const contextProvider = createContextProvider({
         lexis: async () => {
           const content = await invoke<string>('review_lexis_context', {
@@ -313,7 +313,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       // Each agent does ONE full-change analysis (reading files itself), all in
       // parallel. The final verifier then consolidates: the multi-agent pipeline is
       // kept; only the per-agent file batching (that made it take hours) is gone.
-      progressStatus.textContent = `Revisando con ${reviewAgents.length} agente(s) en paralelo…`
+      progressStatus.textContent = reviewT('reviewingWithAgents', { count: reviewAgents.length })
       const agentRuns = await Promise.all(reviewAgents.map(agent => runReviewAgent(agent, onePassPrompt, 'analysis')))
       lastBatchRuns = agentRuns
       reviewRuns.push(...agentRuns.filter(run => run.report || run.error))
@@ -323,7 +323,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       // report (the pipeline: each agent analyses, the last one synthesizes).
       const reportsToSynthesize = reviewRuns.filter(run => run.report).map(run => ({ label: run.label, report: run.report as string }))
       if (!reviewStopped && reportsToSynthesize.length >= 2) {
-        progressStatus.textContent = 'Síntesis final…'
+        progressStatus.textContent = reviewT('finalSynthesis')
         const verifierAgent = reviewAgents.at(-1) ?? reviewAgents[0]
         const synthesisPrompt = await buildReviewSynthesisPrompt(sharedPrompt, reportsToSynthesize)
         const synthesisRun = await runReviewAgent(verifierAgent, synthesisPrompt, 'verification')
@@ -349,7 +349,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       if (salvaged.length) {
         saveReviewCheckpoint()
         showResult(buildReviewDocument(reviewMeta(), salvaged), reviewCommit, resolveReviewFollowUpSession(salvaged, salvaged.length))
-        const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: `Review incompleto (se guardó lo revisado): ${String(error)}` })
+        const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: reviewT('incompleteReview', { error: String(error) }) })
         reviewDrawerBody.prepend(note)
         note.scrollIntoView({ block: 'start', behavior: 'smooth' })
       } else {
@@ -363,7 +363,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
           await invoke('review_branch_context_release', { path: worktree }).catch(error => showReviewError(String(error)))
         }
         aiReviewBtn.disabled = false
-        aiReviewBtn.title = 'AI Review'
+        aiReviewBtn.title = reviewT('aiReview')
       }
   }
 

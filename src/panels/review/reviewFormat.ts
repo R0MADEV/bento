@@ -76,7 +76,7 @@ export function describeReviewPrState(state?: string | null, mergedAt?: string |
   return {
     text: badge.text,
     cls: badge.cls,
-    title: mergedAt ? `Merged at ${new Date(mergedAt).toLocaleString()}` : normalized,
+    title: mergedAt ? reviewT('mergedAt', { date: new Date(mergedAt).toLocaleString() }) : normalized,
   }
 }
 

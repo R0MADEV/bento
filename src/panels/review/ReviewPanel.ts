@@ -149,7 +149,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   sidebarTabs.append(branchesTab, prsTab)
 
   const branchSearch = Object.assign(document.createElement('input'), {
-    className: 'review-branch-search', type: 'text', placeholder: 'Filter…',
+    className: 'review-branch-search', type: 'text', placeholder: reviewT('filterPlaceholder'),
   })
   const branchList = document.createElement('div')
   branchList.className = 'review-branch-list'
@@ -215,7 +215,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     if (!repoPath || !selectedBranch) return
     const checkpoint = await loadReviewCheckpoint(repoPath, selectedBranch, localStorage.getItem(techReviewCheckpointKey(repoPath, selectedBranch)))
     if (!checkpoint) {
-      const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: 'No saved review for this branch yet' })
+      const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: reviewT('noSavedReview') })
       diffView.prepend(note)
       note.scrollIntoView({ block: 'start', behavior: 'smooth' })
       return
@@ -394,14 +394,14 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   splitViewBtn.addEventListener('click', () => {
     splitView = !splitView
     splitViewBtn.classList.toggle('review-icon-btn--active', splitView)
-    splitViewBtn.title = splitView ? 'Unified view' : 'Split view'
+    splitViewBtn.title = reviewT(splitView ? 'unifiedView' : 'splitView')
     if (lastFiles.length) { renderFiles(); injectExistingComments() }
   })
   copyDiffBtn.addEventListener('click', () => {
     if (!lastFiles.length) return
     const text = lastFiles.map(f => f.chunk).join('\n')
     navigator.clipboard.writeText(text).then(() => {
-      copyDiffBtn.title = '✓ Copied!'
+      copyDiffBtn.title = reviewT('copiedExclaim')
       setTimeout(() => { copyDiffBtn.title = reviewT('copyDiff') }, 2000)
     }).catch(() => {})
   })

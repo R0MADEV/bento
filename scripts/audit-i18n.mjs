@@ -14,7 +14,10 @@ const uiHelperArguments = new Map([
   ['setSourceActivity', [0]],
   ['showCommitStatus', [0]],
 ])
-const translationCalls = new Set(['appT', 'taskT', 'i18nT', 't', 'catalogT'])
+// Los accesores tipados por panel (`reviewT`, `diffT`…) también traducen: su
+// argumento es una clave del catálogo, no texto suelto. Sin esto la auditoría
+// contaba como "sin traducir" precisamente lo que sí lo estaba.
+const translationCalls = new Set(['appT', 'taskT', 'reviewT', 'diffT', 'i18nT', 't', 'catalogT'])
 const naturalLanguage = /[A-Za-zÁÉÍÓÚÑáéíóúñ]{2}/u
 const roots = ['src/app', 'src/ui', 'src/panels']
 

@@ -1,3 +1,4 @@
+import { reviewT } from './i18n'
 import { esc, highlightCode, wordDiff } from './reviewFormat'
 
 // Pintar el diff de un archivo, en línea o a dos columnas. Lo que cambia entre
@@ -60,7 +61,7 @@ export function buildFileDiffRenderers(deps: FileDiffDeps): {
         wrap.dataset.line = String(lineNo)
         const capturedLine = lineNo
         const addBtn = Object.assign(document.createElement('button'), {
-          className: 'review-line-comment-btn', textContent: '+', title: `Comment line ${lineNo}`,
+          className: 'review-line-comment-btn', textContent: '+', title: reviewT('commentLine', { line: lineNo }),
         })
         addBtn.addEventListener('mousedown', e => {
           e.preventDefault(); rangeSelector.start(capturedLine)
@@ -155,7 +156,7 @@ export function buildFileDiffRenderers(deps: FileDiffDeps): {
       cell.className = `review-split-cell review-split-cell--right ${extraCls}`
       cell.dataset.line = String(lineNo)
       const addBtn = Object.assign(document.createElement('button'), {
-        className: 'review-line-comment-btn', textContent: '+', title: `Comment line ${lineNo}`,
+        className: 'review-line-comment-btn', textContent: '+', title: reviewT('commentLine', { line: lineNo }),
       })
       const cap = lineNo
       addBtn.addEventListener('mousedown', e => {

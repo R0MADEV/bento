@@ -154,7 +154,7 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
         state.setCurrentPrState(pr.state ?? null)
         const statusRollup = pr.statusCheckRollup ?? []
         state.setLastStatusRollup(statusRollup)
-        const link = Object.assign(document.createElement('a'), { className: 'review-pr-link', textContent: `PR #${pr.number}: ${pr.title}`, href: '#' })
+        const link = Object.assign(document.createElement('a'), { className: 'review-pr-link', textContent: reviewT('prTitle', { number: pr.number, title: pr.title }), href: '#' })
         link.addEventListener('click', e => { e.preventDefault(); openUrl(pr.url).catch(() => {}) })
         prMetaEl.append(link)
 
@@ -165,7 +165,7 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
         if (ci !== 'none') {
           const ciEl = Object.assign(document.createElement('span'), {
             className: `review-ci review-ci--${ci}`,
-            textContent: ci === 'success' ? '✓ CI' : ci === 'failure' ? '✗ CI' : '⟳ CI',
+            textContent: reviewT(ci === 'success' ? 'ciPassing' : ci === 'failure' ? 'ciFailing' : 'ciRunning'),
           })
           ciEl.style.cursor = 'pointer'
           ciEl.addEventListener('click', e => { e.stopPropagation(); state.showCiPopover(ciEl) })
@@ -204,7 +204,7 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
             if (discItems.length === 0) return
             const hdr = Object.assign(document.createElement('div'), {
               className: 'review-discussion-header',
-              textContent: `Discussion · ${discItems.length}`,
+              textContent: reviewT('discussionCount', { count: discItems.length }),
             })
             discussionEl.replaceChildren(hdr, ...discItems.map(item => {
               const msg = document.createElement('div')

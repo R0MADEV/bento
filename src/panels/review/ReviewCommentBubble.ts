@@ -40,7 +40,7 @@ export function buildCommentInputRow(options: {
   const actionsRow = document.createElement('div')
   actionsRow.className = 'review-line-form-actions'
   const sendBtn = Object.assign(document.createElement('button'), { className: 'review-comment-btn', textContent: options.sendLabel })
-  const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: 'Cancel' })
+  const cancelBtn = Object.assign(document.createElement('button'), { className: 'review-line-cancel-btn', textContent: reviewT('cancel') })
   const status = Object.assign(document.createElement('span'), { className: 'review-comment-status' })
   actionsRow.append(cancelBtn, sendBtn)
   if (options.withStatus) actionsRow.append(status)
@@ -172,7 +172,7 @@ export function buildReviewLineForm(filePath: string, line: number, startLine: n
     const body = input.value.trim()
     if (!body) { input.focus(); return }
     const prNumber = actions.currentPrNumber()
-    if (prNumber === null) { status.textContent = 'No PR for this branch'; return }
+    if (prNumber === null) { status.textContent = reviewT('noPrForBranch'); return }
     sendBtn.disabled = true
     try {
       const repoPath = actions.repoPath()
