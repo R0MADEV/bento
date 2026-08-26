@@ -6,17 +6,19 @@ import { basename, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   MEMORY_SCHEMA,
-  normalizeMemoryEntry,
   normalizeTranscriptEntry,
   selectSummaryJobSql,
-  upsertByExternalIdSql,
   upsertSummaryJobSql,
   upsertTranscriptSql,
   updateSummaryJobSql,
 } from './lib/memoryStore.mjs'
-import { generateTranscriptSummary, isNoMemorySummary, isUsefulSummary, terminateSummarizers } from './lib/transcriptSummary.mjs'
-import { collectSessionMetadata, extractTranscript, extractVerification, metadataPrompt, transcriptHash } from './lib/sessionCapture.mjs'
+import { generateTranscriptSummary, terminateSummarizers } from './lib/transcriptSummary.mjs'
+import { collectSessionMetadata, extractTranscript, extractVerification, transcriptHash } from './lib/sessionCapture.mjs'
 import { defaultMemoryDbPath, sqliteBinary } from './lib/memoryPaths.mjs'
+import { resolveSummaryJob } from './lib/summaryJobResolver.mjs'
+import { sweepStaleSummaryJobs } from './lib/staleSummaryJobs.mjs'
+
+const envNumber = name => { const value = Number(process.env[name]); return Number.isFinite(value) ? value : undefined }
 
 if (process.env.BENTO_MEMORY_FINALIZER === '1') process.exit(0)
 
@@ -126,36 +128,26 @@ if (process.env.BENTO_MEMORY_SUMMARY_WORKER !== '1') {
   process.exit(0)
 }
 
+// Before handling this session, drain a small batch of old pending/processing
+// jobs (crashes predating the 317a9fa fix). A failure here must not block
+// processing of the current session.
+if (process.env.BENTO_MEMORY_SKIP_STALE_RETRY !== '1') {
+  await sweepStaleSummaryJobs({
+    runSql,
+    generateSummary: generateTranscriptSummary,
+    staleAfterMs: envNumber('BENTO_MEMORY_STALE_AFTER_MS'),
+    maxAttempts: envNumber('BENTO_MEMORY_STALE_MAX_ATTEMPTS'),
+    batchSize: envNumber('BENTO_MEMORY_STALE_BATCH_SIZE'),
+  }).catch(() => {})
+}
+
 await runSql(`UPDATE memory_summary_jobs SET status = 'processing', error = '', updated_at = '${timestamp}' WHERE project_path = '${projectPath.replaceAll("'", "''")}' AND transcript_external_id = '${transcriptExternalId.replaceAll("'", "''")}';`).catch(() => {})
 
 try {
-  const summary = await generateTranscriptSummary(agent, projectPath, transcript, metadataPrompt(metadata))
-  if (!isUsefulSummary(summary)) {
-    const status = isNoMemorySummary(summary) ? 'skipped' : 'failed'
-    const error = status === 'failed' ? 'El resumidor no devolvió un resultado válido.' : ''
-    await runSql(updateSummaryJobSql(projectPath, transcriptExternalId, status, error))
-    process.exit(0)
-  }
-
-  const completedTranscript = normalizeTranscriptEntry({ ...transcriptEntry, summary, updated_at: new Date().toISOString() })
-  const externalId = `${agent}:session-summary:${sessionId}`
-  const tags = ['session-summary', agent, metadata.branch ? `branch:${metadata.branch}` : ''].filter(Boolean)
-  const entry = normalizeMemoryEntry({
-    id: randomUUID(),
-    project_path: projectPath,
-    kind: 'note',
-    title: `Resumen de sesion: ${basename(projectPath)}`,
-    summary: summary.slice(0, 500),
-    details: summary,
-    tags,
-    files: metadata.changedFiles,
-    source: `${agent}-session-end`,
-    external_id: externalId,
-  })
-  await runSql(`${upsertTranscriptSql(completedTranscript)}\n${upsertByExternalIdSql(entry)}\n${updateSummaryJobSql(projectPath, transcriptExternalId, 'completed')}`)
+  const { status } = await resolveSummaryJob({ runSql, generateSummary: generateTranscriptSummary, transcript: transcriptEntry, metadata })
 
   const retentionDays = Math.max(0, Number(process.env.BENTO_MEMORY_TRANSCRIPT_RETENTION_DAYS) || 0)
-  if (retentionDays > 0) {
+  if (status === 'completed' && retentionDays > 0) {
     await runSql(`DELETE FROM memory_transcripts WHERE summary <> '' AND datetime(updated_at) < datetime('now', '-${retentionDays} days');`)
   }
 } catch (error) {

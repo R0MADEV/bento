@@ -258,6 +258,24 @@ export const updateSummaryJobSql = (projectPath, transcriptExternalId, status, e
     AND transcript_external_id = ${quote(transcriptExternalId)};
 `
 
+// Pending/processing jobs that have been stuck for longer than `beforeIso`,
+// already joined with their transcript: everything needed to retry the
+// summary without another query. `maxAttempts` cuts off infinite retries for
+// a job that will never be summarizable.
+export const selectStaleSummaryJobsSql = (beforeIso, maxAttempts, limitCount = 3) => `
+  SELECT j.project_path, j.agent, j.session_id, j.transcript_external_id, j.metadata_json,
+         t.id AS transcript_id, t.title AS transcript_title, t.transcript AS transcript_text,
+         t.source AS transcript_source, t.created_at AS transcript_created_at
+  FROM memory_summary_jobs j
+  JOIN memory_transcripts t
+    ON t.project_path = j.project_path AND t.external_id = j.transcript_external_id
+  WHERE j.status IN ('pending', 'processing')
+    AND j.updated_at < ${quote(beforeIso)}
+    AND j.attempts < ${Number(maxAttempts) || 5}
+  ORDER BY j.updated_at ASC
+  LIMIT ${Math.max(1, Number(limitCount) || 3)};
+`
+
 export const selectSummaryJobSql = (projectPath, transcriptExternalId) => `
   SELECT * FROM memory_summary_jobs
   WHERE project_path = ${quote(projectPath)}
