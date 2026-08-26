@@ -2,12 +2,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { icon } from '../../ui/helpers/icons'
 import { reviewT } from './i18n'
 import { t as i18nT } from '../../i18n'
-import { redact } from '../../core/ai/agentClient'
-import { startAgent } from '../../adapters/agentRunner'
 import { agentLabel, type AgentType } from '../../core/ai/config'
-import { createContextProvider, type MultiAgentReviewRun } from '../../core/ai/techReview'
-import { buildReviewDocument, buildReviewOverview, isRetryableReviewError, resolveReviewFollowUpSession, type FollowUpSession } from './reviewDocument'
-import { buildReviewPrompt, buildReviewSynthesisPrompt } from './reviewPrompts'
+import type { MultiAgentReviewRun } from '../../core/ai/techReview'
+import { buildReviewDocument, buildReviewOverview, resolveReviewFollowUpSession, type FollowUpSession } from './reviewDocument'
+import { runReviewOnEngine } from './reviewEngineRun'
 import { askAi } from '../../ui/askAi'
 import { techReviewConversationKey } from '../../core/ai/chatHistory'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
@@ -114,7 +112,6 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       authorContext: reviewContext,
       files: lastFiles.map(file => ({ state: file.state, file: file.file, additions: file.additions, deletions: file.deletions })),
     })
-    const reviewChangedFiles = lastFiles.map(file => file.file)
     aiReviewBtn.disabled = true
     aiReviewBtn.title = reviewT('reviewing')
     const reviewEvidence: string[] = []
@@ -152,14 +149,17 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     }, 500)
     // Agents run in parallel, so track every in-flight handle (not just one) to
     // cancel them all on Stop.
-    const activeReviewHandles = new Set<ReturnType<typeof startAgent>>()
     let reviewStopped = false
-    stopReviewBtn.addEventListener('click', async () => {
-      if (reviewStopped || !activeReviewHandles.size) return
+    // Set while a run is live so Stop can reach the agents in the engine.
+    let cancelEngineRun: (() => void) | null = null
+    stopReviewBtn.addEventListener('click', () => {
+      if (reviewStopped || !cancelEngineRun) return
       reviewStopped = true
       stopReviewBtn.disabled = true
       progressStatus.textContent = reviewT('stoppingReview')
-      await Promise.all([...activeReviewHandles].map(handle => handle.cancel().catch(() => {})))
+      // Reaches the agents in the engine, not just this listener: they are
+      // minutes long and billable.
+      cancelEngineRun()
     })
 
     const showResult = (content: string, reviewCommit: string, followUpSession: FollowUpSession): void => {
@@ -224,126 +224,45 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       managedWorktree = branchContext.managed
       reviewCommit = branchContext.commit
       const snapshotBefore = await invoke<string>('review_snapshot', { repoPath: worktree })
-      progressStatus.textContent = reviewT('gatheringContext')
-      const contextProvider = createContextProvider({
-        lexis: async () => {
-          const content = await invoke<string>('review_lexis_context', {
-            path: worktree,
-            question: [
-              `Build a compact review bundle for: ${reviewChangedFiles.join(', ')}`,
-              'Return impact, callers, definitions, tests, risks and likely blast radius.',
-              'Prefer structured evidence over prose.',
-            ].join(' '),
-          })
-          if (!content) throw new Error('Lexis returned no context')
-          return [{ path: '<lexis>', content, reason: 'reference' as const }]
-        },
-        direct: async () => lastFiles.map(file => ({ path: file.file, content: file.chunk, reason: 'changed' as const })),
-      })
-      const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewOverview, changedFiles: reviewChangedFiles })
-      const sharedPrompt = await buildReviewPrompt({
-        project: reviewProjectName,
-        base: reviewBaseBranch,
-        diff: reviewOverview,
-        files: [],
-        contextSources: context.sources,
-        lexisContext: context.snippets.filter(snippet => snippet.reason !== 'changed').map(snippet => `${snippet.path}\n${snippet.content}`).join('\n\n'),
-      })
-      // One full-change prompt per agent: the whole diff + as much file content as
-      // fits inline (large files truncated; the agent reads the rest via its tools).
-      const ONE_PASS_CONTENT_BUDGET = 150_000
-      const perFileBudget = Math.max(800, Math.floor(ONE_PASS_CONTENT_BUDGET / Math.max(lastFiles.length, 1)))
-      const onePassPrompt = await buildReviewPrompt({
-        project: reviewProjectName,
-        base: reviewBaseBranch,
-        diff: reviewOverview,
-        files: lastFiles.map(file => ({
-          path: file.file,
-          content: file.chunk.length > perFileBudget
-            ? `${file.chunk.slice(0, perFileBudget)}\n[truncado; lee el resto en el worktree]`
-            : file.chunk,
-        })),
-        contextSources: context.sources,
-        lexisContext: context.snippets.filter(snippet => snippet.reason !== 'changed').map(snippet => `${snippet.path}\n${snippet.content}`).join('\n\n'),
-      })
-      const snapshotBeforeAgent = await invoke<string>('review_snapshot', { repoPath: worktree })
-      if (snapshotBeforeAgent !== snapshotBefore) throw new Error('Repository changed while preparing the review')
-      const MAX_REVIEW_ATTEMPTS = 2
-      const runReviewAgent = async (agent: AgentType, prompt: string, kind: 'analysis' | 'verification' = 'analysis'): Promise<MultiAgentReviewRun> => {
-        const label = agentLabel(agent)
-        const run: MultiAgentReviewRun = { label, agent }
-        const stageLabel = kind === 'verification' ? 'Síntesis final' : 'Análisis'
-        // A transient blip (rate limit, network, generic exit) used to kill the
-        // stage; retry it once. Timeouts are NOT retried (see isRetryableReviewError).
-        for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt++) {
-          if (reviewStopped) break
-          run.error = undefined
-          run.report = undefined
-          let output = ''
-          const handle = startAgent(
-            { agent, message: prompt, history: [], projectPath: worktree, review: true },
-            chunk => {
-              output += chunk
-              // Show the full process (bounded), and keep it pinned to the bottom.
-              progressStream.textContent = output.length > 40_000 ? '…' + output.slice(-40_000) : output
-              progressStream.scrollTop = progressStream.scrollHeight
-            },
-            sessionId => { run.sessionId = sessionId },
-            message => { run.error = message },
-            tool => {
-              const safeTool = redact(tool).slice(0, 1_000)
-              if (!reviewEvidence.includes(safeTool)) reviewEvidence.push(safeTool)
-              progressStatus.textContent = `${label} · ${stageLabel}: ${safeTool}`
-            },
-          )
-          activeReviewHandles.add(handle)
-          stopReviewBtn.disabled = false
-          try {
-            await handle.ready
-            // `completed` resolves right after the done/error callback has already
-            // run synchronously, so run.error / run.sessionId are set by this point.
-            await handle.completed
-            if (!run.error && !reviewStopped) {
-              const report = output.trim()
-              if (!report) throw new Error('El agente no devolvió ningún análisis')
-              run.report = report
-            }
-          } catch (error) {
-            run.error = error instanceof Error ? error.message : String(error)
-          } finally {
-            handle.unlisten()
-            activeReviewHandles.delete(handle)
-            if (!activeReviewHandles.size) stopReviewBtn.disabled = true
-          }
-          const worthAnotherAttempt = attempt < MAX_REVIEW_ATTEMPTS && !reviewStopped && !run.report && !!run.error
-          const shouldRetry = worthAnotherAttempt && await isRetryableReviewError(run.error as string)
-          if (!shouldRetry) break
-          await new Promise<void>(resolve => setTimeout(resolve, 3_000 * attempt))
-        }
-        return run
-      }
-
-      // Each agent does ONE full-change analysis (reading files itself), all in
-      // parallel. The final verifier then consolidates: the multi-agent pipeline is
-      // kept; only the per-agent file batching (that made it take hours) is gone.
+      // The agents, the parallelism, the per-file budget, the lexis context
+      // and the snapshots all live in `bento_review::engine` now — the same
+      // code the CLI and the phone client run. This used to be orchestrated
+      // here, and the two pipelines drifted apart feature by feature.
       progressStatus.textContent = reviewT('reviewingWithAgents', { count: reviewAgents.length })
-      const agentRuns = await Promise.all(reviewAgents.map(agent => runReviewAgent(agent, onePassPrompt, 'analysis')))
-      lastBatchRuns = agentRuns
-      reviewRuns.push(...agentRuns.filter(run => run.report || run.error))
-      persistReviewCheckpoint()
-
-      // With ≥2 agents, one of them consolidates everyone's analysis into a final
-      // report (the pipeline: each agent analyses, the last one synthesizes).
-      const reportsToSynthesize = reviewRuns.filter(run => run.report).map(run => ({ label: run.label, report: run.report as string }))
-      if (!reviewStopped && reportsToSynthesize.length >= 2) {
-        progressStatus.textContent = reviewT('finalSynthesis')
-        const verifierAgent = reviewAgents.at(-1) ?? reviewAgents[0]
-        const synthesisPrompt = await buildReviewSynthesisPrompt(sharedPrompt, reportsToSynthesize)
-        const synthesisRun = await runReviewAgent(verifierAgent, synthesisPrompt, 'verification')
-        synthesisRun.label = 'Síntesis final'
-        reviewRuns.push(synthesisRun)
-        persistReviewCheckpoint()
+      const engineRun = runReviewOnEngine(
+        {
+          id: `${reviewCommit || 'review'}-${Date.now()}`,
+          cwd: reviewRepoPath,
+          base: reviewBaseBranch,
+          branch: reviewBranch === reviewBaseBranch ? null : reviewBranch,
+          agents: reviewAgents,
+          // Carries the PR number, title and body alongside the author's
+          // note — the engine only sees the diff, so this is the only way
+          // any of it reaches the prompt.
+          context: reviewOverview,
+        },
+        {
+          // Checkpointed per stage, as before: a crash or a reload never costs
+          // the findings that were already in.
+          onRun: (_run, runs) => { lastBatchRuns = runs; persistReviewCheckpoint() },
+          onStatus: text => { progressStatus.textContent = text },
+          onChunk: text => {
+            progressStream.textContent = ((progressStream.textContent ?? '') + text).slice(-40_000)
+            progressStream.scrollTop = progressStream.scrollHeight
+          },
+        },
+      )
+      // Stop now reaches the agents themselves, not just this listener.
+      cancelEngineRun = engineRun.cancel
+      stopReviewBtn.disabled = false
+      try {
+        reviewRuns.push(...(await engineRun.done))
+      } finally {
+        cancelEngineRun = null
+        stopReviewBtn.disabled = true
       }
+      lastBatchRuns = reviewRuns
+      persistReviewCheckpoint()
 
       if (reviewStopped) throw new Error('Review stopped')
       const successfulRuns = reviewRuns.filter(run => run.report)
