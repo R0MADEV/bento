@@ -67,10 +67,13 @@ pub(super) struct ReviewState {
     /// cambiarte a ella.
     branch: Option<String>,
     agent: String,
-    /// When on, `start_run` reviews with all of `AGENTS` and synthesizes
-    /// their reports instead of just `agent` — mirrors desktop's "compare
-    /// agents" toggle (simplified: the TUI has room for an on/off switch,
-    /// not per-agent secondary/tertiary pickers).
+    /// The extra passes desktop calls "Secundario" and "Terciario". Only used
+    /// when `compare` is on; None is its "Ninguno".
+    secondary: Option<String>,
+    tertiary: Option<String>,
+    /// When on, `start_run` reviews with the primary plus whichever extra
+    /// passes are picked, and synthesizes their reports — desktop's "Comparar
+    /// agentes" toggle.
     compare: bool,
     /// Author-supplied focus notes injected into the review prompt —
     /// mirrors desktop's "Contexto para la review" textarea.
@@ -133,6 +136,8 @@ impl ReviewState {
             base: "main".to_string(),
             branch: None,
             agent: AGENTS[0].id.to_string(),
+            secondary: None,
+            tertiary: None,
             compare: false,
             context: String::new(),
             view: ReviewView::Browse,
@@ -329,11 +334,11 @@ impl ReviewState {
         self.load_pr_detail(pr).await;
     }
 
-    fn start_run(&mut self) {
+    pub(super) fn start_run(&mut self) {
         self.output.clear();
         self.session_id = None;
         self.session_agent = None;
-        let agents = if self.compare { bento_review::agents::ids().join(",") } else { self.agent.clone() };
+        let agents = self.review_agents();
         let mut body = json!({
             "id": "1", "cmd": "review.run", "cwd": self.cwd, "base": self.base,
             "context": self.context, "agents": agents,
@@ -375,6 +380,13 @@ impl ReviewState {
                 if let Some((agent, id)) = msg.strip_prefix("SESSION:").and_then(|rest| rest.split_once(':')) {
                     self.session_agent = Some(agent.to_string());
                     self.session_id = Some(id.to_string());
+                }
+                // A multi-agent run streams every report into one buffer. The
+                // sentinels are the only place that says where one pass ends
+                // and the next begins, so they become headings instead of
+                // being dropped after the progress line.
+                if let Some(heading) = batch_heading(&msg) {
+                    self.output.push_str(&heading);
                 }
                 self.last_progress = msg;
             }
@@ -431,6 +443,81 @@ impl ReviewState {
 }
 
 impl ReviewState {
+    /// Stops the review. Aborting the task drops its TcpStream, which closes
+    /// the connection, which is what the daemon reads as "cancel this run" —
+    /// so the agents are killed rather than left running for a stream nobody
+    /// is reading.
+    ///
+    /// The daemon notices on its next write, so an agent that has been silent
+    /// for a while keeps going until it says something. Better than the old
+    /// behaviour, which was to never stop at all.
+    pub(super) fn cancel_run(&mut self) {
+        if let Some(task) = self.stream_task.take() {
+            task.abort();
+        }
+        self.stream_rx = None;
+        self.running = false;
+        self.output.push_str("\n\n*(cancelado)*\n");
+    }
+
+    /// What the rail's action button does, which depends on what the button
+    /// currently says: starting a second run from a button labelled "Parar"
+    /// duplicates the work and the billing.
+    pub(super) fn toggle_run(&mut self) {
+        if self.running {
+            self.cancel_run();
+            return;
+        }
+        self.start_run();
+    }
+
+    /// The agents this run should use, as the daemon's comma-separated list.
+    /// Without compare it is just the primary; with it, every extra pass that
+    /// is set — repeats included, since asking one agent for several passes
+    /// is a deliberate choice and not a mistake to correct.
+    pub(super) fn review_agents(&self) -> String {
+        if !self.compare {
+            return self.agent.clone();
+        }
+        let mut agents = vec![self.agent.clone()];
+        agents.extend([&self.secondary, &self.tertiary].into_iter().flatten().cloned());
+        agents.join(",")
+    }
+
+    /// How many lines of fixed context the rail paints above its rows, taken
+    /// from the very list that gets rendered — counting them by hand here is
+    /// how the clicks drifted off by a row in the first place.
+    pub(super) fn header_lines(&self) -> u16 {
+        // The width only affects how the project path is shortened, never how
+        // many lines there are.
+        draw::sidebar_header(self, 24).len() as u16
+    }
+
+    /// How many rows the rail is showing for the tab that is open. The click
+    /// handler needs it to reject clicks past the end of the list.
+    pub(super) fn sidebar_len(&self) -> usize {
+        match self.sidebar_tab {
+            SidebarTab::Projects => self.projects.len(),
+            SidebarTab::Branches => self.visible_branches().len(),
+            SidebarTab::Prs => self.prs.len(),
+            SidebarTab::Checkpoints => self.checkpoints.len(),
+        }
+    }
+
+    /// Moves the selection of the open tab, ignoring a row that is not there.
+    /// Each tab keeps its own cursor, so switching back finds it where it was.
+    pub(super) fn select_sidebar(&mut self, index: usize) {
+        if index >= self.sidebar_len() {
+            return;
+        }
+        match self.sidebar_tab {
+            SidebarTab::Projects => self.projects_selected = index,
+            SidebarTab::Branches => self.branches_selected = index,
+            SidebarTab::Prs => self.prs_selected = index,
+            SidebarTab::Checkpoints => self.checkpoints_selected = index,
+        }
+    }
+
     /// Las ramas que pasan el filtro escrito con `/`.
     pub(super) fn visible_branches(&self) -> Vec<&String> {
         let needle = self.search.to_lowercase();
@@ -448,6 +535,25 @@ impl ReviewState {
     }
 }
 
+/// The heading for a `BATCH:i/n:agent` or `SYNTHESIS` sentinel, or None when
+/// there is nothing worth announcing — a single-pass run has no other report
+/// to be told apart from.
+fn batch_heading(msg: &str) -> Option<String> {
+    if msg == "SYNTHESIS" {
+        // Same wording as the desktop panel's own label.
+        return Some("\n\n---\n\n# Síntesis final\n\n".to_string());
+    }
+    let rest = msg.strip_prefix("BATCH:")?;
+    let (counts, label) = rest.split_once(':')?;
+    let (_, total) = counts.split_once('/')?;
+    if total == "1" {
+        return None;
+    }
+    // The engine's own label already says whether this is an agent's pass or
+    // a slice of the diff, so it is repeated verbatim rather than reworded.
+    Some(format!("\n\n---\n\n# {label}\n\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +563,178 @@ mod tests {
         state.branches = branches.iter().map(|b| b.to_string()).collect();
         state.search = search.to_string();
         state
+    }
+
+    #[test]
+    fn the_rail_action_cancels_while_running_instead_of_starting_another() {
+        // The button reads "■ Parar" while running; firing another run there
+        // would duplicate the work, the billing and the output.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.running = true;
+
+        state.toggle_run();
+
+        assert!(!state.running, "la acción tenía que parar la review en curso");
+        assert!(state.output.contains("cancelado"));
+    }
+
+    // start_run() spawns the stream task, so this one needs a runtime.
+    #[tokio::test]
+    async fn the_rail_action_starts_a_run_when_nothing_is_running() {
+        let mut state = ReviewState::new("/repo".to_string());
+
+        state.toggle_run();
+
+        assert!(state.running);
+    }
+
+    #[test]
+    fn a_single_agent_run_sends_only_that_agent() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.agent = "claude".into();
+        state.secondary = Some("codex".into());
+        state.compare = false;
+
+        assert_eq!(state.review_agents(), "claude", "sin comparar, los secundarios no corren");
+    }
+
+    #[test]
+    fn comparing_sends_the_primary_and_every_extra_pass_in_order() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.agent = "claude".into();
+        state.secondary = Some("codex".into());
+        state.tertiary = Some("gemini".into());
+        state.compare = true;
+
+        assert_eq!(state.review_agents(), "claude,codex,gemini");
+    }
+
+    #[test]
+    fn an_unset_secondary_does_not_leave_a_hole_in_the_list() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.agent = "claude".into();
+        state.secondary = None;
+        state.tertiary = Some("gemini".into());
+        state.compare = true;
+
+        assert_eq!(state.review_agents(), "claude,gemini");
+    }
+
+    #[test]
+    fn comparing_with_nothing_extra_still_runs_the_primary() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.agent = "claude".into();
+        state.compare = true;
+
+        assert_eq!(state.review_agents(), "claude", "nunca una lista vacía");
+    }
+
+    #[test]
+    fn the_same_agent_picked_twice_runs_twice() {
+        // Deliberately picking one agent for several passes is a real way to
+        // use this — the reports differ run to run. Deduplicating silently
+        // turned three chosen passes into one, and the engine then split the
+        // diff instead, which looks the same on screen but is not.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.agent = "opencode".into();
+        state.secondary = Some("opencode".into());
+        state.tertiary = Some("opencode".into());
+        state.compare = true;
+
+        assert_eq!(state.review_agents(), "opencode,opencode,opencode");
+    }
+
+    #[test]
+    fn each_agents_report_is_labelled_in_the_output() {
+        // Three passes concatenated with no heading are indistinguishable —
+        // you cannot tell whose verdict you are reading, or whether an agent
+        // ran at all.
+        let mut state = ReviewState::new("/repo".to_string());
+
+        state.handle_stream_event(ReviewEvent::Progress("BATCH:1/3:Agente 1/3 (claude)".into()));
+        state.handle_stream_event(ReviewEvent::Content("veredicto uno".into()));
+        state.handle_stream_event(ReviewEvent::Progress("BATCH:2/3:Agente 2/3 (codex)".into()));
+        state.handle_stream_event(ReviewEvent::Content("veredicto dos".into()));
+
+        assert!(state.output.contains("claude"), "falta quién escribió el primero:\n{}", state.output);
+        assert!(state.output.contains("codex"), "falta quién escribió el segundo");
+        assert!(state.output.find("claude") < state.output.find("veredicto uno"));
+        assert!(state.output.find("veredicto uno") < state.output.find("codex"));
+    }
+
+    #[test]
+    fn a_split_diff_is_not_dressed_up_as_several_agents() {
+        // One agent reading a big diff in three slices must not read as three
+        // agents having run — that is exactly the claim that cannot be made
+        // from the screen otherwise.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.handle_stream_event(ReviewEvent::Progress("BATCH:1/3:Batch 1/3".into()));
+
+        assert!(state.output.contains("Batch 1/3"));
+        assert!(!state.output.to_lowercase().contains("agente"), "no hubo tres agentes:\n{}", state.output);
+    }
+
+    #[test]
+    fn the_synthesis_says_it_is_the_synthesis() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.handle_stream_event(ReviewEvent::Progress("SYNTHESIS".into()));
+
+        assert!(state.output.to_lowercase().contains("síntesis") || state.output.to_lowercase().contains("sintesis"));
+    }
+
+    #[test]
+    fn a_single_pass_run_is_not_cluttered_with_a_heading() {
+        // With one agent there is nothing to tell apart.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.handle_stream_event(ReviewEvent::Progress("BATCH:1/1:Agente 1/1 (claude)".into()));
+
+        assert!(state.output.is_empty(), "una sola pasada no necesita cabecera");
+    }
+
+    #[test]
+    fn the_click_geometry_matches_what_the_rail_actually_paints() {
+        // These two drifting apart is the whole bug: the rail painted nine or
+        // ten header lines while hit-testing assumed zero, so every click in
+        // Review landed on the wrong row.
+        let mut state = ReviewState::new("/repo".to_string());
+        assert_eq!(state.header_lines() as usize, draw::sidebar_header(&state, 24).len());
+
+        // A status line appears and disappears, and the count has to follow.
+        state.status = "error: lo que sea".into();
+        assert_eq!(state.header_lines() as usize, draw::sidebar_header(&state, 24).len());
+    }
+
+    #[test]
+    fn the_rail_reports_the_length_of_whichever_tab_is_open() {
+        // The click handler needs this to know which rows exist; reporting the
+        // wrong tab's length would let clicks land on rows that are not there.
+        let mut state = state_with(&["main", "feat/a", "fix/b"], "");
+        state.sidebar_tab = SidebarTab::Branches;
+        assert_eq!(state.sidebar_len(), 3);
+
+        state.sidebar_tab = SidebarTab::Prs;
+        assert_eq!(state.sidebar_len(), 0);
+    }
+
+    #[test]
+    fn selecting_from_the_rail_moves_the_open_tab_only() {
+        let mut state = state_with(&["main", "feat/a", "fix/b"], "");
+        state.sidebar_tab = SidebarTab::Branches;
+
+        state.select_sidebar(2);
+
+        assert_eq!(state.branches_selected, 2);
+        assert_eq!(state.prs_selected, 0, "las otras pestañas no se mueven");
+    }
+
+    #[test]
+    fn a_selection_past_the_end_is_ignored_rather_than_stored() {
+        let mut state = state_with(&["main"], "");
+        state.sidebar_tab = SidebarTab::Branches;
+
+        state.select_sidebar(7);
+
+        assert_eq!(state.branches_selected, 0);
     }
 
     #[test]

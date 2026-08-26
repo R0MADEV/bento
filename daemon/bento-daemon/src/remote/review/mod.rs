@@ -125,10 +125,15 @@ pub async fn review_handler(
 
 /// Runs a full review and forwards it to the client as the flat text stream
 /// this protocol has always spoken: control markers in `[BRACKETS]`, agent
-/// text as-is. The review itself (validation, batching, multi-agent,
-/// synthesis) lives in `bento_review::engine`, shared with the desktop app.
+/// text as-is. The review itself (validation, parallel analyses, verification)
+/// lives in `bento_review::engine`, shared with the CLI, the phone client and
+/// the desktop app (`review_run`).
+///
+/// A client that goes away cancels the review. The agents are minutes long and
+/// billable: leaving them running for a stream nobody reads is what made "c"
+/// in the CLI say "cancelado" while the work carried on.
 pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>, context: String, agents_raw: String, tx: tokio::sync::mpsc::Sender<String>) {
-    use bento_review::engine::{run_review as engine_run, Agents, ReviewEvent, ReviewRequest};
+    use bento_review::engine::{run_review_cancellable as engine_run, Agents, ReviewEvent, ReviewRequest};
 
     let request = ReviewRequest {
         cwd,
@@ -137,23 +142,28 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
         agents: bento_review::engine::parse_agents(&agents_raw),
     };
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<ReviewEvent>(64);
+    let cancel = bento_review::engine::CancelToken::default();
+    let on_disconnect = cancel.clone();
     let forwarding = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let line = match event {
                 ReviewEvent::Content(text) => text,
                 ReviewEvent::Tool(tool) => format!("[TOOL] {tool}"),
-                ReviewEvent::Batch { index, total } => format!("[BATCH:{index}/{total}]"),
+                ReviewEvent::Batch { index, total, label } => format!("[BATCH:{index}/{total}:{label}]"),
                 ReviewEvent::Synthesis => "[SYNTHESIS]".to_string(),
                 ReviewEvent::Session { agent, id } => format!("[SESSION:{agent}:{id}]"),
                 ReviewEvent::Error(message) => format!("[ERROR] {message}"),
                 ReviewEvent::Done => "[DONE]".to_string(),
             };
             if tx.send(line).await.is_err() {
+                // The client is gone: stop the agents rather than finish a
+                // report nobody will read.
+                on_disconnect.cancel();
                 break;
             }
         }
     });
-    engine_run(&request, branch.as_deref(), &Agents, &event_tx).await;
+    engine_run(&request, branch.as_deref(), &Agents, &event_tx, &cancel).await;
     drop(event_tx);
     let _ = forwarding.await;
 }

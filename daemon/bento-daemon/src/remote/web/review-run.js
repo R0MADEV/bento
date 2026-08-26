@@ -193,7 +193,7 @@ function startReview(){
       return;
     }
 
-    const batchMatch=data.match(/^\[BATCH:(\d+)\/(\d+)\]$/);
+    const batchMatch=data.match(/^\[BATCH:(\d+)\/(\d+)(?::([^\]]+))?\]$/);
     if(batchMatch){
       const n=parseInt(batchMatch[1]),total=parseInt(batchMatch[2]);
       if(batchBuf.trim()){agentReports.push(batchBuf);saveReviewCheckpoint(dir,base,batchBuf);}

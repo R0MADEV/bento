@@ -4,7 +4,7 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use serde_json::{json, Value};
 
-use super::format::next_agent;
+use super::format::{next_agent, next_optional_agent};
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
 
 impl ReviewState {
@@ -39,6 +39,18 @@ impl ReviewState {
             KeyCode::Right => { self.focus = Focus::Files; false }
             KeyCode::Char('r') => { self.start_run(); false }
             KeyCode::Char('g') => { self.agent = next_agent(&self.agent); false }
+            // The extra passes only mean anything while comparing, so picking
+            // one turns compare on rather than silently doing nothing.
+            KeyCode::Char('G') => {
+                self.secondary = next_optional_agent(self.secondary.as_deref());
+                self.compare = true;
+                false
+            }
+            KeyCode::Char('t') => {
+                self.tertiary = next_optional_agent(self.tertiary.as_deref());
+                self.compare = true;
+                false
+            }
             KeyCode::F(5) => { self.refresh().await; false }
             KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
@@ -265,13 +277,7 @@ impl ReviewState {
                 self.input.clear();
                 false
             }
-            KeyCode::Char('c') if self.running => {
-                if let Some(task) = self.stream_task.take() { task.abort(); }
-                self.stream_rx = None;
-                self.running = false;
-                self.output.push_str("\n\n*(cancelado)*\n");
-                false
-            }
+            KeyCode::Char('c') if self.running => { self.cancel_run(); false }
             KeyCode::Tab => true,
             KeyCode::Esc => {
                 self.view = ReviewView::Browse;
