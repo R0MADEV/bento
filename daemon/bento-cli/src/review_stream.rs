@@ -7,6 +7,7 @@
 
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use bento_review::stream::{parse_stream_line, StreamLine};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -58,9 +59,20 @@ async fn run(body: Value, tx: mpsc::UnboundedSender<ReviewEvent>) {
         match value.get("event").and_then(Value::as_str) {
             Some("review.output") => {
                 if let Some(chunk) = value.get("data").and_then(Value::as_str) {
-                    match classify_review_chunk(chunk) {
-                        ReviewChunk::Stdout(text) => { let _ = tx.send(ReviewEvent::Content(text.to_string())); }
-                        ReviewChunk::Stderr(msg) => { let _ = tx.send(ReviewEvent::Progress(msg)); }
+                    // Parsed by the shared crate, so the CLI, the phone client
+                    // and the desktop app cannot drift on the wire format.
+                    match parse_stream_line(chunk) {
+                        StreamLine::Text(text) => { let _ = tx.send(ReviewEvent::Content(text)); }
+                        StreamLine::Batch { index, total, label } => {
+                            let _ = tx.send(ReviewEvent::Progress(format!("BATCH:{index}/{total}:{label}")));
+                        }
+                        StreamLine::Synthesis => { let _ = tx.send(ReviewEvent::Progress("SYNTHESIS".into())); }
+                        StreamLine::Session { agent, id } => {
+                            let _ = tx.send(ReviewEvent::Progress(format!("SESSION:{agent}:{id}")));
+                        }
+                        StreamLine::Tool(tool) => { let _ = tx.send(ReviewEvent::Progress(tool)); }
+                        StreamLine::Error(message) => { let _ = tx.send(ReviewEvent::Progress(format!("error: {message}"))); }
+                        StreamLine::Done => {}
                     }
                 }
             }
@@ -71,63 +83,4 @@ async fn run(body: Value, tx: mpsc::UnboundedSender<ReviewEvent>) {
     let _ = tx.send(ReviewEvent::Done);
 }
 
-#[derive(Debug, PartialEq)]
-enum ReviewChunk<'a> {
-    Stderr(String),
-    Stdout(&'a str),
-}
 
-/// Routes the protocol's own control sentinels (batch/synthesis progress,
-/// the session-id marker, error text) away from the actual review content —
-/// mirrors the filtering `review.js` already does for the web panel.
-fn classify_review_chunk(chunk: &str) -> ReviewChunk<'_> {
-    let is_batch_or_session_marker = (chunk.starts_with("[BATCH:") || chunk.starts_with("[SESSION:"))
-        && chunk.ends_with(']');
-    if is_batch_or_session_marker || chunk == "[SYNTHESIS]" {
-        return ReviewChunk::Stderr(chunk.trim_start_matches('[').trim_end_matches(']').to_string());
-    }
-    if let Some(msg) = chunk.strip_prefix("[ERROR] ") {
-        return ReviewChunk::Stderr(format!("error: {msg}"));
-    }
-    // Las herramientas son progreso, no informe: enseñan qué está mirando el
-    // agente sin ensuciar el texto de la review.
-    if let Some(tool) = chunk.strip_prefix("[TOOL] ") {
-        return ReviewChunk::Stderr(tool.to_string());
-    }
-    ReviewChunk::Stdout(chunk)
-}
-
-#[cfg(test)]
-mod review_chunk_tests {
-    use super::*;
-
-    #[test]
-    fn batch_marker_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[BATCH:1/2]"), ReviewChunk::Stderr("BATCH:1/2".into()));
-    }
-
-    #[test]
-    fn session_marker_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[SESSION:claude:abc]"), ReviewChunk::Stderr("SESSION:claude:abc".into()));
-    }
-
-    #[test]
-    fn synthesis_marker_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[SYNTHESIS]"), ReviewChunk::Stderr("SYNTHESIS".into()));
-    }
-
-    #[test]
-    fn error_marker_is_prefixed_and_goes_to_stderr() {
-        assert_eq!(classify_review_chunk("[ERROR] algo falló"), ReviewChunk::Stderr("error: algo falló".into()));
-    }
-
-    #[test]
-    fn plain_text_goes_to_stdout() {
-        assert_eq!(classify_review_chunk("## Título"), ReviewChunk::Stdout("## Título"));
-    }
-
-    #[test]
-    fn bracketed_text_that_is_not_a_known_marker_goes_to_stdout() {
-        assert_eq!(classify_review_chunk("[foo]"), ReviewChunk::Stdout("[foo]"));
-    }
-}
