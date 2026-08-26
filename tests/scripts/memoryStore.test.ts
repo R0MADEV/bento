@@ -11,6 +11,7 @@ import {
   normalizeTranscriptEntry,
   rowToEntry,
   selectByExternalIdSql,
+  claimSummaryJobSql,
   selectStaleSummaryJobsSql,
   upsertTranscriptSql,
   upsertByExternalIdSql,
@@ -217,6 +218,55 @@ describe('memoryStore', () => {
       sqlite(dbPath, upsertSummaryJobSql({ ...base, status: 'pending', error: '' }))
       const rows = JSON.parse(sqlite(dbPath, 'SELECT status, attempts FROM memory_summary_jobs;', true))
       expect(rows).toEqual([{ status: 'failed', attempts: 1 }])
+    })
+  })
+
+  describe('claimSummaryJobSql', () => {
+    const pendingJob = (dbPath: string, updatedAt: string) => {
+      sqlite(dbPath, upsertSummaryJobSql({
+        id: 'job-1', projectPath: '/tmp/bento', agent: 'codex', sessionId: 'abc',
+        transcriptExternalId: 'codex:session-transcript:abc', transcriptHash: 'hash-1',
+        status: 'pending', error: '', attempts: 0, metadata: {},
+        createdAt: '2026-08-06T00:00:00.000Z', updatedAt,
+      }))
+    }
+
+    it('claims a job exactly once', () => {
+      withDb(dbPath => {
+        const seen = '2026-08-06T00:00:00.000Z'
+        pendingJob(dbPath, seen)
+
+        const first = sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', seen))
+        // A second sweep that read the same row before either claimed it: the
+        // witness no longer matches, so it gets nothing and the summarizer —
+        // which is billable — runs once.
+        const second = sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', seen))
+
+        expect(first.trim()).toBe('1')
+        expect(second.trim()).toBe('0')
+      })
+    })
+
+    it('marks the claimed job as processing', () => {
+      withDb(dbPath => {
+        const seen = '2026-08-06T00:00:00.000Z'
+        pendingJob(dbPath, seen)
+
+        sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', seen))
+
+        const rows = JSON.parse(sqlite(dbPath, 'SELECT status FROM memory_summary_jobs;', true))
+        expect(rows).toEqual([{ status: 'processing' }])
+      })
+    })
+
+    it('does not claim a job that moved on since it was read', () => {
+      withDb(dbPath => {
+        pendingJob(dbPath, '2026-08-06T00:00:00.000Z')
+
+        const claimed = sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', 'otra-fecha'))
+
+        expect(claimed.trim()).toBe('0')
+      })
     })
   })
 

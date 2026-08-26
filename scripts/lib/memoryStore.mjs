@@ -262,8 +262,23 @@ export const updateSummaryJobSql = (projectPath, transcriptExternalId, status, e
 // already joined with their transcript: everything needed to retry the
 // summary without another query. `maxAttempts` cuts off infinite retries for
 // a job that will never be summarizable.
+// Takes a stale job only if nobody took it first. `seenUpdatedAt` is the
+// value the sweep read: another worker claiming the row moves it, so the
+// UPDATE matches nothing and `changes()` comes back 0. Selecting and then
+// marking as processing were two steps, so two hooks running at once could
+// both take the same job and pay for the summarizer twice.
+export const claimSummaryJobSql = (projectPath, transcriptExternalId, seenUpdatedAt) => `
+  UPDATE memory_summary_jobs SET status = 'processing', error = '', updated_at = ${quote(now())}
+  WHERE project_path = ${quote(projectPath)}
+    AND transcript_external_id = ${quote(transcriptExternalId)}
+    AND updated_at = ${quote(seenUpdatedAt)}
+    AND status IN ('pending', 'processing');
+  SELECT changes();
+`
+
 export const selectStaleSummaryJobsSql = (beforeIso, maxAttempts, limitCount = 3) => `
   SELECT j.project_path, j.agent, j.session_id, j.transcript_external_id, j.metadata_json,
+         j.updated_at AS seen_updated_at,
          t.id AS transcript_id, t.title AS transcript_title, t.transcript AS transcript_text,
          t.source AS transcript_source, t.created_at AS transcript_created_at
   FROM memory_summary_jobs j

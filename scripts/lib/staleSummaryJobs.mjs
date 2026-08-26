@@ -1,4 +1,4 @@
-import { now, quote, selectStaleSummaryJobsSql } from './memoryStore.mjs'
+import { claimSummaryJobSql, selectStaleSummaryJobsSql } from './memoryStore.mjs'
 import { generateTranscriptSummary } from './transcriptSummary.mjs'
 import { resolveSummaryJob } from './summaryJobResolver.mjs'
 
@@ -27,15 +27,24 @@ export async function sweepStaleSummaryJobs({
   const rows = await runSql(selectStaleSummaryJobsSql(before, maxAttempts, batchSize), true)
   const results = []
   for (const row of rows || []) {
+    // Claimed before anything expensive runs: two hooks can pick the same row
+    // out of the select, and only the one that wins the claim may summarize.
+    // The loser skipping it is the point — the summarizer is billable.
+    if (!(await claimed(row, runSql))) continue
     results.push(await retryOne(row, { runSql, generateSummary }))
   }
   return results
 }
 
-async function retryOne(row, { runSql, generateSummary }) {
-  await runSql(`UPDATE memory_summary_jobs SET status = 'processing', error = '', updated_at = ${quote(now())}
-    WHERE project_path = ${quote(row.project_path)} AND transcript_external_id = ${quote(row.transcript_external_id)};`)
+/// Whether this sweep took the job. sqlite reports the affected rows through
+/// `changes()`, which is 0 when another worker moved it first.
+async function claimed(row, runSql) {
+  const sql = claimSummaryJobSql(row.project_path, row.transcript_external_id, row.seen_updated_at)
+  const rows = await runSql(sql, true)
+  return Number(rows?.[0]?.['changes()'] ?? rows?.[0]?.changes ?? 0) === 1
+}
 
+async function retryOne(row, { runSql, generateSummary }) {
   const transcript = {
     id: row.transcript_id,
     projectPath: row.project_path,

@@ -17,15 +17,27 @@ const MIN_COLS: u16 = 2;
 
 pub(crate) struct Screen {
     parser: vt100::Parser,
+    wants_mouse: bool,
 }
 
 impl Screen {
     pub(crate) fn new(rows: u16, cols: u16) -> Self {
-        Self { parser: vt100::Parser::new(rows.max(MIN_ROWS), cols.max(MIN_COLS), 0) }
+        Self { parser: vt100::Parser::new(rows.max(MIN_ROWS), cols.max(MIN_COLS), 0), wants_mouse: false }
     }
 
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
+        if let Some(wanted) = mouse_mode_change(bytes) {
+            self.wants_mouse = wanted;
+        }
         self.parser.process(bytes);
+    }
+
+    /// Whether the remote program asked for the mouse. While it has it the
+    /// panel forwards clicks instead of using them for its own divider —
+    /// vim and htop are unusable without it, and vt100 does not track the
+    /// mode, so it is read off the stream here.
+    pub(crate) fn wants_mouse(&self) -> bool {
+        self.wants_mouse
     }
 
     /// Resizes the emulated screen, telling the caller whether anything
@@ -109,6 +121,50 @@ fn convert(color: vt100::Color) -> Option<Color> {
     }
 }
 
+/// The last mouse-tracking mode change in `bytes`, if any. Programs enable
+/// tracking with `CSI ? <mode> h` and drop it with `l`; the modes that matter
+/// are 1000 (clicks), 1002/1003 (drag and motion) and 1006 (SGR encoding).
+fn mouse_mode_change(bytes: &[u8]) -> Option<bool> {
+    const MODES: [&[u8]; 4] = [b"1000", b"1002", b"1003", b"1006"];
+    let mut last = None;
+    let mut rest = bytes;
+    while let Some(at) = rest.windows(2).position(|w| w == b"\x1b[") {
+        let after = &rest[at + 2..];
+        if after.first() == Some(&b'?') {
+            let body = &after[1..];
+            if let Some(end) = body.iter().position(|b| *b == b'h' || *b == b'l') {
+                if MODES.iter().any(|mode| body[..end].split(|b| *b == b';').any(|part| part == *mode)) {
+                    last = Some(body[end] == b'h');
+                }
+            }
+        }
+        rest = after;
+    }
+    last
+}
+
+/// One mouse event as the SGR (1006) encoding a modern program expects:
+/// `CSI < button ; col ; row M` for a press, `m` for a release. Coordinates
+/// are 1-based and relative to the pane, not the window.
+pub(crate) fn encode_mouse(kind: crossterm::event::MouseEventKind, column: u16, row: u16) -> Option<Vec<u8>> {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let (button, press) = match kind {
+        MouseEventKind::Down(MouseButton::Left) => (0, true),
+        MouseEventKind::Down(MouseButton::Middle) => (1, true),
+        MouseEventKind::Down(MouseButton::Right) => (2, true),
+        MouseEventKind::Up(MouseButton::Left) => (0, false),
+        MouseEventKind::Up(MouseButton::Middle) => (1, false),
+        MouseEventKind::Up(MouseButton::Right) => (2, false),
+        // 32 is the drag bit; wheel events are 64 and 65.
+        MouseEventKind::Drag(MouseButton::Left) => (32, true),
+        MouseEventKind::ScrollUp => (64, true),
+        MouseEventKind::ScrollDown => (65, true),
+        _ => return None,
+    };
+    let final_byte = if press { 'M' } else { 'm' };
+    Some(format!("\x1b[<{button};{};{}{final_byte}", column + 1, row + 1).into_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +187,54 @@ mod tests {
         (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect())
             .collect()
+    }
+
+    #[test]
+    fn a_program_that_asks_for_the_mouse_gets_it() {
+        let mut screen = Screen::new(10, 20);
+        assert!(!screen.wants_mouse(), "el panel se queda el ratón por defecto");
+
+        screen.feed(b"\x1b[?1002h\x1b[?1006h");
+        assert!(screen.wants_mouse());
+
+        // vim turns it off on exit; the panel takes it back.
+        screen.feed(b"\x1b[?1002l\x1b[?1006l");
+        assert!(!screen.wants_mouse());
+    }
+
+    #[test]
+    fn an_unrelated_escape_does_not_hand_over_the_mouse() {
+        let mut screen = Screen::new(10, 20);
+        // Alternate screen and cursor hiding are not mouse modes.
+        screen.feed(b"\x1b[?1049h\x1b[?25l");
+        assert!(!screen.wants_mouse());
+    }
+
+    #[test]
+    fn a_click_is_encoded_where_the_program_expects_it() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        // SGR is 1-based, and the coordinates are the pane's, not the window's.
+        assert_eq!(
+            encode_mouse(MouseEventKind::Down(MouseButton::Left), 4, 9).unwrap(),
+            b"\x1b[<0;5;10M".to_vec()
+        );
+        assert_eq!(
+            encode_mouse(MouseEventKind::Up(MouseButton::Left), 0, 0).unwrap(),
+            b"\x1b[<0;1;1m".to_vec(),
+        );
+    }
+
+    #[test]
+    fn the_wheel_reaches_the_program_too() {
+        use crossterm::event::MouseEventKind;
+        assert!(encode_mouse(MouseEventKind::ScrollUp, 0, 0).unwrap().starts_with(b"\x1b[<64;"));
+        assert!(encode_mouse(MouseEventKind::ScrollDown, 0, 0).unwrap().starts_with(b"\x1b[<65;"));
+    }
+
+    #[test]
+    fn an_event_with_no_encoding_is_dropped_rather_than_faked() {
+        use crossterm::event::MouseEventKind;
+        assert!(encode_mouse(MouseEventKind::Moved, 0, 0).is_none());
     }
 
     #[test]

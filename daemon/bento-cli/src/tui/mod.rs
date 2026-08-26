@@ -206,6 +206,26 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                 }
                             }
                             Event::Key(key) => session.send_key(key),
+                            // Handed to the remote program while it has asked
+                            // for the mouse: vim and htop are unusable without
+                            // it. The rail's own mouse waits until they give
+                            // it back.
+                            Event::Mouse(mouse) if screen.wants_mouse() => {
+                                let area = terminals::terminal_area(
+                                    terminal.size()?.into(), sidebar_width, &status,
+                                );
+                                let inside = mouse.column >= area.x
+                                    && mouse.row >= area.y
+                                    && mouse.column < area.x + area.width
+                                    && mouse.row < area.y + area.height;
+                                if inside {
+                                    if let Some(bytes) = screen::encode_mouse(
+                                        mouse.kind, mouse.column - area.x, mouse.row - area.y,
+                                    ) {
+                                        session.write(bytes);
+                                    }
+                                }
+                            }
                             // The rail is still on screen while attached, so
                             // it still folds, resizes and — clicking another
                             // row — switches to that terminal.
@@ -296,7 +316,16 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             }
                             continue;
                         }
-                        if review.handle_event(event).await {
+                        // Painted before the call, because the call itself
+                        // blocks this loop: without a frame in between, a slow
+                        // daemon looks like a hang. The header's own count
+                        // follows the flag, so the rows stay where the click
+                        // handler expects them.
+                        review.loading = true;
+                        terminal.draw(|f| review::draw(f, &review, sidebar_width))?;
+                        let leave = review.handle_event(event).await;
+                        review.loading = false;
+                        if leave {
                             mode = Mode::List;
                         }
                     }

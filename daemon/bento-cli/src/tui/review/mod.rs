@@ -104,6 +104,11 @@ pub(super) struct ReviewState {
     session_id: Option<String>,
     session_agent: Option<String>,
 
+    /// True while a daemon call is in flight. The panel awaits those on its
+    /// event loop, so it cannot redraw or take keys until one returns; saying
+    /// so is the difference between "working" and "it froze".
+    pub(super) loading: bool,
+
     /// Last failed daemon call, shown in the sidebar header. Without it an
     /// old daemon that doesn't know a `review.*`/`projects.*` command is
     /// indistinguishable from "este proyecto no tiene ramas".
@@ -158,6 +163,7 @@ impl ReviewState {
             is_run_stream: false,
             session_id: None,
             session_agent: None,
+            loading: false,
             status: String::new(),
             projects: Vec::new(),
             projects_selected: 0,
@@ -701,6 +707,10 @@ mod tests {
 
         // A status line appears and disappears, and the count has to follow.
         state.status = "error: lo que sea".into();
+        assert_eq!(state.header_lines() as usize, draw::sidebar_header(&state, 24).len());
+
+        // So does the loading line, which is the newest way to shift the rows.
+        state.loading = true;
         assert_eq!(state.header_lines() as usize, draw::sidebar_header(&state, 24).len());
     }
 

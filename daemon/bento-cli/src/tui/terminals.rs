@@ -221,7 +221,12 @@ impl Session {
     }
 
     pub(super) fn send_key(&self, key: KeyEvent) {
-        let bytes = key_event_to_bytes(key);
+        self.write(key_event_to_bytes(key));
+    }
+
+    /// Raw bytes to the pty — the encoded mouse events go through here, since
+    /// they are input like any other.
+    pub(super) fn write(&self, bytes: Vec<u8>) {
         if bytes.is_empty() {
             return;
         }

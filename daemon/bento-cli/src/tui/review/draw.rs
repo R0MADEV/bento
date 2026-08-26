@@ -3,8 +3,8 @@
 
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use serde_json::Value;
 
 use super::format::short_path;
@@ -40,10 +40,7 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
     if matches!(review.input_purpose, Some(InputPurpose::Context)) {
         let bottom = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area)[1];
         let input = Paragraph::new(review.input.as_str()).block(
-            Block::default()
-                .title("Contexto para la review (Enter guardar, Esc cancelar)")
-                .borders(Borders::ALL)
-                .border_style(FOCUSED),
+            pane_block("Contexto para la review (Enter guardar, Esc cancelar)").border_style(FOCUSED),
         );
         frame.render_widget(input, bottom);
         // A real cursor rather than a drawn "▏": on a tall screen the box
@@ -98,6 +95,9 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
             if review.search.is_empty() { "—".to_string() } else { review.search.clone() },
         )),
     ];
+    if review.loading {
+        header.push(Line::from("Cargando…").style(FOCUSED));
+    }
     if !review.status.is_empty() {
         header.push(Line::from(review.status.clone()).style(ERROR));
     }
@@ -149,6 +149,17 @@ pub(crate) fn sidebar_rows(review: &ReviewState) -> (String, Vec<SidebarItem>, u
     }
 }
 
+/// A framed box in the panel's own style, for the places that need a `Block`
+/// rather than `Pane`'s inner area — an input, or a paragraph that scrolls.
+/// Square, undimmed borders here read as a different application.
+fn pane_block(title: &str) -> Block<'static> {
+    Block::default()
+        .title(Line::from(Span::styled(format!(" {title} "), DIM)))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(DIM)
+}
+
 fn on_off(v: bool) -> &'static str {
     if v { "sí" } else { "no" }
 }
@@ -189,11 +200,12 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
 }
 
 fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
+    let inner = Pane { title: "", hint: "↑/↓ scroll · Esc volver", focused: true }
+        .render(frame, frame.area());
     let paragraph = Paragraph::new(review.filtered(&review.file_diff))
         .wrap(Wrap { trim: false })
-        .scroll((review.file_scroll, 0))
-        .block(Block::default().title("↑/↓ scroll · Esc: volver").borders(Borders::ALL));
-    frame.render_widget(paragraph, frame.area());
+        .scroll((review.file_scroll, 0));
+    frame.render_widget(paragraph, inner);
 }
 
 fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
@@ -203,7 +215,7 @@ fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
     } else {
         review.pr_status.clone()
     };
-    let block = Block::default().title(format!("PR — {title}")).borders(Borders::ALL);
+    let block = pane_block(&title);
 
     if let Some(label) = pr_input_label(review) {
         let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
@@ -213,7 +225,7 @@ fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
             .block(block);
         frame.render_widget(paragraph, chunks[0]);
         let input = Paragraph::new(format!("{}▏", review.input))
-            .block(Block::default().title(label).borders(Borders::ALL));
+            .block(pane_block(label));
         frame.render_widget(input, chunks[1]);
     } else {
         let paragraph = Paragraph::new(review.filtered(&review.pr_detail))
@@ -243,7 +255,7 @@ fn draw_output(frame: &mut ratatui::Frame, review: &ReviewState) {
     } else {
         "↑/↓ scroll · a: preguntar · Esc: volver".to_string()
     };
-    let block = Block::default().title(format!("Review — {title}")).borders(Borders::ALL);
+    let block = pane_block(&title);
 
     if matches!(review.input_purpose, Some(InputPurpose::Ask)) {
         let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
@@ -253,7 +265,7 @@ fn draw_output(frame: &mut ratatui::Frame, review: &ReviewState) {
             .block(block);
         frame.render_widget(paragraph, chunks[0]);
         let input = Paragraph::new(format!("{}▏", review.input))
-            .block(Block::default().title("Pregunta (Enter enviar, Esc cancelar)").borders(Borders::ALL));
+            .block(pane_block("Pregunta (Enter enviar, Esc cancelar)"));
         frame.render_widget(input, chunks[1]);
     } else {
         let paragraph = Paragraph::new(review.output.as_str())
@@ -278,6 +290,24 @@ mod tests {
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn a_request_in_flight_says_so_instead_of_looking_frozen() {
+        // The panel awaits daemon calls on its event loop, so a slow one (PRs
+        // shell out to `gh`) stops redrawing and stops taking keys. It cannot
+        // be interrupted, but it can at least say what it is doing rather
+        // than looking like it died.
+        let mut review = ReviewState::new("/repo".to_string());
+        review.loading = true;
+
+        assert!(screen(&review, 80, 24).to_lowercase().contains("cargando"));
+    }
+
+    #[test]
+    fn an_idle_panel_does_not_claim_to_be_loading() {
+        let review = ReviewState::new("/repo".to_string());
+        assert!(!screen(&review, 80, 24).to_lowercase().contains("cargando"));
     }
 
     #[test]

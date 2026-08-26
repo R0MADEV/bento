@@ -101,6 +101,25 @@ describe('sweepStaleSummaryJobs', () => {
     })
   })
 
+  it('skips a job another sweep claimed first, instead of summarizing it twice', async () => {
+    await withDb(async dbPath => {
+      seedStaleJob(dbPath, 'abc')
+      const runSql = runSqlFor(dbPath)
+      let summarized = 0
+      const generateSummary = async () => { summarized += 1; return 'un resumen' }
+
+      // Two hooks running at once: both read the same row, only one may pay
+      // for the summarizer.
+      const [first, second] = await Promise.all([
+        sweepStaleSummaryJobs({ runSql, generateSummary, staleAfterMs: 0 }),
+        sweepStaleSummaryJobs({ runSql, generateSummary, staleAfterMs: 0 }),
+      ])
+
+      expect(first.length + second.length).toBe(1)
+      expect(summarized).toBe(1)
+    })
+  })
+
   it('leaves recent jobs alone', async () => {
     await withDb(async dbPath => {
       seedStaleJob(dbPath, 'abc', { updatedAt: new Date().toISOString() })
