@@ -215,6 +215,8 @@ fn main() {
             memory::memory_transcript_create,
             memory::memory_summary_job_list,
             memory::memory_regenerate_summary,
+            review::run::review_run,
+            review::run::review_cancel,
             memory::sources::memory_source_list,
             memory::sources::memory_source_create,
             memory::sources::memory_source_remove,

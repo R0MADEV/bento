@@ -2,6 +2,7 @@
 //! contexto de rama. La lógica vive en `worktree` y en la crate compartida
 //! `bento-review`.
 
+pub mod run;
 mod worktree;
 
 use std::collections::{hash_map::DefaultHasher, HashSet};
