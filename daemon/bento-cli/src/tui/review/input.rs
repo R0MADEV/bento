@@ -51,7 +51,7 @@ impl ReviewState {
                 self.compare = true;
                 false
             }
-            KeyCode::F(5) => { self.refresh().await; false }
+            KeyCode::F(5) => { self.request_refresh(); false }
             KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('c') => {
@@ -59,10 +59,10 @@ impl ReviewState {
                 self.input = self.context.clone();
                 false
             }
-            KeyCode::Char('o') => { self.set_sidebar_tab(SidebarTab::Projects).await; false }
-            KeyCode::Char('b') => { self.set_sidebar_tab(SidebarTab::Branches).await; false }
-            KeyCode::Char('p') => { self.set_sidebar_tab(SidebarTab::Prs).await; false }
-            KeyCode::Char('h') => { self.set_sidebar_tab(SidebarTab::Checkpoints).await; false }
+            KeyCode::Char('o') => { self.request_sidebar_tab(SidebarTab::Projects); false }
+            KeyCode::Char('b') => { self.request_sidebar_tab(SidebarTab::Branches); false }
+            KeyCode::Char('p') => { self.request_sidebar_tab(SidebarTab::Prs); false }
+            KeyCode::Char('h') => { self.request_sidebar_tab(SidebarTab::Checkpoints); false }
             KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') => {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
@@ -85,7 +85,7 @@ impl ReviewState {
                 KeyCode::Enter => {
                     if let Some(cwd) = self.projects.get(self.projects_selected).and_then(|p| p.get("cwd")).and_then(Value::as_str) {
                         self.cwd = cwd.to_string();
-                        self.enter().await;
+                        self.enter();
                         self.focus = Focus::Sidebar;
                         self.sidebar_tab = SidebarTab::Branches;
                     }

@@ -143,7 +143,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                         sidebar_width = toggle_sidebar(sidebar_width, &mut restored_width);
                                     }
                                     KeyCode::Tab => {
-                                        review.enter().await;
+                                        review.enter();
                                         mode = Mode::Review;
                                     }
                                     KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
@@ -321,17 +321,16 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         // daemon looks like a hang. The header's own count
                         // follows the flag, so the rows stay where the click
                         // handler expects them.
-                        review.loading = true;
-                        terminal.draw(|f| review::draw(f, &review, sidebar_width))?;
-                        let leave = review.handle_event(event).await;
-                        review.loading = false;
-                        if leave {
+                        if review.handle_event(event).await {
                             mode = Mode::List;
                         }
                     }
-                    Some(ev) = recv_optional(review.stream_rx()) => {
-                        review.handle_stream_event(ev);
-                    }
+                    // Requests run off this loop now, so a slow daemon no
+                    // longer stops the redraw or the keys.
+                    Some(update) = review.next_update() => match update {
+                        review::ReviewUpdate::Stream(event) => review.handle_stream_event(event),
+                        review::ReviewUpdate::Work(fetched) => review.apply_fetched(fetched),
+                    },
                 }
             }
         }
@@ -458,14 +457,3 @@ mod tests {
     }
 }
 
-/// `tokio::select!` needs a future to poll even when no review stream is
-/// active — `std::future::pending()` never resolves, so this branch simply
-/// stays disabled for the loop iteration until `stream_rx` is `Some` again
-/// (confirmed against tokio's own select! semantics: a non-matching pattern
-/// just disables that arm for the current call, re-armed next iteration).
-async fn recv_optional<T>(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<T>>) -> Option<T> {
-    match rx {
-        Some(r) => r.recv().await,
-        None => std::future::pending().await,
-    }
-}

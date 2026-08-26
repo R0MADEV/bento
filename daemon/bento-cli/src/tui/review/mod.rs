@@ -17,6 +17,15 @@ use serde_json::{json, Value};
 
 use crate::review_stream::{self, ReviewEvent};
 
+/// `select!` needs a future to poll even with no review running;
+/// `pending()` never resolves, so that arm simply stays disabled.
+async fn recv_optional<T>(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<T>>) -> Option<T> {
+    match rx {
+        Some(r) => r.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Los agentes que ofrece el TUI. La lista vive en `bento_review::agents`:
 /// tenerla aquí otra vez era pedir que se separaran.
 use bento_review::agents::AGENTS;
@@ -28,7 +37,7 @@ enum ReviewView {
     Output,
 }
 
-enum SidebarTab {
+pub(super) enum SidebarTab {
     Projects,
     Branches,
     Prs,
@@ -53,6 +62,28 @@ enum InputPurpose {
     /// Filtering what is on screen: the branch list, or the lines of a diff.
     /// Local too — nothing is fetched.
     Search,
+}
+
+/// What a background request came back with. Requests used to be awaited on
+/// the event loop, which stopped the redraw and the keys for as long as the
+/// daemon took — and `review.prs` shells out to `gh`, which can take a while.
+/// Deciding what to ask is synchronous; asking happens off the loop and lands
+/// back here.
+/// Something the panel has to react to that did not come from the keyboard.
+pub(super) enum ReviewUpdate {
+    Stream(ReviewEvent),
+    Work(Fetched),
+}
+
+pub(super) enum Fetched {
+    Files { files: Vec<Value>, viewed: Vec<String> },
+    Projects(Vec<Value>),
+    Branches(Vec<String>),
+    Prs(Vec<Value>),
+    Checkpoints(Vec<Value>),
+    /// The daemon said no. Shown in the header rather than rendered as an
+    /// empty list, which is indistinguishable from "there is nothing".
+    Failed(String),
 }
 
 pub(super) struct ReviewState {
@@ -104,6 +135,13 @@ pub(super) struct ReviewState {
     session_id: Option<String>,
     session_agent: Option<String>,
 
+    /// Results of requests running off the event loop.
+    work_tx: tokio::sync::mpsc::UnboundedSender<Fetched>,
+    work_rx: tokio::sync::mpsc::UnboundedReceiver<Fetched>,
+    /// How many requests are still out, so the header stops saying "loading"
+    /// only when the last one lands.
+    in_flight: usize,
+
     /// True while a daemon call is in flight. The panel awaits those on its
     /// event loop, so it cannot redraw or take keys until one returns; saying
     /// so is the difference between "working" and "it froze".
@@ -136,6 +174,7 @@ pub(super) struct ReviewState {
 
 impl ReviewState {
     pub(super) fn new(cwd: String) -> Self {
+        let (work_tx, work_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             cwd,
             base: "main".to_string(),
@@ -163,6 +202,9 @@ impl ReviewState {
             is_run_stream: false,
             session_id: None,
             session_agent: None,
+            work_tx,
+            work_rx,
+            in_flight: 0,
             loading: false,
             status: String::new(),
             projects: Vec::new(),
@@ -183,8 +225,84 @@ impl ReviewState {
         }
     }
 
-    pub(super) fn stream_rx(&mut self) -> &mut Option<tokio::sync::mpsc::UnboundedReceiver<ReviewEvent>> {
-        &mut self.stream_rx
+    /// Whatever arrives first: a chunk of a running review, or the result of
+    /// a request made off the event loop. One method rather than two
+    /// receivers, because `select!` in the panel's loop cannot borrow the
+    /// state twice while it also has to draw it.
+    pub(super) async fn next_update(&mut self) -> Option<ReviewUpdate> {
+        let Self { stream_rx, work_rx, .. } = self;
+        tokio::select! {
+            event = recv_optional(stream_rx) => event.map(ReviewUpdate::Stream),
+            fetched = work_rx.recv() => fetched.map(ReviewUpdate::Work),
+        }
+    }
+
+
+    /// Records that a request went out. The indicator counts them, so two
+    /// overlapping requests do not have the first one to land clear it.
+    pub(super) fn begin_request(&mut self) {
+        self.in_flight += 1;
+        self.loading = true;
+    }
+
+    /// Applies a result that came back from off the loop.
+    pub(super) fn apply_fetched(&mut self, fetched: Fetched) {
+        self.in_flight = self.in_flight.saturating_sub(1);
+        self.loading = self.in_flight > 0;
+        match fetched {
+            Fetched::Files { files, viewed } => {
+                self.files = files;
+                self.files_selected = 0;
+                self.reviewed = viewed.into_iter().collect();
+                self.view = ReviewView::Browse;
+                self.status.clear();
+            }
+            Fetched::Projects(projects) => { self.projects = projects; self.projects_selected = 0; self.status.clear() }
+            Fetched::Branches(branches) => { self.branches = branches; self.branches_selected = 0; self.status.clear() }
+            Fetched::Prs(prs) => { self.prs = prs; self.prs_selected = 0; self.status.clear() }
+            Fetched::Checkpoints(checkpoints) => {
+                self.checkpoints = checkpoints;
+                self.checkpoints_selected = 0;
+                self.status.clear()
+            }
+            Fetched::Failed(message) => self.status = format!("error: {message}"),
+        }
+    }
+
+    /// Switches tab now and asks for its contents in the background — the tab
+    /// is usable immediately, and the rows appear when the daemon answers.
+    pub(super) fn request_sidebar_tab(&mut self, tab: SidebarTab) {
+        let cwd = self.cwd.clone();
+        let body = match &tab {
+            SidebarTab::Projects => json!({ "id": "1", "cmd": "projects.list" }),
+            SidebarTab::Branches => json!({ "id": "1", "cmd": "review.branches", "cwd": cwd }),
+            SidebarTab::Prs => json!({ "id": "1", "cmd": "review.prs", "cwd": cwd }),
+            SidebarTab::Checkpoints => json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd }),
+        };
+        let wrap: fn(Vec<Value>) -> Fetched = match &tab {
+            SidebarTab::Projects => Fetched::Projects,
+            SidebarTab::Branches => |rows| {
+                Fetched::Branches(rows.into_iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            },
+            SidebarTab::Prs => Fetched::Prs,
+            SidebarTab::Checkpoints => Fetched::Checkpoints,
+        };
+        self.sidebar_tab = tab;
+        self.focus = Focus::Sidebar;
+        self.spawn_list_request(body, wrap);
+    }
+
+    /// Runs one list request off the event loop and posts its result back.
+    fn spawn_list_request(&mut self, body: Value, wrap: fn(Vec<Value>) -> Fetched) {
+        self.begin_request();
+        let tx = self.work_tx.clone();
+        tokio::spawn(async move {
+            let result = match crate::request_data(body).await {
+                Ok(value) => wrap(value.as_array().cloned().unwrap_or_default()),
+                Err(error) => Fetched::Failed(error.to_string()),
+            };
+            let _ = tx.send(result);
+        });
     }
 
     /// Every list the sidebar/browser shows comes through here so a daemon
@@ -200,6 +318,33 @@ impl ReviewState {
                 Vec::new()
             }
         }
+    }
+
+    /// Asks for the changed files off the loop. Two requests, one result:
+    /// the list and the per-file "reviewed" marks are always shown together,
+    /// so applying them separately would flash a list with no marks.
+    pub(super) fn request_files(&mut self) {
+        self.begin_request();
+        let (tx, cwd, base) = (self.work_tx.clone(), self.cwd.clone(), self.base.clone());
+        tokio::spawn(async move {
+            let files = crate::request_data(json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base }));
+            let viewed = crate::request_data(json!({ "id": "1", "cmd": "review.viewed", "cwd": cwd, "base": base }));
+            let (files, viewed) = tokio::join!(files, viewed);
+            let result = match files {
+                Ok(files) => Fetched::Files {
+                    files: files.as_array().cloned().unwrap_or_default(),
+                    viewed: viewed
+                        .ok()
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect(),
+                },
+                Err(error) => Fetched::Failed(error.to_string()),
+            };
+            let _ = tx.send(result);
+        });
     }
 
     pub(super) async fn refresh_files(&mut self) {
@@ -221,18 +366,13 @@ impl ReviewState {
     /// Populates both panes for a fresh entry into the Review tab (List →
     /// Tab): files, and the sidebar's default tab (branches) — without this,
     /// the sidebar shows "Ramas" as active but empty until `b` is pressed.
-    pub(super) async fn enter(&mut self) {
-        self.refresh_files().await;
-        self.fetch_branches().await;
+    /// Entering the tab asks for both halves without waiting: the panel opens
+    /// straight away and fills in as the answers arrive.
+    pub(super) fn enter(&mut self) {
+        self.request_files();
+        self.request_sidebar_tab(SidebarTab::Branches);
     }
 
-    async fn fetch_branches(&mut self) {
-        self.branches = self.fetch_list(json!({ "id": "1", "cmd": "review.branches", "cwd": self.cwd })).await
-            .into_iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-        self.branches_selected = 0;
-    }
 
     fn visible_files(&self) -> Vec<&Value> {
         self.files
@@ -242,26 +382,6 @@ impl ReviewState {
                 file_matches_filter(status, self.file_filter)
             })
             .collect()
-    }
-
-    async fn set_sidebar_tab(&mut self, tab: SidebarTab) {
-        match &tab {
-            SidebarTab::Projects => {
-                self.projects = self.fetch_list(json!({ "id": "1", "cmd": "projects.list" })).await;
-                self.projects_selected = 0;
-            }
-            SidebarTab::Branches => self.fetch_branches().await,
-            SidebarTab::Prs => {
-                self.prs = self.fetch_list(json!({ "id": "1", "cmd": "review.prs", "cwd": self.cwd })).await;
-                self.prs_selected = 0;
-            }
-            SidebarTab::Checkpoints => {
-                self.checkpoints = self.fetch_list(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": self.cwd })).await;
-                self.checkpoints_selected = 0;
-            }
-        }
-        self.sidebar_tab = tab;
-        self.focus = Focus::Sidebar;
     }
 
     async fn load_pr_detail(&mut self, pr: u64) {
@@ -441,10 +561,11 @@ impl ReviewState {
     /// Vuelve a pedir lo que se ve ahora mismo: los archivos y la pestaña
     /// activa del sidebar. Sin esto, un commit o un `git add` hechos en otra
     /// terminal no aparecían hasta salir y volver a entrar.
-    pub(super) async fn refresh(&mut self) {
-        self.refresh_files().await;
+    /// Both halves of the panel, asked for at once and off the loop.
+    pub(super) fn request_refresh(&mut self) {
+        self.request_files();
         let tab = std::mem::replace(&mut self.sidebar_tab, SidebarTab::Branches);
-        self.set_sidebar_tab(tab).await;
+        self.request_sidebar_tab(tab);
     }
 }
 
@@ -695,6 +816,71 @@ mod tests {
         state.handle_stream_event(ReviewEvent::Progress("BATCH:1/1:Agente 1/1 (claude)".into()));
 
         assert!(state.output.is_empty(), "una sola pasada no necesita cabecera");
+    }
+
+    #[tokio::test]
+    async fn switching_tab_does_not_wait_for_the_daemon() {
+        // The whole point: the call is out, the panel is already usable. It
+        // used to sit on the event loop, so a slow `gh` froze the tab.
+        let mut state = ReviewState::new("/repo".to_string());
+
+        state.request_sidebar_tab(SidebarTab::Prs);
+
+        assert!(matches!(state.sidebar_tab, SidebarTab::Prs), "la pestaña cambia ya");
+        assert!(state.loading, "y dice que está pidiendo");
+    }
+
+    #[test]
+    fn a_result_lands_in_the_tab_it_belongs_to() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.sidebar_tab = SidebarTab::Branches;
+        state.begin_request();
+
+        state.apply_fetched(Fetched::Branches(vec!["main".into(), "feat/x".into()]));
+
+        assert_eq!(state.branches, vec!["main".to_string(), "feat/x".to_string()]);
+        assert!(!state.loading, "la última respuesta apaga el indicador");
+    }
+
+    #[test]
+    fn the_indicator_waits_for_every_request_not_just_the_first() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.begin_request();
+        state.begin_request();
+
+        state.apply_fetched(Fetched::Projects(vec![]));
+        assert!(state.loading, "queda una petición fuera");
+
+        state.apply_fetched(Fetched::Prs(vec![]));
+        assert!(!state.loading);
+    }
+
+    #[test]
+    fn a_failed_request_says_why_instead_of_showing_an_empty_list() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.begin_request();
+
+        state.apply_fetched(Fetched::Failed("daemon caído".into()));
+
+        assert!(state.status.contains("daemon caído"));
+        assert!(!state.loading);
+    }
+
+    /// The point of all this: asking does not stop the panel. If the request
+    /// were still awaited inline, this would sit here until the daemon
+    /// answered — and there is no daemon in a test.
+    #[tokio::test]
+    async fn the_panel_stays_responsive_while_a_request_is_out() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.request_sidebar_tab(SidebarTab::Prs);
+
+        // Keys still work with the request in flight.
+        state.branches = vec!["main".into(), "feat/x".into()];
+        state.sidebar_tab = SidebarTab::Branches;
+        state.select_sidebar(1);
+
+        assert_eq!(state.branches_selected, 1);
+        assert!(state.loading, "y la petición sigue fuera");
     }
 
     #[test]
