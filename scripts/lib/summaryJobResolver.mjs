@@ -30,7 +30,10 @@ export async function resolveSummaryJob({ runSql, generateSummary, transcript, m
 
   if (!isUsefulSummary(summary)) {
     const status = isNoMemorySummary(summary) ? 'skipped' : 'failed'
-    const error = status === 'failed' ? 'El resumidor no devolvió un resultado válido.' : ''
+    // The agent's real output (e.g. "not logged in") is what tells apart a
+    // session that was never logged in from one that returned nothing at
+    // all; the old generic message lumped both together.
+    const error = status === 'failed' ? (summary.trim() || 'El resumidor no devolvió ningún texto.') : ''
     await runSql(updateSummaryJobSql(projectPath, transcriptExternalId, status, error))
     return { status }
   }

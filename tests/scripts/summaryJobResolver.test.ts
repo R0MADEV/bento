@@ -87,16 +87,29 @@ describe('resolveSummaryJob', () => {
     })
   })
 
-  it('marks the job failed with the standard message when the summary is not usable', async () => {
+  it('keeps the real agent output as the error when the session was never logged in', async () => {
     await withDb(async dbPath => {
       const transcript = seedJob(dbPath)
       const runSql = runSqlFor(dbPath)
 
-      const result = await resolveSummaryJob({ runSql, generateSummary: async () => 'not logged in', transcript, metadata: {} })
+      const result = await resolveSummaryJob({ runSql, generateSummary: async () => 'not logged in. Run /login.', transcript, metadata: {} })
 
       expect(result.status).toBe('failed')
       const jobs = await runSql('SELECT status, error FROM memory_summary_jobs;', true)
-      expect(jobs).toEqual([{ status: 'failed', error: 'El resumidor no devolvió un resultado válido.' }])
+      expect(jobs).toEqual([{ status: 'failed', error: 'not logged in. Run /login.' }])
+    })
+  })
+
+  it('falls back to a distinct message when the agent returned no text at all', async () => {
+    await withDb(async dbPath => {
+      const transcript = seedJob(dbPath)
+      const runSql = runSqlFor(dbPath)
+
+      const result = await resolveSummaryJob({ runSql, generateSummary: async () => '', transcript, metadata: {} })
+
+      expect(result.status).toBe('failed')
+      const jobs = await runSql('SELECT status, error FROM memory_summary_jobs;', true)
+      expect(jobs).toEqual([{ status: 'failed', error: 'El resumidor no devolvió ningún texto.' }])
     })
   })
 
