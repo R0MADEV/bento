@@ -1,4 +1,4 @@
-import { icon } from './icons'
+import { icon } from './helpers/icons'
 import { appT } from '../core/i18n'
 
 // A panel type the launcher can open, with its icon and a label thunk (thunk so

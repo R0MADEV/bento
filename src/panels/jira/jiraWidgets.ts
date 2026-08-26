@@ -1,4 +1,4 @@
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 
 export function note(text: string, cls = 'jira-note'): HTMLElement {
   const el = document.createElement('div')

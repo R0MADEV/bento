@@ -1,0 +1,9 @@
+{
+  "src/app/createHomeView.ts": 1,
+  "src/panels/db/dbRowEdit.ts": 1,
+  "src/panels/db/dbTableGrid.ts": 2,
+  "src/panels/review/ReviewDiffView.ts": 2,
+  "src/panels/review/ReviewPanel.ts": 1,
+  "src/panels/tasks/tasksDetailViews.ts": 4,
+  "src/panels/tv/TVPanel.ts": 1
+}

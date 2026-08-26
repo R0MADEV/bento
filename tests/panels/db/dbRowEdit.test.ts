@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
+import { builtSql, expectSqlBuilt, fakeDbSql } from '../../helpers/dbSql'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => undefined as unknown),
@@ -24,7 +25,8 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', makeLocalStorage())
   localStorage.setItem('bento.locale', 'en')
   mocks.invoke.mockReset()
-  mocks.invoke.mockResolvedValue(undefined)
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+    fakeDbSql(cmd, args as Record<string, unknown>))
   confirmed = true
   alerts = []
   vi.stubGlobal('confirm', () => confirmed)
@@ -91,23 +93,25 @@ describe('editCell update', () => {
     expect(td.textContent).toBe('ana')
   })
 
-  it('writes a real NULL through raw SQL when the NULL button is used', async () => {
+  // El UPDATE lo escribe `bento_db::query`; aquí importa a qué fila apunta y
+  // que se ejecute tal cual vuelve.
+  it('writes a real NULL through the statement the backend builds', async () => {
     const { td, row } = openEditor()
     const nullBtn = td.querySelector('.db-null-btn') as HTMLButtonElement
     nullBtn.dispatchEvent(new MouseEvent('mousedown', { cancelable: true }))
     await flush()
-    const [cmd, args] = mocks.invoke.mock.calls[0] as [string, { sql: string }]
-    expect(cmd).toBe('db_docker_mysql_query')
-    expect(args.sql).toContain('SET `name` = NULL')
+    expectSqlBuilt(mocks.invoke, 'db_sql_set_null', { kind: 'mysql', db: 'app', table: 'users', column: 'name' })
+    const run = mocks.invoke.mock.calls.find(([cmd]) => cmd === 'db_docker_mysql_query')
+    expect(run![1]).toMatchObject({ sql: builtSql('db_sql_set_null') })
     expect(row[1]).toBe('NULL')
     expect(td.textContent).toBe('NULL')
   })
 
-  it('quotes identifiers the Postgres way and the MySQL way', async () => {
+  it('tells the backend which engine the row belongs to', async () => {
     const { td } = openEditor({ s: server({ kind: 'postgres' }), row: ['7', 'ana'] })
     ;(td.querySelector('.db-null-btn') as HTMLButtonElement).dispatchEvent(new MouseEvent('mousedown', { cancelable: true }))
     await flush()
-    expect((mocks.invoke.mock.calls[0][1] as { sql: string }).sql).toContain('SET "name" = NULL')
+    expectSqlBuilt(mocks.invoke, 'db_sql_set_null', { kind: 'postgres', column: 'name' })
   })
 
   it('reports a plain failure and puts the old value back', async () => {

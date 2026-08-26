@@ -1,0 +1,259 @@
+//! El cliente del daemon: conectar, reenviar su salida al frontend, y
+//! arrancar o reemplazar el proceso del daemon cuando hace falta. Aquí no hay
+//! comandos de Tauri, solo la conversación con el daemon.
+
+// Terminals live in the bento-daemon (out-of-process) so they survive the app
+// closing and can be shared with the CLI and the phone. This module is a thin
+// client: it forwards the pty_* commands to the daemon over a single localhost
+// connection and re-emits the daemon's output as the `pty-output-<id>` /
+// `pty-exit-<id>` events the frontend already listens on.
+//!
+// `terminal.open` is request/response so `pty_spawn` learns whether it reattached
+// to an existing terminal — the caller must then not replay a launch command.
+
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+use tokio::sync::{mpsc, oneshot};
+
+pub struct PtyManager {
+    addr: String,
+    tx: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    counter: AtomicU64,
+    /// Stored so `ensure_connected` can reconnect without needing an AppHandle parameter.
+    app: Arc<Mutex<Option<AppHandle>>>,
+    /// Child handle of the daemon we spawned — used to kill it on shutdown.
+    daemon_child: Arc<Mutex<Option<std::process::Child>>>,
+    /// Serializes connect attempts: the app-startup connect and any command
+    /// racing in via `ensure_connected` must not both kill+respawn the daemon
+    /// concurrently, or whichever's server lands on the loser's daemon dies
+    /// with it (this is why the remote/phone server used to silently die at
+    /// startup even though it briefly logged as started).
+    connect_lock: tokio::sync::Mutex<()>,
+}
+
+impl Default for PtyManager {
+    fn default() -> Self {
+        Self {
+            addr: std::env::var("BENTO_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:7877".into()),
+            tx: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            counter: AtomicU64::new(0),
+            app: Arc::new(Mutex::new(None)),
+            daemon_child: Arc::new(Mutex::new(None)),
+            connect_lock: tokio::sync::Mutex::new(()),
+        }
+    }
+}
+
+impl PtyManager {
+    /// Connect to the daemon and start forwarding its output to the frontend.
+    /// Always kills any running daemon first so the freshly compiled binary is used.
+    /// Safe to call again after a disconnect — replaces the old connection.
+    pub async fn connect(&self, app: AppHandle) -> Result<(), String> {
+        let _guard = self.connect_lock.lock().await;
+        self.connect_locked(app).await
+    }
+
+    async fn connect_locked(&self, app: AppHandle) -> Result<(), String> {
+        *self.app.lock().unwrap() = Some(app.clone());
+
+        // Kill any daemon we started in this session.
+        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        // Kill any orphaned daemon from a previous session.
+        kill_existing_daemon();
+        // Brief pause so the port is freed before we try to bind again.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        if let Some(child) = spawn_daemon() {
+            *self.daemon_child.lock().unwrap() = Some(child);
+        }
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if TcpStream::connect(&self.addr).await.is_ok() {
+                break;
+            }
+        }
+        let stream = TcpStream::connect(&self.addr)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (read_half, mut write_half) = stream.into_split();
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        *self.tx.lock().unwrap() = Some(tx);
+
+        tauri::async_runtime::spawn(async move {
+            while let Some(line) = rx.recv().await {
+                if write_half.write_all(line.as_bytes()).await.is_err()
+                    || write_half.write_all(b"\n").await.is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        let pending = self.pending.clone();
+        let tx_slot = self.tx.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(read_half).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if let Some(event) = value.get("event").and_then(Value::as_str) {
+                    match event {
+                        "terminal.output" => {
+                            if let (Some(id), Some(data)) = (
+                                value.get("pty_id").and_then(Value::as_str),
+                                value.get("data").and_then(Value::as_str),
+                            ) {
+                                let _ = app.emit(&format!("pty-output-{id}"), data.to_string());
+                            }
+                        }
+                        "terminal.exit" => {
+                            if let Some(id) = value.get("pty_id").and_then(Value::as_str) {
+                                let _ = app.emit(&format!("pty-exit-{id}"), ());
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if let Some(id) = value.get("id").and_then(Value::as_str) {
+                    if let Some(sender) = pending.lock().unwrap().remove(id) {
+                        let _ = sender.send(value);
+                    }
+                }
+            }
+            // Daemon disconnected — clear tx so the next request auto-reconnects.
+            *tx_slot.lock().unwrap() = None;
+        });
+        Ok(())
+    }
+
+    /// Reconnect to the daemon if the connection is gone. No-op when already connected.
+    /// Guarded by the same lock as `connect` so a command racing in while the
+    /// app-startup connect is still in flight waits for it instead of also
+    /// kill+respawning the daemon (see `connect_lock` doc comment).
+    pub(super) async fn ensure_connected(&self) -> Result<(), String> {
+        let _guard = self.connect_lock.lock().await;
+        if self.tx.lock().unwrap().is_none() {
+            let app = self
+                .app
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| "bento-daemon not initialized".to_string())?;
+            self.connect_locked(app).await?;
+        }
+        Ok(())
+    }
+
+    /// Fire a command with no reply (write/resize/close/subscribe).
+    pub(super) fn send(&self, line: String) -> Result<(), String> {
+        let result = self
+            .tx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or("bento-daemon not connected (is it running?)")?
+            .send(line);
+        if result.is_err() {
+            *self.tx.lock().unwrap() = None;
+        }
+        result.map_err(|_| "bento-daemon disconnected".to_string())
+    }
+
+    /// Kill the daemon process. Reliable even if the IPC channel is gone.
+    pub fn send_shutdown(&self) {
+        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        } else {
+            // Fallback: daemon was started by a previous session.
+            kill_existing_daemon();
+        }
+    }
+
+    /// Send a command and await its reply. Auto-reconnects if the daemon died.
+    pub(super) async fn request(&self, mut command: Value) -> Result<Value, String> {
+        self.ensure_connected().await?;
+        let id = format!("r{}", self.counter.fetch_add(1, Ordering::SeqCst));
+        command["id"] = json!(id);
+        let (send, recv) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id.clone(), send);
+        self.send(command.to_string())?;
+        match tokio::time::timeout(Duration::from_secs(5), recv).await {
+            Ok(Ok(value)) => {
+                if value.get("ok").and_then(Value::as_bool) == Some(true) {
+                    Ok(value.get("data").cloned().unwrap_or(Value::Null))
+                } else {
+                    Err(value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("daemon error")
+                        .to_string())
+                }
+            }
+            _ => {
+                self.pending.lock().unwrap().remove(&id);
+                Err("bento-daemon did not respond".into())
+            }
+        }
+    }
+}
+
+/// Terminals live in the daemon, so app shutdown no longer kills them.
+pub fn kill_all(_manager: &PtyManager) {}
+
+/// Kill any running bento-daemon process.
+fn kill_existing_daemon() {
+    #[cfg(unix)]
+    let _ = std::process::Command::new("pkill").args(["-f", "bento-daemon"]).output();
+    #[cfg(windows)]
+    let _ = std::process::Command::new("taskkill").args(["/F", "/IM", "bento-daemon.exe"]).output();
+}
+
+/// Launch the daemon and return the child handle so we can kill it on shutdown.
+fn spawn_daemon() -> Option<std::process::Child> {
+    daemon_binary().and_then(|b| std::process::Command::new(b).spawn().ok())
+}
+
+/// Locate the bento-daemon binary: explicit override → bundled sidecar → dev workspace.
+/// Tauri's `externalBin` staging needs the `-<target-triple>` suffix on the
+/// source file (see `scripts/build-daemon-sidecar.mjs`) to disambiguate
+/// multi-arch builds, but strips it when copying into the final per-platform
+/// bundle — so the packaged binary sits right next to the app executable
+/// under the plain name, same as `name` below.
+fn daemon_binary() -> Option<std::path::PathBuf> {
+    let name = if cfg!(windows) { "bento-daemon.exe" } else { "bento-daemon" };
+    if let Ok(explicit) = std::env::var("BENTO_DAEMON_BIN") {
+        let path = std::path::PathBuf::from(explicit);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let bundled = dir.join(name);
+    if bundled.exists() {
+        return Some(bundled);
+    }
+    // Dev layout: <repo>/src-tauri/target/<profile>/ → <repo>/daemon/target/<profile>/
+    let profile = dir.file_name()?.to_string_lossy().into_owned();
+    let candidate = dir
+        .parent()? // .../src-tauri/target
+        .parent()? // .../src-tauri
+        .parent()? // .../<repo>
+        .join("daemon")
+        .join("target")
+        .join(profile)
+        .join(name);
+    candidate.exists().then_some(candidate)
+}

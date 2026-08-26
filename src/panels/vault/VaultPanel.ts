@@ -1,6 +1,6 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 
 interface VaultEntry { id: string; service: string; username: string; url: string; notes: string }
 

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
+import { builtSql, fakeDbSql } from '../../helpers/dbSql'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async () => undefined as unknown),
@@ -44,7 +45,8 @@ beforeEach(() => {
   document.body.replaceChildren()
   shown = []
   mocks.invoke.mockReset()
-  mocks.invoke.mockResolvedValue({ columns: ['id'], rows: [['1']] })
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+    fakeDbSql(cmd, args as Record<string, unknown>) ?? { columns: ['id'], rows: [['1']] })
   mocks.askAi.mockReset()
 })
 
@@ -110,7 +112,13 @@ describe('running a query', () => {
 })
 
 describe('when a query fails', () => {
-  beforeEach(() => { mocks.invoke.mockRejectedValue(new Error('syntax error near FROM')) })
+  beforeEach(() => {
+    mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      const built = fakeDbSql(cmd, args as Record<string, unknown>)
+      if (built !== undefined) return built
+      throw new Error('syntax error near FROM')
+    })
+  })
 
   it('shows the error', async () => {
     open()
@@ -147,7 +155,8 @@ describe('when a query fails', () => {
     editor().value = 'SELECT FROM users'
     runBtn().click()
     await flush()
-    mocks.invoke.mockResolvedValue({ columns: ['type'], rows: [['ALL']] })
+    mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+      fakeDbSql(cmd, args as Record<string, unknown>) ?? { columns: ['type'], rows: [['ALL']] })
     ;(results().querySelector('.db-query-run') as HTMLButtonElement).click()
     await flush()
     expect(results().querySelector('table')).not.toBeNull()
@@ -165,9 +174,10 @@ describe('when a query fails', () => {
 })
 
 describe('filling the editor', () => {
-  it('drops a table example in when its chip is clicked', () => {
+  it('drops a table example in when its chip is clicked', async () => {
     open()
     ;(document.querySelector('.db-query-chip') as HTMLButtonElement).click()
-    expect(editor().value).toContain('users')
+    await flush()
+    expect(editor().value).toBe(builtSql('db_sql_example'))
   })
 })

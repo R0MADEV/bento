@@ -1,4 +1,4 @@
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { taskT } from './i18n'
 import type { TasksPanelCtx } from './tasksPanelContext'
 

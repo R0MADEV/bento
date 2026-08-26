@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { parseContainers, isRunning, groupByProject, runningCount, type Container } from '../../core/docker/containers'
 import { renderContainerLogs, renderContainerTerminal, type DetailLifecycle } from './containerDetail'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 
 export function createDockerPanel(filterPrefix?: string): { element: HTMLElement; dispose: () => void } {
   let containers: Container[] = []

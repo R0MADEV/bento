@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
 import {
-  buildReviewFileBatches,
-  buildReviewFileManifest,
-  computeCiStatus,
   describeReviewNoBranchChanges,
   describeReviewPrState,
   esc,
@@ -11,7 +8,6 @@ import {
   getFileState,
   highlightCode,
   relativeTime,
-  resolveReviewFollowUpSession,
   wordDiff,
 } from '../../../src/panels/review/reviewFormat'
 
@@ -19,41 +15,6 @@ function setup() {
   vi.stubGlobal('localStorage', makeLocalStorage())
   localStorage.setItem('bento.locale', 'en')
 }
-
-describe('resolveReviewFollowUpSession', () => {
-  it('keeps follow-up sessions attached to the last real review agent', () => {
-    expect(resolveReviewFollowUpSession([
-      { label: 'Orchestrator', sessionId: 's1' },
-      { label: 'Synthesis', sessionId: 's2' },
-      { label: 'Verification', sessionId: 'verifier-session' },
-    ].map(run => ({ ...run, agent: 'claude' as const })), 2)).toEqual({ sessionId: 's2', sessionAgent: 'claude' })
-  })
-
-  it('returns nulls when no run in scope has a session id', () => {
-    expect(resolveReviewFollowUpSession([{ label: 'A', agent: 'claude', sessionId: undefined }], 1))
-      .toEqual({ sessionId: null, sessionAgent: null })
-  })
-})
-
-describe('buildReviewFileManifest / buildReviewFileBatches', () => {
-  const files = [
-    { file: 'src/a.ts', additions: 3, deletions: 1, chunk: 'a'.repeat(6), state: 'M' as const },
-    { file: 'src/b.ts', additions: 1, deletions: 0, chunk: 'b'.repeat(6), state: 'D' as const },
-  ]
-
-  it('builds a complete manifest before batching review files', () => {
-    expect(buildReviewFileManifest(files)).toBe('M src/a.ts (+3/-1)\nD src/b.ts (+1/-0)')
-    expect(buildReviewFileBatches(files, 6)).toHaveLength(2)
-  })
-
-  it('keeps files under the char budget in the same batch', () => {
-    expect(buildReviewFileBatches(files, 100)).toHaveLength(1)
-  })
-
-  it('returns an empty array for no files', () => {
-    expect(buildReviewFileBatches([])).toEqual([])
-  })
-})
 
 describe('describeReviewPrState / describeReviewNoBranchChanges', () => {
   it('describes merged PRs explicitly', () => {
@@ -106,24 +67,6 @@ describe('getFileState', () => {
 
   it('defaults to modified', () => {
     expect(getFileState('diff --git a/x b/x\n@@ -1 +1 @@\n')).toBe('M')
-  })
-})
-
-describe('computeCiStatus', () => {
-  it('returns none for an empty rollup', () => {
-    expect(computeCiStatus([])).toBe('none')
-  })
-
-  it('flags failure when any check failed', () => {
-    expect(computeCiStatus([{ conclusion: 'SUCCESS' }, { conclusion: 'FAILURE' }])).toBe('failure')
-  })
-
-  it('flags pending when nothing failed but something is in progress', () => {
-    expect(computeCiStatus([{ state: 'PENDING' }])).toBe('pending')
-  })
-
-  it('is success when every check passed', () => {
-    expect(computeCiStatus([{ conclusion: 'SUCCESS' }, { conclusion: 'SUCCESS' }])).toBe('success')
   })
 })
 

@@ -121,7 +121,39 @@
     "commentedFilter": "With comments",
     "copyDiff": "Copy diff",
     "fileComment": "Comment on file",
-    "nextUnviewed": "Next unviewed (u)"
+    "nextUnviewed": "Next unviewed (u)",
+    "cancel": "Cancel",
+    "noPrForBranch": "No PR for this branch",
+    "copied": "✓ copied",
+    "unifiedView": "Unified view",
+    "splitView": "Split view",
+    "copiedExclaim": "✓ Copied!",
+    "filterPlaceholder": "Filter…",
+    "noSavedReview": "No saved review for this branch yet",
+    "contextLabel": "Context for the review (optional): what does this branch do and what should we look at?",
+    "contextPlaceholder": "e.g. adds API contract tests; check it does not break the DB refactor…",
+    "review": "Review",
+    "reviewing": "Reviewing…",
+    "preparingReview": "Preparing review…",
+    "stop": "Stop",
+    "stoppingReview": "Stopping review…",
+    "creatingWorktree": "Creating isolated worktree…",
+    "gatheringContext": "Gathering context…",
+    "finalSynthesis": "Final synthesis…",
+    "aiReview": "AI Review",
+    "discussion": "Discussion",
+    "commentLine": "Comment line {line}",
+    "mergedAt": "Merged at {date}",
+    "commentCount": "{count} comment(s)",
+    "lineRange": "Line {line} · {file}",
+    "progressMeta": "{chars} chars · {seconds}s",
+    "reviewingWithAgents": "Reviewing with {count} agent(s) in parallel…",
+    "incompleteReview": "Incomplete review (what was reviewed is saved): {error}",
+    "prTitle": "PR #{number}: {title}",
+    "ciPassing": "✓ CI",
+    "ciFailing": "✗ CI",
+    "ciRunning": "⟳ CI",
+    "discussionCount": "Discussion · {count}"
   },
   "diff": {
     "title": "Diff",
@@ -606,7 +638,10 @@
     "createVaultForAiKey": "🔒 Create the Vault (Vault panel) to store your API key securely.",
     "unlockVaultForAiKey": "🔒 Unlock the Vault (Vault panel) to view or store your API key.",
     "apiKey": "API key",
-    "aiBaseUrlPlaceholder": "https://api.openai.com/v1"
+    "aiBaseUrlPlaceholder": "https://api.openai.com/v1",
+    "customExecutable": "Custom executable",
+    "argumentsSpaceSeparated": "Arguments (space-separated)",
+    "couldNotLoadPanel": "Could not load the panel: "
   },
   "panels": {
     "agents": {
@@ -616,7 +651,8 @@
       "terminalsCount": "{count} agents",
       "newAgent": "New Agent",
       "waitingForInput": "Waiting for input",
-      "wantsAttention": "Wants your attention"
+      "wantsAttention": "Wants your attention",
+      "closeAgent": "Close agent"
     },
     "db": {
       "connecting": "Connecting…",
@@ -772,7 +808,32 @@
       "apiToken": "API token",
       "jqlPlaceholder": "JQL…",
       "panelTitle": "Jira",
-      "taskIssueType": "Task"
+      "taskIssueType": "Task",
+      "addAccount": "Add account",
+      "boardView": "Board view",
+      "listView": "List view",
+      "searchBoard": "Search board…",
+      "reloadBoard": "Reload",
+      "editAccount": "Edit account",
+      "loadingBoard": "Loading board…",
+      "loadingBoards": "Loading boards…",
+      "pickABoard": "Search and pick a board.",
+      "allFieldsAreRequired": "Every field is required.",
+      "noAccounts": "No accounts. Use + to add one.",
+      "removeAccount": "Remove account",
+      "attachments": "Attachments",
+      "openOrDownload": "Open / Download",
+      "moveTo": "Move to",
+      "pullRequests": "Pull requests",
+      "estimate": "ESTIMATE",
+      "editDescription": "Edit description",
+      "comments": "Comments",
+      "loadingComments": "Loading comments…",
+      "writeAComment": "Write a comment…",
+      "comment": "Comment",
+      "noComments": "No comments.",
+      "errorLoadingComments": "Could not load the comments.",
+      "errorLoadingDescription": "(could not load the description)"
     },
     "memory": {
       "clear": "Clear",
@@ -919,6 +980,19 @@
       "deleteFailed": "Delete failed",
       "deleteFailedHint": "Could not delete this note. The note was restored."
     },
+    "remote": {
+      "panelTitle": "Phone",
+      "enableWifiServer": "Start the WiFi server",
+      "serverRunning": "Server running",
+      "useTailscale": "Use Tailscale (away from home)",
+      "port": "Port",
+      "howItWorks": "Your Mac is the server. The phone connects straight over WiFi, with no app to install.",
+      "reachableViaTailscale": "Reachable through Tailscale from any network.",
+      "localWifiOnly": "Your local WiFi only — never expose it to the internet.",
+      "checking": "Checking…",
+      "starting": "Starting…",
+      "stopping": "Stopping…"
+    },
     "scripts": {
       "noScripts": "No scripts",
       "runHint": "Run a script to see its output here",
@@ -962,7 +1036,8 @@
       "unavailable": "⚠ {channel} — unavailable",
       "country2": "🌍 Country",
       "channelCount": "{count} channels",
-      "errorMessage": "Error: {message}"
+      "errorMessage": "Error: {message}",
+      "playAChannelFirst": "Play a channel first"
     },
     "vault": {
       "copy": "Copy",

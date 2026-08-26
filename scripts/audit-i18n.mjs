@@ -14,7 +14,10 @@ const uiHelperArguments = new Map([
   ['setSourceActivity', [0]],
   ['showCommitStatus', [0]],
 ])
-const translationCalls = new Set(['appT', 'taskT', 'i18nT', 't', 'catalogT'])
+// Los accesores tipados por panel (`reviewT`, `diffT`…) también traducen: su
+// argumento es una clave del catálogo, no texto suelto. Sin esto la auditoría
+// contaba como "sin traducir" precisamente lo que sí lo estaba.
+const translationCalls = new Set(['appT', 'taskT', 'reviewT', 'diffT', 'i18nT', 't', 'catalogT'])
 const naturalLanguage = /[A-Za-zÁÉÍÓÚÑáéíóúñ]{2}/u
 const roots = ['src/app', 'src/ui', 'src/panels']
 
@@ -91,11 +94,36 @@ for (const file of files) {
   visit(sourceFile)
 }
 
-if (missing.length) {
-  console.error(`Found ${missing.length} untranslated visible UI strings:\n${missing.join('\n')}`)
-  process.exitCode = 1
+// La deuda que ya existe está anotada en i18n-baseline.json: no bloquea, pero
+// no puede crecer. Al traducir un fichero, baja su número (o bórralo).
+//
+// Lo que queda anotado no es prosa y no se traduce: el nombre del producto, el
+// literal SQL `NULL`, los valores de un filtro (`all`, `commented`), una rama
+// por defecto (`origin/main`) y un árbol de ficheros en ASCII. Si algo de eso
+// se "traduce", se rompe.
+const baselineFile = 'scripts/i18n-baseline.json'
+const byFile = missing.reduce((counts, entry) => {
+  const file = entry.split(':')[0]
+  counts[file] = (counts[file] ?? 0) + 1
+  return counts
+}, {})
+
+if (process.argv.includes('--update-baseline')) {
+  fs.writeFileSync(baselineFile, `${JSON.stringify(byFile, null, 2)}\n`)
+  console.log(`i18n baseline actualizado: ${missing.length} strings en ${Object.keys(byFile).length} ficheros`)
 } else {
-  console.log(`i18n audit passed: ${files.length} TypeScript UI files checked.`)
+  const baseline = fs.existsSync(baselineFile) ? JSON.parse(fs.readFileSync(baselineFile, 'utf8')) : {}
+  const worse = Object.entries(byFile).filter(([file, count]) => count > (baseline[file] ?? 0))
+  if (worse.length) {
+    const detail = worse.map(([file, count]) => `${file}: ${count} sin traducir (tolerado ${baseline[file] ?? 0})`)
+    const examples = missing.filter(entry => worse.some(([file]) => entry.startsWith(`${file}:`)))
+    console.error(`Strings de UI sin traducir:\n${detail.join('\n')}\n\n${examples.join('\n')}`)
+    console.error('\nTradúcelos, o si es deliberado: node scripts/audit-i18n.mjs --update-baseline')
+    process.exitCode = 1
+  } else {
+    const pending = Object.values(baseline).reduce((total, count) => total + count, 0)
+    console.log(`i18n ok — ${files.length} ficheros, ${pending} strings con deuda anotada`)
+  }
 }
 
 const forbidden = ['legacyT', 'localizePanel', 'core/panelI18n', 'legacyPatterns']

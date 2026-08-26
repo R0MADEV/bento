@@ -151,10 +151,15 @@ describe('registering a source', () => {
 })
 
 describe('scanning a source', () => {
-  const setup = async (candidates: ImportedMemoryCandidate[], over: Partial<MemoryRepository> = {}) => {
+  const setup = async (
+    candidates: ImportedMemoryCandidate[],
+    over: Partial<MemoryRepository> = {},
+    decision: unknown = { action: 'create', payload: entry({ id: 'new' }) },
+  ) => {
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'memory_source_list') return [source(), source({ id: 's2' })]
       if (cmd === 'memory_source_scan') return candidates
+      if (cmd === 'memory_plan_import') return decision
       return []
     })
     const api = view({ repo: repo(over) })
@@ -171,14 +176,19 @@ describe('scanning a source', () => {
     expect(q('.memory-source-preview-file').textContent).toBe('a.ts')
   })
 
-  it('marks a candidate already imported', async () => {
-    await setup([candidate({ externalId: 'claude:1' })], { list: vi.fn(async () => [entry({ externalId: 'claude:1' })]) })
+  // Si un candidato ya está o se fundiría lo decide `bento_memory::dedup`.
+  it('marks a candidate the planner would skip', async () => {
+    await setup([candidate({ externalId: 'claude:1' })],
+      { list: vi.fn(async () => [entry({ id: 'kept', externalId: 'claude:1' })]) },
+      { action: 'skip', entryId: 'kept' })
     expect(q('.memory-source-preview-item').classList.contains('duplicate')).toBe(true)
     expect(q('.memory-source-preview-badge').classList.contains('existing')).toBe(true)
   })
 
-  it('marks a candidate that would merge into an existing entry', async () => {
-    await setup([candidate({ externalId: 'claude:new' })], { list: vi.fn(async () => [entry({ id: 'dup', externalId: 'claude:old' })]) })
+  it('marks a candidate the planner would merge into an existing entry', async () => {
+    await setup([candidate({ externalId: 'claude:new' })],
+      { list: vi.fn(async () => [entry({ id: 'dup', externalId: 'claude:old' })]) },
+      { action: 'merge', entry: entry({ id: 'dup' }), patch: { tags: [], files: [], summary: '', details: '' } })
     expect(q('.memory-source-preview-badge').classList.contains('merge')).toBe(true)
   })
 

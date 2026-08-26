@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { DbServer } from '../../core/db/dbServer'
 import { isMongo, isPg, isRedis, sqlCmd, creds, target, sqlEscQ, type TableData } from '../../core/db/dbEngine'
-import type { ForeignKey } from './queryBuilders'
+import type { ForeignKey } from '../../core/db/queryBuilders'
 
 // What a grid needs to turn a read-only result into an editable one.
 export interface EditMeta {

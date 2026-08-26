@@ -1,12 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { open as pickFolder } from '@tauri-apps/plugin-dialog'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { parseDiffFiles } from '../diff/diffStats'
+import { parseDiffFiles } from '../../core/git/diffStats'
 import { diffGit } from '../diff/diffGitClient'
 import { reviewT } from './i18n'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import type { ReviewChangeFile, GhComment, GhPr, SidebarMode, FileTypeFilter } from './reviewFormat'
-import { renderReviewPrStateBadge, describeReviewNoBranchChanges, getFileState, computeCiStatus, relativeTime } from './reviewFormat'
+import { renderReviewPrStateBadge, describeReviewNoBranchChanges, getFileState, relativeTime } from './reviewFormat'
+import { prCheckReport } from './prChecks'
 
 export type StatusRollupEntry = { name?: string; workflowName?: string; conclusion?: string | null; state?: string; context?: string; targetUrl?: string }
 
@@ -154,18 +155,23 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
         state.setCurrentPrState(pr.state ?? null)
         const statusRollup = pr.statusCheckRollup ?? []
         state.setLastStatusRollup(statusRollup)
-        const link = Object.assign(document.createElement('a'), { className: 'review-pr-link', textContent: `PR #${pr.number}: ${pr.title}`, href: '#' })
+        const link = Object.assign(document.createElement('a'), { className: 'review-pr-link', textContent: reviewT('prTitle', { number: pr.number, title: pr.title }), href: '#' })
         link.addEventListener('click', e => { e.preventDefault(); openUrl(pr.url).catch(() => {}) })
         prMetaEl.append(link)
 
         const stateBadge = renderReviewPrStateBadge(pr.state, pr.mergedAt, 'review-pr-state')
         if (stateBadge) prMetaEl.append(stateBadge)
 
-        const ci = computeCiStatus(statusRollup)
+        // Cómo van los checks lo decide `bento_review::pr`; aquí solo se elige
+        // qué se pinta con ese recuento.
+        const report = await prCheckReport(statusRollup)
+        const ci = report.total === 0 ? 'none'
+          : report.failed ? 'failure'
+            : report.pending ? 'pending' : 'success'
         if (ci !== 'none') {
           const ciEl = Object.assign(document.createElement('span'), {
             className: `review-ci review-ci--${ci}`,
-            textContent: ci === 'success' ? '✓ CI' : ci === 'failure' ? '✗ CI' : '⟳ CI',
+            textContent: reviewT(ci === 'success' ? 'ciPassing' : ci === 'failure' ? 'ciFailing' : 'ciRunning'),
           })
           ciEl.style.cursor = 'pointer'
           ciEl.addEventListener('click', e => { e.stopPropagation(); state.showCiPopover(ciEl) })
@@ -204,7 +210,7 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
             if (discItems.length === 0) return
             const hdr = Object.assign(document.createElement('div'), {
               className: 'review-discussion-header',
-              textContent: `Discussion · ${discItems.length}`,
+              textContent: reviewT('discussionCount', { count: discItems.length }),
             })
             discussionEl.replaceChildren(hdr, ...discItems.map(item => {
               const msg = document.createElement('div')

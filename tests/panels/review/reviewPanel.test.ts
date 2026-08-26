@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
-import { buildReviewFileBatches, buildReviewFileManifest, createReviewPanel, describeReviewNoBranchChanges, describeReviewPrState, filterReviewPrs, resolveReviewFollowUpSession } from '../../../src/panels/review/ReviewPanel'
+import { createReviewPanel, describeReviewNoBranchChanges, describeReviewPrState, filterReviewPrs } from '../../../src/panels/review/ReviewPanel'
 
 function setup() {
   vi.stubGlobal('localStorage', makeLocalStorage())
@@ -91,24 +91,6 @@ describe('ReviewPanel', () => {
     expect(element.querySelector('.review-agent-hint')?.textContent).toContain('Single agent mode')
   })
 
-  it('keeps follow-up sessions attached to the last real review agent', () => {
-    expect(resolveReviewFollowUpSession([
-      { label: 'Orchestrator', sessionId: 's1' },
-      { label: 'Synthesis', sessionId: 's2' },
-      { label: 'Verification', sessionId: 'verifier-session' },
-    ].map(run => ({ ...run, agent: 'claude' as const })), 2)).toEqual({ sessionId: 's2', sessionAgent: 'claude' })
-  })
-
-  it('builds a complete manifest before batching review files', () => {
-    const files = [
-      { file: 'src/a.ts', additions: 3, deletions: 1, chunk: 'a'.repeat(6), state: 'M' as const },
-      { file: 'src/b.ts', additions: 1, deletions: 0, chunk: 'b'.repeat(6), state: 'D' as const },
-    ]
-
-    expect(buildReviewFileManifest(files)).toBe('M src/a.ts (+3/-1)\nD src/b.ts (+1/-0)')
-    expect(buildReviewFileBatches(files, 6)).toHaveLength(2)
-  })
-
   it('describes merged PRs explicitly', () => {
     expect(describeReviewPrState('MERGED', '2026-08-14T00:00:00Z')).toMatchObject({
       text: 'Merged',
@@ -117,6 +99,9 @@ describe('ReviewPanel', () => {
   })
 
   it('describes merged branches without the generic no-changes copy', () => {
+    // Comprueba la copia en inglés, así que fija el idioma en vez de heredar el
+    // que dejara el test anterior.
+    setup()
     expect(describeReviewNoBranchChanges('MERGED', 'origin/main')).toBe('Merged PR has no remaining changes vs origin/main')
   })
 

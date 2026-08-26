@@ -1,5 +1,5 @@
 import { t as i18nT } from '../../i18n'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { type TableData } from '../../core/db/dbEngine'
 import { type EditMeta } from './dbAccess'
 import { renderCellValue } from './dbCellRender'

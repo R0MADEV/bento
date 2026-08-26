@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import type { MenuItem } from '../../ui/contextMenu'
 import type { Worktree } from '../../core/git/worktree'
-import type { BackupStatus, PrStatus, RebaseStatus } from './gitTypes'
+import type { BackupStatus, PrStatus, RebaseStatus } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 
 export function taskRowActions(options: {

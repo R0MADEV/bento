@@ -1,5 +1,5 @@
 import { appendOperation, type GitOperationEntry } from '../../core/git/rebaseWorkflow'
-import { addRepo, removeRepo } from './repoList'
+import { addRepo, removeRepo } from '../../core/git/repoList'
 
 export class TaskPanelStore {
   private readonly prefix: string

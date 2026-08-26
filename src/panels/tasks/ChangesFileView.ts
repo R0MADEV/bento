@@ -1,4 +1,4 @@
-import { parseFilePatch } from '../../core/git/commitWorkflow'
+import { parseFilePatch } from './taskPatch'
 import { taskT } from './i18n'
 
 interface ChangesFileOptions {
@@ -47,11 +47,11 @@ export function buildChangesFileView(options: ChangesFileOptions): HTMLElement {
   body.className = 'tasks-diff-body'
   body.appendChild(Object.assign(document.createElement('div'), { className: 'db-detail-hint', textContent: taskT('loadingCode') }))
   let rendered = false
-  details.addEventListener('toggle', () => {
+  details.addEventListener('toggle', async () => {
     if (!details.open || rendered) return
     rendered = true
     body.replaceChildren()
-    const patch = parseFilePatch(chunk)
+    const patch = await parseFilePatch(chunk)
     if (!patch.hunks.length) {
       body.appendChild(Object.assign(document.createElement('pre'), { className: 'tasks-diff-code', innerHTML: options.renderPatch(chunk) }))
       return

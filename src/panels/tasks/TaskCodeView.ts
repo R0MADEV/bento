@@ -1,4 +1,8 @@
-import type { CommitFile } from './gitTypes'
+import { fileStateMap } from '../../core/git/fileState'
+
+export { fileStateMap }
+
+import type { CommitFile } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 
 export function escapeCodeHtml(value: string): string {
@@ -14,20 +18,6 @@ export function renderPatchHtml(raw: string): string {
   }).join('')
 }
 
-export function fileStateMap(raw: string): Map<string, string> {
-  const states = new Map<string, string>()
-  for (const line of raw.split('\n').filter(Boolean)) {
-    const x = line[0] ?? ' '
-    const y = line[1] ?? ' '
-    let path = line.slice(3).trim()
-    if (path.includes(' -> ')) path = path.split(' -> ').at(-1) ?? path
-    const state = x === '?' && y === '?' ? 'untracked'
-      : x !== ' ' && y !== ' ' ? 'staged + modified'
-        : x !== ' ' ? 'staged' : 'unstaged'
-    states.set(path.replace(/^"|"$/g, ''), state)
-  }
-  return states
-}
 
 function renderSourceHtml(raw: string): string {
   return raw.split('\n').map((line, index) => {

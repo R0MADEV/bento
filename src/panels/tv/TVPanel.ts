@@ -8,7 +8,7 @@ import { mergeChannelData } from '../../core/channel/mergeChannelData'
 import { toggleFavorite, isFavorite } from '../../core/channel/favorites'
 import { renderGrid } from './grid'
 import { HLSPlayer } from './player'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { PanelInstance } from '../registry'
 
@@ -195,7 +195,7 @@ export function createTVPanel(
       await player.pip()
     } catch {
       const prev = pipButton.title
-      pipButton.title = 'Reproduce un canal primero'
+      pipButton.title = i18nT('tv.playAChannelFirst')
       pipButton.style.opacity = '0.4'
       setTimeout(() => { pipButton.title = prev; pipButton.style.opacity = '' }, 1500)
     }

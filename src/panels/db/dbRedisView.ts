@@ -1,7 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { DbServer } from '../../core/db/dbServer'
-import { parseStructuredJson } from './jsonValues'
+import { parseStructuredJson } from '../../core/db/jsonValues'
 import { target, parseRedisLines } from '../../core/db/dbEngine'
 import { prettyJson, highlightJson } from './dbCellRender'
 import { note, copyToClipboard } from './dbWidgets'

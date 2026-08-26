@@ -1,6 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import type { DbServer } from '../../core/db/dbServer'
-import { buildRelationQuery, exampleQuery, groupRelations, type ForeignKey } from './queryBuilders'
+import { groupRelations, type ForeignKey } from '../../core/db/queryBuilders'
+import { exampleQuery, relationQuery } from '../../core/db/sql'
 import { isMongo, isRedis } from '../../core/db/dbEngine'
 import { note } from './dbWidgets'
 
@@ -24,7 +25,7 @@ export function createQueryChips(deps: QueryChipsDeps): HTMLElement {
   // with a listener) froze the UI. We paint at most CHIP_CAP and the filter
   // re-renders the matches from the whole list.
   type Group = 'all' | 'table' | 'rel'
-  interface ChipItem { group: 'table' | 'rel'; label: string; title: string; fill: () => string }
+  interface ChipItem { group: 'table' | 'rel'; label: string; title: string; fill: () => Promise<string> }
   let activeGroup: Group = 'all'
   const chipItems: ChipItem[] = names.map(name => ({
     group: 'table', label: name, title: i18nT('db.insertExampleQuery'), fill: () => exampleQuery(s, name),
@@ -59,7 +60,7 @@ export function createQueryChips(deps: QueryChipsDeps): HTMLElement {
       chip.className = it.group === 'rel' ? 'db-query-chip db-query-chip-rel' : 'db-query-chip'
       chip.textContent = it.label
       chip.title = it.title
-      chip.addEventListener('click', () => onPick(it.fill()))
+      chip.addEventListener('click', () => { void it.fill().then(onPick) })
       examples.appendChild(chip)
     })
     if (matches.length > CHIP_CAP) {
@@ -100,7 +101,7 @@ export function createQueryChips(deps: QueryChipsDeps): HTMLElement {
           group: 'rel',
           label: `${table} ▸ ${fks.map(f => f.ref_table).join(', ')}`,
           title: fks.map(f => `${f.table}.${f.column} → ${f.ref_table}.${f.ref_column}`).join('\n'),
-          fill: () => buildRelationQuery(s, table, fks),
+          fill: () => relationQuery(s, table, fks),
         })
       })
       renderChips()

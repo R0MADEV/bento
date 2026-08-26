@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { confirm as askConfirm } from '@tauri-apps/plugin-dialog'
 import type { Worktree } from '../../core/git/worktree'
-import type { CommitEntry, RebaseStatus, RewritePreflight } from './gitTypes'
+import type { CommitEntry, RebaseStatus, RewritePreflight } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 
 export function buildRebaseMergeWarning(options: {

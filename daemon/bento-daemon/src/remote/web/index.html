@@ -95,11 +95,8 @@
       <div>
         <div class="field-label">Agentes</div>
         <div class="rv-agent-row">
-          <select id="rv-agent" class="rv-agent-select" onchange="syncAgentUi()">
-            <option value="claude">Claude</option>
-            <option value="opencode">OpenCode</option>
-            <option value="codex">Codex</option>
-          </select>
+          <!-- Las opciones las pone review-run.js desde /agents.js. -->
+          <select id="rv-agent" class="rv-agent-select" onchange="syncAgentUi()"></select>
         </div>
         <label class="rv-agent-toggle-row" style="margin-top:8px">
           <input type="checkbox" id="rv-compare-toggle" onchange="syncAgentUi()">
@@ -109,18 +106,12 @@
           <span class="rv-agent-extra-label">Secundario</span>
           <select id="rv-agent-secondary" class="rv-agent-select" onchange="syncAgentUi()">
             <option value="">Ninguno</option>
-            <option value="claude">Claude</option>
-            <option value="opencode">OpenCode</option>
-            <option value="codex">Codex</option>
           </select>
         </div>
         <div id="rv-agent-tertiary-row" class="rv-agent-extra hidden" style="margin-top:8px">
           <span class="rv-agent-extra-label">Terciario</span>
           <select id="rv-agent-tertiary" class="rv-agent-select" onchange="syncAgentUi()">
             <option value="">Ninguno</option>
-            <option value="claude">Claude</option>
-            <option value="opencode">OpenCode</option>
-            <option value="codex">Codex</option>
           </select>
         </div>
         <div id="rv-agent-badge" class="rv-agent-badge" style="margin-top:8px"></div>
@@ -252,8 +243,12 @@
   </div>
 </div>
 
+<script src="/agents.js"></script>
 <script src="/shared.js"></script>
 <script src="/terminal.js"></script>
 <script src="/review.js"></script>
+<script src="/review-ask.js"></script>
+<script src="/review-run.js"></script>
+<script src="/review-pr.js"></script>
 </body>
 </html>

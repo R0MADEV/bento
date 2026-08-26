@@ -1,5 +1,5 @@
 import { t as i18nT } from '../../i18n'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { askAi } from '../../ui/askAi'
 
 // The right-hand pane: every view renders into it, and its header can hand the

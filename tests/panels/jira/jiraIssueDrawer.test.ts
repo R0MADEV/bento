@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({ openUrl: vi.fn(async () => {}) }))
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: mocks.openUrl }))
 
 import { showIssueDetail } from '../../../src/panels/jira/jiraIssueDrawer'
+// El panel pinta en el idioma activo: buscar un botón por su texto en español
+// solo funcionaba mientras el panel estaba sin traducir.
+import { t as i18nT } from '../../../src/i18n'
 import type { JiraIssue } from '../../../src/core/jira/issues'
 import type { IssueDetail } from '../../../src/core/jira/issueDetail'
 import type { JiraAccount, JiraClient } from '../../../src/panels/jira/jiraClient'
@@ -125,7 +128,7 @@ describe('the description', () => {
     const { promise } = setup({ jira: { fetchIssueDetail: async () => { throw new Error('down') } } })
     await promise
     await flush()
-    expect(q('.jira-detail-desc').textContent).toContain('error')
+    expect(q('.jira-detail-desc').textContent).toBe(i18nT('jira.errorLoadingDescription'))
   })
 })
 
@@ -290,7 +293,7 @@ describe('editing the description', () => {
     q<HTMLButtonElement>('.jira-header button:last-child').click()
     const ta = q<HTMLTextAreaElement>('.jira-detail-desc textarea')
     ta.value = 'h1. New'
-    ;[...document.querySelectorAll('.jira-primary')].find(b => b.textContent === 'Guardar')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    ;[...document.querySelectorAll('.jira-primary')].find(b => b.textContent === i18nT('common.save'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
     expect(request).toHaveBeenCalledWith('PUT', expect.stringContaining('K-1'), { fields: { description: 'h1. New' } })
     expect(q('.jira-detail-desc h1')).not.toBeNull()
@@ -328,9 +331,9 @@ describe('comments', () => {
     const { promise } = setup({ jira: { request } })
     await promise
     await flush()
-    const commentInput = [...document.querySelectorAll('textarea')].find(t => t.placeholder?.includes('coment')) as HTMLTextAreaElement
+    const commentInput = [...document.querySelectorAll('textarea')].find(t => t.placeholder === i18nT('jira.writeAComment')) as HTMLTextAreaElement
     commentInput.value = 'New one'
-    const submit = [...document.querySelectorAll('button')].find(b => b.textContent === 'Comentar') as HTMLButtonElement
+    const submit = [...document.querySelectorAll('button')].find(b => b.textContent === i18nT('jira.comment')) as HTMLButtonElement
     submit.click()
     await flush()
     expect(request).toHaveBeenCalledWith('POST', expect.stringContaining('/comment'), { body: 'New one' })

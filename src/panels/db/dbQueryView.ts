@@ -1,6 +1,6 @@
 import { t as i18nT } from '../../i18n'
 import type { DbServer } from '../../core/db/dbServer'
-import type { ForeignKey } from './queryBuilders'
+import type { ForeignKey } from '../../core/db/queryBuilders'
 import { KIND_LABEL, isMongo, isRedis } from '../../core/db/dbEngine'
 import { fetchColumns, fetchRelations } from './dbAccess'
 import { note } from './dbWidgets'

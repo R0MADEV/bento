@@ -229,6 +229,12 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "base64 0.22.1",
+ "bento-db",
+ "bento-docker",
+ "bento-memory",
+ "bento-notes",
+ "bento-review",
+ "bento-sessions",
  "futures",
  "hex",
  "libc",
@@ -249,6 +255,61 @@ dependencies = [
  "tokio",
  "ts-rs",
  "uuid",
+]
+
+[[package]]
+name = "bento-db"
+version = "0.1.0"
+dependencies = [
+ "bento-docker",
+ "serde",
+]
+
+[[package]]
+name = "bento-docker"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "bento-memory"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "bento-notes"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "bento-review"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "bento-sessions"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

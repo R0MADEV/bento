@@ -5,7 +5,7 @@ import { isWebviewVisible } from '../../core/web/webviewVisibility'
 import { resolveUserAgent, hostOf, getUaMode, setUaMode, type UaMode } from '../../core/web/userAgent'
 import { addHistory, searchHistory, type HistoryEntry } from '../../core/web/history'
 import { addBookmark, removeBookmark, isBookmarked, groupBookmarks, type Bookmark } from '../../core/web/bookmarks'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 
 let webPanelCounter = 0
 

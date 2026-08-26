@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
 import { askAi } from '../../ui/askAi'
-import { parseConflictFiles } from '../../core/git/conflictWorkflow'
 import { taskT } from './i18n'
 
 export function buildSyncErrorView(options: {
@@ -9,9 +8,8 @@ export function buildSyncErrorView(options: {
   path: string
   showDetail: (...nodes: HTMLElement[]) => void
   iconButton: (name: string, title: string, onClick: () => void) => HTMLButtonElement
-  status: (path: string) => Promise<{ raw: string }>
 }): void {
-  const { mode, errorText, path, showDetail, iconButton, status } = options
+  const { mode, errorText, path, showDetail, iconButton } = options
   const wrap = document.createElement('div')
   wrap.className = 'tasks-sync-error'
   const head = document.createElement('div')
@@ -22,8 +20,8 @@ export function buildSyncErrorView(options: {
   )
   wrap.append(head, Object.assign(document.createElement('pre'), { className: 'tasks-sync-error-body', textContent: errorText }))
   if (/conflict|CONFLICT/i.test(errorText)) {
-    status(path).then(result => {
-      const conflicts = parseConflictFiles(result.raw)
+    // Qué códigos del porcelain son un conflicto lo dice `bento_review::status`.
+    invoke<string[]>('git_conflicted_files', { path }).then(conflicts => {
       if (!conflicts.length) return
       const conflictsEl = document.createElement('div')
       conflictsEl.className = 'tasks-conflicts'

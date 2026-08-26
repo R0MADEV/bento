@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../../src/ui/askAi', () => ({ askAi: mocks.askAi }))
 
 import { createAiQueryButton } from '../../../src/panels/db/dbQueryAi'
-import type { ForeignKey } from '../../../src/panels/db/queryBuilders'
+import type { ForeignKey } from '../../../src/core/db/queryBuilders'
 import type { AiTool, AiQueryRunner } from '../../../src/ui/askAi'
 import type { DbServer } from '../../../src/core/db/dbServer'
 

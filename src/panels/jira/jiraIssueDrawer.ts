@@ -1,11 +1,12 @@
 import { open as openUrl } from '@tauri-apps/plugin-shell'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { browseUrl } from '../../core/jira/urls'
 import { jiraWikiToHtml } from '../../core/jira/wikiMarkup'
 import { statusCategoryClass, type AgileColumn } from '../../core/jira/board'
 import type { JiraIssue } from '../../core/jira/issues'
 import { mkBtn, detailHeader } from './jiraWidgets'
 import type { JiraAccount, JiraClient } from './jiraClient'
+import { t as i18nT } from '../../i18n'
 
 export interface JiraIssueDrawerDeps {
   jira: JiraClient
@@ -34,8 +35,8 @@ export interface JiraIssueDrawerDeps {
     const drawer = document.createElement('div')
     drawer.className = 'jira-drawer'
 
-    const openBtn = mkBtn('globe', 'Abrir en Jira', () => openUrl(browseUrl(getActiveAccount()!.site, it.key)).catch(() => {}))
-    const closeBtn = mkBtn('x', 'Cerrar', close)
+    const openBtn = mkBtn('globe', i18nT('jira.openInJira'), () => openUrl(browseUrl(getActiveAccount()!.site, it.key)).catch(() => {}))
+    const closeBtn = mkBtn('x', i18nT('common.close'), close)
 
     const meta = document.createElement('div')
     meta.className = 'jira-detail-meta'
@@ -64,7 +65,7 @@ export interface JiraIssueDrawerDeps {
 
     const descEl = document.createElement('div')
     descEl.className = 'jira-detail-desc jira-wiki-body'
-    descEl.textContent = 'Cargando…'
+    descEl.textContent = i18nT('common.loading')
     left.append(meta, summary, descEl)
 
     body.append(left, right)
@@ -139,7 +140,7 @@ export interface JiraIssueDrawerDeps {
       if (d.attachments.length) {
         const attTitle = document.createElement('div')
         attTitle.className = 'jira-detail-section-title'
-        attTitle.textContent = 'Archivos adjuntos'
+        attTitle.textContent = i18nT('jira.attachments')
         const attGrid = document.createElement('div')
         attGrid.className = 'jira-att-grid'
         d.attachments.forEach(a => {
@@ -169,7 +170,7 @@ export interface JiraIssueDrawerDeps {
           name.title = a.filename
           const dlBtn = document.createElement('button')
           dlBtn.className = 'jira-action'
-          dlBtn.title = 'Abrir / Descargar'
+          dlBtn.title = i18nT('jira.openOrDownload')
           dlBtn.innerHTML = icon('arrow-right')
           dlBtn.addEventListener('click', () => openUrl(a.content).catch(() => {}))
           card.append(name, dlBtn)
@@ -187,7 +188,7 @@ export interface JiraIssueDrawerDeps {
         if (transitions.length) {
           const trTitle = document.createElement('div')
           trTitle.className = 'jira-meta-label'
-          trTitle.textContent = 'Mover a'
+          trTitle.textContent = i18nT('jira.moveTo')
           const trList = document.createElement('div')
           trList.className = 'jira-transitions'
           transitions.forEach(t => {
@@ -221,7 +222,7 @@ export interface JiraIssueDrawerDeps {
       if (d.pullRequests.length) {
         const prTitle = document.createElement('div')
         prTitle.className = 'jira-detail-section-title'
-        prTitle.textContent = 'Pull Requests'
+        prTitle.textContent = i18nT('jira.pullRequests')
         const prList = document.createElement('div')
         prList.className = 'jira-detail-prs'
         d.pullRequests.forEach(pr => {
@@ -246,14 +247,14 @@ export interface JiraIssueDrawerDeps {
         const save = document.createElement('button')
         save.className = 'jira-primary'
         save.style.cssText = 'margin-top:4px;padding:3px 8px;font-size:11px'
-        save.textContent = 'Guardar'
+        save.textContent = i18nT('common.save')
         save.addEventListener('click', async () => {
           save.disabled = true
           try {
             await api('PUT', `api/2/issue/${it.key}`, { update: { timetracking: [{ set: { originalEstimate: estInput.value.trim() } }] } })
             d.estimate = estInput.value.trim()
             estRow?.replaceChildren(
-              Object.assign(document.createElement('span'), { className: 'jira-meta-label', textContent: 'ESTIMACIÓN' }),
+              Object.assign(document.createElement('span'), { className: 'jira-meta-label', textContent: i18nT('jira.estimate') }),
               Object.assign(document.createElement('span'), { className: 'jira-meta-value' })
             )
             const valEl = estRow?.querySelector('.jira-meta-value')
@@ -270,7 +271,7 @@ export interface JiraIssueDrawerDeps {
       // ---- Edit description ----
       const editDescBtn = document.createElement('button')
       editDescBtn.className = 'jira-action'
-      editDescBtn.title = 'Editar descripción'
+      editDescBtn.title = i18nT('jira.editDescription')
       editDescBtn.innerHTML = icon('settings')
       editDescBtn.addEventListener('click', () => {
         const ta = document.createElement('textarea')
@@ -279,10 +280,10 @@ export interface JiraIssueDrawerDeps {
         ta.value = d.description
         const saveDesc = document.createElement('button')
         saveDesc.className = 'jira-primary'
-        saveDesc.textContent = 'Guardar'
+        saveDesc.textContent = i18nT('common.save')
         const cancelDesc = document.createElement('button')
         cancelDesc.className = 'jira-transition-btn'
-        cancelDesc.textContent = 'Cancelar'
+        cancelDesc.textContent = i18nT('common.cancel')
         const row = document.createElement('div')
         row.style.cssText = 'display:flex;gap:6px;margin-top:6px'
         row.append(saveDesc, cancelDesc)
@@ -305,18 +306,18 @@ export interface JiraIssueDrawerDeps {
       // ---- Comments ----
       const commentTitle = document.createElement('div')
       commentTitle.className = 'jira-detail-section-title'
-      commentTitle.textContent = 'Comentarios'
+      commentTitle.textContent = i18nT('jira.comments')
       const commentList = document.createElement('div')
       commentList.className = 'jira-comment-list'
-      commentList.textContent = 'Cargando comentarios…'
+      commentList.textContent = i18nT('jira.loadingComments')
 
       const commentInput = document.createElement('textarea')
       commentInput.className = 'jira-textarea'
-      commentInput.placeholder = 'Escribe un comentario…'
+      commentInput.placeholder = i18nT('jira.writeAComment')
       commentInput.style.cssText = 'min-height:70px;width:100%;box-sizing:border-box'
       const commentSubmit = document.createElement('button')
       commentSubmit.className = 'jira-primary'
-      commentSubmit.textContent = 'Comentar'
+      commentSubmit.textContent = i18nT('jira.comment')
       commentSubmit.addEventListener('click', async () => {
         const text = commentInput.value.trim()
         if (!text) return
@@ -331,7 +332,7 @@ export interface JiraIssueDrawerDeps {
 
       const renderComments = (comments: Array<{ body: string; author?: { displayName?: string }; created?: string }>): void => {
         commentList.replaceChildren()
-        if (!comments.length) { commentList.textContent = 'Sin comentarios.'; return }
+        if (!comments.length) { commentList.textContent = i18nT('jira.noComments'); return }
         comments.forEach(c => {
           const item = document.createElement('div')
           item.className = 'jira-comment'
@@ -351,10 +352,10 @@ export interface JiraIssueDrawerDeps {
           const r = res as { comments?: Array<{ body: string; author?: { displayName?: string }; created?: string }> }
           renderComments(r?.comments ?? [])
         })
-        .catch(() => { commentList.textContent = 'Error cargando comentarios.' })
+        .catch(() => { commentList.textContent = i18nT('jira.errorLoadingComments') })
 
       left.append(commentTitle, commentList, commentInput, commentSubmit)
-    }).catch(() => { descEl.textContent = '(error cargando descripción)' })
+    }).catch(() => { descEl.textContent = i18nT('jira.errorLoadingDescription') })
     overlay.append(drawer)
     detailPane.append(overlay)
   }

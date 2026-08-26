@@ -1,9 +1,11 @@
 import { t as i18nT } from '../../i18n'
+import { buildAgentRename } from './agentRename'
+import { buildSessionCapture } from './agentSessionCapture'
 import { appT } from '../../core/i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { createAgentStore } from '../../core/terminal/agentStore'
 import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
-import { detectAgentCmd, resolveAgentIdentity } from './detectAgent'
+import { detectAgentCmd, resolveAgentIdentity } from '../../core/ai/detectAgent'
 import { emitAgentDock, AGENT_ACTIVATE_EVENT, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { buildResumeCmd } from './agentResume'
@@ -32,17 +34,7 @@ const STATUS_ICON: Record<string, string> = {
 
 // Agents whose herdr hooks report the exact session_id via the Bento socket
 // (keyed by HERDR_PANE_ID). This is the reliable path.
-const SOCKET_AGENTS = new Set(['claude', 'codex'])
-// Agents without a socket-reporting hook: find the session on disk by creation
-// time. Only OpenCode needs this (it has no hook; its session lives in SQLite).
-const SESSION_FIND: Record<string, string> = {
-  'opencode': 'agent_find_opencode_session',
-}
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-
-interface AgentSlot {
+export interface AgentSlot {
   num: number
   customName: string
   cmd?: string
@@ -143,51 +135,8 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   // creation time at/after launch (`sinceMs`), which never grabs another agent's
   // session. Polls for the whole agent lifetime because OpenCode only writes the
   // session on the first message, which may be long after launch.
-  const captureSession = async (agentSlot: AgentSlot, cmd: string, cwd: string, sinceMs: number) => {
-    const useSocket = SOCKET_AGENTS.has(cmd)
-    const findCmd = SESSION_FIND[cmd]
-    if (!useSocket && !findCmd) return
+  const captureSession = buildSessionCapture({ slots: () => slots, claimedSessionIds, onCaptured: () => persistNow() })
 
-    const paneId = agentSlot.handle.getPtyId()
-    let attempt = 0
-    const agentIsAlive = () => slots.includes(agentSlot) && !agentSlot.sessionId
-
-    // Socket agents report on SessionStart (right after launch); poll fast early
-    // so closing the panel a couple seconds in still captures the resume id. If
-    // the hook hasn't fired in ~1 min it never will, so stop. OpenCode writes its
-    // session only on the first message, which can be much later — poll long.
-    const maxAttempts = useSocket ? 24 : 120
-
-    while (agentIsAlive() && attempt < maxAttempts) {
-      await delay(useSocket ? Math.min(500 + attempt * 400, 3000) : Math.min(2000 + attempt * 500, 5000))
-      attempt++
-
-      // Socket (Claude/Codex): exact match by HERDR_PANE_ID.
-      // File-based (OpenCode): newest session created at/after sinceMs, skipping
-      // ones already claimed by another agent in this panel.
-      const [socketId, fileId] = await Promise.all([
-        useSocket
-          ? invoke<string | null>('agent_get_session', { paneId }).catch(() => null)
-          : Promise.resolve(null),
-        findCmd
-          ? invoke<string | null>(findCmd, { cwd, sinceMs, exclude: [...claimedSessionIds] }).catch(() => null)
-          : Promise.resolve(null),
-      ])
-
-      const id = (socketId && !claimedSessionIds.has(socketId)) ? socketId
-               : (fileId  && !claimedSessionIds.has(fileId))  ? fileId
-               : null
-
-      if (id) {
-        claimedSessionIds.add(id)
-        agentSlot.sessionId = id
-        persistNow()
-        return
-      }
-    }
-  }
-
-  // ── Root ──────────────────────────────────────────────────────
   const root = document.createElement('div')
   root.className = 'agents-hub'
 
@@ -220,37 +169,10 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   root.append(cs.element, cs.resizer, termArea)
 
   // ── Inline name edit ──────────────────────────────────────────
-  const startRename = (slot: AgentSlot, nameEl: HTMLElement) => {
-    // The click preceding dblclick can trigger activateAgent → renderSidebar,
-    // detaching nameEl before dblclick fires. Guard against that case.
-    if (!nameEl.isConnected) return
-    isEditing = true
-    const input = document.createElement('input')
-    input.className = 'agents-sidebar-name-input'
-    input.value = slot.customName
-    nameEl.replaceWith(input)
-    input.focus()
-    input.select()
-
-    let committed = false
-    const commit = () => {
-      if (committed) return
-      committed = true
-      const val = input.value.trim()
-      slot.customName = val || slot.customName
-      void invoke('pty_set_title', { id: slot.ptyId, title: slot.customName })
-      isEditing = false
-      renderSidebar()
-    }
-
-    input.addEventListener('blur', commit)
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); input.blur() }
-      if (e.key === 'Escape') { committed = true; isEditing = false; renderSidebar() }
-    })
-  }
-
-  // ── Sidebar render ─────────────────────────────────────────────
+  const startRename = buildAgentRename({
+    setEditing: editing => { isEditing = editing },
+    onRenamed: () => { persistNow(); renderSidebar() },
+  })
 
   const refreshMiniItems = () => {
     const entries = store.getAll()
@@ -315,7 +237,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       const closeBtn = document.createElement('button')
       closeBtn.className = 'agents-sidebar-close'
       closeBtn.textContent = '×'
-      closeBtn.title = 'Close agent'
+      closeBtn.title = i18nT('agents.closeAgent')
       closeBtn.addEventListener('click', e => {
         e.stopPropagation()
         removeAgent(i)

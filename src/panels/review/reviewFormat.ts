@@ -1,6 +1,4 @@
-import { parseDiffFiles } from '../diff/diffStats'
-import type { AgentType } from '../../core/ai/config'
-import type { MultiAgentReviewRun } from '../../core/ai/techReview'
+import { parseDiffFiles } from '../../core/git/diffStats'
 import { reviewT } from './i18n'
 
 export type ReviewChangeFile = ReturnType<typeof parseDiffFiles>[0] & { state: 'A' | 'D' | 'M' }
@@ -29,39 +27,6 @@ export interface GhPr {
 export type SidebarMode = 'branches' | 'prs'
 export type FileTypeFilter = 'all' | 'A' | 'M' | 'D' | 'commented'
 
-export function resolveReviewFollowUpSession(reviewRuns: MultiAgentReviewRun[], reviewAgentCount: number): { sessionId: string | null; sessionAgent: AgentType | null } {
-  const run = reviewRuns
-    .slice(0, reviewAgentCount)
-    .reverse()
-    .find(run => run.sessionId)
-  return {
-    sessionId: run?.sessionId ?? null,
-    sessionAgent: run?.agent ?? null,
-  }
-}
-
-export function buildReviewFileManifest(files: ReviewChangeFile[]): string {
-  return files.map(file => `${file.state} ${file.file} (+${file.additions}/-${file.deletions})`).join('\n')
-}
-
-export function buildReviewFileBatches(files: ReviewChangeFile[], maxBatchChars = 12_000): ReviewChangeFile[][] {
-  if (!files.length) return []
-  const batches: ReviewChangeFile[][] = []
-  let batch: ReviewChangeFile[] = []
-  let chars = 0
-  files.forEach(file => {
-    const nextChars = chars + file.chunk.length
-    if (batch.length && nextChars > maxBatchChars) {
-      batches.push(batch)
-      batch = []
-      chars = 0
-    }
-    batch.push(file)
-    chars += file.chunk.length
-  })
-  if (batch.length) batches.push(batch)
-  return batches
-}
 
 export function describeReviewPrState(state?: string | null, mergedAt?: string | null): { text: string; cls: string; title: string } | null {
   const normalized = (state ?? '').toUpperCase()
@@ -76,7 +41,7 @@ export function describeReviewPrState(state?: string | null, mergedAt?: string |
   return {
     text: badge.text,
     cls: badge.cls,
-    title: mergedAt ? `Merged at ${new Date(mergedAt).toLocaleString()}` : normalized,
+    title: mergedAt ? reviewT('mergedAt', { date: new Date(mergedAt).toLocaleString() }) : normalized,
   }
 }
 
@@ -177,14 +142,6 @@ export const getFileState = (chunk: string): 'A' | 'D' | 'M' => {
 }
 
 // ── CI status ─────────────────────────────────────────────────────────────────
-export const computeCiStatus = (rollup: Array<{ conclusion?: string | null; state?: string }>): 'success' | 'failure' | 'pending' | 'none' => {
-  if (!rollup?.length) return 'none'
-  const vals = rollup.map(c => (c.conclusion ?? c.state ?? '').toUpperCase())
-  if (vals.some(v => ['FAILURE','ERROR','TIMED_OUT','CANCELLED'].includes(v))) return 'failure'
-  if (vals.some(v => ['PENDING','IN_PROGRESS','QUEUED','WAITING','ACTION_REQUIRED'].includes(v))) return 'pending'
-  return 'success'
-}
-
 // ── Relative time ─────────────────────────────────────────────────────────────
 export const relativeTime = (iso: string): string => {
   const diff = Date.now() - new Date(iso).getTime()

@@ -1,12 +1,6 @@
-export interface Container {
-  id: string
-  name: string
-  image: string
-  state: string
-  status: string
-  ports: string
-  project: string
-}
+// La forma la define `bento_docker::Container`, que es quien la produce.
+export type { Container } from '../../generated/bindings/Container'
+import type { Container } from '../../generated/bindings/Container' 
 
 export interface ProjectGroup {
   project: string

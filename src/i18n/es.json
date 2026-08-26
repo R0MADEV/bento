@@ -121,7 +121,39 @@
     "commentedFilter": "Con comentarios",
     "copyDiff": "Copiar diff",
     "fileComment": "Comentar archivo",
-    "nextUnviewed": "Siguiente sin ver (u)"
+    "nextUnviewed": "Siguiente sin ver (u)",
+    "cancel": "Cancelar",
+    "noPrForBranch": "Esta rama no tiene PR",
+    "copied": "✓ copiado",
+    "unifiedView": "Vista unificada",
+    "splitView": "Vista dividida",
+    "copiedExclaim": "✓ ¡Copiado!",
+    "filterPlaceholder": "Filtrar…",
+    "noSavedReview": "Todavía no hay ninguna review guardada para esta rama",
+    "contextLabel": "Contexto para la review (opcional): ¿qué hace esta rama y en qué fijarse?",
+    "contextPlaceholder": "Ej: añade tests de contrato de la API; comprueba que no rompa el refactor de la BD…",
+    "review": "Revisar",
+    "reviewing": "Revisando…",
+    "preparingReview": "Preparando la review…",
+    "stop": "Parar",
+    "stoppingReview": "Parando la review…",
+    "creatingWorktree": "Creando un worktree aislado…",
+    "gatheringContext": "Recogiendo contexto…",
+    "finalSynthesis": "Síntesis final…",
+    "aiReview": "AI Review",
+    "discussion": "Discusión",
+    "commentLine": "Comentar la línea {line}",
+    "mergedAt": "Fusionado el {date}",
+    "commentCount": "{count} comentario(s)",
+    "lineRange": "Línea {line} · {file}",
+    "progressMeta": "{chars} caracteres · {seconds}s",
+    "reviewingWithAgents": "Revisando con {count} agente(s) en paralelo…",
+    "incompleteReview": "Review incompleta (se guardó lo revisado): {error}",
+    "prTitle": "PR #{number}: {title}",
+    "ciPassing": "✓ CI",
+    "ciFailing": "✗ CI",
+    "ciRunning": "⟳ CI",
+    "discussionCount": "Discusión · {count}"
   },
   "diff": {
     "title": "Diff",
@@ -606,7 +638,10 @@
     "createVaultForAiKey": "🔒 Crea el Vault (panel Vault) para guardar tu API key de forma segura.",
     "unlockVaultForAiKey": "🔒 Desbloquea el Vault (panel Vault) para ver o guardar tu API key.",
     "apiKey": "API key",
-    "aiBaseUrlPlaceholder": "https://api.openai.com/v1"
+    "aiBaseUrlPlaceholder": "https://api.openai.com/v1",
+    "customExecutable": "Ejecutable propio",
+    "argumentsSpaceSeparated": "Argumentos (separados por espacios)",
+    "couldNotLoadPanel": "No se pudo cargar el panel: "
   },
   "panels": {
     "agents": {
@@ -616,7 +651,8 @@
       "terminalsCount": "{count} agentes",
       "newAgent": "Nuevo agente",
       "waitingForInput": "Esperando entrada",
-      "wantsAttention": "Requiere tu atención"
+      "wantsAttention": "Requiere tu atención",
+      "closeAgent": "Cerrar agente"
     },
     "db": {
       "connecting": "Conectando…",
@@ -772,7 +808,32 @@
       "apiToken": "API token",
       "jqlPlaceholder": "JQL…",
       "panelTitle": "Jira",
-      "taskIssueType": "Tarea"
+      "taskIssueType": "Tarea",
+      "addAccount": "Añadir cuenta",
+      "boardView": "Vista tablero",
+      "listView": "Vista lista",
+      "searchBoard": "Buscar tablero…",
+      "reloadBoard": "Recargar",
+      "editAccount": "Editar cuenta",
+      "loadingBoard": "Cargando tablero…",
+      "loadingBoards": "Cargando tableros…",
+      "pickABoard": "Busca y selecciona un tablero.",
+      "allFieldsAreRequired": "Todos los campos son obligatorios.",
+      "noAccounts": "Sin cuentas. Usa + para añadir una.",
+      "removeAccount": "Eliminar cuenta",
+      "attachments": "Archivos adjuntos",
+      "openOrDownload": "Abrir / Descargar",
+      "moveTo": "Mover a",
+      "pullRequests": "Pull Requests",
+      "estimate": "ESTIMACIÓN",
+      "editDescription": "Editar descripción",
+      "comments": "Comentarios",
+      "loadingComments": "Cargando comentarios…",
+      "writeAComment": "Escribe un comentario…",
+      "comment": "Comentar",
+      "noComments": "Sin comentarios.",
+      "errorLoadingComments": "Error cargando comentarios.",
+      "errorLoadingDescription": "(error cargando descripción)"
     },
     "memory": {
       "clear": "Limpiar",
@@ -919,6 +980,19 @@
       "deleteFailed": "Error al borrar",
       "deleteFailedHint": "No se pudo borrar esta nota. La nota se restauró."
     },
+    "remote": {
+      "panelTitle": "Móvil",
+      "enableWifiServer": "Activar servidor WiFi",
+      "serverRunning": "Servidor activo",
+      "useTailscale": "Usar Tailscale (fuera de casa)",
+      "port": "Puerto",
+      "howItWorks": "Tu Mac actúa como servidor. El móvil se conecta directamente por WiFi sin instalar ninguna app.",
+      "reachableViaTailscale": "Accesible vía Tailscale desde cualquier red.",
+      "localWifiOnly": "Solo en tu red WiFi local — nunca exponer a internet.",
+      "checking": "Comprobando…",
+      "starting": "Activando…",
+      "stopping": "Desactivando…"
+    },
     "scripts": {
       "noScripts": "Sin scripts",
       "runHint": "Ejecuta un script para ver su salida aquí",
@@ -962,7 +1036,8 @@
       "unavailable": "⚠ {channel} — no disponible",
       "country2": "🌍 País",
       "channelCount": "{count} canales",
-      "errorMessage": "Error: {message}"
+      "errorMessage": "Error: {message}",
+      "playAChannelFirst": "Reproduce un canal primero"
     },
     "vault": {
       "copy": "Copiar",

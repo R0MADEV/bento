@@ -1,14 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { reviewT } from './i18n'
 import { t as i18nT } from '../../i18n'
-import { redact, startAgent } from '../../core/ai/agentClient'
+import { redact } from '../../core/ai/agentClient'
+import { startAgent } from '../../adapters/agentRunner'
 import { agentLabel, type AgentType } from '../../core/ai/config'
-import { buildReviewPrompt, buildReviewSynthesisPrompt, buildReviewDocument, isRetryableReviewError, createContextProvider, type MultiAgentReviewRun } from '../../core/ai/techReview'
+import { createContextProvider, type MultiAgentReviewRun } from '../../core/ai/techReview'
+import { buildReviewDocument, buildReviewOverview, isRetryableReviewError, resolveReviewFollowUpSession, type FollowUpSession } from './reviewDocument'
+import { buildReviewPrompt, buildReviewSynthesisPrompt } from './reviewPrompts'
 import { askAi } from '../../ui/askAi'
-import { techReviewConversationKey, techReviewCheckpointKey } from '../../core/ai/chatHistory'
+import { techReviewConversationKey } from '../../core/ai/chatHistory'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
-import { resolveReviewFollowUpSession, buildReviewFileManifest, type ReviewChangeFile } from './reviewFormat'
+import type { ReviewChangeFile } from './reviewFormat'
 
 export interface ReviewAiRunDom {
   aiReviewBtn: HTMLButtonElement
@@ -46,13 +49,13 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
   const showReviewContextForm = (): void => {
     const form = document.createElement('div')
     form.className = 'review-context-form'
-    const label = Object.assign(document.createElement('label'), { className: 'review-context-label', textContent: 'Contexto para la review (opcional): ¿qué hace esta rama y en qué fijarse?' })
+    const label = Object.assign(document.createElement('label'), { className: 'review-context-label', textContent: reviewT('contextLabel') })
     const ta = Object.assign(document.createElement('textarea'), {
       className: 'review-context-input',
       value: (() => { try { return localStorage.getItem(reviewContextKey()) ?? '' } catch { return '' } })(),
-      placeholder: 'Ej: añade tests de contrato de la API; comprueba que no rompa el refactor de la BD…',
+      placeholder: reviewT('contextPlaceholder'),
     })
-    const runBtn = Object.assign(document.createElement('button'), { className: 'review-context-run', textContent: 'Revisar' })
+    const runBtn = Object.assign(document.createElement('button'), { className: 'review-context-run', textContent: reviewT('review') })
     runBtn.addEventListener('click', () => {
       const value = ta.value.trim()
       try { if (value) localStorage.setItem(reviewContextKey(), value); else localStorage.removeItem(reviewContextKey()) } catch { /* storage full */ }
@@ -102,15 +105,18 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     const reviewAgent = reviewAgents.at(-1) ?? reviewAgents[0]
     const reviewConversationKey = techReviewConversationKey(reviewRepoPath, reviewBranch)
     const reviewProjectName = reviewRepoPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? reviewRepoPath
-    const currentPrNumber = state.getCurrentPrNumber()
-    const prLine = currentPrNumber ? `PR #${currentPrNumber}: ${state.getCurrentPrTitle()}` : `Branch: ${reviewBranch}`
-    const descSection = state.getCurrentPrBody().trim() ? `\nDescription:\n${state.getCurrentPrBody().trim()}\n` : ''
-    const authorContext = reviewContext.trim() ? `\nContexto del autor (qué hace la rama / en qué fijarse):\n${reviewContext.trim()}\n` : ''
-    const reviewFileManifest = buildReviewFileManifest(lastFiles)
-    const reviewOverview = `${prLine}\nBase: ${reviewBaseBranch} <- ${reviewBranch}\n${descSection}${authorContext}Files:\n${reviewFileManifest}\n\nReview the files in the current batch first. If a file is not included below, read it directly from the worktree before deciding.`
+    const reviewOverview = await buildReviewOverview({
+      branch: reviewBranch,
+      base: reviewBaseBranch,
+      prNumber: state.getCurrentPrNumber(),
+      prTitle: state.getCurrentPrTitle(),
+      prBody: state.getCurrentPrBody(),
+      authorContext: reviewContext,
+      files: lastFiles.map(file => ({ state: file.state, file: file.file, additions: file.additions, deletions: file.deletions })),
+    })
     const reviewChangedFiles = lastFiles.map(file => file.file)
     aiReviewBtn.disabled = true
-    aiReviewBtn.title = 'Reviewing...'
+    aiReviewBtn.title = reviewT('reviewing')
     const reviewEvidence: string[] = []
 
     // Progress box visible desde el principio
@@ -118,11 +124,11 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     progressBox.className = 'review-ai-progress'
     const progressHeader = document.createElement('div')
     progressHeader.className = 'review-ai-progress-header'
-    const progressStatus = Object.assign(document.createElement('span'), { className: 'review-ai-progress-status', textContent: 'Preparing review…' })
+    const progressStatus = Object.assign(document.createElement('span'), { className: 'review-ai-progress-status', textContent: reviewT('preparingReview') })
     const progressMeta = Object.assign(document.createElement('span'), { className: 'review-ai-progress-meta' })
     const stopReviewBtn = Object.assign(document.createElement('button'), {
       className: 'review-ai-stop-btn',
-      textContent: 'Stop',
+      textContent: reviewT('stop'),
       disabled: true,
     })
     const progressStream = Object.assign(document.createElement('pre'), { className: 'review-ai-progress-stream' })
@@ -142,7 +148,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     const timer = setInterval(() => {
       const secs = Math.floor((Date.now() - startedAt) / 1000)
       const chars = progressStream.textContent?.length ?? 0
-      progressMeta.textContent = chars ? `${chars} chars · ${secs}s` : `${secs}s`
+      progressMeta.textContent = chars ? reviewT('progressMeta', { chars, seconds: secs }) : `${secs}s`
     }, 500)
     // Agents run in parallel, so track every in-flight handle (not just one) to
     // cancel them all on Stop.
@@ -152,19 +158,22 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       if (reviewStopped || !activeReviewHandles.size) return
       reviewStopped = true
       stopReviewBtn.disabled = true
-      progressStatus.textContent = 'Stopping review…'
+      progressStatus.textContent = reviewT('stoppingReview')
       await Promise.all([...activeReviewHandles].map(handle => handle.cancel().catch(() => {})))
     })
 
-    const showResult = (content: string, reviewCommit: string, followUpSession: { sessionId: string | null; sessionAgent: AgentType | null }): void => {
+    const showResult = (content: string, reviewCommit: string, followUpSession: FollowUpSession): void => {
+      // El agente de la sesión llega como texto desde Rust; aquí solo vale si es
+      // uno de los que la UI sabe pintar.
+      const sessionAgent = followUpSession.sessionAgent as AgentType | null
       reviewDrawerMeta.textContent = `${reviewBranch} · ${reviewCommit.slice(0, 7)}`
       reviewDrawerBody.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'review-drawer-result',
         innerHTML: renderMarkdown(content),
       }))
       state.showReviewDrawer()
-      const followUpAgent = followUpSession.sessionAgent ?? reviewAgent
-      askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, followUpAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, followUpSession.sessionId ?? undefined, followUpSession.sessionAgent ?? undefined, reviewEvidence)
+      const followUpAgent = sessionAgent ?? reviewAgent
+      askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, followUpAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, followUpSession.sessionId ?? undefined, sessionAgent ?? undefined, reviewEvidence)
     }
     let worktree = ''
     let managedWorktree = false
@@ -183,22 +192,29 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     })
     const outputRuns = (): MultiAgentReviewRun[] => (reviewRuns.length ? reviewRuns : lastBatchRuns)
     // Persist the document after every stage so a crash/reload never loses findings.
-    const saveReviewCheckpoint = (): void => {
+    const saveReviewCheckpoint = async (): Promise<void> => {
       const runs = outputRuns().filter(run => run.report || run.error)
       if (!runs.length || !reviewCommit) return
-      const followUpSession = resolveReviewFollowUpSession(runs, runs.length)
-      try {
-        localStorage.setItem(techReviewCheckpointKey(reviewRepoPath, reviewBranch), JSON.stringify({
-          content: buildReviewDocument(reviewMeta(), runs),
-          commit: reviewCommit,
-          branch: reviewBranch,
-          sessionId: followUpSession.sessionId ?? null,
-          sessionAgent: followUpSession.sessionAgent ?? null,
-        }))
-      } catch { /* storage full — the on-screen salvage still applies */ }
+      const [content, followUpSession] = await Promise.all([
+        buildReviewDocument(reviewMeta(), runs),
+        resolveReviewFollowUpSession(runs, runs.length),
+      ])
+      // Saved to the store shared with the daemon and the CLI, so the review
+      // also shows up in the TUI's history and on the phone.
+      await invoke('review_checkpoint_save', {
+        cwd: reviewRepoPath,
+        base: reviewBranch,
+        content,
+        branch: reviewBranch,
+        commit: reviewCommit,
+        sessionId: followUpSession.sessionId,
+        sessionAgent: followUpSession.sessionAgent,
+      })
     }
+    // Persistir es de fondo: si falla, en pantalla sigue estando todo.
+    const persistReviewCheckpoint = (): void => { void saveReviewCheckpoint().catch(() => {}) }
     try {
-      progressStatus.textContent = 'Creating isolated worktree…'
+      progressStatus.textContent = reviewT('creatingWorktree')
       const branchContext = await invoke<{ path: string; commit: string; managed: boolean }>('review_branch_context_prepare', {
         repoPath: reviewRepoPath,
         reference: reviewBranch,
@@ -208,7 +224,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       managedWorktree = branchContext.managed
       reviewCommit = branchContext.commit
       const snapshotBefore = await invoke<string>('review_snapshot', { repoPath: worktree })
-      progressStatus.textContent = 'Gathering context…'
+      progressStatus.textContent = reviewT('gatheringContext')
       const contextProvider = createContextProvider({
         lexis: async () => {
           const content = await invoke<string>('review_lexis_context', {
@@ -225,7 +241,9 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
         direct: async () => lastFiles.map(file => ({ path: file.file, content: file.chunk, reason: 'changed' as const })),
       })
       const context = await contextProvider.collect({ repoRoot: worktree, diff: reviewOverview, changedFiles: reviewChangedFiles })
-      const sharedPrompt = buildReviewPrompt({
+      const sharedPrompt = await buildReviewPrompt({
+        project: reviewProjectName,
+        base: reviewBaseBranch,
         diff: reviewOverview,
         files: [],
         contextSources: context.sources,
@@ -235,7 +253,9 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       // fits inline (large files truncated; the agent reads the rest via its tools).
       const ONE_PASS_CONTENT_BUDGET = 150_000
       const perFileBudget = Math.max(800, Math.floor(ONE_PASS_CONTENT_BUDGET / Math.max(lastFiles.length, 1)))
-      const onePassPrompt = buildReviewPrompt({
+      const onePassPrompt = await buildReviewPrompt({
+        project: reviewProjectName,
+        base: reviewBaseBranch,
         diff: reviewOverview,
         files: lastFiles.map(file => ({
           path: file.file,
@@ -295,7 +315,8 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
             activeReviewHandles.delete(handle)
             if (!activeReviewHandles.size) stopReviewBtn.disabled = true
           }
-          const shouldRetry = attempt < MAX_REVIEW_ATTEMPTS && !reviewStopped && !run.report && !!run.error && isRetryableReviewError(run.error)
+          const worthAnotherAttempt = attempt < MAX_REVIEW_ATTEMPTS && !reviewStopped && !run.report && !!run.error
+          const shouldRetry = worthAnotherAttempt && await isRetryableReviewError(run.error as string)
           if (!shouldRetry) break
           await new Promise<void>(resolve => setTimeout(resolve, 3_000 * attempt))
         }
@@ -305,23 +326,23 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       // Each agent does ONE full-change analysis (reading files itself), all in
       // parallel. The final verifier then consolidates: the multi-agent pipeline is
       // kept; only the per-agent file batching (that made it take hours) is gone.
-      progressStatus.textContent = `Revisando con ${reviewAgents.length} agente(s) en paralelo…`
+      progressStatus.textContent = reviewT('reviewingWithAgents', { count: reviewAgents.length })
       const agentRuns = await Promise.all(reviewAgents.map(agent => runReviewAgent(agent, onePassPrompt, 'analysis')))
       lastBatchRuns = agentRuns
       reviewRuns.push(...agentRuns.filter(run => run.report || run.error))
-      saveReviewCheckpoint()
+      persistReviewCheckpoint()
 
       // With ≥2 agents, one of them consolidates everyone's analysis into a final
       // report (the pipeline: each agent analyses, the last one synthesizes).
       const reportsToSynthesize = reviewRuns.filter(run => run.report).map(run => ({ label: run.label, report: run.report as string }))
       if (!reviewStopped && reportsToSynthesize.length >= 2) {
-        progressStatus.textContent = 'Síntesis final…'
+        progressStatus.textContent = reviewT('finalSynthesis')
         const verifierAgent = reviewAgents.at(-1) ?? reviewAgents[0]
-        const synthesisPrompt = buildReviewSynthesisPrompt(sharedPrompt, reportsToSynthesize)
+        const synthesisPrompt = await buildReviewSynthesisPrompt(sharedPrompt, reportsToSynthesize)
         const synthesisRun = await runReviewAgent(verifierAgent, synthesisPrompt, 'verification')
         synthesisRun.label = 'Síntesis final'
         reviewRuns.push(synthesisRun)
-        saveReviewCheckpoint()
+        persistReviewCheckpoint()
       }
 
       if (reviewStopped) throw new Error('Review stopped')
@@ -329,9 +350,11 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       if (!successfulRuns.length) throw new Error('No valid review responses')
 
       const snapshotAfter = await invoke<string>('review_snapshot', { repoPath: worktree })
-      const content = buildReviewDocument(reviewMeta(), reviewRuns)
-      const followUpSession = resolveReviewFollowUpSession(reviewRuns, reviewRuns.length)
-      saveReviewCheckpoint()
+      const [content, followUpSession] = await Promise.all([
+        buildReviewDocument(reviewMeta(), reviewRuns),
+        resolveReviewFollowUpSession(reviewRuns, reviewRuns.length),
+      ])
+      persistReviewCheckpoint()
       showResult(content, reviewCommit, followUpSession)
       if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
     } catch (error) {
@@ -339,9 +362,13 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       // we have and show the error as a note, instead of wiping the drawer.
       const salvaged = outputRuns().filter(run => run.report)
       if (salvaged.length) {
-        saveReviewCheckpoint()
-        showResult(buildReviewDocument(reviewMeta(), salvaged), reviewCommit, resolveReviewFollowUpSession(salvaged, salvaged.length))
-        const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: `Review incompleto (se guardó lo revisado): ${String(error)}` })
+        persistReviewCheckpoint()
+        const [content, followUpSession] = await Promise.all([
+          buildReviewDocument(reviewMeta(), salvaged),
+          resolveReviewFollowUpSession(salvaged, salvaged.length),
+        ])
+        showResult(content, reviewCommit, followUpSession)
+        const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: reviewT('incompleteReview', { error: String(error) }) })
         reviewDrawerBody.prepend(note)
         note.scrollIntoView({ block: 'start', behavior: 'smooth' })
       } else {
@@ -355,7 +382,7 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
           await invoke('review_branch_context_release', { path: worktree }).catch(error => showReviewError(String(error)))
         }
         aiReviewBtn.disabled = false
-        aiReviewBtn.title = 'AI Review'
+        aiReviewBtn.title = reviewT('aiReview')
       }
   }
 

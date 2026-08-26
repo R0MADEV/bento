@@ -1,9 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { CommitEntry, CommitFile, CommitRecommendation, GitStatus, WorktreeInfo } from './gitTypes'
+import type { CommitEntry, CommitFile, CommitRecommendation, GitStatus, WorktreeInfo } from '../../core/git/gitTypes'
+import type { FixupTarget } from '../../generated/bindings/FixupTarget'
 
 const emptyStatus = (): GitStatus => ({ raw: '', staged: 0, unstaged: 0, untracked: 0, total: 0 })
 
 export const taskGit = {
+  fixupTargets: (path: string, base: string, patch: string, files?: string[]): Promise<FixupTarget[]> =>
+    invoke<FixupTarget[]>('git_fixup_targets', { path, base, patch, files: files ?? null }),
+
   worktrees: (repo: string): Promise<WorktreeInfo[]> => invoke<WorktreeInfo[]>('git_worktree_list', { repo }),
   status: (path: string): Promise<GitStatus> => invoke<GitStatus>('git_status', { path }),
   safeStatus: (path: string): Promise<GitStatus> => invoke<GitStatus>('git_status', { path }).catch(emptyStatus),

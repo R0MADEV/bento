@@ -4,7 +4,7 @@ import type { DbServer } from '../../core/db/dbServer'
 import { isPg, sqlCmd, creds, target, type TableData } from '../../core/db/dbEngine'
 import { renderCellValue } from './dbCellRender'
 import { buildWheres } from './dbWidgets'
-import { ident, qualifiedTable } from '../../core/db/sqlQuote'
+import { setNullStatement } from '../../core/db/sql'
 
 export const editCell = (
   s: DbServer, db: string, table: string, columns: string[],
@@ -23,9 +23,8 @@ export const editCell = (
     if (!confirm(summary)) { restore(); return }
     try {
       if (setNull) {
-        const w = wheres.map(([c, v]) => `${ident(s, c)} = '${v.replace(/'/g, "''")}'`).join(' AND ')
-        const tblQ = qualifiedTable(s, db, table)
-        await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql: `UPDATE ${tblQ} SET ${ident(s, column)} = NULL WHERE ${w}`, ...creds(s) })
+        const sql = await setNullStatement(s, db, table, column, wheres)
+        await invoke(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) })
         row[colIdx] = 'NULL'
         renderCellValue(td as HTMLTableCellElement, 'NULL')
         return

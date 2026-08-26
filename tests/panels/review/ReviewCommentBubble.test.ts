@@ -25,6 +25,7 @@ describe('buildReviewCommentBubble', () => {
     setup()
     const actions: ReviewCommentActions = {
       repoPath: () => '/repo',
+      currentPrNumber: () => 42,
       isResolved: () => false,
       setResolved: vi.fn(),
       refresh: vi.fn(async () => {}),
@@ -41,6 +42,7 @@ describe('buildReviewCommentBubble', () => {
     let resolved = false
     const actions: ReviewCommentActions = {
       repoPath: () => '/repo',
+      currentPrNumber: () => 42,
       isResolved: () => resolved,
       setResolved: (id, value) => { resolved = value; setResolved(id, value) },
       refresh: vi.fn(async () => {}),
@@ -55,14 +57,14 @@ describe('buildReviewCommentBubble', () => {
   it('saves an edit through gh_pr_update_comment and refreshes', async () => {
     setup()
     const refresh = vi.fn(async () => {})
-    const actions: ReviewCommentActions = { repoPath: () => '/repo', isResolved: () => false, setResolved: vi.fn(), refresh }
+    const actions: ReviewCommentActions = { repoPath: () => '/repo', currentPrNumber: () => 42, isResolved: () => false, setResolved: vi.fn(), refresh }
     const bubble = buildReviewCommentBubble(comment, actions)
     bubble.querySelectorAll<HTMLButtonElement>('.review-comment-action-btn')[0].click()
     const textarea = bubble.querySelector<HTMLTextAreaElement>('.review-edit-wrap textarea')!
     textarea.value = 'updated body'
     bubble.querySelector<HTMLButtonElement>('.review-edit-wrap .review-comment-btn')!.click()
     await new Promise(r => setTimeout(r, 0))
-    expect(mocks.invoke).toHaveBeenCalledWith('gh_pr_update_comment', { path: '/repo', commentId: 1, body: 'updated body' })
+    expect(mocks.invoke).toHaveBeenCalledWith('gh_pr_update_comment', { path: '/repo', prNumber: 42, commentId: 1, body: 'updated body' })
     expect(refresh).toHaveBeenCalled()
   })
 
@@ -70,11 +72,11 @@ describe('buildReviewCommentBubble', () => {
     setup()
     vi.stubGlobal('confirm', vi.fn(() => true))
     const refresh = vi.fn(async () => {})
-    const actions: ReviewCommentActions = { repoPath: () => '/repo', isResolved: () => false, setResolved: vi.fn(), refresh }
+    const actions: ReviewCommentActions = { repoPath: () => '/repo', currentPrNumber: () => 42, isResolved: () => false, setResolved: vi.fn(), refresh }
     const bubble = buildReviewCommentBubble(comment, actions)
     bubble.querySelector<HTMLButtonElement>('.review-comment-delete-btn')!.click()
     await new Promise(r => setTimeout(r, 0))
-    expect(mocks.invoke).toHaveBeenCalledWith('gh_pr_delete_comment', { path: '/repo', commentId: 1 })
+    expect(mocks.invoke).toHaveBeenCalledWith('gh_pr_delete_comment', { path: '/repo', prNumber: 42, commentId: 1 })
     expect(refresh).toHaveBeenCalled()
   })
 
@@ -82,7 +84,7 @@ describe('buildReviewCommentBubble', () => {
     setup()
     vi.stubGlobal('confirm', vi.fn(() => false))
     const refresh = vi.fn(async () => {})
-    const actions: ReviewCommentActions = { repoPath: () => '/repo', isResolved: () => false, setResolved: vi.fn(), refresh }
+    const actions: ReviewCommentActions = { repoPath: () => '/repo', currentPrNumber: () => 42, isResolved: () => false, setResolved: vi.fn(), refresh }
     const bubble = buildReviewCommentBubble(comment, actions)
     bubble.querySelector<HTMLButtonElement>('.review-comment-delete-btn')!.click()
     await new Promise(r => setTimeout(r, 0))

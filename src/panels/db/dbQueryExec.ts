@@ -1,10 +1,9 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import type { DbServer } from '../../core/db/dbServer'
-import { withRowLimit } from '../../core/db/rowLimit'
-import type { ForeignKey } from './queryBuilders'
-import { isMongo, isPg, isRedis, sqlCmd, creds, target, type TableData } from '../../core/db/dbEngine'
-import { pgFixIdents } from '../../core/db/pgIdents'
+import type { ForeignKey } from '../../core/db/queryBuilders'
+import { prepareQuery } from '../../core/db/sql'
+import { isMongo, isRedis, sqlCmd, creds, target, type TableData } from '../../core/db/dbEngine'
 import { note } from './dbWidgets'
 import { renderResultTable, preResult } from './dbResultTable'
 
@@ -22,23 +21,17 @@ export function createQueryRunner(
   const executeQuery = async (text: string): Promise<HTMLElement> => {
     if (isMongo(s)) return preResult(await invoke<string>('db_docker_mongo_query', { ...target(s), db, script: text, ...creds(s) }))
     if (isRedis(s)) return preResult(await invoke<string>('db_docker_redis_command', { ...target(s), db, command: text, password: s.password ?? '' }))
-    const limited = withRowLimit(text)
-    // MySQL/MariaDB: with many tables the optimizer takes forever to find the
-    // optimal JOIN ORDER (combinatorial explosion during PLANNING, even if the
-    // query executes few rows). With depth=1 it plans greedily instantly.
-    // Postgres doesn't suffer from this.
-    const sql = isPg(s) ? pgFixIdents(limited, names) : `SET SESSION optimizer_search_depth=1; ${limited}`
-    const data = await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) })
+    // El LIMIT de seguridad, las comillas de Postgres y el prefijo que MySQL
+    // necesita para no atascarse planificando los pone `bento_db::query`.
+    const prepared = await prepareQuery(s, text, names)
+    const data = await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql: prepared.sql, ...creds(s) })
 
     // Enable editing when the query is a plain SELECT * FROM <table> with no joins or aggregations.
-    // Pagination: offer "load more" when the query had no explicit LIMIT (withRowLimit added one).
-    const trimmedText = text.trim().replace(/;\s*$/, '')
-    const limitWasAdded = !/\blimit\b\s+\d/i.test(trimmedText) && /^(select|with)\b/i.test(trimmedText)
-    const loadMore = limitWasAdded
+    // Paginar solo tiene sentido si el LIMIT lo pusimos nosotros.
+    const loadMore = prepared.limited
       ? async (offset: number): Promise<string[][]> => {
-          const pageSql = `${trimmedText} LIMIT 200 OFFSET ${offset}`
-          const moreSql = isPg(s) ? pgFixIdents(pageSql, names) : `SET SESSION optimizer_search_depth=1; ${pageSql}`
-          const more = await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql: moreSql, ...creds(s) })
+          const page = await prepareQuery(s, `${prepared.base} LIMIT 200 OFFSET ${offset}`, names)
+          const more = await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql: page.sql, ...creds(s) })
           return more.rows
         }
       : undefined
@@ -68,14 +61,11 @@ export function createQueryRunner(
   // instant and reveals why a query is slow: which table is scanned in full
   // (join type ALL, no index) and how many rows it estimates combining.
   const explain = async (text: string): Promise<HTMLElement> => {
-    const raw = text.trim().replace(/;\s*$/, '')
-    // With many tables, MySQL/MariaDB takes so long to PLAN the JOIN order that
-    // even the EXPLAIN hangs. optimizer_search_depth=1 forces an immediate
-    // greedy plan: the diagnostic returns instead of blowing up.
-    const sql = isPg(s)
-      ? `EXPLAIN ${pgFixIdents(raw, names)}`
-      : `SET SESSION optimizer_search_depth=1; EXPLAIN ${raw}`
-    const plan = renderResultTable(await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql, ...creds(s) }))
+    // Un EXPLAIN no devuelve filas, así que no lleva LIMIT; lo que sí necesita
+    // es el mismo prefijo del motor (con muchas tablas MySQL tarda tanto en
+    // PLANIFICAR el orden del JOIN que hasta el EXPLAIN se cuelga).
+    const prepared = await prepareQuery(s, `EXPLAIN ${text}`, names)
+    const plan = renderResultTable(await invoke<TableData>(sqlCmd(s, 'query'), { ...target(s), db, sql: prepared.sql, ...creds(s) }))
     const wrap = document.createElement('div')
     wrap.append(
       note(i18nT('db.executionPlanHighRowCountsOrTypeAll'), 'db-detail-hint'),

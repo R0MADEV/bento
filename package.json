@@ -40,14 +40,15 @@
     "lint": "eslint src tests scripts",
     "typecheck": "tsc --noEmit",
     "i18n:check": "node scripts/audit-i18n.mjs",
-    "bindings:generate": "cargo test --manifest-path src-tauri/Cargo.toml export_bindings",
+    "bindings:generate": "cargo test --manifest-path src-tauri/Cargo.toml export_bindings && cargo test --manifest-path daemon/bento-review/Cargo.toml --features ts export_bindings && cargo test --manifest-path daemon/bento-docker/Cargo.toml --features ts export_bindings",
     "bindings:check": "npm run bindings:generate && node scripts/check-generated-bindings.mjs",
     "build:e2e:app": "node scripts/build-e2e-app.mjs",
     "test:e2e:tasks": "node scripts/e2e-tasks.mjs",
-    "ci:local": "npm run lint && npm run typecheck && npm test && npm run bindings:check && npm run build:e2e:app",
+    "ci:local": "npm run lint && npm run typecheck && npm test && npm run check:size && npm run i18n:check && npm run bindings:check && npm run build:e2e:app",
     "ci:remote": "node scripts/run-remote-ci.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "check:size": "node scripts/check-file-size.mjs"
   }
 }

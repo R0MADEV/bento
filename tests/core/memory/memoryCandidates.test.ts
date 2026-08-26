@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(async (_cmd: string, _args?: unknown) => undefined as unknown),
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+
 import { candidateProject, computePreviewCandidateState } from '../../../src/core/memory/memoryCandidates'
+import type { ImportDecision } from '../../../src/core/memory/dedup'
 import type { ImportedMemoryCandidate } from '../../../src/core/memory/memorySource'
 import type { MemoryEntry } from '../../../src/core/memory/MemoryEntry'
 
@@ -53,32 +61,46 @@ describe('candidateProject for lexis snapshots', () => {
   })
 })
 
+// Qué cuenta como duplicado lo decide `bento_memory::dedup`; aquí se comprueba
+// cómo se traduce esa decisión a lo que ve quien va a importar.
 describe('computePreviewCandidateState', () => {
-  it('reports no duplicate against an empty project', () => {
-    expect(computePreviewCandidateState('/p', candidate(), [])).toEqual({
-      duplicateExternal: false, duplicateSemantic: false, duplicateTitle: undefined,
+  const decides = (decision: ImportDecision): void => {
+    mocks.invoke.mockImplementation(async () => decision)
+  }
+
+  beforeEach(() => { mocks.invoke.mockReset() })
+
+  it('reports no duplicate when the planner says to create it', async () => {
+    decides({ action: 'create', payload: entry({ id: 'new' }) })
+    expect(await computePreviewCandidateState('/p', candidate(), [])).toEqual({
+      duplicateExternal: false, duplicateSemantic: false,
     })
   })
 
-  it('flags an exact re-import by external id and names it', () => {
-    const state = computePreviewCandidateState('/p', candidate({ externalId: 'claude:abc' }),
-      [entry({ externalId: 'claude:abc', title: 'Already here' })])
+  it('flags an exact re-import and names the entry it would skip', async () => {
+    decides({ action: 'skip', entryId: 'kept' })
+    const state = await computePreviewCandidateState('/p', candidate(),
+      [entry({ id: 'kept', title: 'Already here' })])
     expect(state.duplicateExternal).toBe(true)
     expect(state.duplicateSemantic).toBe(false)
     expect(state.duplicateTitle).toBe('Already here')
   })
 
-  it('flags a semantic duplicate when the ids differ but the content matches', () => {
-    const state = computePreviewCandidateState('/p', candidate({ externalId: 'claude:new', title: 'A title' }),
-      [entry({ externalId: 'claude:old', title: 'A title' })])
+  it('flags a semantic duplicate and names what it would merge into', async () => {
+    decides({
+      action: 'merge',
+      entry: entry({ id: 'dup', title: 'A title' }),
+      patch: { tags: [], files: [], summary: '', details: '' },
+    })
+    const state = await computePreviewCandidateState('/p', candidate(), [entry({ id: 'dup' })])
     expect(state.duplicateExternal).toBe(false)
     expect(state.duplicateSemantic).toBe(true)
     expect(state.duplicateTitle).toBe('A title')
   })
 
-  it('never reports both kinds of duplicate at once', () => {
-    const state = computePreviewCandidateState('/p', candidate({ externalId: 'claude:abc' }),
-      [entry({ externalId: 'claude:abc' })])
-    expect(state.duplicateExternal && state.duplicateSemantic).toBe(false)
+  it('asks about the candidate stamped with its own creation time', async () => {
+    decides({ action: 'create', payload: entry({ id: 'new' }) })
+    await computePreviewCandidateState('/p', candidate({ createdAt: '2020-05-05T00:00:00.000Z' }), [])
+    expect(mocks.invoke.mock.calls[0][1]).toMatchObject({ projectPath: '/p', updatedAt: '2020-05-05T00:00:00.000Z' })
   })
 })

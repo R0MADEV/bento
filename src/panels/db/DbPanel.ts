@@ -1,5 +1,5 @@
 import { t as i18nT } from '../../i18n'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { note } from './dbWidgets'
 import { detectDocker, detectLocal } from './dbDetect'

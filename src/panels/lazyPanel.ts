@@ -1,4 +1,5 @@
 import type { PanelInstance, PanelApi } from './registry'
+import { t as i18nT } from '../i18n'
 
 // Defers loading a panel's module until it is instantiated: the initial
 // bundle doesn't drag in heavy dependencies (xterm, hls.js) from panels the
@@ -27,7 +28,7 @@ export function lazyPanel(load: () => Promise<PanelInstance>): PanelInstance {
   }).catch(error => {
     if (disposed) return
     element.classList.add('panel-load-error')
-    element.textContent = `No se pudo cargar el panel: ${String(error)}`
+    element.textContent = `${i18nT('common.couldNotLoadPanel')}${String(error)}`
   })
 
   return {

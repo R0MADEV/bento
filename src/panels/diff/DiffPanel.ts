@@ -1,9 +1,9 @@
 import { open as pickFolder } from '@tauri-apps/plugin-dialog'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { renderPatchHtml, buildCommitFileList } from '../tasks/TaskCodeView'
-import { icon } from '../../ui/icons'
-import type { CommitEntry } from '../tasks/gitTypes'
-import { parseDiffFiles } from './diffStats'
+import { icon } from '../../ui/helpers/icons'
+import type { CommitEntry } from '../../core/git/gitTypes'
+import { parseDiffFiles } from '../../core/git/diffStats'
 import { diffGit } from './diffGitClient'
 import { diffT } from './i18n'
 

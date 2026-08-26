@@ -1,8 +1,16 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
+import { builtSql, expectSqlBuilt, fakeDbSql } from '../../helpers/dbSql'
+
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(async (_cmd: string, _args?: unknown) => undefined as unknown),
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+
 import { createQueryChips, CHIP_CAP } from '../../../src/panels/db/dbQueryChips'
-import type { ForeignKey } from '../../../src/panels/db/queryBuilders'
+import type { ForeignKey } from '../../../src/core/db/queryBuilders'
 import type { DbServer } from '../../../src/core/db/dbServer'
 
 const server = (over: Partial<DbServer> = {}): DbServer =>
@@ -37,6 +45,9 @@ const typeFilter = (el: HTMLElement, q: string): void => {
 beforeEach(() => {
   vi.stubGlobal('localStorage', makeLocalStorage())
   localStorage.setItem('bento.locale', 'en')
+  mocks.invoke.mockReset()
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+    fakeDbSql(cmd, args as Record<string, unknown>))
 })
 
 describe('table chips', () => {
@@ -44,11 +55,12 @@ describe('table chips', () => {
     expect(labels(chips().el)).toEqual(['users', 'orders'])
   })
 
-  it('hands back an example query when a chip is clicked', () => {
+  it('asks the backend for that table example and hands it back', async () => {
     const { el, onPick } = chips()
     ;(el.querySelector('.db-query-chip') as HTMLButtonElement).click()
-    expect(onPick).toHaveBeenCalledTimes(1)
-    expect(onPick.mock.calls[0][0]).toContain('users')
+    await flush()
+    expectSqlBuilt(mocks.invoke, 'db_sql_example', { kind: 'mysql', name: 'users' })
+    expect(onPick).toHaveBeenCalledWith(builtSql('db_sql_example'))
   })
 
   it('caps how many chips it paints and says how many were left out', () => {

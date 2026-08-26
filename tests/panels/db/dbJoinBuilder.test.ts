@@ -1,8 +1,16 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
+import { builtSql, expectSqlBuilt, fakeDbSql } from '../../helpers/dbSql'
+
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(async (_cmd: string, _args?: unknown) => undefined as unknown),
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+
 import { createJoinBuilder } from '../../../src/panels/db/dbJoinBuilder'
-import type { ForeignKey } from '../../../src/panels/db/queryBuilders'
+import type { ForeignKey } from '../../../src/core/db/queryBuilders'
 import type { DbServer } from '../../../src/core/db/dbServer'
 
 const server = (over: Partial<DbServer> = {}): DbServer =>
@@ -14,6 +22,11 @@ const fk = (table: string, column: string, refTable: string): ForeignKey =>
 const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0))
 
 const NAMES = ['users', 'orders', 'products']
+
+const answerJoin = (join?: string | null): void => {
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+    fakeDbSql(cmd, args as Record<string, unknown>, { join }))
+}
 
 function builder(over: { s?: DbServer; rels?: ForeignKey[] } = {}) {
   const onBuild = vi.fn()
@@ -40,6 +53,8 @@ const chips = (el: HTMLElement): string[] =>
 beforeEach(() => {
   vi.stubGlobal('localStorage', makeLocalStorage())
   localStorage.setItem('bento.locale', 'en')
+  mocks.invoke.mockReset()
+  answerJoin()
 })
 
 describe('availability', () => {
@@ -94,20 +109,20 @@ describe('building the query', () => {
     expect(onBuild).not.toHaveBeenCalled()
   })
 
-  it('hands back a JOIN query for connected tables', async () => {
-    const { el, onBuild } = builder({ rels: [fk('orders', 'user_id', 'users')] })
+  // Qué tablas conectan con cuáles, y con qué SQL, lo decide `bento_db::query`.
+  it('sends the picked tables with their relations and hands back what comes out', async () => {
+    const relations = [fk('orders', 'user_id', 'users')]
+    const { el, onBuild } = builder({ rels: relations })
     pick(el, 'users')
     pick(el, 'orders')
     build(el)
     await flush()
-    expect(onBuild).toHaveBeenCalledTimes(1)
-    const sql = onBuild.mock.calls[0][0] as string
-    expect(sql.toLowerCase()).toContain('join')
-    expect(sql).toContain('orders')
-    expect(sql).toContain('users')
+    expectSqlBuilt(mocks.invoke, 'db_sql_join', { kind: 'mysql', tables: ['users', 'orders'], relations })
+    expect(onBuild).toHaveBeenCalledWith(builtSql('db_sql_join'))
   })
 
   it('explains that unconnected tables cannot be joined, and builds nothing', async () => {
+    answerJoin(null)
     const { el, onBuild } = builder({ rels: [fk('orders', 'user_id', 'users')] })
     pick(el, 'users')
     pick(el, 'products')

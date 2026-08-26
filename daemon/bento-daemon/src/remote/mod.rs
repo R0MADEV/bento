@@ -2,7 +2,9 @@
 //! phone) attach to the daemon's terminals. Opt-in — only started when the
 //! caller explicitly calls `RemoteControl::start`.
 
-mod review;
+mod assets;
+pub(crate) mod inventory;
+pub(crate) mod review;
 
 use axum::{
     extract::{
@@ -10,7 +12,7 @@ use axum::{
         Path, Query, State,
     },
     http::StatusCode,
-    response::{Html, IntoResponse, Json},
+    response::{IntoResponse, Json},
     routing::{delete, get, post},
     Router,
 };
@@ -33,14 +35,6 @@ use review::{
     review_pr_submit_handler,
     review_pr_update_comment_handler, review_prs_handler,
 };
-
-const MOBILE_HTML: &str = include_str!("web/index.html");
-const SHARED_CSS: &str = include_str!("web/shared.css");
-const TERMINAL_CSS: &str = include_str!("web/terminal.css");
-const REVIEW_CSS: &str = include_str!("web/review.css");
-const SHARED_JS: &str = include_str!("web/shared.js");
-const TERMINAL_JS: &str = include_str!("web/terminal.js");
-const REVIEW_JS: &str = include_str!("web/review.js");
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -126,17 +120,13 @@ impl RemoteControl {
 
         let state = Arc::new(RemoteState { manager, token, herdr_socket });
         let app = Router::new()
-            .route("/", get(index))
-            .route("/shared.css", get(|| asset("text/css", SHARED_CSS)))
-            .route("/terminal.css", get(|| asset("text/css", TERMINAL_CSS)))
-            .route("/review.css", get(|| asset("text/css", REVIEW_CSS)))
-            .route("/shared.js", get(|| asset("text/javascript", SHARED_JS)))
-            .route("/terminal.js", get(|| asset("text/javascript", TERMINAL_JS)))
-            .route("/review.js", get(|| asset("text/javascript", REVIEW_JS)))
+            .merge(assets::routes())
             .route("/api/terminals", get(terminals))
             .route("/api/terminals", post(new_terminal))
             .route("/api/terminals/:id", delete(kill_terminal))
-            .route("/api/projects", get(projects_handler))
+            .route("/api/projects", get(inventory::projects_handler))
+            .route("/api/tasks", get(inventory::tasks_handler))
+            .route("/api/docker", get(inventory::docker_handler))
             .route("/api/fs/dirs", get(fs_dirs_handler))
             .route("/api/review", get(review_handler))
             .route("/api/review/branches", get(review_branches_handler))
@@ -219,8 +209,21 @@ fn local_ip() -> String {
         .unwrap_or_else(|_| "127.0.0.1".to_string())
 }
 
+/// `Command::new("tailscale")` relies on PATH, but a GUI-launched macOS app
+/// (Finder/Launchpad/Dock) gets launchd's minimal PATH — `/usr/bin:/bin:/usr/sbin:/sbin` —
+/// which doesn't include where the CLI actually lives, so the plain name is
+/// never found there. Check the well-known install locations directly first.
+fn tailscale_binary() -> std::path::PathBuf {
+    for candidate in ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate.into();
+        }
+    }
+    "tailscale".into()
+}
+
 pub fn tailscale_ip() -> Option<String> {
-    let output = std::process::Command::new("tailscale")
+    let output = std::process::Command::new(tailscale_binary())
         .args(["ip", "-4"])
         .output()
         .ok()?;
@@ -247,22 +250,6 @@ pub(super) fn authorized(state: &RemoteState, auth: &Auth) -> bool {
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
-
-async fn index(State(state): State<Arc<RemoteState>>, Query(auth): Query<Auth>) -> impl IntoResponse {
-    if !authorized(&state, &auth) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
-    }
-    Html(MOBILE_HTML).into_response()
-}
-
-// Static CSS/JS assets for the mobile web client. Unauthenticated: `index.html`
-// is a compile-time `include_str!` constant with no server-side templating, so
-// a `<script src>`/`<link>` tag has no way to carry the `?token=` query param.
-// The content itself is non-sensitive UI code — every data-bearing route
-// (`/api/*`, `/ws/*`) keeps its own `authorized()` check untouched.
-async fn asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, content_type)], body)
-}
 
 fn git_branch(cwd: &str) -> Option<String> {
     let out = std::process::Command::new("git")
@@ -414,31 +401,6 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
     }
     outgoing.abort();
 }
-
-// ── /api/projects ─────────────────────────────────────────────────────────────
-
-async fn projects_handler(
-    State(state): State<Arc<RemoteState>>,
-    Query(auth): Query<Auth>,
-) -> impl IntoResponse {
-    if !authorized(&state, &auth) {
-        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
-    }
-    let mut seen = std::collections::HashSet::new();
-    let list: Vec<_> = state
-        .manager
-        .list()
-        .into_iter()
-        .filter(|info| !info.cwd.is_empty())
-        .filter(|info| seen.insert(info.cwd.clone()))
-        .map(|info| {
-            let branch = git_branch(&info.cwd);
-            json!({ "cwd": info.cwd, "branch": branch })
-        })
-        .collect();
-    Json(list).into_response()
-}
-
 // ── /api/fs/dirs ──────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -496,30 +458,5 @@ mod tests {
         let r = resolve_bind_ip(true, None, "192.168.1.10".into());
         assert_eq!(r.bind_host, "192.168.1.10");
         assert_eq!(r.display_ip, "192.168.1.10");
-    }
-
-    #[test]
-    fn mobile_html_references_split_assets() {
-        assert!(MOBILE_HTML.contains(r#"href="/shared.css""#));
-        assert!(MOBILE_HTML.contains(r#"href="/terminal.css""#));
-        assert!(MOBILE_HTML.contains(r#"href="/review.css""#));
-        assert!(MOBILE_HTML.contains(r#"src="/shared.js""#));
-        assert!(MOBILE_HTML.contains(r#"src="/terminal.js""#));
-        assert!(MOBILE_HTML.contains(r#"src="/review.js""#));
-        assert!(!MOBILE_HTML.contains("<style>"));
-        assert!(!MOBILE_HTML.contains("function switchTab"));
-    }
-
-    #[test]
-    fn split_assets_contain_expected_functions() {
-        assert!(SHARED_JS.contains("function switchTab"));
-        assert!(SHARED_JS.contains("function esc"));
-        assert!(TERMINAL_JS.contains("function attach"));
-        assert!(TERMINAL_JS.contains("function connect"));
-        assert!(REVIEW_JS.contains("function startReview"));
-        assert!(REVIEW_JS.contains("function loadPRs"));
-        assert!(SHARED_CSS.contains("#tabbar"));
-        assert!(TERMINAL_CSS.contains("#tcon"));
-        assert!(REVIEW_CSS.contains("#rv-output"));
     }
 }

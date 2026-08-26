@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { Worktree } from '../../core/git/worktree'
-import type { CommitEntry, CommitFile } from './gitTypes'
+import type { CommitEntry, CommitFile } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 
 export function buildCommitLogView(options: {

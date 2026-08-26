@@ -4,7 +4,7 @@ import { TauriAppSettingsRepository } from '../../adapters/TauriAppSettingsRepos
 import { TaskPanelStore } from './TaskPanelStore'
 import { createTaskDockerView } from './TaskDockerView'
 import type { JiraConfig, TaskIssue } from './taskJiraClient'
-import type { BackupStatus, PrStatus, RebaseStatus, UpstreamStatus } from './gitTypes'
+import type { BackupStatus, PrStatus, RebaseStatus, UpstreamStatus } from '../../core/git/gitTypes'
 import type { DetailLifecycle } from '../docker/containerDetail'
 
 // The former single closure over `createTasksPanel` split into a mutable

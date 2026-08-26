@@ -1,7 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import type { DbServer } from '../../core/db/dbServer'
-import { buildJoinPath, type Relation } from '../../core/db/joinPath'
-import { buildJoinQuery, type ForeignKey } from './queryBuilders'
+import type { ForeignKey } from '../../core/db/queryBuilders'
+import { joinQuery } from '../../core/db/sql'
 import { isMongo, isRedis } from '../../core/db/dbEngine'
 
 // Unique datalist ids: several DB panels can be open at once.
@@ -64,10 +64,9 @@ export function createJoinBuilder(deps: JoinBuilderDeps): HTMLElement {
       jMsg.textContent = ''
       if (!picked.length) return
       await relationsReady
-      const rels: Relation[] = getRelations().map(f => ({ table: f.table, column: f.column, refTable: f.ref_table, refColumn: f.ref_column }))
-      const plan = buildJoinPath(picked, rels)
-      if (!plan) { jMsg.textContent = i18nT('db.thoseTablesAreNotConnectedByTheirRelationships'); return }
-      onBuild(buildJoinQuery(s, plan))
+      const sql = await joinQuery(s, picked, getRelations())
+      if (!sql) { jMsg.textContent = i18nT('db.thoseTablesAreNotConnectedByTheirRelationships'); return }
+      onBuild(sql)
     })
     joinBuilder.append(jLabel, jChips, jAdd, jList, jBuild, jMsg)
   }

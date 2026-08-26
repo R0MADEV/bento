@@ -1,7 +1,7 @@
 import { t as i18nT } from '../../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { askAi } from '../../ui/askAi'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 import type { MemoryEntry, MemoryKind, NewMemoryEntry } from '../../core/memory/MemoryEntry'
 import {
   KIND_LABEL, KIND_OPTIONS, splitList, timeLabel, sourceLabel, canRegenerateSummary,

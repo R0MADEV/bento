@@ -1,4 +1,4 @@
-import { icon } from '../ui/icons'
+import { icon } from '../ui/helpers/icons'
 import { appT } from '../core/i18n'
 import { resumableAgents, recentProjects } from './homeData'
 import { AGENT_SESSIONS_KEY } from '../core/terminal/agentDockState'

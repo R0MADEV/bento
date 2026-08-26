@@ -1,5 +1,5 @@
 import { t as i18nT } from '../../i18n'
-import { icon } from '../../ui/icons'
+import { icon } from '../../ui/helpers/icons'
 
 export const note = (text: string, cls = 'db-note'): HTMLElement => {
   const el = document.createElement('div')

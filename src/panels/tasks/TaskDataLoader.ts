@@ -4,7 +4,7 @@ import { parseContainers, isRunning } from '../../core/docker/containers'
 import { extractIssueKey, parseAheadBehind } from '../../core/git/taskJira'
 import { mapWithConcurrency } from '../../core/git/rebaseWorkflow'
 import { loadJiraConfig, fetchIssue, type JiraConfig, type TaskIssue } from './taskJiraClient'
-import type { BackupStatus, PrStatus, RebaseStatus, UpstreamStatus } from './gitTypes'
+import type { BackupStatus, PrStatus, RebaseStatus, UpstreamStatus } from '../../core/git/gitTypes'
 import { taskT } from './i18n'
 import { taskGit } from './taskGitClient'
 

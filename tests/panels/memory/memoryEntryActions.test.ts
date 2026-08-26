@@ -2,8 +2,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
 
-const mocks = vi.hoisted(() => ({ askConfirm: vi.fn(async () => true) }))
+const mocks = vi.hoisted(() => ({
+  askConfirm: vi.fn(async () => true),
+  invoke: vi.fn(async (_cmd: string, _args?: unknown) => undefined as unknown),
+}))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ confirm: mocks.askConfirm }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 
 import { createMemoryEntryActions } from '../../../src/panels/memory/memoryEntryActions'
 import { MEMORY_ARCHIVED_TAG, MEMORY_PINNED_TAG } from '../../../src/core/memory/normalize'
@@ -51,6 +55,16 @@ beforeEach(() => {
   localStorage.setItem('bento.locale', 'en')
   mocks.askConfirm.mockReset()
   mocks.askConfirm.mockResolvedValue(true)
+  // Fundir varias memorias en una es de `bento_memory::dedup`; aquí basta con
+  // que devuelva algo reconocible para ver a quién se le escribe.
+  mocks.invoke.mockImplementation(async (_cmd: string, args?: unknown) => {
+    const entries = (args as { entries: MemoryEntry[] }).entries
+    return {
+      ...entries[0],
+      tags: [...new Set(entries.flatMap(item => item.tags))],
+      files: [...new Set(entries.flatMap(item => item.files))],
+    }
+  })
 })
 
 describe('archiveEntries', () => {
