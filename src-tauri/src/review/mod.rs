@@ -56,14 +56,6 @@ pub fn review_checkpoint_delete(cwd: String, base: String) -> Result<(), String>
     bento_review::checkpoints::delete_checkpoint(&cwd, &base)
 }
 
-/// The review prompt now lives in `bento-review`, shared with the daemon and
-/// the CLI — these two commands are the frontend's way in, so the prompt has
-/// exactly one definition instead of one per language.
-#[tauri::command]
-pub fn review_build_prompt(input: bento_review::ReviewPromptInput) -> String {
-    bento_review::build_review_prompt(&input)
-}
-
 /// El documento de la review, con quién falló y con quién se sigue hablando.
 /// Todo vive en `bento_review::report`, compartido con el daemon y el CLI.
 #[tauri::command]
@@ -94,21 +86,6 @@ pub fn review_build_overview(input: bento_review::report::OverviewInput) -> Stri
 pub fn review_is_retryable(message: String) -> bool {
     bento_review::agents::is_retryable(&message)
 }
-
-/// El informe de un revisor, para el prompt de síntesis.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SynthesisReport {
-    label: String,
-    report: String,
-}
-
-#[tauri::command]
-pub fn review_build_synthesis_prompt(base_prompt: String, reports: Vec<SynthesisReport>) -> String {
-    let refs: Vec<(&str, &str)> = reports.iter().map(|r| (r.label.as_str(), r.report.as_str())).collect();
-    bento_review::build_synthesis_prompt(&refs, &base_prompt)
-}
-
 
 
 #[tauri::command]

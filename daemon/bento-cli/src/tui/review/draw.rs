@@ -34,7 +34,9 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
     // Three columns: what you can pick, what you picked, and the report about
     // it. The drawer only takes width when there is something in it — running
     // a review no longer replaces the panel with a full-screen view.
-    let drawer_width = if review.output.is_empty() && !review.running { 0 } else { review.drawer_width };
+    // Driven by the flag, not by whether there is text: a run that ends with
+    // nothing still has an error worth reading.
+    let drawer_width = if review.drawer_open { review.drawer_width } else { 0 };
     let cols = Layout::horizontal([
         Constraint::Length(sidebar_width),
         Constraint::Min(1),

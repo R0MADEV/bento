@@ -141,6 +141,11 @@ pub(super) struct ReviewState {
     /// only when the last one lands.
     in_flight: usize,
 
+    /// Whether the report drawer is on screen. An explicit flag rather than
+    /// "is there output": a run that failed before writing anything used to
+    /// take the drawer away along with the error inside it. Once open it
+    /// stays until the user folds it.
+    pub(super) drawer_open: bool,
     /// Width of the report drawer. Kept here rather than in the panel loop
     /// because it is this panel's third column, not a global.
     pub(super) drawer_width: u16,
@@ -210,6 +215,7 @@ impl ReviewState {
             work_tx,
             work_rx,
             in_flight: 0,
+            drawer_open: false,
             drawer_width: crate::tui::drawer::DEFAULT_WIDTH,
             restored_drawer_width: crate::tui::drawer::DEFAULT_WIDTH,
             loading: false,
@@ -507,15 +513,21 @@ impl ReviewState {
         self.open_drawer();
     }
 
-    /// Unfolds the drawer, so a report never lands somewhere invisible.
+    /// Shows the drawer, so a report never lands somewhere invisible.
     pub(super) fn open_drawer(&mut self) {
+        self.drawer_open = true;
         if self.drawer_width <= crate::tui::drawer::COLLAPSED_WIDTH {
             self.drawer_width = self.restored_drawer_width;
         }
     }
 
-    /// Folds it away, or brings it back to the width it had.
+    /// Folds it to its stub, or brings it back to the width it had. Folding
+    /// leaves the stub rather than hiding it, so there is something to click.
     pub(super) fn toggle_drawer(&mut self) {
+        if !self.drawer_open {
+            self.open_drawer();
+            return;
+        }
         self.drawer_width = crate::tui::drawer::toggle(self.drawer_width, &mut self.restored_drawer_width);
     }
 
@@ -536,6 +548,12 @@ impl ReviewState {
                 // being dropped after the progress line.
                 if let Some(heading) = batch_heading(&msg) {
                     self.output.push_str(&heading);
+                }
+                // A failure is the answer, not progress: kept in the report
+                // so it is still on screen once the run stops. Everything else
+                // is noise the moment the report exists.
+                if let Some(reason) = msg.strip_prefix("error: ") {
+                    self.output.push_str(&format!("\n\n**La review falló:** {reason}\n"));
                 }
                 self.last_progress = msg;
             }
@@ -920,6 +938,8 @@ mod tests {
     #[tokio::test]
     async fn a_report_never_lands_in_a_folded_drawer() {
         let mut state = ReviewState::new("/repo".to_string());
+        // Open it, then fold it — the first toggle on a closed drawer opens it.
+        state.open_drawer();
         state.toggle_drawer();
         assert_eq!(state.drawer_width, crate::tui::drawer::COLLAPSED_WIDTH);
 
@@ -928,15 +948,78 @@ mod tests {
         assert!(state.drawer_width > crate::tui::drawer::COLLAPSED_WIDTH);
     }
 
+    #[tokio::test]
+    async fn a_review_that_failed_says_why_after_it_stops() {
+        // The daemon reports failures as progress, and progress was only shown
+        // while running — so a run that died left an empty drawer and no
+        // reason anywhere.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.start_run();
+
+        state.handle_stream_event(ReviewEvent::Progress("error: claude no encontrado".into()));
+        state.handle_stream_event(ReviewEvent::Done);
+
+        assert!(state.output.contains("claude no encontrado"), "el motivo se queda a la vista:\n{}", state.output);
+    }
+
+    #[tokio::test]
+    async fn ordinary_progress_does_not_end_up_in_the_report() {
+        // Tool lines are noise once the report is written.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.start_run();
+
+        state.handle_stream_event(ReviewEvent::Progress("Read engine.rs".into()));
+        state.handle_stream_event(ReviewEvent::Done);
+
+        assert!(!state.output.contains("Read engine.rs"));
+    }
+
+    #[tokio::test]
+    async fn the_drawer_does_not_vanish_when_a_review_ends_with_nothing() {
+        // Deriving its visibility from "is there output" meant a run that
+        // failed before writing anything took the drawer — and the error
+        // message inside it — off the screen at the exact moment it mattered.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.start_run();
+
+        state.handle_stream_event(ReviewEvent::Done);
+
+        assert!(state.drawer_open, "el cajón se queda hasta que lo cierres tú");
+    }
+
+    #[tokio::test]
+    async fn a_finished_review_keeps_its_report_on_screen() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.start_run();
+        state.handle_stream_event(ReviewEvent::Content("veredicto".into()));
+        state.handle_stream_event(ReviewEvent::Done);
+
+        assert!(state.drawer_open);
+        assert!(!state.running);
+    }
+
     #[test]
     fn folding_the_drawer_remembers_how_wide_it_was() {
         let mut state = ReviewState::new("/repo".to_string());
+        state.open_drawer();
         state.drawer_width = 90;
 
         state.toggle_drawer();
         state.toggle_drawer();
 
         assert_eq!(state.drawer_width, 90, "vuelve a 90, no al ancho por defecto");
+    }
+
+    #[test]
+    fn the_first_press_on_a_closed_drawer_opens_it() {
+        // Otherwise the key would appear to do nothing the first time.
+        let mut state = ReviewState::new("/repo".to_string());
+        assert!(!state.drawer_open);
+
+        state.toggle_drawer();
+
+        assert!(state.drawer_open);
+        assert!(state.drawer_width > crate::tui::drawer::COLLAPSED_WIDTH);
     }
 
     #[test]
