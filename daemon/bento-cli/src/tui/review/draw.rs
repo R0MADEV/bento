@@ -45,7 +45,32 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
     .split(area);
     draw_sidebar(frame, review, cols[0]);
     draw_file_browser(frame, review, cols[1]);
-    if drawer_width > 0 {
+    if drawer_width > 0 && review.showing_history {
+        // The history lives where the report does, so picking which review to
+        // read is one column, not a trip to the rail.
+        let rows: Vec<SidebarItem> = review
+            .checkpoints
+            .iter()
+            .map(|cp| {
+                let resumable = cp.get("resumable").and_then(Value::as_bool).unwrap_or(false);
+                let base = cp.get("base").and_then(Value::as_str).unwrap_or("");
+                SidebarItem {
+                    label: cp.get("saved_at").and_then(Value::as_str).unwrap_or("?").to_string(),
+                    detail: match resumable {
+                        true => format!("{base} · se puede seguir"),
+                        false => base.to_string(),
+                    },
+                    status: match resumable { true => ItemStatus::Active, false => ItemStatus::Idle },
+                }
+            })
+            .collect();
+        Sidebar {
+            focused: matches!(review.focus, Focus::Drawer),
+            empty_message: "Sin reviews guardadas.",
+            ..Sidebar::new("REVIEWS", &rows, review.checkpoints_selected)
+        }
+        .render(frame, cols[2]);
+    } else if drawer_width > 0 {
         let title = if review.running {
             match review.last_progress.is_empty() {
                 true => "REVIEW · corriendo…".to_string(),
@@ -217,7 +242,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
             "ARCHIVOS {}/{} · {} revisados",
             visible.len(), review.files.len(), review.reviewed.len(),
         ),
-        hint: "f filtro · espacio marcar · Enter diff · r correr · → informe",
+        hint: "f filtro · espacio marcar · Enter diff · r correr · l reviews · → informe",
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);

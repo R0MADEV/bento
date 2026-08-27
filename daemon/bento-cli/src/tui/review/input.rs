@@ -54,6 +54,8 @@ impl ReviewState {
             KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('w') => { self.toggle_drawer(); false }
+            // The saved reviews, in the drawer where their reports live.
+            KeyCode::Char('l') => { self.toggle_history(); false }
             // Asking about the report used to belong to the full-screen view;
             // the report is in the drawer now, so the key lives here.
             KeyCode::Char('a') if !self.running && !self.output.is_empty() => {
@@ -79,6 +81,21 @@ impl ReviewState {
                     Focus::Files => self.handle_files_key(code).await,
                     // Arrows scroll the report; there is nothing to select in
                     // it, and everything else belongs to the panel.
+                    // Listing past reviews, the arrows move a selection and
+                    // Enter opens one; showing a report, they scroll it.
+                    Focus::Drawer if self.showing_history => {
+                        match code {
+                            KeyCode::Up => self.checkpoints_selected = self.checkpoints_selected.saturating_sub(1),
+                            KeyCode::Down => {
+                                if self.checkpoints_selected + 1 < self.checkpoints.len() {
+                                    self.checkpoints_selected += 1;
+                                }
+                            }
+                            KeyCode::Enter => self.open_selected_review().await,
+                            _ => {}
+                        }
+                        false
+                    }
                     Focus::Drawer => {
                         match code {
                             KeyCode::Up => self.scroll_drawer(-1),

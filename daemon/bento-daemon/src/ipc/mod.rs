@@ -66,6 +66,10 @@ pub(crate) struct Request {
     pub(crate) agents: Option<String>,
     #[serde(default)]
     pub(crate) content: Option<String>,
+    /// Which review run a checkpoint belongs to, so its incremental saves land
+    /// on one entry and two runs of the same branch keep both.
+    #[serde(default)]
+    pub(crate) run_id: Option<String>,
     #[serde(default)]
     pub(crate) session_id: Option<String>,
     #[serde(default)]

@@ -145,6 +145,15 @@ pub(super) struct ReviewState {
     /// only when the last one lands.
     in_flight: usize,
 
+    /// Identifies the review in flight, so its saves land on one entry and a
+    /// later review of the same branch does not overwrite it.
+    run_id: Option<String>,
+
+    /// Whether the drawer is listing past reviews instead of showing one.
+    /// The drawer is either "the report" or "which report", never a third
+    /// place to look.
+    pub(super) showing_history: bool,
+
     /// Whether the report drawer is on screen. An explicit flag rather than
     /// "is there output": a run that failed before writing anything used to
     /// take the drawer away along with the error inside it. Once open it
@@ -219,6 +228,8 @@ impl ReviewState {
             work_tx,
             work_rx,
             in_flight: 0,
+            showing_history: false,
+            run_id: None,
             drawer_open: false,
             drawer_width: crate::tui::drawer::DEFAULT_WIDTH,
             restored_drawer_width: crate::tui::drawer::DEFAULT_WIDTH,
@@ -510,6 +521,9 @@ impl ReviewState {
         self.is_run_stream = is_run;
         self.last_progress.clear();
         self.scroll = 0;
+        // New for every run: the saves this one makes share it, and the next
+        // review gets its own so both survive.
+        self.run_id = Some(new_run_id());
         // Stays in Browse: the report goes to the drawer beside the files
         // rather than replacing the panel, so the rail and the file list are
         // still there while it runs.
@@ -543,9 +557,50 @@ impl ReviewState {
         self.scroll = self.scroll.saturating_add_signed(delta);
     }
 
+    /// Opens the review selected in the history: its report and, with it, the
+    /// verifier's session — which is what makes "keep asking about this one"
+    /// work later.
+    pub(super) async fn open_selected_review(&mut self) {
+        let Some(entry) = self.checkpoints.get(self.checkpoints_selected).cloned() else { return };
+        let base = entry.get("base").and_then(Value::as_str).unwrap_or(&self.base).to_string();
+        let mut body = json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": self.cwd, "base": base });
+        // Asking for this run rather than the newest of that branch, which is
+        // the whole point of keeping them apart.
+        if let Some(run) = entry.get("run_id").and_then(Value::as_str) {
+            body["run_id"] = json!(run);
+        }
+        let Ok(cp) = crate::request_data(body).await else {
+            self.status = "no se pudo abrir esa review".into();
+            return;
+        };
+        self.output = cp.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
+        self.session_id = cp.get("session_id").and_then(Value::as_str).map(String::from);
+        self.session_agent = cp.get("session_agent").and_then(Value::as_str).map(String::from);
+        self.scroll = 0;
+        self.running = false;
+        self.last_progress.clear();
+        self.showing_history = false;
+    }
+
+    /// Swaps the drawer between the report and the list of past reviews,
+    /// asking for the list off the loop when it is opened.
+    pub(super) fn toggle_history(&mut self) {
+        self.showing_history = !self.showing_history;
+        self.drawer_open = true;
+        if self.drawer_width <= crate::tui::drawer::COLLAPSED_WIDTH {
+            self.drawer_width = self.restored_drawer_width;
+        }
+        if self.showing_history {
+            let body = json!({ "id": "1", "cmd": "review.checkpoints", "cwd": self.cwd });
+            self.spawn_list_request(body, Fetched::Checkpoints);
+        }
+    }
+
     /// Shows the drawer, so a report never lands somewhere invisible.
     pub(super) fn open_drawer(&mut self) {
         self.drawer_open = true;
+        // A report takes the drawer back from the list: you asked for this one.
+        self.showing_history = false;
         if self.drawer_width <= crate::tui::drawer::COLLAPSED_WIDTH {
             self.drawer_width = self.restored_drawer_width;
         }
@@ -608,6 +663,7 @@ impl ReviewState {
         let body = json!({
             "id": "1", "cmd": "review.checkpoint_save", "cwd": self.cwd, "base": self.base,
             "content": self.output, "session_id": self.session_id, "agent": self.session_agent,
+            "run_id": self.run_id,
         });
         tokio::spawn(async move {
             let _ = crate::request_data(body).await;
@@ -731,6 +787,14 @@ impl ReviewState {
         let needle = self.search.to_lowercase();
         text.lines().filter(|l| l.to_lowercase().contains(&needle)).collect::<Vec<_>>().join("\n")
     }
+}
+
+/// Identifies one review run. Only has to be unique among the runs of a
+/// project, which the clock gives with room to spare.
+fn new_run_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    format!("{nanos}")
 }
 
 /// The heading for a `BATCH:i/n:agent` or `SYNTHESIS` sentinel, or None when
@@ -952,6 +1016,20 @@ mod tests {
 
         assert_eq!(state.branches_selected, 1);
         assert!(state.loading, "y la petición sigue fuera");
+    }
+
+    #[tokio::test]
+    async fn each_review_gets_its_own_id_so_the_previous_one_survives() {
+        // Same id would mean the second review overwrote the first's report
+        // and, worse, the verifier session you could still ask.
+        let mut state = ReviewState::new("/repo".to_string());
+
+        state.start_run();
+        let first = state.run_id.clone();
+        state.start_run();
+
+        assert!(first.is_some());
+        assert_ne!(first, state.run_id);
     }
 
     #[tokio::test]
