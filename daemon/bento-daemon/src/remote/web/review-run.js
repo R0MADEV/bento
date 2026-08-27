@@ -116,6 +116,7 @@ function startReview(){
 
   hideChat();
   reviewSessionId=null;
+  reviewRunId=String(Date.now());
   reviewSessionAgent=null;
   out.className='empty-state';
   out.innerHTML='<div class="rv-placeholder">Esperando síntesis&#8230;</div>';

@@ -39,7 +39,13 @@ pub async fn get_checkpoint_handler(
     }
     let cwd = params.get("cwd").ok_or(StatusCode::BAD_REQUEST)?;
     let base = params.get("base").ok_or(StatusCode::BAD_REQUEST)?;
-    get_checkpoint(cwd, base).map(Json).ok_or(StatusCode::NOT_FOUND)
+    // With a run id, that review; without one, the branch's newest — which is
+    // what a client that predates several-per-branch still asks for.
+    let found = match params.get("run_id") {
+        Some(run) => bento_review::checkpoints::get_run(cwd, base, run),
+        None => get_checkpoint(cwd, base),
+    };
+    found.map(Json).ok_or(StatusCode::NOT_FOUND)
 }
 
 // PUT /api/review/checkpoint  (body: Checkpoint JSON)
