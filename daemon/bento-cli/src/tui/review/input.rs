@@ -29,7 +29,6 @@ impl ReviewState {
             ReviewView::Browse => self.handle_browse_key(key.code).await,
             ReviewView::FileDetail => self.handle_file_detail_key(key.code),
             ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
-            ReviewView::Output => self.handle_output_key(key.code),
         }
     }
 
@@ -54,6 +53,17 @@ impl ReviewState {
             KeyCode::F(5) => { self.request_refresh(); false }
             KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
+            KeyCode::Char('w') => { self.toggle_drawer(); false }
+            // Asking about the report used to belong to the full-screen view;
+            // the report is in the drawer now, so the key lives here.
+            KeyCode::Char('a') if !self.running && !self.output.is_empty() => {
+                self.input_purpose = Some(InputPurpose::Ask);
+                self.input.clear();
+                false
+            }
+            KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(10); false }
+            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(10); false }
+            KeyCode::Char('c') if self.running => { self.cancel_run(); false }
             KeyCode::Char('c') => {
                 self.input_purpose = Some(InputPurpose::Context);
                 self.input = self.context.clone();
@@ -148,7 +158,8 @@ impl ReviewState {
                             self.scroll = 0;
                             self.running = false;
                             self.last_progress.clear();
-                            self.view = ReviewView::Output;
+                            self.view = ReviewView::Browse;
+                            self.open_drawer();
                         }
                     }
                     false
@@ -262,30 +273,6 @@ impl ReviewState {
         }
     }
 
-    fn handle_output_key(&mut self, code: KeyCode) -> bool {
-        if code == KeyCode::Char('/') {
-            self.start_search();
-            return false;
-        }
-        match code {
-            KeyCode::Up => { self.scroll = self.scroll.saturating_sub(1); false }
-            KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); false }
-            KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(10); false }
-            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(10); false }
-            KeyCode::Char('a') if !self.running => {
-                self.input_purpose = Some(InputPurpose::Ask);
-                self.input.clear();
-                false
-            }
-            KeyCode::Char('c') if self.running => { self.cancel_run(); false }
-            KeyCode::Tab => true,
-            KeyCode::Esc => {
-                self.view = ReviewView::Browse;
-                false
-            }
-            _ => false,
-        }
-    }
 
     async fn handle_text_input(&mut self, code: KeyCode) {
         match code {

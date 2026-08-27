@@ -2,6 +2,7 @@
 //! inline attach (returns to the list when the remote session ends), plus a
 //! Review tab for running AI code reviews without leaving the terminal.
 
+mod drawer;
 mod pane;
 mod review;
 mod screen;
@@ -54,6 +55,8 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
     // sized rather than the default.
     let mut restored_width = sidebar::DEFAULT_WIDTH;
     let mut dragging_divider = false;
+    // The review drawer's edge, dragged separately from the rail's.
+    let mut dragging_drawer = false;
     let mut status = String::new();
 
     loop {
@@ -300,6 +303,34 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         // which panel you are looking at.
                         if let Event::Mouse(mouse) = event {
                             let total = terminal.size()?.width;
+                            // The drawer's own edge and chevron, checked first:
+                            // they sit to the right of everything the rail owns.
+                            let drawer_left = total.saturating_sub(review.drawer_width);
+                            if review.drawer_width > 0 {
+                                match mouse.kind {
+                                    MouseEventKind::Down(MouseButton::Left)
+                                        if drawer::grabs_chevron(mouse.column, mouse.row, drawer_left) =>
+                                    {
+                                        review.toggle_drawer();
+                                        continue;
+                                    }
+                                    MouseEventKind::Down(MouseButton::Left)
+                                        if drawer::grabs_divider(mouse.column, drawer_left) =>
+                                    {
+                                        dragging_drawer = true;
+                                        continue;
+                                    }
+                                    MouseEventKind::Drag(MouseButton::Left) if dragging_drawer => {
+                                        review.drawer_width = drawer::width_after_drag(mouse.column, total);
+                                        continue;
+                                    }
+                                    MouseEventKind::Up(MouseButton::Left) if dragging_drawer => {
+                                        dragging_drawer = false;
+                                        continue;
+                                    }
+                                    _ => {}
+                                }
+                            }
                             let rail = RailMouse {
                                 width: &mut sidebar_width,
                                 restored: &mut restored_width,

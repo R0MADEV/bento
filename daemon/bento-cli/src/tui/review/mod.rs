@@ -34,7 +34,6 @@ enum ReviewView {
     Browse,
     FileDetail,
     PrDetail,
-    Output,
 }
 
 pub(super) enum SidebarTab {
@@ -142,6 +141,12 @@ pub(super) struct ReviewState {
     /// only when the last one lands.
     in_flight: usize,
 
+    /// Width of the report drawer. Kept here rather than in the panel loop
+    /// because it is this panel's third column, not a global.
+    pub(super) drawer_width: u16,
+    /// The width to come back to when it is unfolded.
+    pub(super) restored_drawer_width: u16,
+
     /// True while a daemon call is in flight. The panel awaits those on its
     /// event loop, so it cannot redraw or take keys until one returns; saying
     /// so is the difference between "working" and "it froze".
@@ -205,6 +210,8 @@ impl ReviewState {
             work_tx,
             work_rx,
             in_flight: 0,
+            drawer_width: crate::tui::drawer::DEFAULT_WIDTH,
+            restored_drawer_width: crate::tui::drawer::DEFAULT_WIDTH,
             loading: false,
             status: String::new(),
             projects: Vec::new(),
@@ -493,7 +500,23 @@ impl ReviewState {
         self.is_run_stream = is_run;
         self.last_progress.clear();
         self.scroll = 0;
-        self.view = ReviewView::Output;
+        // Stays in Browse: the report goes to the drawer beside the files
+        // rather than replacing the panel, so the rail and the file list are
+        // still there while it runs.
+        self.view = ReviewView::Browse;
+        self.open_drawer();
+    }
+
+    /// Unfolds the drawer, so a report never lands somewhere invisible.
+    pub(super) fn open_drawer(&mut self) {
+        if self.drawer_width <= crate::tui::drawer::COLLAPSED_WIDTH {
+            self.drawer_width = self.restored_drawer_width;
+        }
+    }
+
+    /// Folds it away, or brings it back to the width it had.
+    pub(super) fn toggle_drawer(&mut self) {
+        self.drawer_width = crate::tui::drawer::toggle(self.drawer_width, &mut self.restored_drawer_width);
     }
 
     pub(super) fn handle_stream_event(&mut self, event: ReviewEvent) {
@@ -881,6 +904,39 @@ mod tests {
 
         assert_eq!(state.branches_selected, 1);
         assert!(state.loading, "y la petición sigue fuera");
+    }
+
+    #[tokio::test]
+    async fn running_a_review_keeps_you_in_the_panel() {
+        // It used to switch to a full-screen view, so the rail and the file
+        // list vanished for as long as the review lasted.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.start_run();
+
+        assert!(matches!(state.view, ReviewView::Browse), "sigue en el panel");
+        assert!(state.drawer_width > crate::tui::drawer::COLLAPSED_WIDTH, "y el cajón se abre");
+    }
+
+    #[tokio::test]
+    async fn a_report_never_lands_in_a_folded_drawer() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.toggle_drawer();
+        assert_eq!(state.drawer_width, crate::tui::drawer::COLLAPSED_WIDTH);
+
+        state.start_run();
+
+        assert!(state.drawer_width > crate::tui::drawer::COLLAPSED_WIDTH);
+    }
+
+    #[test]
+    fn folding_the_drawer_remembers_how_wide_it_was() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.drawer_width = 90;
+
+        state.toggle_drawer();
+        state.toggle_drawer();
+
+        assert_eq!(state.drawer_width, 90, "vuelve a 90, no al ancho por defecto");
     }
 
     #[test]

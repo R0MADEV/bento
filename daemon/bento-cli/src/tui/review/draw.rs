@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Pa
 use serde_json::Value;
 
 use super::format::short_path;
+use super::super::drawer::Drawer;
 use super::super::pane::Pane;
 use super::super::sidebar::{ItemStatus, Sidebar, SidebarItem};
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
@@ -17,7 +18,6 @@ pub(crate) fn draw(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_wid
         ReviewView::Browse => draw_browse(frame, review, sidebar_width),
         ReviewView::FileDetail => draw_file_detail(frame, review),
         ReviewView::PrDetail => draw_pr_detail(frame, review),
-        ReviewView::Output => draw_output(frame, review),
     }
 }
 
@@ -31,11 +31,36 @@ const DIM: Style = Style::new().fg(Color::DarkGray);
 
 fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16) {
     let area = frame.area();
-    // The same rail width as the terminal panel, so dragging it in one place
-    // is not silently ignored in the other.
-    let cols = Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(1)]).split(area);
+    // Three columns: what you can pick, what you picked, and the report about
+    // it. The drawer only takes width when there is something in it — running
+    // a review no longer replaces the panel with a full-screen view.
+    let drawer_width = if review.output.is_empty() && !review.running { 0 } else { review.drawer_width };
+    let cols = Layout::horizontal([
+        Constraint::Length(sidebar_width),
+        Constraint::Min(1),
+        Constraint::Length(drawer_width),
+    ])
+    .split(area);
     draw_sidebar(frame, review, cols[0]);
     draw_file_browser(frame, review, cols[1]);
+    if drawer_width > 0 {
+        let title = if review.running {
+            match review.last_progress.is_empty() {
+                true => "REVIEW · corriendo…".to_string(),
+                false => format!("REVIEW · {}", review.last_progress),
+            }
+        } else {
+            "REVIEW".to_string()
+        };
+        Drawer {
+            title: &title,
+            hint: if review.running { "c parar · d plegar" } else { "↑/↓ scroll · a preguntar · d plegar" },
+            body: &review.output,
+            scroll: review.scroll,
+            focused: review.running,
+        }
+        .render(frame, cols[2]);
+    }
 
     if matches!(review.input_purpose, Some(InputPurpose::Context)) {
         let bottom = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area)[1];
@@ -190,7 +215,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
             "ARCHIVOS {}/{} · {} revisados",
             visible.len(), review.files.len(), review.reviewed.len(),
         ),
-        hint: "f filtro · espacio marcar · Enter diff",
+        hint: "f filtro · espacio marcar · Enter diff · r correr · w cajón",
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);
@@ -247,34 +272,6 @@ fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
     }
 }
 
-fn draw_output(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let area = frame.area();
-    let title = if review.running {
-        let progress = if review.last_progress.is_empty() { "corriendo…".to_string() } else { review.last_progress.clone() };
-        format!("{progress} — c: cancelar")
-    } else {
-        "↑/↓ scroll · a: preguntar · Esc: volver".to_string()
-    };
-    let block = pane_block(&title);
-
-    if matches!(review.input_purpose, Some(InputPurpose::Ask)) {
-        let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
-        let paragraph = Paragraph::new(review.output.as_str())
-            .wrap(Wrap { trim: false })
-            .scroll((review.scroll, 0))
-            .block(block);
-        frame.render_widget(paragraph, chunks[0]);
-        let input = Paragraph::new(format!("{}▏", review.input))
-            .block(pane_block("Pregunta (Enter enviar, Esc cancelar)"));
-        frame.render_widget(input, chunks[1]);
-    } else {
-        let paragraph = Paragraph::new(review.output.as_str())
-            .wrap(Wrap { trim: false })
-            .scroll((review.scroll, 0))
-            .block(block);
-        frame.render_widget(paragraph, area);
-    }
-}
 
 #[cfg(test)]
 mod tests {
