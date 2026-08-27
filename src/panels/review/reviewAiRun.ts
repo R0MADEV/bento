@@ -178,6 +178,8 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     let worktree = ''
     let managedWorktree = false
     let reviewCommit = ''
+    // Identifies this run among the project's saved reviews.
+    const reviewRunId = `${Date.now()}`
     // Declared outside the try so the catch can salvage whatever completed.
     const reviewRuns: MultiAgentReviewRun[] = []
     // In-flight batches of the current agent, used to salvage a crash that
@@ -209,6 +211,9 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
         commit: reviewCommit,
         sessionId: followUpSession.sessionId,
         sessionAgent: followUpSession.sessionAgent,
+        // Shared by every save this run makes, so they land on one entry and
+        // a later review of the same branch does not overwrite it.
+        runId: reviewRunId,
       })
     }
     // Persistir es de fondo: si falla, en pantalla sigue estando todo.

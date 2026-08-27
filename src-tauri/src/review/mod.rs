@@ -25,6 +25,9 @@ pub fn review_checkpoint_save(
     commit: Option<String>,
     session_id: Option<String>,
     session_agent: Option<String>,
+    // Which run this belongs to, so the saves one review makes as it goes
+    // land on one entry and a later review of the same branch keeps both.
+    run_id: Option<String>,
 ) -> Result<(), String> {
     if content.trim().is_empty() {
         return Err("empty checkpoint".into());
@@ -38,6 +41,7 @@ pub fn review_checkpoint_save(
         session_agent,
         branch,
         commit,
+        run_id,
     })
 }
 
