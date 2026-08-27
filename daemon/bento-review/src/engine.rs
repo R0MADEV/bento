@@ -414,7 +414,10 @@ async fn run_planned_cancellable(
         }
     }
 
-    if plan.synthesize && reports.len() >= 2 {
+    // Gated on having a verifier and something for it to read, not on two
+    // reports: with two agents there is one analysis, and requiring two meant
+    // the agent chosen as verifier was silently never run.
+    if plan.synthesize && !reports.is_empty() {
         let _ = tx.send(ReviewEvent::Synthesis).await;
         // Written to disk and handed over as paths: pasting them in meant
         // cutting each analysis to fit one prompt, so the verifier judged on
@@ -594,6 +597,22 @@ mod tests {
 
     /// Three agents: the first two analyse the whole change and the third
     /// verifies their analyses without producing one of its own.
+    /// Two agents means one analysis and one verification. Gating the
+    /// verification on "two or more reports" meant the second agent was
+    /// picked, shown in the rail, and never run.
+    #[tokio::test]
+    async fn two_agents_still_run_the_verifier() {
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![report("analisis", None), report("verificado", None)];
+
+        let (events, runner) = collect("diff --git a/x b/x\n+1\n", &["uno".into(), "dos".into()], runner).await;
+
+        let calls = runner.calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2, "el segundo agente tiene que correr: {:?}", calls.iter().map(|c| &c[..8]).collect::<Vec<_>>());
+        assert!(calls[1].starts_with("dos:"), "y es el verificador");
+        assert!(events.iter().any(|e| matches!(e, ReviewEvent::Synthesis)));
+    }
+
     #[tokio::test]
     async fn three_agents_analyse_and_the_last_one_verifies_them() {
         let runner = FakeRunner {

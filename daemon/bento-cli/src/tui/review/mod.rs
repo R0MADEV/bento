@@ -43,9 +43,13 @@ pub(super) enum SidebarTab {
     Checkpoints,
 }
 
-enum Focus {
+#[derive(Clone, Copy)]
+pub(super) enum Focus {
     Sidebar,
     Files,
+    /// The report drawer. Arrow keys scroll it instead of moving a selection,
+    /// because there is nothing to select in a report.
+    Drawer,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -511,6 +515,32 @@ impl ReviewState {
         // still there while it runs.
         self.view = ReviewView::Browse;
         self.open_drawer();
+    }
+
+    /// Moves the focus one column right, skipping the drawer when it is not
+    /// there — keys landing on something invisible read as a dead keyboard.
+    pub(super) fn focus_right(&mut self) {
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::Files,
+            Focus::Files if self.drawer_open => Focus::Drawer,
+            other => other,
+        };
+    }
+
+    /// And one column left.
+    pub(super) fn focus_left(&mut self) {
+        self.focus = match self.focus {
+            Focus::Drawer => Focus::Files,
+            Focus::Files => Focus::Sidebar,
+            other => other,
+        };
+    }
+
+    /// Scrolls the report. `saturating_add_signed` on an unsigned counter
+    /// already stops at the top, which is what scrolling up past the
+    /// beginning should do.
+    pub(super) fn scroll_drawer(&mut self, delta: i16) {
+        self.scroll = self.scroll.saturating_add_signed(delta);
     }
 
     /// Shows the drawer, so a report never lands somewhere invisible.
@@ -1008,6 +1038,53 @@ mod tests {
         state.toggle_drawer();
 
         assert_eq!(state.drawer_width, 90, "vuelve a 90, no al ancho por defecto");
+    }
+
+    #[tokio::test]
+    async fn right_from_the_files_reaches_the_drawer_when_it_is_open() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.open_drawer();
+        state.focus = Focus::Files;
+
+        state.focus_right();
+
+        assert!(matches!(state.focus, Focus::Drawer));
+    }
+
+    #[test]
+    fn right_stays_on_the_files_when_the_drawer_is_closed() {
+        // Otherwise the keys would land somewhere invisible.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.focus = Focus::Files;
+
+        state.focus_right();
+
+        assert!(matches!(state.focus, Focus::Files));
+    }
+
+    #[test]
+    fn left_from_the_drawer_goes_back_to_the_files() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.open_drawer();
+        state.focus = Focus::Drawer;
+
+        state.focus_left();
+
+        assert!(matches!(state.focus, Focus::Files));
+    }
+
+    #[test]
+    fn the_arrows_scroll_the_report_while_it_has_the_focus() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.open_drawer();
+        state.focus = Focus::Drawer;
+        state.scroll = 5;
+
+        state.scroll_drawer(3);
+        assert_eq!(state.scroll, 8);
+
+        state.scroll_drawer(-10);
+        assert_eq!(state.scroll, 0, "no se sube más allá del principio");
     }
 
     #[test]

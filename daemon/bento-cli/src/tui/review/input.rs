@@ -34,8 +34,8 @@ impl ReviewState {
 
     async fn handle_browse_key(&mut self, code: KeyCode) -> bool {
         match code {
-            KeyCode::Left => { self.focus = Focus::Sidebar; false }
-            KeyCode::Right => { self.focus = Focus::Files; false }
+            KeyCode::Left => { self.focus_left(); false }
+            KeyCode::Right => { self.focus_right(); false }
             KeyCode::Char('r') => { self.start_run(); false }
             KeyCode::Char('g') => { self.agent = next_agent(&self.agent); false }
             // The extra passes only mean anything while comparing, so picking
@@ -77,6 +77,16 @@ impl ReviewState {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
                     Focus::Files => self.handle_files_key(code).await,
+                    // Arrows scroll the report; there is nothing to select in
+                    // it, and everything else belongs to the panel.
+                    Focus::Drawer => {
+                        match code {
+                            KeyCode::Up => self.scroll_drawer(-1),
+                            KeyCode::Down => self.scroll_drawer(1),
+                            _ => {}
+                        }
+                        false
+                    }
                 }
             }
             KeyCode::Tab | KeyCode::Char('q') | KeyCode::Esc => true,

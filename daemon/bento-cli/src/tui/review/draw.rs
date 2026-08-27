@@ -56,10 +56,10 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
         };
         Drawer {
             title: &title,
-            hint: if review.running { "c parar · d plegar" } else { "↑/↓ scroll · a preguntar · d plegar" },
+            hint: if review.running { "c parar · w plegar" } else { "↑/↓ scroll · a preguntar · w plegar" },
             body: &review.output,
             scroll: review.scroll,
-            focused: review.running,
+            focused: matches!(review.focus, Focus::Drawer),
         }
         .render(frame, cols[2]);
     }
@@ -217,7 +217,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
             "ARCHIVOS {}/{} · {} revisados",
             visible.len(), review.files.len(), review.reviewed.len(),
         ),
-        hint: "f filtro · espacio marcar · Enter diff · r correr · w cajón",
+        hint: "f filtro · espacio marcar · Enter diff · r correr · → informe",
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);
