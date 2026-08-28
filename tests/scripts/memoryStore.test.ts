@@ -11,6 +11,8 @@ import {
   normalizeTranscriptEntry,
   rowToEntry,
   selectByExternalIdSql,
+  claimSummaryJobSql,
+  selectStaleSummaryJobsSql,
   upsertTranscriptSql,
   upsertByExternalIdSql,
   upsertSummaryJobSql,
@@ -216,6 +218,139 @@ describe('memoryStore', () => {
       sqlite(dbPath, upsertSummaryJobSql({ ...base, status: 'pending', error: '' }))
       const rows = JSON.parse(sqlite(dbPath, 'SELECT status, attempts FROM memory_summary_jobs;', true))
       expect(rows).toEqual([{ status: 'failed', attempts: 1 }])
+    })
+  })
+
+  describe('claimSummaryJobSql', () => {
+    const pendingJob = (dbPath: string, updatedAt: string) => {
+      sqlite(dbPath, upsertSummaryJobSql({
+        id: 'job-1', projectPath: '/tmp/bento', agent: 'codex', sessionId: 'abc',
+        transcriptExternalId: 'codex:session-transcript:abc', transcriptHash: 'hash-1',
+        status: 'pending', error: '', attempts: 0, metadata: {},
+        createdAt: '2026-08-06T00:00:00.000Z', updatedAt,
+      }))
+    }
+
+    it('claims a job exactly once', () => {
+      withDb(dbPath => {
+        const seen = '2026-08-06T00:00:00.000Z'
+        pendingJob(dbPath, seen)
+
+        const first = sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', seen))
+        // A second sweep that read the same row before either claimed it: the
+        // witness no longer matches, so it gets nothing and the summarizer —
+        // which is billable — runs once.
+        const second = sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', seen))
+
+        expect(first.trim()).toBe('1')
+        expect(second.trim()).toBe('0')
+      })
+    })
+
+    it('marks the claimed job as processing', () => {
+      withDb(dbPath => {
+        const seen = '2026-08-06T00:00:00.000Z'
+        pendingJob(dbPath, seen)
+
+        sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', seen))
+
+        const rows = JSON.parse(sqlite(dbPath, 'SELECT status FROM memory_summary_jobs;', true))
+        expect(rows).toEqual([{ status: 'processing' }])
+      })
+    })
+
+    it('does not claim a job that moved on since it was read', () => {
+      withDb(dbPath => {
+        pendingJob(dbPath, '2026-08-06T00:00:00.000Z')
+
+        const claimed = sqlite(dbPath, claimSummaryJobSql('/tmp/bento', 'codex:session-transcript:abc', 'otra-fecha'))
+
+        expect(claimed.trim()).toBe('0')
+      })
+    })
+  })
+
+  describe('selectStaleSummaryJobsSql', () => {
+    const seedJob = (dbPath: string, transcript: ReturnType<typeof normalizeTranscriptEntry>, job: Record<string, unknown>) => {
+      sqlite(dbPath, upsertTranscriptSql(transcript))
+      sqlite(dbPath, upsertSummaryJobSql(job))
+    }
+
+    it('picks up pending/processing jobs stuck before the cutoff, joined with their transcript', () => {
+      withDb(dbPath => {
+        const transcript = normalizeTranscriptEntry({
+          id: 't1', project_path: '/tmp/bento', agent: 'codex', session_id: 'abc',
+          title: 'Sesion codex: bento', transcript: 'user: hola\nassistant: revision',
+          source: 'codex-session-end', external_id: 'codex:session-transcript:abc',
+          created_at: '2026-08-01T00:00:00.000Z',
+        })
+        seedJob(dbPath, transcript, {
+          id: 'job-1', projectPath: '/tmp/bento', agent: 'codex', sessionId: 'abc',
+          transcriptExternalId: 'codex:session-transcript:abc', transcriptHash: 'hash-1',
+          status: 'pending', error: '', attempts: 0, metadata: { branch: 'main' },
+          createdAt: '2026-08-06T00:00:00.000Z', updatedAt: '2026-08-06T00:00:00.000Z',
+        })
+
+        const rows = JSON.parse(sqlite(dbPath, selectStaleSummaryJobsSql('2026-08-20T00:00:00.000Z', 5, 3), true))
+
+        expect(rows).toHaveLength(1)
+        expect(rows[0]).toMatchObject({
+          project_path: '/tmp/bento', agent: 'codex', session_id: 'abc',
+          transcript_external_id: 'codex:session-transcript:abc',
+          transcript_text: 'user: hola\nassistant: revision',
+        })
+      })
+    })
+
+    it('ignores jobs newer than the cutoff, already finished, or past the retry limit', () => {
+      withDb(dbPath => {
+        const transcriptFor = (sessionId: string) => normalizeTranscriptEntry({
+          id: `t-${sessionId}`, project_path: '/tmp/bento', agent: 'codex', session_id: sessionId,
+          title: 'Sesion codex: bento', transcript: 'user: hola',
+          source: 'codex-session-end', external_id: `codex:session-transcript:${sessionId}`,
+          created_at: '2026-08-01T00:00:00.000Z',
+        })
+        const jobFor = (sessionId: string, overrides: Record<string, unknown>) => ({
+          id: `job-${sessionId}`, projectPath: '/tmp/bento', agent: 'codex', sessionId,
+          transcriptExternalId: `codex:session-transcript:${sessionId}`, transcriptHash: `hash-${sessionId}`,
+          status: 'pending', error: '', attempts: 0, metadata: {},
+          createdAt: '2026-08-06T00:00:00.000Z', updatedAt: '2026-08-06T00:00:00.000Z',
+          ...overrides,
+        })
+
+        seedJob(dbPath, transcriptFor('too-new'), jobFor('too-new', { updatedAt: '2026-08-25T23:59:00.000Z' }))
+        seedJob(dbPath, transcriptFor('completed'), jobFor('completed', { status: 'completed' }))
+        seedJob(dbPath, transcriptFor('exhausted'), jobFor('exhausted', { attempts: 5 }))
+        seedJob(dbPath, transcriptFor('due'), jobFor('due', {}))
+
+        const rows = JSON.parse(sqlite(dbPath, selectStaleSummaryJobsSql('2026-08-20T00:00:00.000Z', 5, 3), true))
+
+        expect(rows.map((row: { session_id: string }) => row.session_id)).toEqual(['due'])
+      })
+    })
+
+    it('caps how many stale jobs come back at once', () => {
+      withDb(dbPath => {
+        for (const sessionId of ['a', 'b', 'c']) {
+          seedJob(dbPath,
+            normalizeTranscriptEntry({
+              id: `t-${sessionId}`, project_path: '/tmp/bento', agent: 'codex', session_id: sessionId,
+              title: 'Sesion codex: bento', transcript: 'user: hola',
+              source: 'codex-session-end', external_id: `codex:session-transcript:${sessionId}`,
+              created_at: '2026-08-01T00:00:00.000Z',
+            }),
+            {
+              id: `job-${sessionId}`, projectPath: '/tmp/bento', agent: 'codex', sessionId,
+              transcriptExternalId: `codex:session-transcript:${sessionId}`, transcriptHash: `hash-${sessionId}`,
+              status: 'pending', error: '', attempts: 0, metadata: {},
+              createdAt: '2026-08-06T00:00:00.000Z', updatedAt: '2026-08-06T00:00:00.000Z',
+            })
+        }
+
+        const rows = JSON.parse(sqlite(dbPath, selectStaleSummaryJobsSql('2026-08-20T00:00:00.000Z', 5, 2), true))
+
+        expect(rows).toHaveLength(2)
+      })
     })
   })
 })

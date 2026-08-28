@@ -146,11 +146,15 @@ pub(crate) fn dispatch(
 
         "review.checkpoint_save" => match (&req.cwd, &req.base, &req.content) {
             (Some(cwd), Some(base), Some(content)) => {
+                // Sent by the client so the saves one review makes as it
+                // goes land on one entry, and two reviews of the same branch
+                // do not overwrite each other.
                 let cp = crate::remote::review::Checkpoint {
                     cwd: cwd.clone(),
                     base: base.clone(),
                     content: content.clone(),
                     saved_at: crate::remote::review::now_iso8601(),
+                    run_id: req.run_id.clone(),
                     branch: None,
                     commit: None,
                     session_id: req.session_id.clone(),
@@ -183,10 +187,19 @@ pub(crate) fn dispatch(
         },
 
         "review.checkpoint_get" => match (&req.cwd, &req.base) {
-            (Some(cwd), Some(base)) => match crate::remote::review::get_checkpoint(cwd, base) {
-                Some(cp) => send(ok(&req.id, serde_json::to_value(&cp).unwrap_or(Value::Null))),
-                None => send(fail(&req.id, "no hay checkpoint guardado".into())),
-            },
+            // With a run id, that specific review; without one, the latest
+            // for the branch — which is what a client that predates the
+            // history list still asks for.
+            (Some(cwd), Some(base)) => {
+                let found = match &req.run_id {
+                    Some(run) => bento_review::checkpoints::get_run(cwd, base, run),
+                    None => crate::remote::review::get_checkpoint(cwd, base),
+                };
+                match found {
+                    Some(cp) => send(ok(&req.id, serde_json::to_value(&cp).unwrap_or(Value::Null))),
+                    None => send(fail(&req.id, "no hay checkpoint guardado".into())),
+                }
+            }
             _ => send(fail(&req.id, "cwd and base required".into())),
         },
 

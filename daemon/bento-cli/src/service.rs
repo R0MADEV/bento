@@ -143,8 +143,9 @@ fn io_err(msg: &str) -> std::io::Error {
     std::io::Error::other(msg)
 }
 
-/// Spawn `bin` detached so it keeps running after the CLI exits.
-fn spawn_detached(bin: &std::path::Path) -> std::io::Result<()> {
+/// Spawn `bin` detached so it keeps running after the CLI exits. Returns the
+/// child's pid.
+fn spawn_detached(bin: &std::path::Path) -> std::io::Result<u32> {
     let mut cmd = std::process::Command::new(bin);
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -152,10 +153,43 @@ fn spawn_detached(bin: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
+        // setsid(), not process_group(0): a new process group still leaves the
+        // child in our *session*, so closing the terminal that started it sends
+        // it SIGHUP and the daemon dies minutes later, looking like a crash.
+        // setsid() leaves the session too — and it gives the child its own
+        // group as well, so asking for both would make setsid() fail with
+        // EPERM for already being a group leader.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
     }
-    cmd.spawn()?;
-    Ok(())
+    Ok(cmd.spawn()?.id())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A process outlives the terminal that started it only if it is in its
+    /// own session; this is the difference the daemon was missing.
+    #[test]
+    fn the_spawned_process_leaves_our_session() {
+        // `yes` needs no arguments and keeps running with its stdout on
+        // /dev/null, so there is something alive to inspect.
+        let pid = spawn_detached(std::path::Path::new("/usr/bin/yes")).expect("no se pudo lanzar");
+
+        let ours = unsafe { libc::getsid(0) };
+        let theirs = unsafe { libc::getsid(pid as i32) };
+        unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+
+        assert_ne!(theirs, -1, "el hijo ya no existe: no se pudo comprobar su sesión");
+        assert_ne!(theirs, ours, "el hijo sigue en nuestra sesión y morirá con ella");
+    }
 }
 
 #[cfg(target_os = "macos")]

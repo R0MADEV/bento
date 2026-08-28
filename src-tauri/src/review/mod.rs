@@ -2,6 +2,7 @@
 //! contexto de rama. La lógica vive en `worktree` y en la crate compartida
 //! `bento-review`.
 
+pub mod run;
 mod worktree;
 
 use std::collections::{hash_map::DefaultHasher, HashSet};
@@ -24,6 +25,9 @@ pub fn review_checkpoint_save(
     commit: Option<String>,
     session_id: Option<String>,
     session_agent: Option<String>,
+    // Which run this belongs to, so the saves one review makes as it goes
+    // land on one entry and a later review of the same branch keeps both.
+    run_id: Option<String>,
 ) -> Result<(), String> {
     if content.trim().is_empty() {
         return Err("empty checkpoint".into());
@@ -37,6 +41,7 @@ pub fn review_checkpoint_save(
         session_agent,
         branch,
         commit,
+        run_id,
     })
 }
 
@@ -53,14 +58,6 @@ pub fn review_checkpoints_list(cwd: String) -> Vec<bento_review::checkpoints::Ch
 #[tauri::command]
 pub fn review_checkpoint_delete(cwd: String, base: String) -> Result<(), String> {
     bento_review::checkpoints::delete_checkpoint(&cwd, &base)
-}
-
-/// The review prompt now lives in `bento-review`, shared with the daemon and
-/// the CLI — these two commands are the frontend's way in, so the prompt has
-/// exactly one definition instead of one per language.
-#[tauri::command]
-pub fn review_build_prompt(input: bento_review::ReviewPromptInput) -> String {
-    bento_review::build_review_prompt(&input)
 }
 
 /// El documento de la review, con quién falló y con quién se sigue hablando.
@@ -93,21 +90,6 @@ pub fn review_build_overview(input: bento_review::report::OverviewInput) -> Stri
 pub fn review_is_retryable(message: String) -> bool {
     bento_review::agents::is_retryable(&message)
 }
-
-/// El informe de un revisor, para el prompt de síntesis.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SynthesisReport {
-    label: String,
-    report: String,
-}
-
-#[tauri::command]
-pub fn review_build_synthesis_prompt(base_prompt: String, reports: Vec<SynthesisReport>) -> String {
-    let refs: Vec<(&str, &str)> = reports.iter().map(|r| (r.label.as_str(), r.report.as_str())).collect();
-    bento_review::build_synthesis_prompt(&refs, &base_prompt)
-}
-
 
 
 #[tauri::command]

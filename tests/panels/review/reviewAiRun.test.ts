@@ -4,12 +4,16 @@ import { makeLocalStorage } from '../../helpers/localStorage'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async (_cmd: string, _args?: unknown) => undefined as unknown),
-  startAgent: vi.fn(),
   askAi: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('../../../src/adapters/agentRunner', () => ({ startAgent: mocks.startAgent }))
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
+    listeners.set(name, handler)
+    return () => listeners.delete(name)
+  },
+}))
 vi.mock('../../../src/core/ai/agentClient', () => ({ redact: (v: string) => v }))
 vi.mock('../../../src/ui/askAi', () => ({ askAi: mocks.askAi }))
 
@@ -22,7 +26,7 @@ function setup() {
   vi.stubGlobal('localStorage', makeLocalStorage())
   localStorage.setItem('bento.locale', 'en')
   mocks.invoke.mockReset()
-  mocks.startAgent.mockReset()
+  listeners.clear()
   mocks.askAi.mockReset()
 }
 
@@ -112,6 +116,44 @@ function fakeReportCommand(cmd: string, args: Record<string, unknown> | undefine
   return undefined
 }
 
+/// Handlers registered by `runReviewOnEngine`, keyed by event name. The real
+/// backend emits these; the tests play them by hand.
+const listeners = new Map<string, (event: { payload: unknown }) => void>()
+
+/// Emits one engine event to whoever is listening for it.
+function emitReview(id: string, kind: string, payload: unknown) {
+  listeners.get(`review://${kind}:${id}`)?.({ payload })
+}
+
+/// The id `runReviewOnEngine` generated for the run in flight, taken from the
+/// listeners it registered — the panel builds it from the commit and the clock.
+function currentRunId(): string {
+  // "review://batch:<id>" — the id is after the LAST colon; the scheme's own
+  // colon comes first and slicing there yielded "//batch:<id>".
+  const name = [...listeners.keys()][0] ?? ''
+  return name.slice(name.lastIndexOf(':') + 1)
+}
+
+/// Stands in for the Rust command: replays a whole review as the engine would
+/// report it, one stage per agent plus the verification when there are two.
+function engineRun(reports: string[], options: { fail?: string } = {}) {
+  return async () => {
+    await Promise.resolve()
+    const id = currentRunId()
+    reports.forEach((report, index) => {
+      emitReview(id, 'batch', { index: index + 1, total: reports.length, label: `Agente ${index + 1}/${reports.length}` })
+      emitReview(id, 'chunk', { text: report })
+    })
+    if (reports.length >= 2) {
+      emitReview(id, 'synthesis', {})
+      emitReview(id, 'chunk', { text: 'consolidado' })
+    }
+    emitReview(id, 'session', { agent: 'claude', sessionId: 'sess-1' })
+    if (options.fail) emitReview(id, 'error', { message: options.fail })
+    emitReview(id, 'done', {})
+  }
+}
+
 const REPORT_COMMANDS = ['review_build_overview', 'review_build_document', 'review_follow_up_session', 'review_is_retryable']
 
 function mockInvoke(map: Record<string, unknown>) {
@@ -119,13 +161,10 @@ function mockInvoke(map: Record<string, unknown>) {
     if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
     if (CHECKPOINT_COMMANDS.includes(cmd)) return null
     if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
+    if (cmd === 'review_run' || cmd === 'review_cancel') return undefined
     if (cmd in map) return map[cmd]
     throw new Error(`unmocked invoke: ${cmd}`)
   })
-}
-
-function successHandle() {
-  return { requestId: 'r', ready: Promise.resolve(), completed: Promise.resolve(), cancel: vi.fn(async () => {}), unlisten: vi.fn() }
 }
 
 // Wires aiReviewBtn.click() -> handleAiReviewClick, exactly like ReviewPanel.ts does,
@@ -194,16 +233,14 @@ describe('happy path', () => {
       review_snapshot: 'snap1',
       review_branch_context_release: undefined,
     })
-    mocks.startAgent.mockImplementation((_p: unknown, onChunk: (c: string) => void, onDone: (s: string) => void) => {
-      onChunk('All good.')
-      onDone('sess-1')
-      return successHandle()
-    })
+    const runEngine = engineRun(['All good.'])
     const loader = makeLoader(h)
     await loader.handleAiReviewClick() // shows context form
     h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
+    await vi.waitFor(() => expect(listeners.size).toBeGreaterThan(0))
+    await runEngine()
     await vi.waitFor(() => expect(h.dom.reviewDrawerBody.querySelector('.review-drawer-result')).toBeTruthy())
-    expect(mocks.startAgent).toHaveBeenCalledTimes(1)
+    expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'review_run')).toBe(true)
     expect(mocks.askAi).toHaveBeenCalled()
     expect(h.dom.aiReviewBtn.disabled).toBe(false)
     // Guardado en el almacén compartido con el daemon y el CLI, no en localStorage.
@@ -222,15 +259,13 @@ describe('happy path', () => {
       review_branch_context_prepare: { path: '/wt', commit: 'abc1234', managed: false },
       review_snapshot: 'snap1',
     })
-    mocks.startAgent.mockImplementation((_p: unknown, onChunk: (c: string) => void, onDone: (s: string) => void) => {
-      onChunk('Report text.')
-      onDone('sess-x')
-      return successHandle()
-    })
+    const runEngine = engineRun(['informe uno', 'informe dos'])
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
     h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
-    await vi.waitFor(() => expect(mocks.startAgent).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(listeners.size).toBeGreaterThan(0))
+    await runEngine()
+    await vi.waitFor(() => expect(h.dom.reviewDrawerBody.querySelector('.review-drawer-result')).toBeTruthy())
   })
 })
 
@@ -263,28 +298,29 @@ describe('failure handling', () => {
       if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
       if (cmd === 'review_branch_context_prepare') return { path: '/wt', commit: 'abc1234', managed: true }
       if (cmd === 'review_snapshot') {
+        // Two calls now, not three: the mid-review snapshot moved into the
+        // engine, so the closing one is the second.
         snapshotCalls += 1
-        if (snapshotCalls <= 2) return 'snap1'
+        if (snapshotCalls <= 1) return 'snap1'
         throw new Error('snapshot failed')
       }
       if (cmd === 'review_branch_context_release') return undefined
+      if (cmd === 'review_run' || cmd === 'review_cancel') return undefined
       throw new Error(`unmocked: ${cmd}`)
     })
-    mocks.startAgent.mockImplementation((_p: unknown, onChunk: (c: string) => void, onDone: (s: string) => void) => {
-      onChunk('Partial report.')
-      onDone('sess-2')
-      return successHandle()
-    })
+    const runEngine = engineRun(['Partial report.'])
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
     h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
+    await vi.waitFor(() => expect(listeners.size).toBeGreaterThan(0))
+    await runEngine()
     await vi.waitFor(() => expect(h.dom.reviewDrawerBody.querySelector('.review-drawer-result')).toBeTruthy())
     expect(h.dom.reviewDrawerBody.textContent).toContain('Incomplete review')
   })
 })
 
 describe('stop button', () => {
-  it('cancels the active agent handle', async () => {
+  it('cancels the run in the engine, not just the listener', async () => {
     setup()
     const h = makeHarness()
     mockInvoke({
@@ -292,12 +328,6 @@ describe('stop button', () => {
       review_snapshot: 'snap1',
       review_branch_context_release: undefined,
     })
-    const cancel = vi.fn(async () => {})
-    let resolveReady!: () => void
-    let resolveCompleted!: () => void
-    const ready = new Promise<void>(resolve => { resolveReady = resolve })
-    const completed = new Promise<void>(resolve => { resolveCompleted = resolve })
-    mocks.startAgent.mockImplementation(() => ({ requestId: 'r', ready, completed, cancel, unlisten: vi.fn() }))
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
     h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
@@ -307,7 +337,9 @@ describe('stop button', () => {
       return btn!
     })
     stopBtn.click()
-    await vi.waitFor(() => expect(cancel).toHaveBeenCalled())
-    resolveReady(); resolveCompleted()
+    // `review_cancel` is what reaches the agents; stopping only the listener
+    // left them running and billing.
+    await vi.waitFor(() => expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'review_cancel')).toBe(true))
+    emitReview(currentRunId(), 'done', {})
   })
 })

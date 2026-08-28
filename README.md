@@ -240,6 +240,10 @@ Pull requests are welcome. Before opening one:
 3. Follow the commit convention: `feat: added …` / `fix: corrected …`
 4. Branch names: `feat/short-description` or `fix/short-description`
 
+About to touch the memory or bundling code? [`docs/pendiente.md`](docs/pendiente.md)
+records what was open, how each point was closed and — just as usefully — what
+was looked at and deliberately left alone, so nobody relitigates it.
+
 ---
 
 ## License

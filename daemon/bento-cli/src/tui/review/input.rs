@@ -4,7 +4,7 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use serde_json::{json, Value};
 
-use super::format::next_agent;
+use super::format::{next_agent, next_optional_agent};
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
 
 impl ReviewState {
@@ -29,32 +29,81 @@ impl ReviewState {
             ReviewView::Browse => self.handle_browse_key(key.code).await,
             ReviewView::FileDetail => self.handle_file_detail_key(key.code),
             ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
-            ReviewView::Output => self.handle_output_key(key.code),
         }
     }
 
     async fn handle_browse_key(&mut self, code: KeyCode) -> bool {
         match code {
-            KeyCode::Left => { self.focus = Focus::Sidebar; false }
-            KeyCode::Right => { self.focus = Focus::Files; false }
+            KeyCode::Left => { self.focus_left(); false }
+            KeyCode::Right => { self.focus_right(); false }
             KeyCode::Char('r') => { self.start_run(); false }
             KeyCode::Char('g') => { self.agent = next_agent(&self.agent); false }
-            KeyCode::F(5) => { self.refresh().await; false }
+            // The extra passes only mean anything while comparing, so picking
+            // one turns compare on rather than silently doing nothing.
+            KeyCode::Char('G') => {
+                self.secondary = next_optional_agent(self.secondary.as_deref());
+                self.compare = true;
+                false
+            }
+            KeyCode::Char('t') => {
+                self.tertiary = next_optional_agent(self.tertiary.as_deref());
+                self.compare = true;
+                false
+            }
+            KeyCode::F(5) => { self.request_refresh(); false }
             KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
+            KeyCode::Char('w') => { self.toggle_drawer(); false }
+            // The saved reviews, in the drawer where their reports live.
+            KeyCode::Char('l') => { self.toggle_history(); false }
+            // Asking about the report used to belong to the full-screen view;
+            // the report is in the drawer now, so the key lives here.
+            KeyCode::Char('a') if !self.running && !self.output.is_empty() => {
+                self.input_purpose = Some(InputPurpose::Ask);
+                self.input.clear();
+                false
+            }
+            KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(10); false }
+            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(10); false }
+            KeyCode::Char('c') if self.running => { self.cancel_run(); false }
             KeyCode::Char('c') => {
                 self.input_purpose = Some(InputPurpose::Context);
                 self.input = self.context.clone();
                 false
             }
-            KeyCode::Char('o') => { self.set_sidebar_tab(SidebarTab::Projects).await; false }
-            KeyCode::Char('b') => { self.set_sidebar_tab(SidebarTab::Branches).await; false }
-            KeyCode::Char('p') => { self.set_sidebar_tab(SidebarTab::Prs).await; false }
-            KeyCode::Char('h') => { self.set_sidebar_tab(SidebarTab::Checkpoints).await; false }
+            KeyCode::Char('o') => { self.request_sidebar_tab(SidebarTab::Projects); false }
+            KeyCode::Char('b') => { self.request_sidebar_tab(SidebarTab::Branches); false }
+            KeyCode::Char('p') => { self.request_sidebar_tab(SidebarTab::Prs); false }
+            KeyCode::Char('h') => { self.request_sidebar_tab(SidebarTab::Checkpoints); false }
             KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') => {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
                     Focus::Files => self.handle_files_key(code).await,
+                    // Arrows scroll the report; there is nothing to select in
+                    // it, and everything else belongs to the panel.
+                    // Listing past reviews, the arrows move a selection and
+                    // Enter opens one; showing a report, they scroll it.
+                    Focus::Drawer if self.showing_history => {
+                        match code {
+                            KeyCode::Up => self.checkpoints_selected = self.checkpoints_selected.saturating_sub(1),
+                            KeyCode::Down => {
+                                if self.checkpoints_selected + 1 < self.checkpoints.len() {
+                                    self.checkpoints_selected += 1;
+                                }
+                            }
+                            KeyCode::Enter => self.open_selected_review().await,
+                            _ => {}
+                        }
+                        false
+                    }
+                    Focus::Drawer => {
+                        match code {
+                            KeyCode::Up => self.scroll_drawer(-1),
+                            KeyCode::Down => self.scroll_drawer(1),
+                            _ => {}
+                        }
+                        false
+                    }
                 }
             }
             KeyCode::Tab | KeyCode::Char('q') | KeyCode::Esc => true,
@@ -73,7 +122,7 @@ impl ReviewState {
                 KeyCode::Enter => {
                     if let Some(cwd) = self.projects.get(self.projects_selected).and_then(|p| p.get("cwd")).and_then(Value::as_str) {
                         self.cwd = cwd.to_string();
-                        self.enter().await;
+                        self.enter();
                         self.focus = Focus::Sidebar;
                         self.sidebar_tab = SidebarTab::Branches;
                     }
@@ -136,7 +185,8 @@ impl ReviewState {
                             self.scroll = 0;
                             self.running = false;
                             self.last_progress.clear();
-                            self.view = ReviewView::Output;
+                            self.view = ReviewView::Browse;
+                            self.open_drawer();
                         }
                     }
                     false
@@ -250,36 +300,6 @@ impl ReviewState {
         }
     }
 
-    fn handle_output_key(&mut self, code: KeyCode) -> bool {
-        if code == KeyCode::Char('/') {
-            self.start_search();
-            return false;
-        }
-        match code {
-            KeyCode::Up => { self.scroll = self.scroll.saturating_sub(1); false }
-            KeyCode::Down => { self.scroll = self.scroll.saturating_add(1); false }
-            KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(10); false }
-            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(10); false }
-            KeyCode::Char('a') if !self.running => {
-                self.input_purpose = Some(InputPurpose::Ask);
-                self.input.clear();
-                false
-            }
-            KeyCode::Char('c') if self.running => {
-                if let Some(task) = self.stream_task.take() { task.abort(); }
-                self.stream_rx = None;
-                self.running = false;
-                self.output.push_str("\n\n*(cancelado)*\n");
-                false
-            }
-            KeyCode::Tab => true,
-            KeyCode::Esc => {
-                self.view = ReviewView::Browse;
-                false
-            }
-            _ => false,
-        }
-    }
 
     async fn handle_text_input(&mut self, code: KeyCode) {
         match code {

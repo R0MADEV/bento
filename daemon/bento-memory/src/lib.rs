@@ -371,20 +371,8 @@ pub fn memory_regenerate_summary(
             return Ok(None);
         }
     };
-    if summary.is_empty()
-        || summary.eq_ignore_ascii_case("SIN_MEMORIA")
-        || summary.to_lowercase().contains("not logged in")
-    {
-        let status = if summary.eq_ignore_ascii_case("SIN_MEMORIA") {
-            "skipped"
-        } else {
-            "failed"
-        };
-        let error = if status == "failed" {
-            "El resumidor no devolvió un resultado válido."
-        } else {
-            ""
-        };
+    let (status, error) = classify_summary(&summary);
+    if !status.is_empty() {
         conn.execute(
             "UPDATE memory_summary_jobs SET status = ?1, error = ?2, attempts = attempts + 1, updated_at = ?3
              WHERE project_path = ?4 AND transcript_external_id = ?5",
@@ -410,6 +398,24 @@ pub fn memory_regenerate_summary(
         params![transcript.updated_at, transcript.project_path, transcript.external_id],
     ).map_err(|e| e.to_string())?;
     Ok(Some(entry))
+}
+
+/// Which outcome a summarizer's output means for its job: an empty status is
+/// a usable summary. The agent's real output is kept as the error, since it
+/// is what tells apart a session that was never logged in from an agent that
+/// returned nothing at all.
+fn classify_summary(summary: &str) -> (&'static str, String) {
+    let trimmed = summary.trim();
+    if trimmed.eq_ignore_ascii_case("SIN_MEMORIA") {
+        return ("skipped", String::new());
+    }
+    if trimmed.is_empty() {
+        return ("failed", "El resumidor no devolvió ningún texto.".into());
+    }
+    if trimmed.to_lowercase().contains("not logged in") {
+        return ("failed", trimmed.into());
+    }
+    ("", String::new())
 }
 
 fn chrono_like_now() -> String {
@@ -616,5 +622,31 @@ mod tests {
     fn a_new_entry_without_content_or_with_a_bad_kind_is_refused() {
         assert!(new_entry("/proj", "note", "", "", "", "cli").is_err());
         assert!(new_entry("/proj", "inventado", "título", "", "", "cli").is_err());
+    }
+
+    #[test]
+    fn an_unusable_summary_keeps_the_agent_output_as_the_error() {
+        assert_eq!(
+            classify_summary("not logged in. Run /login."),
+            ("failed", "not logged in. Run /login.".to_string())
+        );
+    }
+
+    #[test]
+    fn an_empty_summary_gets_its_own_message_instead_of_a_blank_error() {
+        assert_eq!(
+            classify_summary("   "),
+            ("failed", "El resumidor no devolvió ningún texto.".to_string())
+        );
+    }
+
+    #[test]
+    fn the_sentinel_is_skipped_without_an_error() {
+        assert_eq!(classify_summary("SIN_MEMORIA"), ("skipped", String::new()));
+    }
+
+    #[test]
+    fn a_useful_summary_is_not_classified_as_a_failure() {
+        assert!(classify_summary("Cambios: se arregló el bug X.").0.is_empty());
     }
 }

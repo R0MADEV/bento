@@ -134,8 +134,34 @@ pub(crate) async fn stream_review(body: Value) -> std::io::Result<()> {
     Ok(())
 }
 
+/// How long a single request may take before the caller gives up. The panel
+/// awaits these on its event loop, so an answer that never comes freezes the
+/// whole TUI — no redraw, no keys. Generous enough for the slow ones (the
+/// `review.*` commands shell out to `git` and `gh`) and finite, which is the
+/// point.
+const REQUEST_TIMEOUT_SECS: u64 = 20;
+
+fn request_timeout() -> std::time::Duration {
+    let secs = std::env::var("BENTO_REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(REQUEST_TIMEOUT_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
 /// Send one request and return the `data` field of the response.
 pub(crate) async fn request_data(body: Value) -> std::io::Result<Value> {
+    tokio::time::timeout(request_timeout(), request_data_inner(body))
+        .await
+        .unwrap_or_else(|_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "el daemon no respondió a tiempo",
+            ))
+        })
+}
+
+async fn request_data_inner(body: Value) -> std::io::Result<Value> {
     let mut stream = TcpStream::connect(addr()).await?;
     stream.write_all(body.to_string().as_bytes()).await?;
     stream.write_all(b"\n").await?;
@@ -211,4 +237,32 @@ pub(crate) fn print_help() {
     eprintln!("  bento review run [--cwd <dir>] [--base <ref>] [--branch <ref>] [--context <text>] [--agents claude,codex,opencode]   run a full AI code review (runs real AI agents)");
     eprintln!();
     eprintln!("env: BENTO_DAEMON_ADDR (default 127.0.0.1:7877)");
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+
+    /// A daemon that accepts the connection and then never answers — exactly
+    /// what a hung `gh` call behind `review.prs` looks like from here.
+    #[tokio::test]
+    async fn a_daemon_that_never_answers_times_out_instead_of_hanging_forever() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            // Held open, silent, for longer than the timeout under test.
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            drop(socket);
+        });
+        std::env::set_var("BENTO_DAEMON_ADDR", addr.to_string());
+        std::env::set_var("BENTO_REQUEST_TIMEOUT_SECS", "1");
+
+        let started = std::time::Instant::now();
+        let result = request_data(serde_json::json!({ "id": "1", "cmd": "review.prs" })).await;
+
+        assert!(result.is_err(), "una espera infinita congela el panel entero");
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "tardó demasiado en rendirse");
+    }
 }

@@ -7,6 +7,10 @@ let reviewSse=null;
 let currentPR=null;
 
 let reviewSessionId=null;
+// Identifies the review in flight. Shared by the saves it makes as it goes,
+// and new for the next one — without it a second review of the same branch
+// overwrote the first, taking its report and its resumable session.
+let reviewRunId=null;
 
 let reviewSessionAgent=null;
 
@@ -30,6 +34,7 @@ async function saveReviewCheckpoint(dir,base,buf){
     const body={cwd:dir,base,content:buf,saved_at:new Date().toISOString()};
     if(reviewSessionId){body.session_id=reviewSessionId;}
     if(reviewSessionAgent){body.session_agent=reviewSessionAgent;}
+    if(reviewRunId){body.run_id=reviewRunId;}
     await fetch('/api/review/checkpoint'+q,{
       method:'PUT',
       headers:{'Content-Type':'application/json'},
@@ -61,7 +66,9 @@ async function renderReviewHistory(dir){
       +(item.saved_at?'<span class="rv-hist-chip-date">'+esc(fmtRelDate(item.saved_at))+'</span>':'');
     info.onclick=()=>{
       document.getElementById('rv-base').value=item.base;
-      void restoreReviewCheckpoint(dir,item.base);
+      // This run, not the branch's newest: several reviews of one branch are
+      // kept now, so asking by base alone would always reopen the last.
+      void restoreReviewCheckpoint(dir,item.base,item.run_id);
       void renderReviewHistory(dir);
     };
     const del=document.createElement('button');
@@ -82,11 +89,12 @@ async function renderReviewHistory(dir){
   });
 }
 
-async function restoreReviewCheckpoint(dir,base){
+async function restoreReviewCheckpoint(dir,base,runId){
   const out=document.getElementById('rv-output');
   if(!out)return;
   try{
-    const res=await fetch('/api/review/checkpoint'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base));
+    const res=await fetch('/api/review/checkpoint'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)
+      +(runId?'&run_id='+encodeURIComponent(runId):''));
     if(!res.ok){
       hideChat();
       out.className='empty-state';

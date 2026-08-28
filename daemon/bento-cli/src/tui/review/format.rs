@@ -46,6 +46,20 @@ pub(super) fn next_agent(current: &str) -> String {
     bento_review::agents::next_id(current).to_string()
 }
 
+/// The same cycle for an optional extra pass, with desktop's "Ninguno" as an
+/// extra stop: without it a secondary picked by accident could never be
+/// cleared. Wrapping past the last agent lands back on None.
+pub(super) fn next_optional_agent(current: Option<&str>) -> Option<String> {
+    let ids = bento_review::agents::ids();
+    match current {
+        None => ids.first().map(|id| id.to_string()),
+        Some(current) => {
+            let last = ids.last().is_some_and(|id| *id == current);
+            (!last).then(|| bento_review::agents::next_id(current).to_string())
+        }
+    }
+}
+
 /// El estado de los checks de CI, en una línea por check. Sin esto había que
 /// salir a GitHub para saber si el PR pasaba.
 pub(super) fn format_checks(data: &Value) -> String {
@@ -155,6 +169,16 @@ mod tests {
         assert_eq!(next_agent("claude"), "codex");
         assert_eq!(next_agent("codex"), "opencode");
         assert_eq!(next_agent("opencode"), "claude");
+    }
+
+    #[test]
+    fn an_optional_pass_cycles_through_none_so_it_can_be_unset_again() {
+        // Desktop's "Ninguno" has to be reachable, or a secondary picked by
+        // accident could never be cleared.
+        assert_eq!(next_optional_agent(None), Some("claude".to_string()));
+        assert_eq!(next_optional_agent(Some("claude")), Some("codex".to_string()));
+        assert_eq!(next_optional_agent(Some("codex")), Some("opencode".to_string()));
+        assert_eq!(next_optional_agent(Some("opencode")), None);
     }
 
     #[test]

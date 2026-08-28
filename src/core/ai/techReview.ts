@@ -11,60 +11,6 @@ export interface MultiAgentReviewRun {
   error?: string
 }
 
-export interface ContextSnippet {
-  path: string
-  content: string
-  reason: 'changed' | 'reference' | 'test' | 'definition'
-}
-
-export interface ContextInput {
-  repoRoot: string
-  diff: string
-  changedFiles: string[]
-}
-
-export interface ContextResult {
-  snippets: ContextSnippet[]
-  sources: ContextSource[]
-  lexisAvailable: boolean
-}
-
-export interface ContextProvider {
-  collect(input: ContextInput): Promise<ContextResult>
-}
-
-export interface ContextProviderDependencies {
-  lexis?: (input: ContextInput) => Promise<ContextSnippet[]>
-  git?: (input: ContextInput) => Promise<ContextSnippet[]>
-  direct: (input: ContextInput) => Promise<ContextSnippet[]>
-}
-
-export function createContextProvider(dependencies: ContextProviderDependencies): ContextProvider {
-  return {
-    async collect(input): Promise<ContextResult> {
-      const snippets: ContextSnippet[] = []
-      const sources: ContextSource[] = []
-      let lexisAvailable = false
-      if (dependencies.lexis) {
-        try {
-          const result = await dependencies.lexis(input)
-          if (result.length) { snippets.push(...result); sources.push('lexis'); lexisAvailable = true }
-        } catch { /* fallback below */ }
-      }
-      if (dependencies.git) {
-        try {
-          const result = await dependencies.git(input)
-          if (result.length) { snippets.push(...result); sources.push('git') }
-        } catch { /* direct files remain the minimum context */ }
-      }
-      const direct = await dependencies.direct(input)
-      snippets.push(...direct)
-      sources.push('direct')
-      return { snippets, sources: [...new Set(sources)], lexisAvailable }
-    },
-  }
-}
-
 export interface ReviewCheckpoint {
   content: string
   commit: string

@@ -116,6 +116,7 @@ function startReview(){
 
   hideChat();
   reviewSessionId=null;
+  reviewRunId=String(Date.now());
   reviewSessionAgent=null;
   out.className='empty-state';
   out.innerHTML='<div class="rv-placeholder">Esperando síntesis&#8230;</div>';
@@ -193,7 +194,7 @@ function startReview(){
       return;
     }
 
-    const batchMatch=data.match(/^\[BATCH:(\d+)\/(\d+)\]$/);
+    const batchMatch=data.match(/^\[BATCH:(\d+)\/(\d+)(?::([^\]]+))?\]$/);
     if(batchMatch){
       const n=parseInt(batchMatch[1]),total=parseInt(batchMatch[2]);
       if(batchBuf.trim()){agentReports.push(batchBuf);saveReviewCheckpoint(dir,base,batchBuf);}

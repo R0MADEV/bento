@@ -26,6 +26,12 @@ pub struct Checkpoint {
     /// The commit the review was made against, so a stale one can be spotted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
+    /// Which run this is. Stable across the saves one review makes as it goes,
+    /// and different between runs — without it a second review of the same
+    /// branch overwrote the first, taking its report and its resumable
+    /// session with it. Absent on checkpoints written before this existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,6 +40,15 @@ pub struct CheckpointMeta {
     pub saved_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// Which run this entry is, so a client can ask for this one rather than
+    /// "the latest for this branch". None on entries saved before runs were
+    /// told apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    /// Whether it can still be asked a follow-up question — the verifier's
+    /// session. Listing an entry that cannot be resumed as if it could is
+    /// worse than saying so.
+    pub resumable: bool,
 }
 
 fn checkpoints_dir() -> Option<PathBuf> {
@@ -42,6 +57,16 @@ fn checkpoints_dir() -> Option<PathBuf> {
 
 pub fn checkpoint_path(cwd: &str, base: &str) -> Option<PathBuf> {
     checkpoints_dir().map(|dir| crate::store::entry_path(&dir, cwd, base))
+}
+
+/// Where a checkpoint belongs. Runs get their own file; one without a
+/// `run_id` keeps the old `cwd:base` location so it stays findable.
+pub fn checkpoint_path_for(cp: &Checkpoint) -> Option<PathBuf> {
+    match &cp.run_id {
+        Some(run) => checkpoints_dir()
+            .map(|dir| crate::store::entry_path(&dir, &cp.cwd, &format!("{}:{run}", cp.base))),
+        None => checkpoint_path(&cp.cwd, &cp.base),
+    }
 }
 
 /// All saved checkpoints for `cwd` (one per base branch reviewed), newest
@@ -61,7 +86,13 @@ pub fn list_checkpoint_metas(cwd: &str) -> Vec<CheckpointMeta> {
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
         .filter_map(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
         .filter(|cp| cp.cwd == cwd)
-        .map(|cp| CheckpointMeta { base: cp.base, saved_at: cp.saved_at, branch: cp.branch })
+        .map(|cp| CheckpointMeta {
+            base: cp.base,
+            saved_at: cp.saved_at,
+            branch: cp.branch,
+            resumable: cp.session_id.is_some(),
+            run_id: cp.run_id,
+        })
         .collect();
     metas.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
     metas
@@ -75,6 +106,15 @@ pub fn get_checkpoint(cwd: &str, base: &str) -> Option<Checkpoint> {
     serde_json::from_str::<Checkpoint>(&raw).ok()
 }
 
+/// One specific run, for a client picking from the history rather than
+/// reopening whatever was last.
+pub fn get_run(cwd: &str, base: &str, run_id: &str) -> Option<Checkpoint> {
+    let dir = checkpoints_dir()?;
+    let path = crate::store::entry_path(&dir, cwd, &format!("{base}:{run_id}"));
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Checkpoint>(&raw).ok()
+}
+
 /// Writes `cp` to its checkpoint file — shared by the HTTP `PUT
 /// /api/review/checkpoint` handler (the web panel saves incrementally as
 /// batches complete) and the daemon's IPC socket (`review.checkpoint_save`,
@@ -83,7 +123,7 @@ pub fn get_checkpoint(cwd: &str, base: &str) -> Option<Checkpoint> {
 pub fn save_checkpoint(cp: &Checkpoint) -> Result<(), String> {
     let dir = checkpoints_dir().ok_or_else(|| "no home dir".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = checkpoint_path(&cp.cwd, &cp.base).ok_or_else(|| "bad checkpoint path".to_string())?;
+    let path = checkpoint_path_for(cp).ok_or_else(|| "bad checkpoint path".to_string())?;
     let raw = serde_json::to_string(cp).map_err(|e| e.to_string())?;
     std::fs::write(path, raw).map_err(|e| e.to_string())
 }
@@ -157,5 +197,53 @@ mod tests {
     fn end_of_a_leap_year_day_is_february_29() {
         // 2024-02-29T12:00:00Z (2024 is a leap year).
         assert_eq!(iso8601_from_unix_secs(1_709_208_000), "2024-02-29T12:00:00Z");
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+
+    fn checkpoint(base: &str, run: Option<&str>, saved: &str) -> Checkpoint {
+        Checkpoint {
+            cwd: "/repo".into(),
+            base: base.into(),
+            content: format!("informe {saved}"),
+            saved_at: saved.into(),
+            session_id: Some(format!("sess-{saved}")),
+            session_agent: Some("opencode".into()),
+            branch: None,
+            commit: None,
+            run_id: run.map(String::from),
+        }
+    }
+
+    #[test]
+    fn two_reviews_of_the_same_branch_do_not_overwrite_each_other() {
+        // Filed under cwd+base alone, a second review of `main` replaced the
+        // first — its report and, worse, the session you could still ask.
+        let first = checkpoint_path_for(&checkpoint("main", Some("run-1"), "2026-08-27T09:00:00Z"));
+        let second = checkpoint_path_for(&checkpoint("main", Some("run-2"), "2026-08-27T10:00:00Z"));
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn saving_the_same_review_twice_keeps_one_file() {
+        // The web panel saves after every stage; those are the same review and
+        // must land on the same file, or a run would leave one entry per stage.
+        let early = checkpoint_path_for(&checkpoint("main", Some("run-1"), "2026-08-27T09:00:00Z"));
+        let late = checkpoint_path_for(&checkpoint("main", Some("run-1"), "2026-08-27T09:05:00Z"));
+
+        assert_eq!(early, late);
+    }
+
+    #[test]
+    fn a_checkpoint_without_a_run_id_keeps_its_old_location() {
+        // Saved by an older client, or by one that does not track runs: it
+        // still has to be found where it has always been.
+        let legacy = checkpoint_path_for(&checkpoint("main", None, "2026-08-27T09:00:00Z"));
+
+        assert_eq!(legacy, checkpoint_path("/repo", "main"));
     }
 }
