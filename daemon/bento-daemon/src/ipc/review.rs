@@ -204,7 +204,9 @@ pub(crate) fn dispatch(
         },
 
         "review.checkpoint_delete" => match (&req.cwd, &req.base) {
-            (Some(cwd), Some(base)) => match crate::remote::review::delete_checkpoint(cwd, base) {
+            // Without the run id this only ever removed the runless entry, so
+            // deleting a review from the history left its file untouched.
+            (Some(cwd), Some(base)) => match crate::remote::review::delete_checkpoint(cwd, base, req.run_id.as_deref()) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
                 Err(e) => send(fail(&req.id, e)),
             },

@@ -192,9 +192,19 @@ fn iso8601_from_unix_secs(secs: u64) -> String {
 
 /// Shared by the HTTP delete handler and the daemon's IPC socket
 /// (`review.checkpoint_delete`).
-pub fn delete_checkpoint(cwd: &str, base: &str) -> Result<(), String> {
-    let path = checkpoint_path(cwd, base).ok_or_else(|| "bad checkpoint path".to_string())?;
-    std::fs::remove_file(path).map_err(|e| e.to_string())
+/// Removes one saved review: the run named, or the runless entry when none is.
+///
+/// The run id is what makes this reach anything at all today. Without it only
+/// the old `cwd:base` path was ever removed, so deleting a review from the
+/// history left its file exactly where it was and the entry came back on the
+/// next listing.
+pub fn delete_checkpoint(cwd: &str, base: &str, run_id: Option<&str>) -> Result<(), String> {
+    let key = match run_id {
+        Some(run) => format!("{base}:{run}"),
+        None => base.to_string(),
+    };
+    let dir = checkpoints_dir().ok_or_else(|| "bad checkpoint path".to_string())?;
+    std::fs::remove_file(crate::store::entry_path(&dir, cwd, &key)).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

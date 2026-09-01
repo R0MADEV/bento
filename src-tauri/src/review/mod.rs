@@ -55,9 +55,11 @@ pub fn review_checkpoints_list(cwd: String) -> Vec<bento_review::checkpoints::Ch
     bento_review::checkpoints::list_checkpoint_metas(&cwd)
 }
 
+/// Naming the run is what makes this reach a review saved today: every client
+/// stamps one, and without it only the runless entry was ever removed.
 #[tauri::command]
-pub fn review_checkpoint_delete(cwd: String, base: String) -> Result<(), String> {
-    bento_review::checkpoints::delete_checkpoint(&cwd, &base)
+pub fn review_checkpoint_delete(cwd: String, base: String, run_id: Option<String>) -> Result<(), String> {
+    bento_review::checkpoints::delete_checkpoint(&cwd, &base, run_id.as_deref())
 }
 
 /// El documento de la review, con quién falló y con quién se sigue hablando.

@@ -77,7 +77,10 @@ async function renderReviewHistory(dir){
     del.title='Eliminar review';
     del.onclick=async ev=>{
       ev.stopPropagation();
-      try{await fetch('/api/review/checkpoint'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(item.base),{method:'DELETE'});}catch(_){}
+      // Naming the run matters: by base alone the delete missed the file and
+      // the chip came back on the next listing.
+      const run=item.run_id?'&run_id='+encodeURIComponent(item.run_id):'';
+      try{await fetch('/api/review/checkpoint'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(item.base)+run,{method:'DELETE'});}catch(_){}
       if(item.base===currentBase){
         const out=document.getElementById('rv-output');
         if(out){out.className='empty-state';out.innerHTML='<div class="rv-placeholder">Elige un proyecto y una rama base<br>para iniciar la revisión.</div>';}

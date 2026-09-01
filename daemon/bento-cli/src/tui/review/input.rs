@@ -192,9 +192,12 @@ impl ReviewState {
                     false
                 }
                 KeyCode::Char('d') => {
-                    if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
-                        let base = base.to_string();
-                        let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": self.cwd, "base": base })).await;
+                    if let Some(entry) = self.checkpoints.get(self.checkpoints_selected).cloned() {
+                        let Some(base) = entry.get("base").and_then(Value::as_str).map(String::from) else { return false };
+                        // Naming the run is what makes the delete reach the
+                        // file; by base alone it missed and the entry returned.
+                        let run = entry.get("run_id").and_then(Value::as_str).map(String::from);
+                        let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": self.cwd, "base": base, "run_id": run })).await;
                         self.checkpoints = self.fetch_list(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": self.cwd })).await;
                         if self.checkpoints_selected >= self.checkpoints.len() {
                             self.checkpoints_selected = self.checkpoints.len().saturating_sub(1);

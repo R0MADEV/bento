@@ -66,7 +66,7 @@ pub async fn put_checkpoint_handler(
     }
 }
 
-// DELETE /api/review/checkpoint?cwd=…&base=…
+// DELETE /api/review/checkpoint?cwd=…&base=…[&run_id=…]
 pub async fn delete_checkpoint_handler(
     State(state): State<Arc<RemoteState>>,
     Query(auth): Query<Auth>,
@@ -77,6 +77,8 @@ pub async fn delete_checkpoint_handler(
     }
     let Some(cwd) = params.get("cwd") else { return StatusCode::BAD_REQUEST };
     let Some(base) = params.get("base") else { return StatusCode::BAD_REQUEST };
-    let _ = delete_checkpoint(cwd, base);
+    // Naming the run is what makes this reach a review saved today; without
+    // it only the runless entry was ever removed.
+    let _ = delete_checkpoint(cwd, base, params.get("run_id").map(String::as_str));
     StatusCode::OK
 }
