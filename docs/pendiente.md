@@ -196,22 +196,31 @@ Son dos runtimes JS sin build compartido y una TUI que no pinta HTML.
 
 ---
 
+## 7. Los comandos sin llamante — resuelto
+
+Cuatro comandos escritos, registrados y sin nadie que los llamara. Ninguno era
+funcionalidad a medias: eran la copia muerta de algo que ya funciona por otro
+lado, así que se fueron.
+
+`memory_source_import` montaba el bucle de importación entero en Rust mientras
+el panel importa con el suyo, candidato a candidato para poder enseñar
+progreso; la regla de qué se salta, qué se fusiona y qué se crea sí está
+compartida (`memory_plan_import`), que es lo que piden las normas. Duplicado
+estaba el bucle, no la regla.
+
+`memory_transcript_list` y `memory_transcript_create` eran la versión Rust de lo
+que el hook hace directo contra SQLite desde `scripts/lib/memoryStore.mjs`. Si
+algún día el escritorio enseña esas transcripciones, es una pantalla nueva, no
+estos comandos. `agent_socket_path` no aparecía en ningún sitio.
+
+**Ojo con dos falsos positivos**: `workspace_reset` y los trece `db_docker_*`
+parecen muertos y no lo están — el primero lo usa `scripts/e2e-tasks.mjs`, y los
+otros se construyen a mano en `dbEngine.ts` (`db_docker_${engine}_${op}`).
+
 ## Lo que sigue abierto
 
-Poco, y nada de la review:
-
-| qué | por qué importa |
-|---|---|
-| `memory_transcript_list` / `memory_transcript_create` sin llamante | el panel de memoria enseña los trabajos de resumen, no las transcripciones que el hook guarda |
-| `memory_source_import` sin llamante | el panel escanea fuentes y nunca importa de ellas |
-| `agent_socket_path` sin llamante | muerto, en ningún sitio del repo |
-| `review-pr.js` y `review-ask.js` sin tests | el arnés para cargar el cliente del móvil ya está montado (`tests/web/reviewClient.test.ts`) |
-
-`workspace_reset` y los trece `db_docker_*` parecen muertos y no lo están: el
-primero lo usa `scripts/e2e-tasks.mjs`, y los otros se construyen a mano en
-`dbEngine.ts` (`db_docker_${engine}_${op}`).
-
-`src/core` está al 97,6 % de líneas, con el umbral en 85.
+Nada bloqueante. `src/core` está al 97,6 % de líneas con el umbral en 85, y el
+cliente web del móvil ya tiene tests en sus cuatro ficheros.
 
 ## Decidido que no
 
