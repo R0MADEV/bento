@@ -158,3 +158,122 @@ describe('el documento que manda el motor', () => {
     expect(client.reviewDocumentFrom({ nope: true })).toBeNull()
   })
 })
+
+// Los PRs y el chat de seguimiento del móvil: escriben en GitHub desde el
+// teléfono, y hasta ahora no los probaba nadie.
+const prSource = readFileSync('daemon/bento-daemon/src/remote/web/review-pr.js', 'utf8')
+const askSource = readFileSync('daemon/bento-daemon/src/remote/web/review-ask.js', 'utf8')
+
+interface PrClient {
+  submitComment: () => Promise<void>
+  submitReview: () => Promise<void>
+  switchPRTab: (name: string) => void
+  currentPR: number | null
+}
+
+function loadPr(): PrClient {
+  const client = globalThis as unknown as PrClient
+  document.body.innerHTML = `
+    <div id="rv-pr-view"></div>
+    <textarea id="rv-comment-text"></textarea>
+    <button id="rv-comment-submit"></button>
+    <textarea id="rv-submit-body"></textarea>
+    <button id="rv-submit-btn"></button>
+    <input type="radio" name="rv-event" value="APPROVE" checked>
+    <select id="rv-project"><option value="/repo" selected>/repo</option></select>
+    <div id="rv-pr-tab-diff" class="rv-pr-tab"></div>
+    <div id="rv-pr-tab-comments" class="rv-pr-tab"></div>
+    <div id="rv-pr-diff"></div>
+    <div id="rv-pr-comments"></div>
+    <div id="rv-comments-list"></div>`
+  ;(globalThis as unknown as { q: string }).q = '?token=t'
+  ;(0, eval)(prSource.replace(/^(let|const) /gm, 'var '))
+  client.currentPR = 7
+  return client
+}
+
+describe('los PRs desde el móvil', () => {
+  it('no manda un comentario vacío', async () => {
+    const client = loadPr()
+    const fetched = fetchSpy()
+
+    await client.submitComment()
+
+    expect(fetched).not.toHaveBeenCalled()
+  })
+
+  it('manda el comentario al PR abierto y vacía la caja', async () => {
+    const client = loadPr()
+    const fetched = fetchSpy()
+    const textarea = document.getElementById('rv-comment-text') as HTMLTextAreaElement
+    textarea.value = '  esto está mal  '
+
+    await client.submitComment()
+
+    const [url, init] = fetched.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/review/pr/comment')
+    expect(url).toContain('pr=7')
+    expect(JSON.parse(String(init.body))).toEqual({ body: 'esto está mal' })
+    expect(textarea.value).toBe('')
+  })
+
+  it('deja el botón usable aunque la petición falle', async () => {
+    const client = loadPr()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('sin red'))))
+    ;(document.getElementById('rv-comment-text') as HTMLTextAreaElement).value = 'algo'
+    const btn = document.getElementById('rv-comment-submit') as HTMLButtonElement
+
+    // Un botón que se queda deshabilitado tras un fallo de red deja el panel
+    // muerto hasta recargar.
+    await expect(client.submitComment()).rejects.toThrow('sin red')
+    expect(btn.disabled).toBe(false)
+  })
+
+  it('manda la revisión con el veredicto marcado', async () => {
+    const client = loadPr()
+    const fetched = fetchSpy()
+    ;(document.getElementById('rv-submit-body') as HTMLTextAreaElement).value = 'ok por mí'
+
+    await client.submitReview()
+
+    const [, init] = fetched.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ event: 'APPROVE', body: 'ok por mí' })
+  })
+})
+
+describe('el chat de seguimiento del móvil', () => {
+  function loadAsk() {
+    document.body.innerHTML = `
+      <div id="rv-chat"></div>
+      <div id="rv-chat-msgs"><div>lo de antes</div></div>
+      <textarea id="rv-ask-input"></textarea>
+      <button id="rv-ask-send"></button>`
+    ;(0, eval)(askSource.replace(/^(let|const) /gm, 'var '))
+    return globalThis as unknown as {
+      showChat: () => void
+      hideChat: () => void
+      sendAsk: () => void
+    }
+  }
+
+  it('esconder el chat se lleva la conversación de antes', () => {
+    const client = loadAsk()
+
+    client.hideChat()
+
+    // Si no, la siguiente review abre con las respuestas de la anterior.
+    expect(document.getElementById('rv-chat-msgs')?.innerHTML).toBe('')
+    expect((document.getElementById('rv-chat') as HTMLElement).style.display).toBe('none')
+  })
+
+  it('no manda una pregunta vacía', () => {
+    const client = loadAsk()
+    const opened: string[] = []
+    vi.stubGlobal('EventSource', class { constructor(url: string) { opened.push(url) } close() {} })
+    ;(document.getElementById('rv-ask-input') as HTMLTextAreaElement).value = '   '
+
+    client.sendAsk()
+
+    expect(opened).toEqual([])
+  })
+})
