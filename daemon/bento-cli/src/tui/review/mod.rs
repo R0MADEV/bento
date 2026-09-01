@@ -7,15 +7,18 @@
 //! subcommands already use.
 
 mod draw;
+mod drawer_state;
 mod format;
 mod input;
+mod pr_actions;
+mod run_state;
 
 pub(super) use draw::draw;
-use format::{file_matches_filter, format_checks, format_pr_comments, format_review_comments, FileFilter};
+use format::{file_matches_filter, FileFilter};
 
 use serde_json::{json, Value};
 
-use crate::review_stream::{self, ReviewEvent};
+use crate::review_stream::ReviewEvent;
 
 /// `select!` needs a future to poll even with no review running;
 /// `pending()` never resolves, so that arm simply stays disabled.
@@ -401,7 +404,6 @@ impl ReviewState {
         self.request_sidebar_tab(SidebarTab::Branches);
     }
 
-
     fn visible_files(&self) -> Vec<&Value> {
         self.files
             .iter()
@@ -410,264 +412,6 @@ impl ReviewState {
                 file_matches_filter(status, self.file_filter)
             })
             .collect()
-    }
-
-    async fn load_pr_detail(&mut self, pr: u64) {
-        let diff = crate::request_data(json!({ "id": "1", "cmd": "review.pr_diff", "cwd": self.cwd, "pr": pr }))
-            .await
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-            .unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
-        let comments = crate::request_data(json!({ "id": "1", "cmd": "review.pr_comments", "cwd": self.cwd, "pr": pr }))
-            .await
-            .ok()
-            .map(|v| format_pr_comments(&v))
-            .unwrap_or_default();
-        let checks = crate::request_data(json!({ "id": "1", "cmd": "review.pr_checks", "cwd": self.cwd, "pr": pr }))
-            .await
-            .ok()
-            .map(|v| format_checks(&v))
-            .unwrap_or_default();
-        let inline = crate::request_data(json!({ "id": "1", "cmd": "review.pr_review_comments", "cwd": self.cwd, "pr": pr }))
-            .await
-            .ok()
-            .map(|v| format_review_comments(&v))
-            .unwrap_or_default();
-        // Encabezado con lo que ya trae la lista: sin él, el detalle abría
-        // directamente en el diff y no decía ni de qué PR era.
-        let header = self
-            .prs
-            .iter()
-            .find(|p| p.get("number").and_then(Value::as_u64) == Some(pr))
-            .map(|p| {
-                let field = |key: &str| p.get(key).and_then(Value::as_str).unwrap_or("").to_string();
-                let author = p.get("author").and_then(|a| a.get("login")).and_then(Value::as_str).unwrap_or("?");
-                format!(
-                    "# #{pr} {}\n\n{} → {} · @{author}\n{}\n",
-                    field("title"), field("headRefName"), field("baseRefName"), field("url"),
-                )
-            })
-            .unwrap_or_else(|| format!("# PR #{pr}\n"));
-        self.pr_detail = format!(
-            "{header}{checks}{inline}\n---\n\n{diff}\n\n---\n\n## Comentarios\n\n{comments}"
-        );
-        self.pr_scroll = 0;
-        self.current_pr = Some(pr);
-        self.pr_status.clear();
-        self.view = ReviewView::PrDetail;
-    }
-
-    async fn submit_pr_comment(&mut self) {
-        let Some(pr) = self.current_pr else { return };
-        let body = std::mem::take(&mut self.input);
-        if body.trim().is_empty() {
-            return;
-        }
-        let result = crate::request_data(json!({
-            "id": "1", "cmd": "review.pr_comment_add", "cwd": self.cwd, "pr": pr, "data": body,
-        })).await;
-        self.pr_status = match result {
-            Ok(_) => "comentario agregado".to_string(),
-            Err(e) => format!("error: {e}"),
-        };
-        self.load_pr_detail(pr).await;
-    }
-
-    async fn submit_pr_review(&mut self, event: &str) {
-        let Some(pr) = self.current_pr else { return };
-        let body = std::mem::take(&mut self.input);
-        let mut req = json!({ "id": "1", "cmd": "review.pr_submit", "cwd": self.cwd, "pr": pr, "event": event });
-        if !body.trim().is_empty() {
-            req["data"] = json!(body);
-        }
-        let result = crate::request_data(req).await;
-        self.pr_status = match result {
-            Ok(_) => format!("review enviada ({event})"),
-            Err(e) => format!("error: {e}"),
-        };
-        self.load_pr_detail(pr).await;
-    }
-
-    pub(super) fn start_run(&mut self) {
-        self.output.clear();
-        self.session_id = None;
-        self.session_agent = None;
-        let agents = self.review_agents();
-        let mut body = json!({
-            "id": "1", "cmd": "review.run", "cwd": self.cwd, "base": self.base,
-            "context": self.context, "agents": agents,
-        });
-        if let Some(branch) = &self.branch {
-            body["branch"] = json!(branch);
-        }
-        self.begin_stream(body, true);
-    }
-
-    fn start_ask(&mut self) {
-        let question = std::mem::take(&mut self.input);
-        self.output.push_str(&format!("\n\n---\n\n**Pregunta:** {question}\n\n"));
-        let body = json!({
-            "id": "1", "cmd": "review.ask", "cwd": self.cwd, "base": self.base,
-            "agent": self.agent, "question": question,
-        });
-        self.begin_stream(body, false);
-    }
-
-    fn begin_stream(&mut self, body: Value, is_run: bool) {
-        let (rx, task) = review_stream::spawn_review_stream(body);
-        self.stream_rx = Some(rx);
-        self.stream_task = Some(task);
-        self.running = true;
-        self.is_run_stream = is_run;
-        self.last_progress.clear();
-        self.scroll = 0;
-        // New for every run: the saves this one makes share it, and the next
-        // review gets its own so both survive.
-        self.run_id = Some(new_run_id());
-        // Stays in Browse: the report goes to the drawer beside the files
-        // rather than replacing the panel, so the rail and the file list are
-        // still there while it runs.
-        self.view = ReviewView::Browse;
-        self.open_drawer();
-    }
-
-    /// Moves the focus one column right, skipping the drawer when it is not
-    /// there — keys landing on something invisible read as a dead keyboard.
-    pub(super) fn focus_right(&mut self) {
-        self.focus = match self.focus {
-            Focus::Sidebar => Focus::Files,
-            Focus::Files if self.drawer_open => Focus::Drawer,
-            other => other,
-        };
-    }
-
-    /// And one column left.
-    pub(super) fn focus_left(&mut self) {
-        self.focus = match self.focus {
-            Focus::Drawer => Focus::Files,
-            Focus::Files => Focus::Sidebar,
-            other => other,
-        };
-    }
-
-    /// Scrolls the report. `saturating_add_signed` on an unsigned counter
-    /// already stops at the top, which is what scrolling up past the
-    /// beginning should do.
-    pub(super) fn scroll_drawer(&mut self, delta: i16) {
-        self.scroll = self.scroll.saturating_add_signed(delta);
-    }
-
-    /// Opens the review selected in the history: its report and, with it, the
-    /// verifier's session — which is what makes "keep asking about this one"
-    /// work later.
-    pub(super) async fn open_selected_review(&mut self) {
-        let Some(entry) = self.checkpoints.get(self.checkpoints_selected).cloned() else { return };
-        let base = entry.get("base").and_then(Value::as_str).unwrap_or(&self.base).to_string();
-        let mut body = json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": self.cwd, "base": base });
-        // Asking for this run rather than the newest of that branch, which is
-        // the whole point of keeping them apart.
-        if let Some(run) = entry.get("run_id").and_then(Value::as_str) {
-            body["run_id"] = json!(run);
-        }
-        let Ok(cp) = crate::request_data(body).await else {
-            self.status = "no se pudo abrir esa review".into();
-            return;
-        };
-        self.output = cp.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
-        self.session_id = cp.get("session_id").and_then(Value::as_str).map(String::from);
-        self.session_agent = cp.get("session_agent").and_then(Value::as_str).map(String::from);
-        self.scroll = 0;
-        self.running = false;
-        self.last_progress.clear();
-        self.showing_history = false;
-    }
-
-    /// Swaps the drawer between the report and the list of past reviews,
-    /// asking for the list off the loop when it is opened.
-    pub(super) fn toggle_history(&mut self) {
-        self.showing_history = !self.showing_history;
-        self.drawer_open = true;
-        if self.drawer_width <= crate::tui::drawer::COLLAPSED_WIDTH {
-            self.drawer_width = self.restored_drawer_width;
-        }
-        if self.showing_history {
-            let body = json!({ "id": "1", "cmd": "review.checkpoints", "cwd": self.cwd });
-            self.spawn_list_request(body, Fetched::Checkpoints);
-        }
-    }
-
-    /// Shows the drawer, so a report never lands somewhere invisible.
-    pub(super) fn open_drawer(&mut self) {
-        self.drawer_open = true;
-        // A report takes the drawer back from the list: you asked for this one.
-        self.showing_history = false;
-        if self.drawer_width <= crate::tui::drawer::COLLAPSED_WIDTH {
-            self.drawer_width = self.restored_drawer_width;
-        }
-    }
-
-    /// Folds it to its stub, or brings it back to the width it had. Folding
-    /// leaves the stub rather than hiding it, so there is something to click.
-    pub(super) fn toggle_drawer(&mut self) {
-        if !self.drawer_open {
-            self.open_drawer();
-            return;
-        }
-        self.drawer_width = crate::tui::drawer::toggle(self.drawer_width, &mut self.restored_drawer_width);
-    }
-
-    pub(super) fn handle_stream_event(&mut self, event: ReviewEvent) {
-        match event {
-            ReviewEvent::Content(text) => self.output.push_str(&text),
-            ReviewEvent::Progress(msg) => {
-                // run_review()'s own "[SESSION:agent:id]" sentinel, already
-                // stripped of its brackets by classify_review_chunk — keep
-                // it so a finished run's checkpoint can resume that session.
-                if let Some((agent, id)) = msg.strip_prefix("SESSION:").and_then(|rest| rest.split_once(':')) {
-                    self.session_agent = Some(agent.to_string());
-                    self.session_id = Some(id.to_string());
-                }
-                // A multi-agent run streams every report into one buffer. The
-                // sentinels are the only place that says where one pass ends
-                // and the next begins, so they become headings instead of
-                // being dropped after the progress line.
-                if let Some(heading) = batch_heading(&msg) {
-                    self.output.push_str(&heading);
-                }
-                // A failure is the answer, not progress: kept in the report
-                // so it is still on screen once the run stops. Everything else
-                // is noise the moment the report exists.
-                if let Some(reason) = msg.strip_prefix("error: ") {
-                    self.output.push_str(&format!("\n\n**La review falló:** {reason}\n"));
-                }
-                self.last_progress = msg;
-            }
-            ReviewEvent::Done => {
-                self.running = false;
-                self.stream_rx = None;
-                self.stream_task = None;
-                if self.is_run_stream && !self.output.trim().is_empty() {
-                    self.save_checkpoint();
-                }
-            }
-        }
-    }
-
-    /// Fire-and-forget: persists the just-finished run as a checkpoint so a
-    /// later `a` (ask) has something to resume — mirrors what the web
-    /// panel's own JS does after each batch, via the same `review.*`
-    /// checkpoint storage (`review.checkpoint_save`, a thin IPC wrapper
-    /// around the same save the web panel's `PUT /api/review/checkpoint`
-    /// uses).
-    fn save_checkpoint(&self) {
-        let body = json!({
-            "id": "1", "cmd": "review.checkpoint_save", "cwd": self.cwd, "base": self.base,
-            "content": self.output, "session_id": self.session_id, "agent": self.session_agent,
-            "run_id": self.run_id,
-        });
-        tokio::spawn(async move {
-            let _ = crate::request_data(body).await;
-        });
     }
 }
 
@@ -697,47 +441,6 @@ impl ReviewState {
 }
 
 impl ReviewState {
-    /// Stops the review. Aborting the task drops its TcpStream, which closes
-    /// the connection, which is what the daemon reads as "cancel this run" —
-    /// so the agents are killed rather than left running for a stream nobody
-    /// is reading.
-    ///
-    /// The daemon notices on its next write, so an agent that has been silent
-    /// for a while keeps going until it says something. Better than the old
-    /// behaviour, which was to never stop at all.
-    pub(super) fn cancel_run(&mut self) {
-        if let Some(task) = self.stream_task.take() {
-            task.abort();
-        }
-        self.stream_rx = None;
-        self.running = false;
-        self.output.push_str("\n\n*(cancelado)*\n");
-    }
-
-    /// What the rail's action button does, which depends on what the button
-    /// currently says: starting a second run from a button labelled "Parar"
-    /// duplicates the work and the billing.
-    pub(super) fn toggle_run(&mut self) {
-        if self.running {
-            self.cancel_run();
-            return;
-        }
-        self.start_run();
-    }
-
-    /// The agents this run should use, as the daemon's comma-separated list.
-    /// Without compare it is just the primary; with it, every extra pass that
-    /// is set — repeats included, since asking one agent for several passes
-    /// is a deliberate choice and not a mistake to correct.
-    pub(super) fn review_agents(&self) -> String {
-        if !self.compare {
-            return self.agent.clone();
-        }
-        let mut agents = vec![self.agent.clone()];
-        agents.extend([&self.secondary, &self.tertiary].into_iter().flatten().cloned());
-        agents.join(",")
-    }
-
     /// How many lines of fixed context the rail paints above its rows, taken
     /// from the very list that gets rendered — counting them by hand here is
     /// how the clicks drifted off by a row in the first place.
