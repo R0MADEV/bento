@@ -63,6 +63,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Both ratchets carry their own baseline, so they only fail on new debt.
+      # They lived in `ci:local` alone, and a file grew past the budget over six
+      # commits with nothing to say so.
+      - name: Check file sizes
+        run: npm run check:size
+
+      - name: Check UI strings are translated
+        run: npm run i18n:check
+
       # `tauri::generate_context!` validates frontendDist at Rust compile time.
       # Create dist before bindings/clippy compile the Tauri binary on clean runners.
       - name: Build frontend
