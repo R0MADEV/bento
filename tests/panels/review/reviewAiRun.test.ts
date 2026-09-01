@@ -226,16 +226,38 @@ describe('review context form', () => {
 })
 
 describe('happy path', () => {
+  it('does not build a worktree of its own for the engine to ignore', async () => {
+    // El motor prepara el suyo y revisa ahí. El panel montaba otro, lo
+    // fotografiaba antes y después —sin que nadie lo tocara, así que el aviso
+    // de "el repo cambió" no podía saltar nunca— y lo borraba al salir. Un
+    // worktree creado y destruido por review para sacar un sha.
+    setup()
+    const h = makeHarness()
+    mockInvoke({ git_rev_parse: 'abc1234567890' })
+    const runEngine = engineRun(['All good.'])
+    const loader = makeLoader(h)
+    await loader.handleAiReviewClick()
+    h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
+    await vi.waitFor(() => expect(listeners.size).toBeGreaterThan(0))
+    await runEngine()
+    await vi.waitFor(() => expect(h.dom.reviewDrawerBody.querySelector('.review-drawer-result')).toBeTruthy())
+
+    const called = mocks.invoke.mock.calls.map(([cmd]) => cmd)
+    expect(called).not.toContain('review_branch_context_prepare')
+    expect(called).not.toContain('review_branch_context_release')
+    expect(called).not.toContain('review_snapshot')
+    // El sha sigue haciendo falta: es lo que archiva la review.
+    const saved = mocks.invoke.mock.calls.find(([cmd]) => cmd === 'review_checkpoint_save')
+    expect(saved![1]).toMatchObject({ commit: 'abc1234567890' })
+  })
+
   it('keeps what the agent looked at as evidence for the follow-up chat', async () => {
     // Every tool the agent used is what backs the report. It used to be
     // collected and handed to the chat; moving to the shared engine dropped it
     // on the floor — the list was still built, still passed, and never filled.
     setup()
     const h = makeHarness()
-    mockInvoke({
-      review_branch_context_prepare: { path: '/wt', commit: 'abc1234', managed: false },
-      review_snapshot: 'snap1',
-    })
+    mockInvoke({ git_rev_parse: 'abc1234' })
     const runEngine = engineRun(['All good.'], { tools: ['Read src/a.ts', 'Grep TODO', 'Read src/a.ts'] })
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
@@ -253,11 +275,7 @@ describe('happy path', () => {
   it('runs a single-agent review end to end and shows the result', async () => {
     setup()
     const h = makeHarness()
-    mockInvoke({
-      review_branch_context_prepare: { path: '/wt', commit: 'abc1234', managed: true },
-      review_snapshot: 'snap1',
-      review_branch_context_release: undefined,
-    })
+    mockInvoke({ git_rev_parse: 'abc1234' })
     const runEngine = engineRun(['All good.'])
     const loader = makeLoader(h)
     await loader.handleAiReviewClick() // shows context form
@@ -280,10 +298,7 @@ describe('happy path', () => {
     setup()
     const h = makeHarness({ agents: ['claude', 'codex'] })
     h.dom.reviewCompareAgentsToggle.checked = true
-    mockInvoke({
-      review_branch_context_prepare: { path: '/wt', commit: 'abc1234', managed: false },
-      review_snapshot: 'snap1',
-    })
+    mockInvoke({ git_rev_parse: 'abc1234' })
     const runEngine = engineRun(['informe uno', 'informe dos'])
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
@@ -295,20 +310,25 @@ describe('happy path', () => {
 })
 
 describe('failure handling', () => {
-  it('shows an error with no salvage when the worktree cannot be prepared', async () => {
+  it('shows an error with no salvage when the review cannot even start', async () => {
     setup()
     const h = makeHarness()
     mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (CHECKPOINT_COMMANDS.includes(cmd)) return null
       if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
-      if (cmd === 'review_branch_context_prepare') throw new Error('worktree busy')
+      if (cmd === 'git_rev_parse') return 'abc1234'
+      if (cmd === 'review_run') throw new Error('daemon no responde')
       throw new Error(`unmocked: ${cmd}`)
     })
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
     h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
-    await vi.waitFor(() => expect(h.dom.reviewDrawerBody.textContent).toContain('worktree busy'))
+    // Se ve un error y no se inventa un informe. El motivo concreto del
+    // daemon no llega hasta aquí: el recolector lo guarda como una etapa
+    // fallida y arriba solo queda "no hubo respuestas válidas". Está anotado
+    // en docs/pendiente.md.
+    await vi.waitFor(() => expect(h.dom.reviewDrawerBody.querySelector('.review-error')).toBeTruthy())
     expect(h.dom.reviewDrawerBody.querySelector('.review-drawer-result')).toBeFalsy()
     expect(h.dom.aiReviewBtn.disabled).toBe(false)
   })
@@ -316,23 +336,17 @@ describe('failure handling', () => {
   it('salvages a completed run when a later step fails', async () => {
     setup()
     const h = makeHarness()
-    let snapshotCalls = 0
     mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (CHECKPOINT_COMMANDS.includes(cmd)) return null
       if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
-      if (cmd === 'review_branch_context_prepare') return { path: '/wt', commit: 'abc1234', managed: true }
-      if (cmd === 'review_snapshot') {
-        // Two calls now, not three: the mid-review snapshot moved into the
-        // engine, so the closing one is the second.
-        snapshotCalls += 1
-        if (snapshotCalls <= 1) return 'snap1'
-        throw new Error('snapshot failed')
-      }
-      if (cmd === 'review_branch_context_release') return undefined
+      if (cmd === 'git_rev_parse') return 'abc1234'
       if (cmd === 'review_run' || cmd === 'review_cancel') return undefined
       throw new Error(`unmocked: ${cmd}`)
     })
+    // El motor entrega y falla un paso de después: lo ya entregado se pinta
+    // igual, con el error como nota, en vez de dejar el cajón vacío.
+    mocks.askAi.mockImplementationOnce(() => { throw new Error('el chat no arrancó') })
     const runEngine = engineRun(['Partial report.'])
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
@@ -348,11 +362,7 @@ describe('stop button', () => {
   it('cancels the run in the engine, not just the listener', async () => {
     setup()
     const h = makeHarness()
-    mockInvoke({
-      review_branch_context_prepare: { path: '/wt', commit: 'abc1234', managed: true },
-      review_snapshot: 'snap1',
-      review_branch_context_release: undefined,
-    })
+    mockInvoke({ git_rev_parse: 'abc1234' })
     const loader = makeLoader(h)
     await loader.handleAiReviewClick()
     h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()

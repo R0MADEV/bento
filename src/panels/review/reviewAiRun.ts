@@ -176,8 +176,6 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       const followUpAgent = sessionAgent ?? reviewAgent
       askAi('', false, undefined, undefined, { role: 'assistant', content }, reviewRepoPath, followUpAgent, reviewConversationKey, `${reviewProjectName} · ${reviewBranch}`, reviewBranch, reviewCommit, followUpSession.sessionId ?? undefined, sessionAgent ?? undefined, reviewEvidence)
     }
-    let worktree = ''
-    let managedWorktree = false
     let reviewCommit = ''
     // Identifies this run among the project's saved reviews.
     const reviewRunId = `${Date.now()}`
@@ -220,16 +218,14 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
     // Persistir es de fondo: si falla, en pantalla sigue estando todo.
     const persistReviewCheckpoint = (): void => { void saveReviewCheckpoint().catch(() => {}) }
     try {
-      progressStatus.textContent = reviewT('creatingWorktree')
-      const branchContext = await invoke<{ path: string; commit: string; managed: boolean }>('review_branch_context_prepare', {
-        repoPath: reviewRepoPath,
+      // Only the sha, which is what files the review. The worktree the agents
+      // read is the engine's own: this panel used to build a second one,
+      // photograph it before and after — nothing ever ran in it, so the "the
+      // repo changed" warning could not fire — and delete it on the way out.
+      reviewCommit = await invoke<string>('git_rev_parse', {
+        path: reviewRepoPath,
         reference: reviewBranch,
-        commit: null,
-      })
-      worktree = branchContext.path
-      managedWorktree = branchContext.managed
-      reviewCommit = branchContext.commit
-      const snapshotBefore = await invoke<string>('review_snapshot', { repoPath: worktree })
+      }).catch(() => '')
       // The agents, the parallelism, the per-file budget, the lexis context
       // and the snapshots all live in `bento_review::engine` now — the same
       // code the CLI and the phone client run. This used to be orchestrated
@@ -283,14 +279,12 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       const successfulRuns = reviewRuns.filter(run => run.report)
       if (!successfulRuns.length) throw new Error('No valid review responses')
 
-      const snapshotAfter = await invoke<string>('review_snapshot', { repoPath: worktree })
       const [content, followUpSession] = await Promise.all([
         buildReviewDocument(reviewMeta(), reviewRuns),
         resolveReviewFollowUpSession(reviewRuns, reviewRuns.length),
       ])
       persistReviewCheckpoint()
       showResult(content, reviewCommit, followUpSession)
-      if (snapshotAfter !== snapshotBefore) showReviewError('Repository changed during review; findings may be stale')
     } catch (error) {
       // Never discard completed findings on failure/stop: render + persist what
       // we have and show the error as a note, instead of wiping the drawer.
@@ -312,9 +306,6 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
       finally {
         clearInterval(timer)
         if (!reviewStopped) reviewDrawerMeta.textContent = reviewDrawerMeta.textContent || reviewT('title')
-        if (managedWorktree) {
-          await invoke('review_branch_context_release', { path: worktree }).catch(error => showReviewError(String(error)))
-        }
         aiReviewBtn.disabled = false
         aiReviewBtn.title = reviewT('aiReview')
       }

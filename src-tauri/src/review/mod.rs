@@ -5,16 +5,14 @@
 pub mod run;
 mod worktree;
 
-use std::collections::{hash_map::DefaultHasher, HashSet};
-use std::fs;
-use std::hash::{Hash, Hasher};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tokio::process::Command as AsyncCommand;
 
 pub(crate) use worktree::{is_managed_review_worktree, set_review_worktree_writable};
 use worktree::ReviewBranchContext;
 pub(crate) use worktree::release_managed_context_path;
-use worktree::{git_output, normalize_review_path, prepare_branch_context, validate_finding_path};
+use worktree::{normalize_review_path, prepare_branch_context, validate_finding_path};
 
 #[tauri::command]
 pub fn review_checkpoint_save(
@@ -177,26 +175,4 @@ pub async fn review_lexis_context(path: String, question: String) -> Result<Stri
     }
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(text.chars().take(12_000).collect())
-}
-
-#[tauri::command]
-pub async fn review_snapshot(repo_path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let repo = PathBuf::from(repo_path)
-            .canonicalize()
-            .map_err(|e| e.to_string())?;
-        let mut input = git_output(&repo, &["diff", "HEAD", "--binary"])?;
-        input.push_str(&git_output(&repo, &["status", "--porcelain"])?);
-        input.push_str(&git_output(&repo, &["ls-files"])?);
-        let untracked = git_output(&repo, &["ls-files", "--others", "--exclude-standard"])?;
-        for file in untracked.lines().filter(|line| !line.is_empty()) {
-            input.push_str(file);
-            input.push_str(&fs::read_to_string(repo.join(file)).unwrap_or_default());
-        }
-        let mut hasher = DefaultHasher::new();
-        input.hash(&mut hasher);
-        Ok(format!("{:016x}", hasher.finish()))
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
