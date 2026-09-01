@@ -277,7 +277,13 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
 
       if (reviewStopped) throw new Error('Review stopped')
       const successfulRuns = reviewRuns.filter(run => run.report)
-      if (!successfulRuns.length) throw new Error('No valid review responses')
+      if (!successfulRuns.length) {
+        // The daemon names why each agent failed — not installed, timed out,
+        // answered nothing. Dropping those left "no valid responses", which is
+        // the one thing the reader could already see.
+        const reasons = reviewRuns.map(run => run.error).filter(Boolean).join(' · ')
+        throw new Error(reasons || 'No valid review responses')
+      }
 
       const [content, followUpSession] = await Promise.all([
         buildReviewDocument(reviewMeta(), reviewRuns),

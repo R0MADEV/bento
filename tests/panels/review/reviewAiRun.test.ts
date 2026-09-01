@@ -251,6 +251,24 @@ describe('happy path', () => {
     expect(saved![1]).toMatchObject({ commit: 'abc1234567890' })
   })
 
+  it('says why the review failed instead of just that it did', async () => {
+    // The daemon names the reason — the agent is not installed, it timed out,
+    // it answered nothing. Swallowing it left "No valid review responses",
+    // which is the one thing the reader already knew.
+    setup()
+    const h = makeHarness()
+    mockInvoke({ git_rev_parse: 'abc1234' })
+    const runEngine = engineRun([], { fail: 'claude no está instalado' })
+    const loader = makeLoader(h)
+    await loader.handleAiReviewClick()
+    h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
+    await vi.waitFor(() => expect(listeners.size).toBeGreaterThan(0))
+    await runEngine()
+
+    await vi.waitFor(() =>
+      expect(h.dom.reviewDrawerBody.textContent).toContain('claude no está instalado'))
+  })
+
   it('keeps what the agent looked at as evidence for the follow-up chat', async () => {
     // Every tool the agent used is what backs the report. It used to be
     // collected and handed to the chat; moving to the shared engine dropped it
