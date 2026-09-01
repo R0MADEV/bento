@@ -127,6 +127,9 @@ pub(crate) async fn stream_review(body: Value) -> std::io::Result<()> {
                 let _ = stdout.flush().await;
             }
             review_stream::ReviewEvent::Progress(msg) => eprintln!("{msg}"),
+            // Already printed, chunk by chunk. This mode streams to a pipe:
+            // the assembled document would be the same review twice.
+            review_stream::ReviewEvent::Document(_) => {}
             review_stream::ReviewEvent::Done => break,
         }
     }

@@ -1,6 +1,13 @@
 // Elegir agentes, correr y parar la review, y la lista de archivos cambiados.
 let reviewTimer=null;
 
+// El documento que manda el motor, si esta línea es esa. El marcador solo
+// cuenta al principio del trozo: el informe puede mencionarlo.
+function reviewDocumentFrom(data){
+  const marker='[DOCUMENT]\n';
+  return (typeof data==='string'&&data.startsWith(marker))?data.slice(marker.length):null;
+}
+
 function toggleProgressStream(){
   const s=document.getElementById('rv-progress-stream');
   const t=document.getElementById('rv-progress-toggle');
@@ -137,6 +144,9 @@ function startReview(){
   let hasSynthesis=false;
   // agentReports keeps each completed batch so we can fall back if synthesis fails
   let agentReports=[];
+  // Si llega el documento del motor, es lo que se guarda: lo de aquí es el
+  // apaño para un daemon viejo que todavía no lo manda.
+  let hasDocument=false;
   let startedAt=Date.now();
 
   reviewTimer=setInterval(()=>{
@@ -159,10 +169,22 @@ function startReview(){
   reviewSse.onmessage=e=>{
     let data;try{data=JSON.parse(e.data);}catch(_){data=e.data;}
 
+    // El documento entero, montado por el motor: cabecera, el informe de cada
+    // agente y la verificación. Sustituye a lo que fuéramos acumulando aquí,
+    // que era la versión de este cliente de la misma review.
+    const document_=reviewDocumentFrom(data);
+    if(document_!==null){
+      finalBuf=document_;
+      hasDocument=true;
+      out.className='rv-md';
+      out.innerHTML=mdToHtml(finalBuf);
+      return;
+    }
+
     if(data==='[DONE]'){
       reviewSse.close();reviewSse=null;
       if(batchBuf.trim())agentReports.push(batchBuf);
-      if(!hasSynthesis){
+      if(!hasSynthesis&&!hasDocument){
         finalBuf=agentReports[agentReports.length-1]||batchBuf;
         out.className='rv-md';
         out.innerHTML=mdToHtml(finalBuf);

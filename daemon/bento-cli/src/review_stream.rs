@@ -14,6 +14,9 @@ use tokio::sync::mpsc;
 pub(crate) enum ReviewEvent {
     Content(String),
     Progress(String),
+    /// The finished review, assembled by the engine. It replaces whatever the
+    /// chunks had built up: one review reads the same wherever it was run.
+    Document(String),
     Done,
 }
 
@@ -72,6 +75,7 @@ async fn run(body: Value, tx: mpsc::UnboundedSender<ReviewEvent>) {
                         }
                         StreamLine::Tool(tool) => { let _ = tx.send(ReviewEvent::Progress(tool)); }
                         StreamLine::Error(message) => { let _ = tx.send(ReviewEvent::Progress(format!("error: {message}"))); }
+                        StreamLine::Document(document) => { let _ = tx.send(ReviewEvent::Document(document)); }
                         StreamLine::Done => {}
                     }
                 }

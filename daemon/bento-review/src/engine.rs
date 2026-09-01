@@ -40,6 +40,11 @@ pub enum ReviewEvent {
     /// The session that can be resumed to ask follow-up questions.
     Session { agent: String, id: String },
     Error(String),
+    /// The finished review, as one markdown document: header, each agent's
+    /// report, the verification. Built here so the desktop, the CLI and the
+    /// phone save the same thing — they used to assemble their own, and all
+    /// three write to one shared store.
+    Document(String),
     Done,
 }
 
@@ -190,7 +195,7 @@ pub async fn run_review_cancellable(
     let review_cwd = isolated.as_ref().map(|c| c.path.clone()).unwrap_or_else(|| request.cwd.clone());
 
     let scoped = ReviewRequest { cwd: review_cwd, ..clone_request(request) };
-    run_planned_cancellable(&scoped, &diff, runner, tx, cancel).await;
+    run_planned_cancellable(&scoped, &diff, branch, runner, tx, cancel).await;
 
     if let Some(context) = isolated {
         let path = std::path::Path::new(&context.path);
@@ -341,6 +346,7 @@ fn lexis_question(diff: &str) -> String {
 async fn run_planned_cancellable(
     request: &ReviewRequest,
     diff: &str,
+    branch: Option<&str>,
     runner: &dyn AgentRunner,
     tx: &Sender<ReviewEvent>,
     cancel: &CancelToken,
@@ -350,6 +356,8 @@ async fn run_planned_cancellable(
 
     let mut reports: Vec<(String, String)> = Vec::new();
     let mut session: Option<(String, String)> = None;
+    // The same runs the document is built from, filled as the review goes.
+    let mut runs: Vec<crate::report::ReviewRun> = Vec::new();
 
     // Every stage at once, the way the desktop panel does it: three agents one
     // after another take three times as long for the same result. Their text
@@ -430,6 +438,13 @@ async fn run_planned_cancellable(
                 // for one that does not.
                 let shown = if streamed.trim().is_empty() { report.clone() } else { streamed };
                 let _ = tx.send(ReviewEvent::Content(shown)).await;
+                runs.push(crate::report::ReviewRun {
+                    label: stage.label.clone(),
+                    agent: Some(stage.agent.clone()),
+                    session_id: session.as_ref().map(|(_, id)| id.clone()),
+                    report: Some(report.clone()),
+                    error: None,
+                });
                 reports.push((stage.label.clone(), report));
             }
             // The agent's own words, not "not found or failed": that told you
@@ -495,8 +510,17 @@ async fn run_planned_cancellable(
         drop(text_tx);
         let streamed = collecting.await.unwrap_or_default();
         if !streamed.trim().is_empty() {
-            let _ = tx.send(ReviewEvent::Content(streamed)).await;
+            let _ = tx.send(ReviewEvent::Content(streamed.clone())).await;
         }
+        // Labelled as the desktop labels it, so the same review does not read
+        // differently depending on which client saved it.
+        runs.push(crate::report::ReviewRun {
+            label: "Síntesis final".into(),
+            agent: Some(agent.clone()),
+            session_id: None,
+            report: Some(streamed),
+            error: None,
+        });
         match attempt {
             Ok((_, Some(id))) => session = Some((agent, id)),
             Ok(_) => {}
@@ -521,7 +545,26 @@ async fn run_planned_cancellable(
     if let Some((agent, id)) = session {
         let _ = tx.send(ReviewEvent::Session { agent, id }).await;
     }
+    // Before `Done`, which is when a client saves what it has.
+    if !runs.is_empty() {
+        let meta = crate::report::ReviewDocumentMeta {
+            branch: branch.unwrap_or(&request.base).to_string(),
+            base: request.base.clone(),
+            commit: reviewed_commit(&request.cwd, branch),
+            compare_agents: runs.len() > 1,
+            fallback_agent_label: request.agents.first().cloned().unwrap_or_default(),
+        };
+        let _ = tx.send(ReviewEvent::Document(crate::report::build_document(&meta, &runs))).await;
+    }
     let _ = tx.send(ReviewEvent::Done).await;
+}
+
+/// The commit the review was made against, for the document's header. Best
+/// effort: a header without a sha is worth more than no document.
+fn reviewed_commit(cwd: &str, branch: Option<&str>) -> String {
+    crate::vcs::git_cmd(cwd, &["rev-parse", branch.unwrap_or("HEAD")])
+        .map(|sha| sha.trim().to_string())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -702,7 +745,7 @@ mod tests {
             agents: agents.clone(),
         };
         let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-        run_planned_cancellable(&request, "diff --git a/x b/x\n+1\n", &runner, &tx, &CancelToken::default()).await;
+        run_planned_cancellable(&request, "diff --git a/x b/x\n+1\n", None, &runner, &tx, &CancelToken::default()).await;
         drop(tx);
         let _ = drain.await;
 
@@ -811,7 +854,7 @@ mod tests {
             while let Some(e) = rx.recv().await { events.push(e); }
             events
         });
-        run_planned_cancellable(&request, "diff --git a/uno.txt b/uno.txt\n+++ b/uno.txt\n+x\n", &Meddler(dir.path().to_path_buf()), &tx, &CancelToken::default()).await;
+        run_planned_cancellable(&request, "diff --git a/uno.txt b/uno.txt\n+++ b/uno.txt\n+x\n", None, &Meddler(dir.path().to_path_buf()), &tx, &CancelToken::default()).await;
         drop(tx);
         let events = collected.await.unwrap();
 
@@ -910,7 +953,7 @@ mod tests {
             }
             token.cancel();
         });
-        run_planned_cancellable(&request, "diff --git a/x b/x\n+1\n", &Slow(started.clone()), &tx, &cancel).await;
+        run_planned_cancellable(&request, "diff --git a/x b/x\n+1\n", None, &Slow(started.clone()), &tx, &cancel).await;
         drop(tx);
         let _ = drain.await;
 
@@ -934,7 +977,7 @@ mod tests {
             cwd: "/repo".into(), base: "main".into(), context: String::new(),
             agents: agents.to_vec(),
         };
-        run_planned_cancellable(&request, diff, &runner, &tx, &CancelToken::default()).await;
+        run_planned_cancellable(&request, diff, None, &runner, &tx, &CancelToken::default()).await;
         drop(tx);
         let mut events = Vec::new();
         while let Some(e) = rx.recv().await {
@@ -1021,7 +1064,7 @@ mod tests {
         let runner = OneFastOneBlocked(gate.clone());
         let cancel = CancelToken::default();
         let review = async {
-            run_planned_cancellable(&request, "diff --git a/a.rs b/a.rs\n+x\n", &runner, &tx, &cancel).await;
+            run_planned_cancellable(&request, "diff --git a/a.rs b/a.rs\n+x\n", None, &runner, &tx, &cancel).await;
             drop(tx);
         };
         tokio::pin!(review);
@@ -1129,5 +1172,42 @@ mod tests {
         assert_eq!(parse_agents("rm -rf /,claude"), vec!["claude"]);
         assert_eq!(parse_agents(""), vec!["claude"]);
         assert_eq!(parse_agents("desconocido"), vec!["claude"]);
+    }
+
+    /// The document each client used to assemble on its own: the desktop from
+    /// its own collector, the CLI by concatenating chunks, the phone by
+    /// keeping the last buffer. Same review, three different documents in one
+    /// shared store.
+    #[tokio::test]
+    async fn a_finished_review_ends_with_the_whole_document() {
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() =
+            vec![report("hallazgo de uno", None), report("hallazgo de dos", None), report("veredicto", None)];
+
+        let (events, _) = collect("diff --git a/x b/x\n+1\n", &["uno".into(), "dos".into(), "tres".into()], runner).await;
+
+        let document = events.iter().find_map(|e| match e {
+            ReviewEvent::Document(text) => Some(text.clone()),
+            _ => None,
+        });
+        let document = document.expect("la review acaba con su documento");
+        assert!(document.contains("Base: `main`"), "con cabecera: {document}");
+        assert!(document.contains("hallazgo de uno"), "y el informe de cada agente: {document}");
+        assert!(document.contains("hallazgo de dos"), "{document}");
+        assert!(document.contains("veredicto"), "incluida la verificación: {document}");
+    }
+
+    #[tokio::test]
+    async fn the_document_goes_out_before_the_end_so_a_client_can_save_it() {
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![report("un hallazgo", None)];
+
+        let (events, _) = collect("diff --git a/x b/x\n+1\n", &["uno".into()], runner).await;
+
+        let document_at = events.iter().position(|e| matches!(e, ReviewEvent::Document(_)));
+        let done_at = events.iter().position(|e| matches!(e, ReviewEvent::Done));
+        // The CLI saves its checkpoint on Done: a document that arrives after
+        // it is a document nobody keeps.
+        assert!(document_at < done_at, "{events:?}");
     }
 }

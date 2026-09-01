@@ -77,6 +77,12 @@ impl ReviewState {
                 }
                 self.last_progress = msg;
             }
+            // The engine's own document, header and all. What the chunks
+            // built was this app's version of the same review.
+            ReviewEvent::Document(document) => {
+                self.output = document;
+                self.scroll = 0;
+            }
             ReviewEvent::Done => {
                 self.running = false;
                 self.stream_rx = None;

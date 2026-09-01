@@ -142,3 +142,19 @@ describe('los agentes que corre el móvil', () => {
     expect(client.selectedAgents()).toEqual(['claude', 'codex'])
   })
 })
+
+describe('el documento que manda el motor', () => {
+  it('reconoce la línea del documento y se queda con el markdown', () => {
+    const client = loadRun() as unknown as { reviewDocumentFrom: (data: unknown) => string | null }
+
+    expect(client.reviewDocumentFrom('[DOCUMENT]\n## Revisión: feat/x\nBase: `main`'))
+      .toBe('## Revisión: feat/x\nBase: `main`')
+  })
+
+  it('no confunde con el documento un informe que lo menciona', () => {
+    const client = loadRun() as unknown as { reviewDocumentFrom: (data: unknown) => string | null }
+
+    expect(client.reviewDocumentFrom('mira el [DOCUMENT] ese')).toBeNull()
+    expect(client.reviewDocumentFrom({ nope: true })).toBeNull()
+  })
+})

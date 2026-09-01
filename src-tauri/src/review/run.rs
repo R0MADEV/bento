@@ -112,6 +112,10 @@ async fn stream_review(app: &AppHandle, id: &str, request: serde_json::Value) ->
             }
             StreamLine::Tool(tool) => emit(app, id, "tool", json!({ "tool": tool })),
             StreamLine::Error(message) => emit(app, id, "error", json!({ "message": message })),
+            // This panel builds the document itself, stage by stage, because
+            // it checkpoints after each one — the engine's arrives at the end.
+            // Passed on all the same, so it never lands in the report as text.
+            StreamLine::Document(document) => emit(app, id, "document", json!({ "document": document })),
             StreamLine::Text(text) => emit(app, id, "chunk", json!({ "text": format!("{text}\n") })),
             StreamLine::Done => break,
         }

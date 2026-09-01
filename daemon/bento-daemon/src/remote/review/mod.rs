@@ -153,6 +153,7 @@ pub(crate) async fn run_review(cwd: String, base: String, branch: Option<String>
                 ReviewEvent::Synthesis => "[SYNTHESIS]".to_string(),
                 ReviewEvent::Session { agent, id } => format!("[SESSION:{agent}:{id}]"),
                 ReviewEvent::Error(message) => format!("[ERROR] {message}"),
+                ReviewEvent::Document(document) => format!("[DOCUMENT]\n{document}"),
                 ReviewEvent::Done => "[DONE]".to_string(),
             };
             if tx.send(line).await.is_err() {

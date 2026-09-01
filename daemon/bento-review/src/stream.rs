@@ -17,6 +17,10 @@ pub enum StreamLine {
     /// What the agent is doing right now.
     Tool(String),
     Error(String),
+    /// The finished review as one document, built by the engine. It replaces
+    /// whatever the client had assembled from the chunks: that is the whole
+    /// point of building it once.
+    Document(String),
     Done,
     /// Report text, to be shown as-is.
     Text(String),
@@ -30,6 +34,11 @@ pub fn parse_stream_line(line: &str) -> StreamLine {
     }
     if line == "[DONE]" {
         return StreamLine::Done;
+    }
+    // The document is the only marker with a body of its own, and that body
+    // is markdown with newlines in it.
+    if let Some(document) = line.strip_prefix("[DOCUMENT]\n") {
+        return StreamLine::Document(document.to_string());
     }
     if let Some(rest) = bracketed(line, "[BATCH:") {
         // "index/total:label" — the label may contain colons of its own, so
@@ -113,6 +122,24 @@ mod tests {
         assert_eq!(
             parse_stream_line("[BATCH: esto no son cuentas]"),
             StreamLine::Text("[BATCH: esto no son cuentas]".into())
+        );
+    }
+
+    #[test]
+    fn the_document_marker_carries_the_whole_report() {
+        assert_eq!(
+            parse_stream_line("[DOCUMENT]\n## Revisión: feat/x\nBase: `main`"),
+            StreamLine::Document("## Revisión: feat/x\nBase: `main`".into())
+        );
+    }
+
+    #[test]
+    fn a_report_that_merely_mentions_the_marker_is_still_report() {
+        // Markers are recognised at the start of a chunk, and the document's
+        // own body can quote anything.
+        assert_eq!(
+            parse_stream_line("mira el [DOCUMENT] ese"),
+            StreamLine::Text("mira el [DOCUMENT] ese".into())
         );
     }
 }
