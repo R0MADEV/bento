@@ -3,6 +3,7 @@ import { makeLocalStorage } from '../../helpers/localStorage'
 import {
   describeReviewNoBranchChanges,
   describeReviewPrState,
+  describeReviewStaleness,
   esc,
   filterReviewPrs,
   getFileState,
@@ -112,5 +113,26 @@ describe('highlightCode', () => {
 
   it('escapes but does not tokenize unknown extensions', () => {
     expect(highlightCode('<b>const</b>', 'weirdext')).toBe('&lt;b&gt;const&lt;/b&gt;')
+  })
+})
+
+describe('describeReviewStaleness', () => {
+  it('avisa cuando el código se movió debajo de la review', () => {
+    setup()
+    // El commit se guarda con la review precisamente para esto; hasta ahora
+    // se estampaba y no lo miraba nadie.
+    expect(describeReviewStaleness('abc1234567', 'def7654321')).toContain('abc1234')
+  })
+
+  it('calla cuando la review es del commit que hay', () => {
+    setup()
+    expect(describeReviewStaleness('abc1234567', 'abc1234567')).toBeNull()
+  })
+
+  it('calla también cuando falta alguno de los dos', () => {
+    setup()
+    // No haber podido leer el sha no es prueba de que nada cambiara.
+    expect(describeReviewStaleness('', 'def7654321')).toBeNull()
+    expect(describeReviewStaleness('abc1234567', '')).toBeNull()
   })
 })

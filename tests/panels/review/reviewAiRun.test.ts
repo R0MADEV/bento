@@ -93,7 +93,6 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
   return { dom, data, state, showReviewDrawer }
 }
 
-const PROMPT_COMMANDS = ['review_build_prompt', 'review_build_synthesis_prompt']
 const CHECKPOINT_COMMANDS = ['review_checkpoint_save', 'review_checkpoint_get']
 
 interface FakeRun { label: string; agent?: string | null; sessionId?: string | null; report?: string | null; error?: string | null }
@@ -159,7 +158,6 @@ const REPORT_COMMANDS = ['review_build_overview', 'review_build_document', 'revi
 
 function mockInvoke(map: Record<string, unknown>) {
   mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-    if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
     if (CHECKPOINT_COMMANDS.includes(cmd)) return null
     if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
     if (cmd === 'review_run' || cmd === 'review_cancel') return undefined
@@ -332,7 +330,6 @@ describe('failure handling', () => {
     setup()
     const h = makeHarness()
     mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (CHECKPOINT_COMMANDS.includes(cmd)) return null
       if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
       if (cmd === 'git_rev_parse') return 'abc1234'
@@ -355,7 +352,6 @@ describe('failure handling', () => {
     setup()
     const h = makeHarness()
     mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (PROMPT_COMMANDS.includes(cmd)) return 'PROMPT'
       if (CHECKPOINT_COMMANDS.includes(cmd)) return null
       if (REPORT_COMMANDS.includes(cmd)) return fakeReportCommand(cmd, args as Record<string, unknown> | undefined)
       if (cmd === 'git_rev_parse') return 'abc1234'

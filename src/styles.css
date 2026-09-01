@@ -4479,6 +4479,8 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
   cursor: pointer;
 }
 .review-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+/* La review es de un commit que la rama ya dejó atrás. */
+.review-stale { margin: 0 0 8px; padding: 6px 8px; border: 1px solid var(--gold); border-radius: 4px; font-size: 10px; color: var(--fg-dim); }
 /* La lista de reviews guardadas, en la misma columna que el informe que abre. */
 .review-history { display: flex; flex-direction: column; gap: 2px; }
 .review-history-empty { font-size: 11px; color: var(--fg-dim); padding: 6px 2px; }

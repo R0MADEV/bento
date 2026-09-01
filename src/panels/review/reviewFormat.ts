@@ -62,6 +62,16 @@ export function describeReviewNoBranchChanges(state?: string | null, baseBranch 
   return reviewT('noBranchChanges', { base: baseBranch })
 }
 
+// El aviso de que la review es de otro commit, o `null` si no lo es. El commit
+// se guarda con cada review para esto; hasta ahora se estampaba y no lo leía
+// nadie. Sin uno de los dos shas no se avisa: no haber podido leerlo no es
+// prueba de que algo cambiara.
+export function describeReviewStaleness(saved: string, current: string): string | null {
+  const canCompare = Boolean(saved) && Boolean(current)
+  if (!canCompare || saved === current) return null
+  return reviewT('staleReview', { commit: saved.slice(0, 7) })
+}
+
 export function filterReviewPrs(prs: readonly GhPr[], query: string): GhPr[] {
   const q = query.trim().toLowerCase()
   if (!q) return [...prs]

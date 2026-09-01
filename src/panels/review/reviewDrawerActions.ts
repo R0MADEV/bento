@@ -3,6 +3,8 @@ import { askAi } from '../../ui/askAi'
 import { techReviewCheckpointKey, techReviewConversationKey } from '../../core/ai/chatHistory'
 import type { AgentType } from '../../core/ai/config'
 import type { ReviewCheckpoint } from '../../core/ai/techReview'
+import { invoke } from '@tauri-apps/api/core'
+import { describeReviewStaleness } from './reviewFormat'
 import { reviewT } from './i18n'
 import { deleteReviewCheckpoint, listReviewCheckpoints, loadReviewCheckpoint } from './reviewCheckpoints'
 import { buildReviewHistory } from './reviewHistory'
@@ -47,10 +49,25 @@ export function buildReviewDrawerActions(dom: DrawerDom, deps: DrawerDeps): {
       className: 'review-drawer-result',
       innerHTML: renderMarkdown(checkpoint.content),
     }))
+    void warnIfStale(checkpoint)
     showReviewDrawer()
     const projectName = repoPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? repoPath
     const followUpAgent = (checkpoint.sessionAgent ?? 'claude') as AgentType
     askAi('', false, undefined, undefined, { role: 'assistant', content: checkpoint.content }, repoPath, followUpAgent, techReviewConversationKey(repoPath, checkpoint.branch), `${projectName} · ${checkpoint.branch}`, checkpoint.branch, checkpoint.commit, checkpoint.sessionId ?? undefined, checkpoint.sessionAgent ?? undefined, [])
+  }
+
+  // Reviews are read against the code they are about, and a branch moves on.
+  // The commit is saved with every review for exactly this, and until now
+  // nothing compared it.
+  const warnIfStale = async (checkpoint: ReviewCheckpoint): Promise<void> => {
+    const head = await invoke<string>('git_rev_parse', {
+      path: deps.getRepoPath(), reference: checkpoint.branch,
+    }).catch(() => '')
+    const warning = describeReviewStaleness(checkpoint.commit, head)
+    if (!warning) return
+    dom.reviewDrawerBody.prepend(Object.assign(document.createElement('div'), {
+      className: 'review-stale', textContent: warning,
+    }))
   }
 
   // Re-open the last saved review for the selected branch. Findings are
