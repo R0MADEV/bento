@@ -46,6 +46,18 @@ describe('ReviewPanel', () => {
     expect(element.querySelector('.review-drawer')?.classList.contains('hidden')).toBe(true)
   })
 
+  it('puts the report next to the diff instead of on top of it', () => {
+    setup()
+    const { element } = createReviewPanel()
+    const drawer = element.querySelector('.review-drawer')
+
+    // The third column: a sibling of the diff inside the same row, not an
+    // overlay laid over it. As an overlay it covered the code the findings
+    // point at, which is what you read them against.
+    expect(drawer?.parentElement?.className).toBe('review-body')
+    expect(drawer?.previousElementSibling?.className).toBe('review-detail')
+  })
+
   it('comment bar hidden until PR is loaded', () => {
     setup()
     const { element } = createReviewPanel()

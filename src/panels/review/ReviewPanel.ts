@@ -172,8 +172,10 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const { emptyState, emptyOpenBtn } = buildEmptyState()
 
   detail.append(diffSearchInput, filterBar, diffView, commentBar)
-  body.append(cs.element, cs.resizer, detail)
-  root.append(body, reviewDrawer)
+  // Third column, not an overlay: the report is read against the code it is
+  // about, and covering that code to show it defeats the point.
+  body.append(cs.element, cs.resizer, detail, reviewDrawer)
+  root.append(body)
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const showNoRepo = (): void => { diffView.replaceChildren(emptyState) }
