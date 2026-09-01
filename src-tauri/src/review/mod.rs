@@ -58,6 +58,18 @@ pub fn review_checkpoint_get(
     }
 }
 
+/// Los archivos ya revisados de un proyecto y una rama, del almacén que
+/// comparten el daemon y la CLI: marcarlos en un cliente y seguir en otro.
+#[tauri::command]
+pub fn review_viewed_get(cwd: String, base: String) -> Vec<String> {
+    bento_review::viewed::get(&cwd, &base)
+}
+
+#[tauri::command]
+pub fn review_viewed_set(cwd: String, base: String, paths: Vec<String>) -> Result<(), String> {
+    bento_review::viewed::set(&cwd, &base, &paths)
+}
+
 #[tauri::command]
 pub fn review_checkpoints_list(cwd: String) -> Vec<bento_review::checkpoints::CheckpointMeta> {
     bento_review::checkpoints::list_checkpoint_metas(&cwd)

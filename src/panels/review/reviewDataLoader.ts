@@ -61,6 +61,7 @@ export interface ReviewDataLoaderState {
   getCurrentPrState: () => string | null
   setCurrentPrState: (v: string | null) => void
   getViewedFiles: () => Set<string>
+  loadViewedFiles: () => Promise<void>
   renderBranchList: () => void
   renderPrList: () => void
   loadPrList: () => Promise<void>
@@ -124,6 +125,9 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
       const lastFiles = parseDiffFiles(raw).map(f => ({ ...f, state: getFileState(f.chunk) }))
       state.setLastFiles(lastFiles)
       state.setTotalFiles(lastFiles.length)
+      // Antes de pintar: las casillas de "ya revisado" salen de esto, y ahora
+      // vienen del almacén compartido en vez del navegador.
+      await state.loadViewedFiles()
       state.updateViewedCounter()
       state.renderFiles()
       diffSearchInput.classList.remove('hidden')

@@ -70,6 +70,7 @@ interface Harness {
   renderPrList: ReturnType<typeof vi.fn>
   loadPrList: ReturnType<typeof vi.fn>
   renderFiles: ReturnType<typeof vi.fn>
+  loadViewedFiles: ReturnType<typeof vi.fn>
   injectExistingComments: ReturnType<typeof vi.fn>
   updateViewedCounter: ReturnType<typeof vi.fn>
   showCommentStatus: ReturnType<typeof vi.fn>
@@ -107,6 +108,7 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
   const renderFiles = vi.fn()
   const injectExistingComments = vi.fn()
   const updateViewedCounter = vi.fn()
+  const loadViewedFiles = vi.fn(async () => {})
   const showCommentStatus = vi.fn()
   const showCiPopover = vi.fn()
   const state: ReviewDataLoaderState = {
@@ -145,6 +147,7 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
     getCurrentPrState: () => data.currentPrState,
     setCurrentPrState: v => { data.currentPrState = v },
     getViewedFiles: () => new Set<string>(),
+    loadViewedFiles,
     renderBranchList,
     renderPrList,
     loadPrList,
@@ -154,7 +157,7 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
     showCommentStatus,
     showCiPopover,
   }
-  return { dom, data, state, renderBranchList, renderPrList, loadPrList, renderFiles, injectExistingComments, updateViewedCounter, showCommentStatus, showCiPopover }
+  return { dom, data, state, renderBranchList, renderPrList, loadPrList, renderFiles, injectExistingComments, updateViewedCounter, loadViewedFiles, showCommentStatus, showCiPopover }
 }
 
 const DIFF_A = 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n'
@@ -179,6 +182,21 @@ describe('loadDiff', () => {
     expect(h.renderFiles).toHaveBeenCalled()
     expect(h.updateViewedCounter).toHaveBeenCalled()
     expect(h.dom.diffSearchInput.classList.contains('hidden')).toBe(false)
+  })
+
+  it('brings in what is already reviewed before drawing the diff', async () => {
+    setup()
+    const h = makeHarness({ selectedBranch: 'origin/feat', activeLocalBranch: 'main' })
+    mockInvoke({ git_ref_diff: DIFF_A })
+    const order: string[] = []
+    h.loadViewedFiles.mockImplementation(async () => { order.push('viewed') })
+    h.renderFiles.mockImplementation(() => { order.push('render') })
+
+    await buildReviewDataLoader(h.dom, h.state).loadDiff()
+
+    // Las casillas de "ya revisado" se pintan con eso: al revés salen vacías
+    // y se llenan solas un instante después.
+    expect(order).toEqual(['viewed', 'render'])
   })
 
   it('uses the worktree diff when the selected branch is the active local branch', async () => {

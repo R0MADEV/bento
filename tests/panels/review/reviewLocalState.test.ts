@@ -1,9 +1,25 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
+
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(async () => null as unknown) }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+
 import { buildReviewLocalState } from '../../../src/panels/review/reviewLocalState'
 
-function setup(overrides: { repoPath?: string; branch?: string; pr?: number | null; total?: number } = {}) {
+// The shared store, as the Rust commands see it: one list per repo and ref.
+function fakeStore(initial: Record<string, string[]> = {}) {
+  const files = { ...initial }
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    const { cwd, base, paths } = (args ?? {}) as { cwd: string, base: string, paths?: string[] }
+    if (cmd === 'review_viewed_get') return files[`${cwd}:${base}`] ?? []
+    if (cmd === 'review_viewed_set') { files[`${cwd}:${base}`] = paths ?? []; return null }
+    return null
+  })
+  return files
+}
+
+function setup(overrides: { repoPath?: string, branch?: string, pr?: number | null, total?: number } = {}) {
   const viewedCounterEl = document.createElement('span')
   const state = buildReviewLocalState({
     repoPath: () => overrides.repoPath ?? '/repo',
@@ -19,52 +35,96 @@ describe('review local state', () => {
   beforeEach(() => {
     globalThis.localStorage = makeLocalStorage() as unknown as Storage
     localStorage.setItem('bento.locale', 'en')
+    fakeStore()
   })
 
-  it('remembers a file marked as viewed', () => {
+  it('remembers a file marked as viewed', async () => {
     const { state } = setup()
     state.setFileViewed('src/a.ts', true)
-    expect([...setup().state.getViewedFiles()]).toEqual(['src/a.ts'])
+
+    const other = setup()
+    await other.state.loadViewedFiles()
+    expect([...other.state.getViewedFiles()]).toEqual(['src/a.ts'])
   })
 
-  it('forgets it when unmarked', () => {
+  it('forgets it when unmarked', async () => {
     const { state } = setup()
     state.setFileViewed('src/a.ts', true)
     state.setFileViewed('src/a.ts', false)
-    expect(setup().state.getViewedFiles().size).toBe(0)
+
+    const other = setup()
+    await other.state.loadViewedFiles()
+    expect(other.state.getViewedFiles().size).toBe(0)
   })
 
-  it('keeps each branch of a repo apart', () => {
+  it('keeps each branch of a repo apart', async () => {
     setup({ branch: 'feat/a' }).state.setFileViewed('src/a.ts', true)
-    expect(setup({ branch: 'feat/b' }).state.getViewedFiles().size).toBe(0)
+
+    const other = setup({ branch: 'feat/b' })
+    await other.state.loadViewedFiles()
+    expect(other.state.getViewedFiles().size).toBe(0)
   })
 
-  it('keeps each repo apart', () => {
-    setup({ repoPath: '/uno' }).state.setFileViewed('src/a.ts', true)
-    expect(setup({ repoPath: '/otro' }).state.getViewedFiles().size).toBe(0)
+  it('marks travel to the store the CLI and the phone read', async () => {
+    const { state } = setup()
+
+    state.setFileViewed('src/a.ts', true)
+
+    // Marking a file read on the desktop and carrying on from the phone is
+    // the whole point of one store: this used to stay in the browser.
+    await vi.waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith(
+      'review_viewed_set', { cwd: '/repo', base: 'feat/a', paths: ['src/a.ts'] },
+    ))
   })
 
-  it('hides the counter when there is nothing to count', () => {
+  it('sees what another client marked', async () => {
+    fakeStore({ '/repo:feat/a': ['src/desde-el-movil.ts'] })
+    const { state } = setup()
+
+    await state.loadViewedFiles()
+
+    expect([...state.getViewedFiles()]).toEqual(['src/desde-el-movil.ts'])
+  })
+
+  it('carries over what the browser had, once', async () => {
+    // Marks made before the store existed are not worth losing; moving them
+    // clears the browser copy, so unmarking a file cannot resurrect it.
+    localStorage.setItem('bento.review.viewed./repo.feat/a', JSON.stringify(['src/viejo.ts']))
+    const files = fakeStore()
+    const { state } = setup()
+
+    await state.loadViewedFiles()
+
+    expect([...state.getViewedFiles()]).toEqual(['src/viejo.ts'])
+    expect(files['/repo:feat/a']).toEqual(['src/viejo.ts'])
+    expect(localStorage.getItem('bento.review.viewed./repo.feat/a')).toBeNull()
+  })
+
+  it('a store that cannot be read is nothing marked, not a broken panel', async () => {
+    mocks.invoke.mockImplementation(async () => { throw new Error('sin store') })
+    const { state } = setup()
+
+    await state.loadViewedFiles()
+
+    expect(state.getViewedFiles().size).toBe(0)
+  })
+
+  it('counts what is viewed out of the total', async () => {
+    const { state, viewedCounterEl } = setup({ total: 3 })
+    state.setFileViewed('src/a.ts', true)
+    expect(viewedCounterEl.textContent).toContain('1')
+    expect(viewedCounterEl.classList.contains('hidden')).toBe(false)
+  })
+
+  it('hides the counter when there are no files', () => {
     const { state, viewedCounterEl } = setup({ total: 0 })
     state.updateViewedCounter()
     expect(viewedCounterEl.classList.contains('hidden')).toBe(true)
   })
 
-  it('shows how many of the total are done', () => {
-    const { state, viewedCounterEl } = setup({ total: 3 })
-    state.setFileViewed('src/a.ts', true)
-    expect(viewedCounterEl.classList.contains('hidden')).toBe(false)
-    expect(viewedCounterEl.textContent).toMatch(/1.*3/)
-  })
-
-  it('remembers a comment marked as resolved, per PR', () => {
+  it('remembers a comment given as resolved, per PR', () => {
     setup({ pr: 10 }).state.setCommentResolved(1, true)
     expect([...setup({ pr: 10 }).state.getResolvedComments()]).toEqual([1])
     expect(setup({ pr: 11 }).state.getResolvedComments().size).toBe(0)
-  })
-
-  it('reads corrupt storage as nothing marked instead of throwing', () => {
-    localStorage.setItem('bento.review.viewed./repo.feat/a', 'esto no es json')
-    expect(setup().state.getViewedFiles().size).toBe(0)
   })
 })

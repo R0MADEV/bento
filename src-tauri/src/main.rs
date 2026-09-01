@@ -124,6 +124,8 @@ fn main() {
             review::review_checkpoint_save,
             review::review_checkpoint_get,
             review::review_checkpoints_list,
+            review::review_viewed_get,
+            review::review_viewed_set,
             review::review_checkpoint_delete,
             review::review_build_document,
             review::review_follow_up_session,
