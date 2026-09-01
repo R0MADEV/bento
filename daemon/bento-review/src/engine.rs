@@ -367,7 +367,12 @@ async fn run_planned_cancellable(
     // report is worse than a slow one.
     let snapshot_before = crate::snapshot::snapshot(&request.cwd).ok();
 
-    let attempts = futures::future::join_all(plan.stages.iter().map(|stage| {
+    // Todas a la vez, pero se recogen en el orden del plan y no en el de
+    // llegada: `FuturesOrdered` es lo que permite las dos cosas. Con `join_all`
+    // no salía nada hasta que acababa la última, así que el checkpoint por
+    // etapa del cliente no guardaba nada hasta el final y un fallo a mitad se
+    // llevaba lo que ya estaba hecho.
+    let mut attempts: futures::stream::FuturesOrdered<_> = plan.stages.iter().map(|stage| {
         let mut input = ReviewPromptInput::new(&request.cwd, &request.base, &stage.diff, &request.context);
         input.files = prompt_files(&stage.diff);
         input.lexis_context = lexis_context.clone();
@@ -403,16 +408,17 @@ async fn run_planned_cancellable(
             drop(text_tx);
             (attempt, collecting.await.unwrap_or_default())
         }
-    }))
-    .await;
+    }).collect();
 
-    if cancel.is_cancelled() {
-        let _ = tx.send(ReviewEvent::Error("review cancelada".into())).await;
-        return;
-    }
-
-    for (i, (stage, (attempt, streamed))) in plan.stages.iter().zip(attempts).enumerate() {
-        let _ = tx.send(ReviewEvent::Batch { index: i + 1, total, label: stage.label.clone() }).await;
+    let mut index = 0;
+    while let Some((attempt, streamed)) = futures::StreamExt::next(&mut attempts).await {
+        if cancel.is_cancelled() {
+            let _ = tx.send(ReviewEvent::Error("review cancelada".into())).await;
+            return;
+        }
+        let stage = &plan.stages[index];
+        index += 1;
+        let _ = tx.send(ReviewEvent::Batch { index, total, label: stage.label.clone() }).await;
         match attempt {
             Ok((report, sid)) => {
                 if let Some(id) = sid {
@@ -976,6 +982,76 @@ mod tests {
         assert_eq!(calls.len(), 3, "dos análisis y una verificación");
         assert!(calls[2].starts_with("opencode:"), "verifica el último agente");
         assert!(events.iter().any(|e| matches!(e, ReviewEvent::Session { agent, .. } if agent == "opencode")));
+    }
+
+    /// One agent answers at once; the other waits to be let go. Lets a test
+    /// look at what the client has heard while a stage is still running.
+    struct OneFastOneBlocked(std::sync::Arc<tokio::sync::Notify>);
+
+    impl AgentRunner for OneFastOneBlocked {
+        fn run(&self, agent: &str, _c: &str, _p: &str, _tx: Sender<String>) -> BoxFuture<'_, AgentResult> {
+            let gate = self.0.clone();
+            let agent = agent.to_string();
+            Box::pin(async move {
+                if agent == "codex" {
+                    gate.notified().await;
+                }
+                Ok((format!("informe de {agent}"), None))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_finished_report_goes_out_while_the_next_agent_is_still_working() {
+        // Todas las etapas corren a la vez, pero salían todas juntas al final:
+        // el cliente no veía nada hasta que acababa el último, así que su
+        // checkpoint por etapa no guardaba nada hasta entonces y un fallo a
+        // mitad se llevaba lo que ya estaba hecho.
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let request = ReviewRequest {
+            cwd: "/repo".into(),
+            base: "main".into(),
+            context: String::new(),
+            agents: vec!["claude".into(), "codex".into(), "opencode".into()],
+        };
+        // La review corre en su propia tarea para poder mirar el canal
+        // mientras sigue en marcha; `local` la mantiene en este hilo, que es
+        // lo que deja pasar las referencias prestadas.
+        let runner = OneFastOneBlocked(gate.clone());
+        let cancel = CancelToken::default();
+        let review = async {
+            run_planned_cancellable(&request, "diff --git a/a.rs b/a.rs\n+x\n", &runner, &tx, &cancel).await;
+            drop(tx);
+        };
+        tokio::pin!(review);
+
+        // Con `codex` aún parado, lo de `claude` ya tiene que haber salido.
+        let mut early = Vec::new();
+        tokio::select! {
+            _ = &mut review => panic!("no debería acabar con codex aún parado"),
+            _ = async {
+                while early.len() < 2 {
+                    early.push(rx.recv().await.expect("algún evento"));
+                }
+            } => {}
+            // Con el fallo, aquí no llega nada hasta que acaban todas las
+            // etapas: sin este plazo el test se cuelga en vez de fallar.
+            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                panic!("la primera etapa no salió mientras las demás seguían: {early:?}")
+            }
+        }
+        assert!(matches!(early[0], ReviewEvent::Batch { index: 1, .. }), "{:?}", early[0]);
+        assert!(
+            matches!(&early[1], ReviewEvent::Content(t) if t.contains("claude")),
+            "el informe del primero tiene que salir sin esperar al resto: {:?}",
+            early[1],
+        );
+
+        gate.notify_waiters();
+        review.await;
+        let rest: Vec<ReviewEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(rest.iter().any(|e| matches!(e, ReviewEvent::Content(t) if t.contains("codex"))));
     }
 
     #[tokio::test]
