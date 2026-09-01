@@ -109,17 +109,23 @@ fn time_key(saved_at: &str) -> String {
     }
 }
 
-/// The newest checkpoint for `(cwd, base)` in `dir`, whichever run it belongs
+/// The newest checkpoint about `ref_name` in `dir`, whichever run it belongs
 /// to. Every file has to be read: the name is a hash of the run, so the run
 /// ids of a branch cannot be worked out from the directory listing.
-fn latest_in(dir: &std::path::Path, cwd: &str, base: &str) -> Option<Checkpoint> {
+///
+/// A review is about the ref it is filed under *and* the branch it names: the
+/// desktop files a review of `feat/x` under `feat/x`, while the CLI and the
+/// phone file the same review under the base it was compared against and put
+/// `feat/x` in `branch`. Matching only the key is what kept each client from
+/// ever seeing the other's reviews.
+fn latest_in(dir: &std::path::Path, cwd: &str, ref_name: &str) -> Option<Checkpoint> {
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
         .filter_map(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
-        .filter(|cp| cp.cwd == cwd && cp.base == base)
+        .filter(|cp| cp.cwd == cwd && (cp.base == ref_name || cp.branch.as_deref() == Some(ref_name)))
         .max_by_key(|cp| time_key(&cp.saved_at))
 }
 

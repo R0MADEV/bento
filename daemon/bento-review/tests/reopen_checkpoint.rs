@@ -79,3 +79,30 @@ fn deleting_without_a_run_id_still_removes_the_old_entry() {
 
     assert!(get_checkpoint(cwd, "main").is_none());
 }
+
+#[test]
+fn a_review_run_from_the_cli_is_found_by_the_desktop_asking_for_that_branch() {
+    home();
+    let cwd = "/repo-cross-client";
+    // The CLI and the phone file a review under the base it was compared
+    // against, naming the branch reviewed; the desktop files it under the
+    // branch itself and asks for it by that name.
+    let mut from_the_cli = checkpoint(cwd, "main", Some("run-cli"), "2026-08-27T09:00:00Z");
+    from_the_cli.branch = Some("feat/y".into());
+    save_checkpoint(&from_the_cli).unwrap();
+
+    let found = get_checkpoint(cwd, "feat/y").expect("the desktop has to see it too");
+    assert_eq!(found.run_id.as_deref(), Some("run-cli"));
+
+    // And the base it was filed under still reaches it.
+    assert_eq!(get_checkpoint(cwd, "main").unwrap().run_id.as_deref(), Some("run-cli"));
+}
+
+#[test]
+fn a_review_of_the_working_tree_is_not_mistaken_for_a_review_of_a_branch() {
+    home();
+    let cwd = "/repo-worktree-review";
+    save_checkpoint(&checkpoint(cwd, "main", Some("run-wt"), "2026-08-27T09:00:00Z")).unwrap();
+
+    assert!(get_checkpoint(cwd, "feat/z").is_none());
+}
