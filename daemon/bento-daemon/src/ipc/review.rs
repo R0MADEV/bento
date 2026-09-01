@@ -227,3 +227,73 @@ pub(crate) fn dispatch(
         other => send(fail(&req.id, format!("unknown command: {other}"))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs one request through the dispatch and returns what it answered.
+    /// A client blocks on that answer, so "answered nothing" is a hang.
+    fn dispatched(body: Value) -> Vec<Value> {
+        let req: Request = serde_json::from_value(body).expect("request");
+        let sent = std::sync::Mutex::new(Vec::new());
+        let (out, _rx) = mpsc::unbounded_channel();
+        let mut tasks = Vec::new();
+        dispatch(
+            &req.cmd.clone(),
+            &req,
+            &|line: String| sent.lock().unwrap().push(serde_json::from_str(&line).unwrap()),
+            &out,
+            &mut tasks,
+        );
+        sent.into_inner().unwrap()
+    }
+
+    fn error_of(body: Value) -> String {
+        let answers = dispatched(body);
+        assert_eq!(answers.len(), 1, "una respuesta y solo una");
+        assert_eq!(answers[0]["ok"], json!(false));
+        answers[0]["error"].as_str().unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn every_review_command_answers_what_it_is_missing_instead_of_going_quiet() {
+        // The socket client waits for the id it sent; a command that answers
+        // nothing is a hung panel, not a no-op.
+        for cmd in [
+            "review.branches",
+            "review.files",
+            "review.file",
+            "review.prs",
+            "review.pr_diff",
+            "review.ask",
+            "review.run",
+            "review.checkpoint_save",
+            "review.checkpoint_get",
+            "review.checkpoint_delete",
+            "review.viewed",
+            "review.viewed_set",
+            "review.checkpoints",
+            "review.pr_submit",
+        ] {
+            let error = error_of(json!({ "id": "1", "cmd": cmd }));
+            assert!(error.contains("required"), "{cmd} contesta «{error}»");
+        }
+    }
+
+    #[test]
+    fn an_unknown_review_command_is_named_in_the_error() {
+        assert_eq!(
+            error_of(json!({ "id": "1", "cmd": "review.inventado" })),
+            "unknown command: review.inventado",
+        );
+    }
+
+    #[test]
+    fn the_answer_carries_the_id_it_was_asked_with() {
+        // Answers come back over one socket shared by every request; without
+        // the id the client cannot tell which is which.
+        let answers = dispatched(json!({ "id": "42", "cmd": "review.branches" }));
+        assert_eq!(answers[0]["id"], json!("42"));
+    }
+}
