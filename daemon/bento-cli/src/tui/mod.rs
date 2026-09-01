@@ -142,6 +142,21 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                         }
                                         Err(message) => status = message,
                                     },
+                                    // Cerrar el que está seleccionado. El
+                                    // escritorio y el móvil ya podían; esta
+                                    // era la única que solo sabía abrirlos.
+                                    KeyCode::Char('k') => {
+                                        if let Some(item) = items.get(selected) {
+                                            match terminals::close_terminal(&item.pty_id).await {
+                                                Ok(()) => {
+                                                    selected = terminals::selection_after_close(items.len(), selected);
+                                                    items = terminals::fetch_terminals().await.unwrap_or_default();
+                                                    status.clear();
+                                                }
+                                                Err(error) => status = format!("No se pudo cerrar: {error}"),
+                                            }
+                                        }
+                                    }
                                     KeyCode::Char('b') => {
                                         sidebar_width = toggle_sidebar(sidebar_width, &mut restored_width);
                                     }

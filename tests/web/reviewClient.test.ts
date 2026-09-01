@@ -277,3 +277,41 @@ describe('el chat de seguimiento del móvil', () => {
     expect(opened).toEqual([])
   })
 })
+
+// El cliente de terminales del móvil. Vive en el mismo daemon y hasta ahora
+// solo sabía abrir una shell en casa.
+const terminalSource = readFileSync('daemon/bento-daemon/src/remote/web/terminal.js', 'utf8')
+
+interface TerminalClient {
+  newTerminalUrl: (cwd: string | null) => string
+}
+
+function loadTerminal(): TerminalClient {
+  document.body.innerHTML = `
+    <div id="page-terminals"></div>
+    <div id="list"></div>
+    <button id="newbtn"></button>
+    <input id="inp">
+    <div id="term"></div>
+    <div id="dot"></div>`
+  ;(globalThis as unknown as { q: string }).q = '?token=t'
+  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve([]) } as Response)))
+  ;(0, eval)(terminalSource.replace(/^(let|const) /gm, 'var '))
+  return globalThis as unknown as TerminalClient
+}
+
+describe('abrir una terminal desde el móvil', () => {
+  it('la abre en el proyecto que elijas', () => {
+    const client = loadTerminal()
+
+    // Sin decir dónde, el daemon la abre en casa — que para trabajar en un
+    // proyecto no vale de nada.
+    expect(client.newTerminalUrl('/repo/bento')).toBe('/api/terminals?token=t&cwd=%2Frepo%2Fbento')
+  })
+
+  it('y sin proyecto, donde el daemon decida', () => {
+    const client = loadTerminal()
+
+    expect(client.newTerminalUrl(null)).toBe('/api/terminals?token=t')
+  })
+})

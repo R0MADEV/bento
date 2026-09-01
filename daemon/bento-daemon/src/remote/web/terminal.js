@@ -136,11 +136,34 @@ async function killTerminal(){
   goBack();
 }
 
+// Dónde abrir la nueva. Sin proyecto, la abre el daemon donde decida (casa).
+function newTerminalUrl(cwd){
+  return '/api/terminals'+q+(cwd?'&cwd='+encodeURIComponent(cwd):'');
+}
+
+// Los proyectos son los directorios donde ya hay terminales abiertas, que es
+// donde de verdad quieres abrir otra.
+async function pickProject(){
+  let projects=[];
+  try{
+    const r=await fetch('/api/projects'+q);
+    if(r.ok)projects=await r.json();
+  }catch(_){}
+  if(!projects.length)return null;
+  const names=projects.map((p,i)=>(i+1)+') '+p.cwd+(p.branch?' · '+p.branch:''));
+  const answer=prompt('¿Dónde la abro?\n\n0) Mi carpeta\n'+names.join('\n'),'0');
+  if(answer===null)return undefined;
+  const index=parseInt(answer,10);
+  return (index>=1&&index<=projects.length)?projects[index-1].cwd:null;
+}
+
 async function newTerminal(){
   const btn=document.getElementById('newbtn');
+  const cwd=await pickProject();
+  if(cwd===undefined)return;
   btn.textContent='Abriendo…';btn.disabled=true;
   try{
-    const r=await fetch('/api/terminals'+q,{method:'POST'});
+    const r=await fetch(newTerminalUrl(cwd),{method:'POST'});
     if(!r.ok){btn.textContent='+ Nueva terminal';btn.disabled=false;return}
     const {id}=await r.json();
     await load();attach(id,id);

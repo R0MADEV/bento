@@ -129,7 +129,7 @@ fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area:
     };
     let inner = Pane {
         title: "",
-        hint: "↑/↓ navegar · Enter conectar · n nuevo · b plegar · Tab review · q salir",
+        hint: "↑/↓ navegar · Enter conectar · n nuevo · k cerrar · b plegar · Tab review · q salir",
         focused: false,
     }
     .render(frame, area);
@@ -150,6 +150,22 @@ fn short_cwd(cwd: &str, sidebar_width: u16) -> String {
     }
     let tail: String = shortened.chars().skip(shortened.chars().count() - (budget - 1)).collect();
     format!("…{tail}")
+}
+
+/// Cierra un terminal. Lo mismo que hacen el escritorio y el móvil: los tres
+/// hablan con el mismo daemon, y esta era la única de las tres que solo sabía
+/// abrirlos.
+pub(super) async fn close_terminal(pty_id: &str) -> std::io::Result<()> {
+    crate::request_data(json!({ "id": "1", "cmd": "terminal.close", "pty_id": pty_id })).await?;
+    Ok(())
+}
+
+/// Dónde queda el cursor tras cerrar el de la fila `selected`, contando los
+/// terminales que había antes. Cerrar el último dejaba el cursor apuntando a
+/// una fila que ya no existe.
+pub(super) fn selection_after_close(before: usize, selected: usize) -> usize {
+    let left = before.saturating_sub(1);
+    selected.min(left.saturating_sub(1))
 }
 
 pub(super) async fn fetch_terminals() -> std::io::Result<Vec<TerminalInfo>> {
@@ -486,5 +502,14 @@ mod tests {
     #[test]
     fn an_absurdly_narrow_rail_does_not_underflow_the_budget() {
         assert!(!short_cwd("/tmp/bento", 2).is_empty());
+    }
+
+    #[test]
+    fn closing_the_last_terminal_leaves_the_selection_inside_the_list() {
+        // Matar el último dejaba el cursor apuntando a una fila que ya no
+        // está, y la siguiente tecla leía fuera de la lista.
+        assert_eq!(selection_after_close(3, 2), 1);
+        assert_eq!(selection_after_close(3, 0), 0);
+        assert_eq!(selection_after_close(1, 0), 0, "sin terminales, la primera fila");
     }
 }

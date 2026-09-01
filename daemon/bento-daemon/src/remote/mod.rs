@@ -297,15 +297,28 @@ async fn kill_terminal(
     }
 }
 
+/// Dónde abrir el terminal que pide el móvil: donde diga, si existe y es un
+/// directorio; si no, en casa. La ruta llega por HTTP, así que se comprueba
+/// aquí en vez de dársela al shell tal cual.
+fn open_cwd(requested: Option<String>, home: &str) -> String {
+    requested
+        .filter(|path| !path.is_empty() && std::path::Path::new(path).is_dir())
+        .unwrap_or_else(|| home.to_string())
+}
+
 async fn new_terminal(
     State(state): State<Arc<RemoteState>>,
     Query(auth): Query<Auth>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     if !authorized(&state, &auth) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+    // Sin esto el móvil solo sabía abrir una shell en casa, que para trabajar
+    // en un proyecto no vale de nada.
+    let home = open_cwd(params.get("cwd").cloned(), &home);
     let id = format!("pty-mobile-{}", uuid_v4());
     let mut env = vec![];
     if let Some(socket) = &state.herdr_socket {
@@ -458,5 +471,23 @@ mod tests {
         let r = resolve_bind_ip(true, None, "192.168.1.10".into());
         assert_eq!(r.bind_host, "192.168.1.10");
         assert_eq!(r.display_ip, "192.168.1.10");
+    }
+
+    #[test]
+    fn a_new_terminal_opens_where_you_asked_when_that_place_exists() {
+        let dir = std::env::temp_dir();
+        let home = "/home/quien-sea".to_string();
+
+        assert_eq!(open_cwd(Some(dir.to_string_lossy().to_string()), &home), dir.to_string_lossy());
+    }
+
+    #[test]
+    fn and_falls_back_home_when_it_does_not() {
+        // Llega por HTTP: una ruta inventada, o un fichero, no abre nada raro.
+        let home = "/home/quien-sea".to_string();
+
+        assert_eq!(open_cwd(Some("/no/existe/esto".into()), &home), home);
+        assert_eq!(open_cwd(Some(String::new()), &home), home);
+        assert_eq!(open_cwd(None, &home), home);
     }
 }
