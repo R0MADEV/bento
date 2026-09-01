@@ -155,12 +155,27 @@ pub fn get_run(cwd: &str, base: &str, run_id: &str) -> Option<Checkpoint> {
 /// batches complete) and the daemon's IPC socket (`review.checkpoint_save`,
 /// called once after a `review.run` finishes so `review.ask` has something
 /// to resume).
+///
+/// Both of those clients save without saying which branch or which commit they
+/// reviewed — a browser and a socket message have no git to ask. Stamping it
+/// here, where the cwd is known, is what keeps a reopened review able to say
+/// whether the code moved under it. What the caller already knew wins.
 pub fn save_checkpoint(cp: &Checkpoint) -> Result<(), String> {
     let dir = checkpoints_dir().ok_or_else(|| "no home dir".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = checkpoint_path_for(cp).ok_or_else(|| "bad checkpoint path".to_string())?;
-    let raw = serde_json::to_string(cp).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string(&stamped(cp)).map_err(|e| e.to_string())?;
     std::fs::write(path, raw).map_err(|e| e.to_string())
+}
+
+/// `cp` with whatever metadata it is missing filled in from its repo.
+fn stamped(cp: &Checkpoint) -> Checkpoint {
+    let is_already_stamped = cp.branch.is_some() && cp.commit.is_some();
+    if is_already_stamped {
+        return cp.clone();
+    }
+    let (branch, commit) = reviewed_at(&cp.cwd, cp.branch.clone());
+    Checkpoint { branch, commit: cp.commit.clone().or(commit), ..cp.clone() }
 }
 
 /// A JS-`Date`-parseable UTC timestamp with no extra crate: this workspace
@@ -192,6 +207,22 @@ fn iso8601_from_unix_secs(secs: u64) -> String {
 
 /// Shared by the HTTP delete handler and the daemon's IPC socket
 /// (`review.checkpoint_delete`).
+/// What a review was made against: the branch reviewed and the sha at that
+/// moment. The desktop already sends both; the daemon's clients (CLI, phone,
+/// web) don't, and a checkpoint saved without them reopens with no way to tell
+/// whether the code moved under it.
+///
+/// Best effort by design: a directory that isn't a repo, or a detached HEAD,
+/// stamps nothing rather than losing the review over metadata.
+pub fn reviewed_at(cwd: &str, branch: Option<String>) -> (Option<String>, Option<String>) {
+    let branch = branch.or_else(|| crate::vcs::current_branch(cwd).ok());
+    let commit = crate::vcs::git_cmd(cwd, &["rev-parse", "HEAD"])
+        .ok()
+        .map(|sha| sha.trim().to_string())
+        .filter(|sha| !sha.is_empty());
+    (branch, commit)
+}
+
 /// Removes one saved review: the run named, or the runless entry when none is.
 ///
 /// The run id is what makes this reach anything at all today. Without it only
@@ -365,5 +396,52 @@ mod reopen_tests {
         assert_eq!(latest_in(&dir, "/repo", "main").unwrap().run_id.as_deref(), Some("mine"));
         assert!(latest_in(&dir, "/repo", "sin-reviews").is_none());
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use super::*;
+    use crate::test_support::{repo, run};
+
+    #[test]
+    fn stamps_the_branch_and_the_sha_the_review_was_made_at() {
+        let git = repo("stamp");
+        let cwd = git.0.to_string_lossy().to_string();
+        std::fs::write(git.0.join("a.txt"), "uno").unwrap();
+        run(&git.0, &["add", "."]);
+        run(&git.0, &["commit", "-qm", "uno"]);
+        run(&git.0, &["checkout", "-qb", "feat/x"]);
+
+        let (branch, commit) = reviewed_at(&cwd, None);
+
+        assert_eq!(branch.as_deref(), Some("feat/x"));
+        let head = run(&git.0, &["rev-parse", "HEAD"]).trim().to_string();
+        assert_eq!(commit, Some(head));
+    }
+
+    #[test]
+    fn the_branch_the_client_names_wins_over_the_checked_out_one() {
+        let git = repo("stamp-named");
+        let cwd = git.0.to_string_lossy().to_string();
+        std::fs::write(git.0.join("a.txt"), "uno").unwrap();
+        run(&git.0, &["add", "."]);
+        run(&git.0, &["commit", "-qm", "uno"]);
+
+        let (branch, _) = reviewed_at(&cwd, Some("feat/desde-el-movil".into()));
+
+        assert_eq!(branch.as_deref(), Some("feat/desde-el-movil"));
+    }
+
+    #[test]
+    fn a_directory_that_is_not_a_repo_stamps_nothing_instead_of_failing() {
+        let dir = std::env::temp_dir().join(format!("bento-stamp-plain-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (branch, commit) = reviewed_at(&dir.to_string_lossy(), None);
+
+        assert!(branch.is_none());
+        assert!(commit.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

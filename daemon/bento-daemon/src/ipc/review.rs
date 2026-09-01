@@ -149,13 +149,15 @@ pub(crate) fn dispatch(
                 // Sent by the client so the saves one review makes as it
                 // goes land on one entry, and two reviews of the same branch
                 // do not overwrite each other.
+                // The branch reviewed, when the client named one; the sha, and
+                // the branch when it didn't, are stamped by `save_checkpoint`.
                 let cp = crate::remote::review::Checkpoint {
                     cwd: cwd.clone(),
                     base: base.clone(),
                     content: content.clone(),
                     saved_at: crate::remote::review::now_iso8601(),
                     run_id: req.run_id.clone(),
-                    branch: None,
+                    branch: req.branch.clone(),
                     commit: None,
                     session_id: req.session_id.clone(),
                     session_agent: req.agent.clone(),

@@ -98,7 +98,7 @@ impl ReviewState {
         let body = json!({
             "id": "1", "cmd": "review.checkpoint_save", "cwd": self.cwd, "base": self.base,
             "content": self.output, "session_id": self.session_id, "agent": self.session_agent,
-            "run_id": self.run_id,
+            "run_id": self.run_id, "branch": self.branch,
         });
         tokio::spawn(async move {
             let _ = crate::request_data(body).await;
