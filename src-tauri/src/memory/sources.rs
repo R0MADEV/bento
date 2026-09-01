@@ -51,13 +51,3 @@ pub fn memory_source_scan(
 ) -> Result<Vec<ImportedMemoryCandidate>, String> {
     bento_memory::sources::memory_source_scan(&data_dir(&app)?, project_path, id, limit)
 }
-
-#[tauri::command]
-pub fn memory_source_import(
-    app: AppHandle,
-    project_path: String,
-    id: String,
-    limit: Option<usize>,
-) -> Result<usize, String> {
-    bento_memory::sources::memory_source_import(&data_dir(&app)?, project_path, id, limit)
-}

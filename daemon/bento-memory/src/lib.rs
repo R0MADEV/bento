@@ -67,7 +67,6 @@ pub fn data_dir() -> Result<std::path::PathBuf, String> {
 pub(crate) const MAX_TEXT_LENGTH: usize = 20_000;
 pub(crate) const MAX_LIST_ITEMS: usize = 100;
 pub(crate) const MAX_LIST_ITEM_LENGTH: usize = 500;
-pub(crate) const MAX_TRANSCRIPT_LENGTH: usize = 200_000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,8 +131,8 @@ pub struct MemorySummaryJob {
     pub updated_at: String,
 }
 
-use db::{connection, encode, find_by_external_id, find_transcript_by_summary_external_id, regenerate_transcript_summary, row_to_entry, row_to_summary_job, row_to_transcript, upsert_summary_entry};
-use validate::{validate_entry, validate_transcript};
+use db::{connection, encode, find_by_external_id, find_transcript_by_summary_external_id, regenerate_transcript_summary, row_to_entry, row_to_summary_job, upsert_summary_entry};
+use validate::validate_entry;
 
 pub fn memory_list(data_dir: &Path, project_path: String) -> Result<Vec<MemoryEntry>, String> {
     let conn = connection(data_dir)?;
@@ -260,23 +259,6 @@ pub fn memory_migrate(data_dir: &Path, entries: Vec<MemoryEntry>) -> Result<usiz
     Ok(migrated)
 }
 
-pub fn memory_transcript_list(
-    data_dir: &Path,
-    project_path: String,
-) -> Result<Vec<MemoryTranscript>, String> {
-    let conn = connection(data_dir)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, project_path, agent, session_id, title, transcript, summary, source, external_id, created_at, updated_at
-         FROM memory_transcripts WHERE project_path = ?1 ORDER BY updated_at DESC",
-    ).map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(params![project_path.trim()], row_to_transcript)
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    Ok(rows)
-}
-
 pub fn memory_summary_job_list(
     data_dir: &Path,
     project_path: String,
@@ -305,34 +287,6 @@ pub fn memory_summary_job_list(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     Ok(rows)
-}
-
-pub fn memory_transcript_create(
-    data_dir: &Path,
-    entry: MemoryTranscript,
-) -> Result<MemoryTranscript, String> {
-    let conn = connection(data_dir)?;
-    validate_transcript(&entry)?;
-    conn.execute(
-        "INSERT INTO memory_transcripts (id, project_path, agent, session_id, title, transcript, summary, source, external_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-         ON CONFLICT(project_path, external_id) WHERE external_id <> ''
-         DO UPDATE SET title = excluded.title, transcript = excluded.transcript, summary = excluded.summary, source = excluded.source, updated_at = excluded.updated_at",
-        params![
-            entry.id,
-            entry.project_path,
-            entry.agent,
-            entry.session_id,
-            entry.title,
-            entry.transcript,
-            entry.summary,
-            entry.source,
-            entry.external_id,
-            entry.created_at,
-            entry.updated_at
-        ],
-    ).map_err(|e| e.to_string())?;
-    Ok(entry)
 }
 
 pub fn memory_regenerate_summary(

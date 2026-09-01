@@ -130,8 +130,3 @@ pub fn agent_get_session(
 ) -> Option<String> {
     state.get_session(&pane_id)
 }
-
-#[tauri::command]
-pub fn agent_socket_path(state: tauri::State<Arc<AgentSocket>>) -> String {
-    state.socket_path.clone()
-}

@@ -1,7 +1,7 @@
 //! Validación de lo que llega del frontend antes de tocar la base de datos.
 //! Es la frontera de confianza del panel de memoria: aquí no se recorta.
 
-use super::{MemoryEntry, MemoryTranscript, MAX_LIST_ITEMS, MAX_LIST_ITEM_LENGTH, MAX_TEXT_LENGTH, MAX_TRANSCRIPT_LENGTH};
+use super::{MemoryEntry, MAX_LIST_ITEMS, MAX_LIST_ITEM_LENGTH, MAX_TEXT_LENGTH};
 
 pub(crate) fn validate_text(field: &str, value: &str, required: bool) -> Result<(), String> {
     if required && value.trim().is_empty() {
@@ -53,30 +53,6 @@ pub(crate) fn validate_entry(entry: &MemoryEntry) -> Result<(), String> {
         && entry.details.trim().is_empty()
     {
         return Err("title, summary o details es obligatorio".to_string());
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_transcript(entry: &MemoryTranscript) -> Result<(), String> {
-    validate_text("id", &entry.id, true)?;
-    validate_text("projectPath", &entry.project_path, false)?;
-    validate_text("agent", &entry.agent, true)?;
-    validate_text("sessionId", &entry.session_id, true)?;
-    validate_text("title", &entry.title, true)?;
-    validate_text("source", &entry.source, true)?;
-    validate_text("externalId", &entry.external_id, true)?;
-    validate_text("createdAt", &entry.created_at, true)?;
-    validate_text("updatedAt", &entry.updated_at, true)?;
-    if entry.transcript.trim().is_empty() {
-        return Err("transcript es obligatorio".to_string());
-    }
-    if entry.transcript.len() > MAX_TRANSCRIPT_LENGTH {
-        return Err(format!(
-            "transcript supera el límite de {MAX_TRANSCRIPT_LENGTH} caracteres"
-        ));
-    }
-    if !matches!(entry.agent.as_str(), "claude" | "codex") {
-        return Err("agent debe ser claude o codex".to_string());
     }
     Ok(())
 }

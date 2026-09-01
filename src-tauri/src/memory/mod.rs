@@ -4,7 +4,7 @@
 pub mod import;
 pub mod sources;
 
-pub use bento_memory::{MemoryEntry, MemoryPatch, MemorySummaryJob, MemoryTranscript};
+pub use bento_memory::{MemoryEntry, MemoryPatch, MemorySummaryJob};
 
 use tauri::{AppHandle, Manager};
 
@@ -71,27 +71,11 @@ pub fn memory_migrate(app: AppHandle, entries: Vec<MemoryEntry>) -> Result<usize
 }
 
 #[tauri::command]
-pub fn memory_transcript_list(
-    app: AppHandle,
-    project_path: String,
-) -> Result<Vec<MemoryTranscript>, String> {
-    bento_memory::memory_transcript_list(&data_dir(&app)?, project_path)
-}
-
-#[tauri::command]
 pub fn memory_summary_job_list(
     app: AppHandle,
     project_path: String,
 ) -> Result<Vec<MemorySummaryJob>, String> {
     bento_memory::memory_summary_job_list(&data_dir(&app)?, project_path)
-}
-
-#[tauri::command]
-pub fn memory_transcript_create(
-    app: AppHandle,
-    entry: MemoryTranscript,
-) -> Result<MemoryTranscript, String> {
-    bento_memory::memory_transcript_create(&data_dir(&app)?, entry)
 }
 
 #[tauri::command]
