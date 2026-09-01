@@ -1,11 +1,13 @@
 # Lo que queda pendiente
 
-Estado a 26 de agosto de 2026, con la rama `feat/cli-raw-attach` ya mergeada
-(PR #17). Aquí va lo que estaba abierto y por qué importaba. Lo que se decidió
-no hacer está al final, para no volver a discutirlo.
+Estado a 1 de septiembre de 2026. Aquí va lo que estaba abierto y por qué
+importaba. Lo que se decidió no hacer está al final, para no volver a
+discutirlo.
 
-**Los tres puntos abiertos están cerrados**: se conservan con lo que se hizo
-en cada uno, porque el *por qué* sigue siendo útil para quien toque esa zona.
+Los puntos resueltos se conservan con lo que se hizo en cada uno, porque el
+*por qué* sigue siendo útil para quien toque esa zona. Los tres primeros vienen
+de `feat/cli-raw-attach` (PR #17); el 5 y el 6, del repaso de la review
+compartida. Lo que sigue abierto está más abajo, en su propia sección.
 
 ## 1. Los resúmenes de sesión pierden datos — resuelto
 
@@ -93,7 +95,123 @@ para no volver a mirarlo:
 | `├── .env` (×4) | un árbol de ficheros en ASCII |
 | `Picture in Picture` | el nombre de la función del navegador |
 
+## 5. El repaso de la review — resuelto
+
+Ocho arreglos y un hueco de tests, en orden. Todos venían de la misma mudanza:
+la review pasó a correr en el daemon, compartida por escritorio, CLI y móvil, y
+cada cliente se quedó con medio cable suelto.
+
+**Los informes llegaban todos al final.** El motor esperaba a que terminaran
+todos los agentes antes de emitir ninguno. Ahora sale cada uno en cuanto está,
+en orden, mientras el siguiente sigue trabajando.
+
+**Parar colgaba el panel y dejaba un worktree.** `emit("done")` vivía dentro de
+la tarea que la cancelación abortaba, así que al parar no salía nunca. Ahora
+`done` se emite desde fuera, esperando a esa tarea: sale como acabe la review,
+cancelada incluida.
+
+**El escritorio guardaba reviews que no podía reabrir.** El `run_id` se añadió
+al guardado y no a la lectura, así que la reapertura miraba una ruta donde ya no
+escribía nadie. Y el borrado, igual: la entrada volvía en el siguiente listado.
+
+**Dos worktrees por review.** El panel preparaba el suyo, lo fotografiaba antes
+y después y lo borraba al salir — pero al motor le pasaba el repo, y el motor
+prepara el suyo. Nadie entraba en el del panel, así que el aviso de "el repo
+cambió durante la review" no podía saltar. Fuera; el sha sale de `git_rev_parse`.
+
+**El motivo real del fallo se tiraba.** El agente decía por qué (no instalado,
+timeout, no contestó); el recolector lo cambiaba por "no encontrado o falló" y
+el panel por "No valid review responses". Ahora llega el motivo, y los timeouts
+y los fallos deterministas ya no se reintentan tres veces para nada.
+
+**Las reviews de un cliente eran invisibles en el otro.** El escritorio archiva
+la review de `feat/x` bajo `feat/x`; la TUI y el móvil bajo la base, con
+`feat/x` en `branch`. La búsqueda solo miraba la clave. Ahora una review es de
+la rama bajo la que está archivada y de la que nombra; y el daemon estampa rama
+y commit al guardar, que los clientes sin git no los mandaban.
+
+**El historial de la TUI, con el componente equivocado.** Se pintaba con el rail
+izquierdo: chevron a la derecha, apuntando al revés, y el clic comprobándose
+contra el borde izquierdo del cajón. Las filas no respondían al ratón. Ahora
+comparte marco con el cajón, se clica, y la copia que vivía en el rail — cuyo
+Enter ignoraba el `run_id` — ya no está.
+
+**El informe del escritorio tapaba el diff.** Era un overlay `position:
+absolute` sobre el panel. Ahora es la tercera columna, al lado del código contra
+el que se lee.
+
+**El escritorio no llegaba a las reviews que guardaba.** Con el `run_id`, una
+rama conserva todas; la TUI y el móvil tenían su lista y el escritorio solo
+podía reabrir la más nueva, sin poder borrar ninguna — con los dos comandos
+Rust que hacían falta ya escritos y sin llamante. Ahora la tercera columna
+cambia entre el informe y el historial del proyecto (no de la rama, para que
+salgan también las del móvil y el terminal).
+
+**Los tests que faltaban.** El dispatch IPC `review.*`, los handlers HTTP de
+checkpoints y el cliente del móvil no tenían ninguno. El del móvil no es un
+módulo: se carga como lo carga el navegador (`tests/web/reviewClient.test.ts`),
+y ese patrón sirve para el resto de `remote/web`.
+
+## 6. La lógica compartida, hasta donde llega — resuelto
+
+El motor, los prompts, el contexto de lexis, el diff, las ramas, los PRs y el
+almacén de checkpoints son una sola implementación en `bento-review` que usan
+el escritorio, el móvil y la CLI. Lo que no lo era:
+
+**El documento de la review lo montaba cada uno.** `report::build_document`
+existe para que los tres escriban el mismo markdown y solo lo llamaba el
+escritorio: la TUI concatenaba trozos con sus propios títulos y el móvil se
+quedaba con la síntesis pelada, tirando el informe de cada agente. Ahora lo
+monta el motor y lo manda como un evento más (`[DOCUMENT]`, por el mismo
+formato de siempre), acabe la review como acabe: si un agente falla, el fallo
+entra en el documento como una sección suya y sale igual, que es justo cuando
+más falta hace. `Done` sigue saliendo solo si terminó — anunciar un final que no
+hubo era peor —, así que los clientes archivan al recibir el documento y no al
+recibir el final. El escritorio sigue montando el suyo porque guarda checkpoint
+tras cada etapa y necesita documento a mitad de review; recibe el evento igual
+para que no acabe pegado al informe como texto. El `bento review` de una tirada
+lo ignora: ese modo escribe a una tubería según llega.
+
+Con las etapas partidas en dos funciones el motor se pasaba del presupuesto de
+tamaño, así que la planificación (cuántas etapas, quién analiza, quién verifica)
+vive en `plan.rs`.
+
+**Los archivos vistos del escritorio vivían en el navegador.** La TUI y el móvil
+los guardan en `bento_review::viewed`. Ahora los tres van al mismo sitio; lo que
+hubiera en el navegador se mueve una vez y se borra de allí, para que desmarcar
+un archivo no lo resucite.
+
+**El commit guardado con cada review no lo miraba nadie.** Al reabrirla en el
+escritorio se compara con el de la rama y se avisa si ya no coinciden. Y el
+listado compartido marca cada entrada como desfasada o no, con un `rev-parse`
+por rama y no por review, así que lo dicen los tres clientes igual.
+
+**El escritorio no llegaba a las reviews que guardaba** (ver el punto 5) y
+tenía dos comandos sin llamante de cuando orquestaba la review por su cuenta,
+`review_lexis_context` y `review_validate_finding_path`. Fuera.
+
+Lo que se queda repetido a propósito: el markdown se pinta en tres sitios
+(`renderMarkdown` en TS, `mdToHtml` en el cliente web, texto plano en la TUI).
+Son dos runtimes JS sin build compartido y una TUI que no pinta HTML.
+
 ---
+
+## Lo que sigue abierto
+
+Poco, y nada de la review:
+
+| qué | por qué importa |
+|---|---|
+| `memory_transcript_list` / `memory_transcript_create` sin llamante | el panel de memoria enseña los trabajos de resumen, no las transcripciones que el hook guarda |
+| `memory_source_import` sin llamante | el panel escanea fuentes y nunca importa de ellas |
+| `agent_socket_path` sin llamante | muerto, en ningún sitio del repo |
+| `review-pr.js` y `review-ask.js` sin tests | el arnés para cargar el cliente del móvil ya está montado (`tests/web/reviewClient.test.ts`) |
+
+`workspace_reset` y los trece `db_docker_*` parecen muertos y no lo están: el
+primero lo usa `scripts/e2e-tasks.mjs`, y los otros se construyen a mano en
+`dbEngine.ts` (`db_docker_${engine}_${op}`).
+
+`src/core` está al 97,6 % de líneas, con el umbral en 85.
 
 ## Decidido que no
 
@@ -127,6 +245,15 @@ Aprendidas a base de que pasaran:
 - **Un `git bisect` miente si el entorno cambia entre ramas.** El OOM de arriba
   señaló un commit inocente: el worktree de prueba no tenía `target/` y la
   carpeta de trabajo sí.
+- **El cliente web del daemon se puede testear.** No es un módulo: se lee el
+  fichero y se evalúa como lo evalúa el navegador, con `let` top-level cambiado
+  a `var` para poder leer su estado desde el test. Está en
+  `tests/web/reviewClient.test.ts`.
+- **Escribirle a un hijo que ya se fue tumba el proceso.** El resumidor le pasa
+  el prompt al agente por stdin; si el agente no está o cerró su entrada, ese
+  `write` da EPIPE, y sin un `on('error')` no se cae el resumen sino el hook
+  entero. Salió como un fallo intermitente de la suite completa que no se
+  reproducía corriendo el fichero solo.
 - **CI corre en Windows.** `process.kill(-pid)` (grupo de procesos) y los
   scripts `.sh` en tests no valen allí. El patrón del repo es una función pura
   que recibe la plataforma, como `crossPlatformProcess.mjs`.
