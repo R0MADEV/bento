@@ -54,8 +54,11 @@ impl ReviewState {
             KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('w') => { self.toggle_drawer(); false }
-            // The saved reviews, in the drawer where their reports live.
-            KeyCode::Char('l') => { self.toggle_history(); false }
+            // The saved reviews, in the drawer where their reports live. The
+            // rail had a second copy of this list whose Enter ignored the run
+            // id, so it opened the newest review of that branch rather than
+            // the one you picked.
+            KeyCode::Char('h') => { self.toggle_history(); false }
             // Asking about the report used to belong to the full-screen view;
             // the report is in the drawer now, so the key lives here.
             KeyCode::Char('a') if !self.running && !self.output.is_empty() => {
@@ -74,7 +77,6 @@ impl ReviewState {
             KeyCode::Char('o') => { self.request_sidebar_tab(SidebarTab::Projects); false }
             KeyCode::Char('b') => { self.request_sidebar_tab(SidebarTab::Branches); false }
             KeyCode::Char('p') => { self.request_sidebar_tab(SidebarTab::Prs); false }
-            KeyCode::Char('h') => { self.request_sidebar_tab(SidebarTab::Checkpoints); false }
             KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') => {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
@@ -92,6 +94,7 @@ impl ReviewState {
                                 }
                             }
                             KeyCode::Enter => self.open_selected_review().await,
+                            KeyCode::Char('d') => self.delete_selected_review().await,
                             _ => {}
                         }
                         false
@@ -162,46 +165,6 @@ impl ReviewState {
                 KeyCode::Enter => {
                     if let Some(pr) = self.prs.get(self.prs_selected).and_then(|p| p.get("number")).and_then(Value::as_u64) {
                         self.load_pr_detail(pr).await;
-                    }
-                    false
-                }
-                _ => false,
-            },
-            SidebarTab::Checkpoints => match code {
-                KeyCode::Up => { self.checkpoints_selected = self.checkpoints_selected.saturating_sub(1); false }
-                KeyCode::Down => {
-                    if self.checkpoints_selected + 1 < self.checkpoints.len() { self.checkpoints_selected += 1; }
-                    false
-                }
-                KeyCode::Enter => {
-                    if let Some(base) = self.checkpoints.get(self.checkpoints_selected).and_then(|c| c.get("base")).and_then(Value::as_str) {
-                        let base = base.to_string();
-                        let data = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_get", "cwd": self.cwd, "base": base })).await;
-                        if let Ok(cp) = data {
-                            self.base = base;
-                            self.output = cp.get("content").and_then(Value::as_str).unwrap_or_default().to_string();
-                            self.session_id = cp.get("session_id").and_then(Value::as_str).map(String::from);
-                            self.session_agent = cp.get("session_agent").and_then(Value::as_str).map(String::from);
-                            self.scroll = 0;
-                            self.running = false;
-                            self.last_progress.clear();
-                            self.view = ReviewView::Browse;
-                            self.open_drawer();
-                        }
-                    }
-                    false
-                }
-                KeyCode::Char('d') => {
-                    if let Some(entry) = self.checkpoints.get(self.checkpoints_selected).cloned() {
-                        let Some(base) = entry.get("base").and_then(Value::as_str).map(String::from) else { return false };
-                        // Naming the run is what makes the delete reach the
-                        // file; by base alone it missed and the entry returned.
-                        let run = entry.get("run_id").and_then(Value::as_str).map(String::from);
-                        let _ = crate::request_data(json!({ "id": "1", "cmd": "review.checkpoint_delete", "cwd": self.cwd, "base": base, "run_id": run })).await;
-                        self.checkpoints = self.fetch_list(json!({ "id": "1", "cmd": "review.checkpoints", "cwd": self.cwd })).await;
-                        if self.checkpoints_selected >= self.checkpoints.len() {
-                            self.checkpoints_selected = self.checkpoints.len().saturating_sub(1);
-                        }
                     }
                     false
                 }

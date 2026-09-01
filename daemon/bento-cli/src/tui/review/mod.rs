@@ -1,5 +1,5 @@
 //! Review tab: a persistent split-pane browser (sidebar: base/agent/compare
-//! controls + proyectos/ramas/PRs/historial tabs; main: changed files with
+//! controls + proyectos/ramas/PRs tabs; main: changed files with
 //! per-file "reviewed" tracking) mirroring the desktop app's Tech Review
 //! panel, plus full-screen drill-downs for a file's diff, a PR's
 //! diff/comments, and a running/loaded review — all via the same
@@ -43,7 +43,6 @@ pub(super) enum SidebarTab {
     Projects,
     Branches,
     Prs,
-    Checkpoints,
 }
 
 #[derive(Clone, Copy)]
@@ -308,7 +307,6 @@ impl ReviewState {
             SidebarTab::Projects => json!({ "id": "1", "cmd": "projects.list" }),
             SidebarTab::Branches => json!({ "id": "1", "cmd": "review.branches", "cwd": cwd }),
             SidebarTab::Prs => json!({ "id": "1", "cmd": "review.prs", "cwd": cwd }),
-            SidebarTab::Checkpoints => json!({ "id": "1", "cmd": "review.checkpoints", "cwd": cwd }),
         };
         let wrap: fn(Vec<Value>) -> Fetched = match &tab {
             SidebarTab::Projects => Fetched::Projects,
@@ -316,7 +314,6 @@ impl ReviewState {
                 Fetched::Branches(rows.into_iter().filter_map(|v| v.as_str().map(String::from)).collect())
             },
             SidebarTab::Prs => Fetched::Prs,
-            SidebarTab::Checkpoints => Fetched::Checkpoints,
         };
         self.sidebar_tab = tab;
         self.focus = Focus::Sidebar;
@@ -457,7 +454,18 @@ impl ReviewState {
             SidebarTab::Projects => self.projects.len(),
             SidebarTab::Branches => self.visible_branches().len(),
             SidebarTab::Prs => self.prs.len(),
-            SidebarTab::Checkpoints => self.checkpoints.len(),
+        }
+    }
+
+    /// How many saved reviews the history is showing, for the same reason.
+    pub(in crate::tui) fn checkpoints_len(&self) -> usize {
+        self.checkpoints.len()
+    }
+
+    /// Picks one of them, ignoring a row that is not there.
+    pub(in crate::tui) fn select_checkpoint(&mut self, index: usize) {
+        if index < self.checkpoints.len() {
+            self.checkpoints_selected = index;
         }
     }
 
@@ -471,7 +479,6 @@ impl ReviewState {
             SidebarTab::Projects => self.projects_selected = index,
             SidebarTab::Branches => self.branches_selected = index,
             SidebarTab::Prs => self.prs_selected = index,
-            SidebarTab::Checkpoints => self.checkpoints_selected = index,
         }
     }
 

@@ -7,8 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use serde_json::Value;
 
-use super::format::short_path;
-use super::super::drawer::Drawer;
+use super::format::{checkpoint_row, short_path};
+use super::super::drawer::{Drawer, History};
 use super::super::pane::Pane;
 use super::super::sidebar::{ItemStatus, Sidebar, SidebarItem};
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
@@ -47,27 +47,14 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
     draw_file_browser(frame, review, cols[1]);
     if drawer_width > 0 && review.showing_history {
         // The history lives where the report does, so picking which review to
-        // read is one column, not a trip to the rail.
-        let rows: Vec<SidebarItem> = review
-            .checkpoints
-            .iter()
-            .map(|cp| {
-                let resumable = cp.get("resumable").and_then(Value::as_bool).unwrap_or(false);
-                let base = cp.get("base").and_then(Value::as_str).unwrap_or("");
-                SidebarItem {
-                    label: cp.get("saved_at").and_then(Value::as_str).unwrap_or("?").to_string(),
-                    detail: match resumable {
-                        true => format!("{base} · se puede seguir"),
-                        false => base.to_string(),
-                    },
-                    status: match resumable { true => ItemStatus::Active, false => ItemStatus::Idle },
-                }
-            })
-            .collect();
-        Sidebar {
+        // read is one column, not a trip to the rail. Drawn with the drawer's
+        // own chrome, not the rail's: this column folds to the right.
+        let rows: Vec<String> = review.checkpoints.iter().map(checkpoint_row).collect();
+        History {
+            rows: &rows,
+            selected: review.checkpoints_selected,
             focused: matches!(review.focus, Focus::Drawer),
             empty_message: "Sin reviews guardadas.",
-            ..Sidebar::new("REVIEWS", &rows, review.checkpoints_selected)
         }
         .render(frame, cols[2]);
     } else if drawer_width > 0 {
@@ -188,16 +175,6 @@ pub(crate) fn sidebar_rows(review: &ReviewState) -> (String, Vec<SidebarItem>, u
             }).collect(),
             review.prs_selected,
         ),
-        SidebarTab::Checkpoints => (
-            format!("[h] HISTORIAL ({})", review.checkpoints.len()),
-            review.checkpoints.iter().map(|c| {
-                row(
-                    c.get("base").and_then(Value::as_str).unwrap_or("?").to_string(),
-                    c.get("saved_at").and_then(Value::as_str).unwrap_or("").to_string(),
-                )
-            }).collect(),
-            review.checkpoints_selected,
-        ),
     }
 }
 
@@ -242,7 +219,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
             "ARCHIVOS {}/{} · {} revisados",
             visible.len(), review.files.len(), review.reviewed.len(),
         ),
-        hint: "f filtro · espacio marcar · Enter diff · r correr · l reviews · → informe",
+        hint: "f filtro · espacio marcar · Enter diff · r correr · h reviews · → informe",
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);

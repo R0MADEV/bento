@@ -328,6 +328,20 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                         dragging_drawer = false;
                                         continue;
                                     }
+                                    // Listing past reviews, its rows are the
+                                    // point of the column: reachable by mouse
+                                    // like every other list in the panel.
+                                    MouseEventKind::Down(MouseButton::Left)
+                                        if review.showing_history && mouse.column > drawer_left =>
+                                    {
+                                        if let Some(index) = drawer::history_row_at(
+                                            mouse.row,
+                                            review.checkpoints_len(),
+                                        ) {
+                                            review.select_checkpoint(index);
+                                        }
+                                        continue;
+                                    }
                                     _ => {}
                                 }
                             }

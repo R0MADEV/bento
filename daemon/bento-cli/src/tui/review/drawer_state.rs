@@ -58,6 +58,27 @@ impl ReviewState {
         self.showing_history = false;
     }
 
+    /// Deletes the review selected in the history and asks for the list
+    /// again. Naming the run is what makes the delete reach the file; by base
+    /// alone it missed and the entry came back on the next listing.
+    pub(super) async fn delete_selected_review(&mut self) {
+        let Some(entry) = self.checkpoints.get(self.checkpoints_selected).cloned() else { return };
+        let Some(base) = entry.get("base").and_then(Value::as_str).map(String::from) else { return };
+        let run = entry.get("run_id").and_then(Value::as_str).map(String::from);
+        let body = json!({
+            "id": "1", "cmd": "review.checkpoint_delete",
+            "cwd": self.cwd, "base": base, "run_id": run,
+        });
+        if crate::request_data(body).await.is_err() {
+            self.status = "no se pudo borrar esa review".into();
+            return;
+        }
+        self.checkpoints.remove(self.checkpoints_selected);
+        if self.checkpoints_selected >= self.checkpoints.len() {
+            self.checkpoints_selected = self.checkpoints.len().saturating_sub(1);
+        }
+    }
+
     /// Swaps the drawer between the report and the list of past reviews,
     /// asking for the list off the loop when it is opened.
     pub(super) fn toggle_history(&mut self) {

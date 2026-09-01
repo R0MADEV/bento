@@ -159,6 +159,34 @@ pub(super) fn short_path(path: &str, max: usize) -> String {
     }
 }
 
+/// One saved review, in a line: when it was made, what it is about, and
+/// whether it can still be asked a follow-up. The branch reviewed wins over
+/// the ref it is filed under — that is what the reader recognises.
+pub(super) fn checkpoint_row(cp: &Value) -> String {
+    let about = cp
+        .get("branch")
+        .and_then(Value::as_str)
+        .filter(|branch| !branch.is_empty())
+        .or_else(|| cp.get("base").and_then(Value::as_str))
+        .unwrap_or("?");
+    let when = cp.get("saved_at").and_then(Value::as_str).unwrap_or("");
+    let resumable = cp.get("resumable").and_then(Value::as_bool).unwrap_or(false);
+    let mark = if resumable { " · se puede seguir" } else { "" };
+    format!("{} · {about}{mark}", short_timestamp(when))
+}
+
+/// `2026-08-27T09:00:00Z` → `27/08 09:00`. Only the shape the store writes is
+/// shortened; anything else is left alone rather than sliced into nonsense.
+fn short_timestamp(saved_at: &str) -> String {
+    let Some((date, time)) = saved_at.split_once('T') else { return saved_at.to_string() };
+    let parts: Vec<&str> = date.split('-').collect();
+    let [_, month, day] = parts[..] else { return saved_at.to_string() };
+    match time.len() >= 5 {
+        true => format!("{day}/{month} {}", &time[..5]),
+        false => saved_at.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +305,29 @@ mod tests {
         // GitHub deja `line` a null cuando la línea comentada ya no existe.
         let data = json!([{ "user": { "login": "ada" }, "path": "src/a.rs", "line": null, "body": "x" }]);
         assert!(format_review_comments(&data).contains("`src/a.rs`"));
+    }
+
+    #[test]
+    fn a_saved_review_reads_as_when_and_what_it_was_about() {
+        let cp = serde_json::json!({
+            "base": "main", "branch": "feat/x",
+            "saved_at": "2026-08-27T09:05:00Z", "resumable": true,
+        });
+
+        assert_eq!(checkpoint_row(&cp), "27/08 09:05 · feat/x · se puede seguir");
+    }
+
+    #[test]
+    fn a_review_of_the_working_tree_falls_back_to_the_ref_it_is_filed_under() {
+        let cp = serde_json::json!({ "base": "main", "saved_at": "2026-08-27T09:05:00.123Z" });
+
+        assert_eq!(checkpoint_row(&cp), "27/08 09:05 · main");
+    }
+
+    #[test]
+    fn a_timestamp_that_is_not_the_stores_shape_is_left_alone() {
+        let cp = serde_json::json!({ "base": "main", "saved_at": "hace un rato" });
+
+        assert_eq!(checkpoint_row(&cp), "hace un rato · main");
     }
 }

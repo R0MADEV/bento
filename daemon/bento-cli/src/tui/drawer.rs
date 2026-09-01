@@ -8,7 +8,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 
 /// Default width: wide enough for a report's prose without starving the pane
 /// it sits next to.
@@ -30,26 +30,34 @@ pub(crate) struct Drawer<'a> {
     pub(crate) focused: bool,
 }
 
+/// The drawer's frame: chevron on its left edge, title next to it. Shared with
+/// the history, which is the same column showing a different thing — drawn
+/// with the rail's component instead, its chevron came out on the far right,
+/// pointing the wrong way and nowhere near where the click is tested for.
+fn chrome(title: &str, focused: bool, collapsed: bool) -> Block<'static> {
+    // Folded, the chevron points back the way it opens; open, it points at
+    // the edge it will fold into. Mirrored from the rail's, which folds
+    // the other way.
+    let chevron = if collapsed { "‹" } else { "›" };
+    let heading = match collapsed {
+        true => Line::from(Span::styled(chevron, DIM)),
+        false => Line::from(vec![
+            Span::styled(chevron, DIM),
+            Span::raw(" "),
+            Span::styled(title.to_string(), Style::new().add_modifier(Modifier::BOLD)),
+        ]),
+    };
+    Block::default()
+        .title(heading)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if focused { FOCUSED } else { DIM })
+}
+
 impl Drawer<'_> {
     pub(crate) fn render(&self, frame: &mut ratatui::Frame, area: Rect) {
         let collapsed = area.width <= COLLAPSED_WIDTH;
-        // Folded, the chevron points back the way it opens; open, it points at
-        // the edge it will fold into. Mirrored from the rail's, which folds
-        // the other way.
-        let chevron = if collapsed { "‹" } else { "›" };
-        let heading = match collapsed {
-            true => Line::from(Span::styled(chevron, DIM)),
-            false => Line::from(vec![
-                Span::styled(chevron, DIM),
-                Span::raw(" "),
-                Span::styled(self.title, Style::new().add_modifier(Modifier::BOLD)),
-            ]),
-        };
-        let block = Block::default()
-            .title(heading)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(if self.focused { FOCUSED } else { DIM });
+        let block = chrome(self.title, self.focused, collapsed);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         if collapsed {
@@ -64,6 +72,52 @@ impl Drawer<'_> {
             frame.render_widget(Paragraph::new(Line::from(Span::styled(self.hint, DIM))), rows[1]);
         }
     }
+}
+
+/// The list of saved reviews, in the drawer, because that is where the report
+/// it opens will land.
+pub(crate) struct History<'a> {
+    /// One preformatted line per saved review, newest first.
+    pub(crate) rows: &'a [String],
+    pub(crate) selected: usize,
+    pub(crate) focused: bool,
+    pub(crate) empty_message: &'a str,
+}
+
+impl History<'_> {
+    pub(crate) fn render(&self, frame: &mut ratatui::Frame, area: Rect) {
+        let collapsed = area.width <= COLLAPSED_WIDTH;
+        let block = chrome("REVIEWS", self.focused, collapsed);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if collapsed {
+            return;
+        }
+        if self.rows.is_empty() {
+            frame.render_widget(Paragraph::new(Line::from(Span::styled(self.empty_message, DIM))), inner);
+            return;
+        }
+        let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(inner);
+        let items: Vec<ListItem> = self.rows.iter().map(|row| ListItem::new(row.clone())).collect();
+        let mut state = ListState::default().with_selected(Some(self.selected));
+        frame.render_stateful_widget(
+            List::new(items).highlight_style(Style::new().fg(Color::Indexed(4)).add_modifier(Modifier::BOLD)),
+            rows[0],
+            &mut state,
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("↑/↓ · Enter abrir · d borrar · h volver", DIM))),
+            rows[1],
+        );
+    }
+}
+
+/// Which saved review a click landed on, counting from the first row under the
+/// border. `None` past the last one: a click on empty space picks nothing
+/// rather than the row that happens to be last.
+pub(crate) fn history_row_at(row: u16, rows: usize) -> Option<usize> {
+    let index = usize::from(row.checked_sub(1)?);
+    (index < rows).then_some(index)
 }
 
 /// Whether a click grabbed the drawer's left edge, with a column of slack on
@@ -179,5 +233,52 @@ mod tests {
     fn the_chevron_is_clickable_on_the_top_row_only() {
         assert!(grabs_chevron(40, 0, 40));
         assert!(!grabs_chevron(40, 3, 40), "eso ya es el cuerpo");
+    }
+
+    #[test]
+    fn the_history_wears_the_drawer_chrome_so_its_chevron_is_where_the_click_looks() {
+        let rows = vec!["27/08 09:00 · feat/x".to_string()];
+        let history = History { rows: &rows, selected: 0, focused: false, empty_message: "Sin reviews." };
+        let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
+        terminal.draw(|frame| history.render(frame, frame.area())).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        // The chevron of a right-hand column points at the edge it folds into,
+        // and sits on its left — where `grabs_chevron` tests for it. Rendered
+        // with the rail's component it came out mirrored, at the far right.
+        assert_eq!(buffer[(1, 0)].symbol(), "›");
+        let screen: String = (0..6)
+            .map(|y| (0..30).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("REVIEWS"));
+        assert!(screen.contains("feat/x"));
+    }
+
+    #[test]
+    fn an_empty_history_says_so_instead_of_showing_an_empty_box() {
+        let history = History { rows: &[], selected: 0, focused: false, empty_message: "Sin reviews." };
+        let mut terminal = Terminal::new(TestBackend::new(30, 6)).unwrap();
+        terminal.draw(|frame| history.render(frame, frame.area())).unwrap();
+        let screen: String = (0..6)
+            .map(|y| (0..30).map(|x| terminal.backend().buffer()[(x, y)].symbol().to_string()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("Sin reviews."));
+    }
+
+    #[test]
+    fn a_click_picks_the_row_it_landed_on() {
+        // Row 0 is the border and the title; the list starts under it.
+        assert_eq!(history_row_at(1, 3), Some(0));
+        assert_eq!(history_row_at(3, 3), Some(2));
+    }
+
+    #[test]
+    fn a_click_below_the_last_review_picks_none_of_them() {
+        assert_eq!(history_row_at(4, 3), None);
+        assert_eq!(history_row_at(0, 3), None, "eso es el borde");
+        assert_eq!(history_row_at(1, 0), None, "no hay ninguna");
     }
 }
