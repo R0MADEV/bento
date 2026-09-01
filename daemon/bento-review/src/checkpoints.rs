@@ -94,16 +94,51 @@ pub fn list_checkpoint_metas(cwd: &str) -> Vec<CheckpointMeta> {
             run_id: cp.run_id,
         })
         .collect();
-    metas.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
+    metas.sort_by(|a, b| time_key(&b.saved_at).cmp(&time_key(&a.saved_at)));
     metas
 }
 
-/// The full saved checkpoint for `(cwd, base)`, if any — shared by the HTTP
-/// get handler and the daemon's IPC socket (`review.checkpoint_get`).
+/// A `saved_at` that sorts by time rather than by byte. The daemon stamps
+/// whole seconds (`…:51Z`), the phone milliseconds (`…:51.123Z`), and as plain
+/// text the millisecond one loses because `.` sits below `Z` — so the older
+/// review came out on top.
+fn time_key(saved_at: &str) -> String {
+    match saved_at.strip_suffix('Z') {
+        Some(rest) if !rest.contains('.') => format!("{rest}.000Z"),
+        _ => saved_at.to_string(),
+    }
+}
+
+/// The newest checkpoint for `(cwd, base)` in `dir`, whichever run it belongs
+/// to. Every file has to be read: the name is a hash of the run, so the run
+/// ids of a branch cannot be worked out from the directory listing.
+fn latest_in(dir: &std::path::Path, cwd: &str, base: &str) -> Option<Checkpoint> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
+        .filter(|cp| cp.cwd == cwd && cp.base == base)
+        .max_by_key(|cp| time_key(&cp.saved_at))
+}
+
+/// The saved checkpoint to reopen for `(cwd, base)`: the one filed under that
+/// pair, or else the most recent run of it.
+///
+/// The fallback is the whole point. Every client now stamps a run id, so
+/// nothing is written to the plain `cwd:base` path any more — and the desktop,
+/// which has no history view to pick a run from, could no longer find a single
+/// review it had saved.
 pub fn get_checkpoint(cwd: &str, base: &str) -> Option<Checkpoint> {
     let path = checkpoint_path(cwd, base)?;
-    let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str::<Checkpoint>(&raw).ok()
+    if let Some(cp) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
+    {
+        return Some(cp);
+    }
+    latest_in(&checkpoints_dir()?, cwd, base)
 }
 
 /// One specific run, for a client picking from the history rather than
@@ -245,5 +280,80 @@ mod run_tests {
         let legacy = checkpoint_path_for(&checkpoint("main", None, "2026-08-27T09:00:00Z"));
 
         assert_eq!(legacy, checkpoint_path("/repo", "main"));
+    }
+}
+
+#[cfg(test)]
+mod reopen_tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("bento-reopen-{name}-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(dir: &std::path::Path, cwd: &str, base: &str, run: Option<&str>, saved: &str) {
+        let cp = Checkpoint {
+            cwd: cwd.into(),
+            base: base.into(),
+            content: format!("report {saved}"),
+            saved_at: saved.into(),
+            session_id: None,
+            session_agent: None,
+            branch: None,
+            commit: None,
+            run_id: run.map(String::from),
+        };
+        let key = match run {
+            Some(run) => format!("{base}:{run}"),
+            None => base.to_string(),
+        };
+        let path = crate::store::entry_path(dir, cwd, &key);
+        std::fs::write(path, serde_json::to_string(&cp).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn reopening_finds_the_newest_run_when_there_is_no_legacy_file() {
+        // The desktop always sends a run id, so it never writes the legacy
+        // path — and asking for `(cwd, base)` found nothing at all. It saved
+        // reviews it could not reopen.
+        let dir = temp_dir("newest");
+        write(&dir, "/repo", "main", Some("run-1"), "2026-08-27T09:00:00Z");
+        write(&dir, "/repo", "main", Some("run-2"), "2026-08-27T11:00:00Z");
+        write(&dir, "/repo", "main", Some("run-0"), "2026-08-27T08:00:00Z");
+
+        let found = latest_in(&dir, "/repo", "main").expect("some run of that branch");
+        assert_eq!(found.run_id.as_deref(), Some("run-2"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn milliseconds_and_whole_seconds_still_order_by_time() {
+        // The daemon stamps whole seconds, the phone milliseconds. Compared as
+        // plain text `…:20Z` beats `…:20.500Z`, because `.` sorts below `Z` —
+        // so the older one won.
+        let dir = temp_dir("mixed");
+        write(&dir, "/repo", "main", Some("segundos"), "2026-08-27T09:00:20Z");
+        write(&dir, "/repo", "main", Some("milis"), "2026-08-27T09:00:20.500Z");
+
+        assert_eq!(latest_in(&dir, "/repo", "main").unwrap().run_id.as_deref(), Some("milis"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn another_project_or_another_branch_is_not_picked_up() {
+        let dir = temp_dir("scope");
+        write(&dir, "/repo", "main", Some("mine"), "2026-08-27T09:00:00Z");
+        write(&dir, "/otro", "main", Some("otro-repo"), "2026-08-27T23:00:00Z");
+        write(&dir, "/repo", "feat/x", Some("otra-rama"), "2026-08-27T23:00:00Z");
+
+        assert_eq!(latest_in(&dir, "/repo", "main").unwrap().run_id.as_deref(), Some("mine"));
+        assert!(latest_in(&dir, "/repo", "sin-reviews").is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
