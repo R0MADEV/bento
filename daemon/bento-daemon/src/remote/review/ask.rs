@@ -58,7 +58,11 @@ pub(crate) async fn ask(cwd: &str, base: &str, agent: &str, question: &str, tx: 
             El desarrollador tiene la siguiente pregunta. Responde en español, de forma concisa y técnica.\n\n\
             Pregunta: {question}"
         );
-        bento_review::agents::run_collecting(agent, cwd, &prompt, None, true, &tx).await;
+        // The reason goes down the same channel as the answer: without it a
+        // failed ask showed nothing at all and read as the agent ignoring you.
+        if let Err(reason) = bento_review::agents::run_collecting(agent, cwd, &prompt, None, true, &tx).await {
+            let _ = tx.send(format!("\n\n**No se pudo responder:** {reason}\n")).await;
+        }
     }
     let _ = tx.send("[DONE]".into()).await;
 }
@@ -119,7 +123,9 @@ async fn resume_agent(
     question: &str,
     tx: &tokio::sync::mpsc::Sender<String>,
 ) {
-    bento_review::agents::run_collecting(agent, cwd, question, Some(session_id), true, tx).await;
+    if let Err(reason) = bento_review::agents::run_collecting(agent, cwd, question, Some(session_id), true, tx).await {
+        let _ = tx.send(format!("\n\n**No se pudo responder:** {reason}\n")).await;
+    }
 }
 
 fn bad_request(msg: &str) -> Response {

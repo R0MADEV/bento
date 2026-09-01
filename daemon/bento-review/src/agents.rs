@@ -369,6 +369,11 @@ pub fn is_retryable(message: &str) -> bool {
 /// the TUI's review being stopped, an HTTP client disconnecting — the real
 /// subprocess must die with it, which tokio does NOT do by default. Without
 /// it a cancelled review keeps running, and billing, unseen.
+/// What one agent run produced, or why it produced nothing. The reason is
+/// what tells a rate limit apart from a timeout, and neither of those from an
+/// agent that is not installed — the caller decides whether to retry.
+pub type AgentOutcome = Result<(String, Option<String>), String>;
+
 pub async fn run_collecting(
     agent: &str,
     cwd: &str,
@@ -376,7 +381,7 @@ pub async fn run_collecting(
     session_id: Option<&str>,
     review: bool,
     tx: &tokio::sync::mpsc::Sender<String>,
-) -> Option<(String, Option<String>)> {
+) -> AgentOutcome {
     run_collecting_with_tools(agent, cwd, prompt, session_id, review, tx, &mut |_| {}).await
 }
 
@@ -391,8 +396,8 @@ pub async fn run_collecting_with_tools(
     review: bool,
     tx: &tokio::sync::mpsc::Sender<String>,
     on_tool: &mut (dyn FnMut(String) + Send),
-) -> Option<(String, Option<String>)> {
-    let inv = invocation(agent, prompt, cwd, session_id, review).ok()?;
+) -> AgentOutcome {
+    let inv = invocation(agent, prompt, cwd, session_id, review)?;
     let program = resolve_executable(&inv.program)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or(inv.program);
@@ -409,8 +414,8 @@ pub async fn run_collecting_with_tools(
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .ok()?;
-    let stdout = child.stdout.take()?;
+        .map_err(|e| format!("{agent} no se pudo lanzar: {e}"))?;
+    let stdout = child.stdout.take().ok_or_else(|| format!("{agent} no dio salida"))?;
 
     let mut parser = AgentParser::new(agent);
     let mut collected = String::new();
@@ -422,27 +427,37 @@ pub async fn run_collecting_with_tools(
         let line = match tokio::time::timeout(LINE_TIMEOUT, lines.next_line()).await {
             Ok(Ok(Some(line))) => line,
             Ok(Ok(None)) => break,
-            Ok(Err(_)) | Err(_) => {
+            Ok(Err(e)) => {
                 let _ = child.kill().await;
-                return None;
+                return Err(format!("{agent}: no se pudo leer su salida: {e}"));
+            }
+            Err(_) => {
+                let _ = child.kill().await;
+                return Err(format!("{agent}: timeout esperando su siguiente línea"));
             }
         };
         if line.len() > MAX_LINE {
             let _ = child.kill().await;
-            return None;
+            return Err(format!("{agent}: una línea de salida pasó de {MAX_LINE} caracteres"));
         }
         match parser.parse_line(&line) {
             AgentEvent::Chunk(text) => {
                 collected.push_str(&text);
-                if collected.len() > MAX_OUTPUT || tx.send(text).await.is_err() {
+                if collected.len() > MAX_OUTPUT {
                     let _ = child.kill().await;
-                    return None;
+                    return Err(format!("{agent}: su salida pasó de {MAX_OUTPUT} caracteres"));
+                }
+                if tx.send(text).await.is_err() {
+                    let _ = child.kill().await;
+                    return Err(format!("{agent}: ya no queda nadie leyendo su salida"));
                 }
             }
             AgentEvent::SessionId(id) => session = Some(id),
-            AgentEvent::Error(_) => {
+            // Whatever the agent says as it fails is exactly what tells a
+            // rate limit apart from a session that was never logged in.
+            AgentEvent::Error(message) => {
                 let _ = child.kill().await;
-                return None;
+                return Err(format!("{agent}: {message}"));
             }
             AgentEvent::ToolUse(tool) => on_tool(tool),
             AgentEvent::Done | AgentEvent::Ignore => {}
@@ -453,7 +468,7 @@ pub async fn run_collecting_with_tools(
     if agent == "opencode" && session.is_none() {
         session = find_opencode_session(cwd, launched_ms).await;
     }
-    Some((collected, session))
+    Ok((collected, session))
 }
 
 /// opencode doesn't always report its session id on stdout, so fall back to

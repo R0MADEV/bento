@@ -17,6 +17,9 @@ use crate::worktree::{prepare_branch_context, release_managed_context_path, set_
 /// single call is asked to hold more than it can actually reason about.
 const BATCH_BUDGET: usize = 60_000;
 
+/// A beat between a failed attempt and its retry.
+const RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(3);
+
 const SYNTHESIS_TAIL: &str = "Escribe el informe final directamente, sin preámbulo. Empieza con:\n\n**Veredicto:**";
 
 /// What the caller learns while a review runs.
@@ -116,16 +119,17 @@ pub fn parse_agents(raw: &str) -> Vec<String> {
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// How the engine runs one agent. Injected so the orchestration can be
-/// tested without spawning anything.
+/// tested without spawning anything. The failure carries its reason: that is
+/// what says whether trying again is worth anything.
 pub trait AgentRunner: Send + Sync {
-    fn run(&self, agent: &str, cwd: &str, prompt: &str, tx: Sender<String>) -> BoxFuture<'_, Option<(String, Option<String>)>>;
+    fn run(&self, agent: &str, cwd: &str, prompt: &str, tx: Sender<String>) -> BoxFuture<'_, crate::agents::AgentOutcome>;
 }
 
 /// The real one: the agent CLIs, in read-only review mode.
 pub struct Agents;
 
 impl AgentRunner for Agents {
-    fn run(&self, agent: &str, cwd: &str, prompt: &str, tx: Sender<String>) -> BoxFuture<'_, Option<(String, Option<String>)>> {
+    fn run(&self, agent: &str, cwd: &str, prompt: &str, tx: Sender<String>) -> BoxFuture<'_, crate::agents::AgentOutcome> {
         let (agent, cwd, prompt) = (agent.to_string(), cwd.to_string(), prompt.to_string());
         Box::pin(async move {
             let tools = tx.clone();
@@ -373,13 +377,28 @@ async fn run_planned_cancellable(
         let prompt = build_review_prompt(&input);
         async move {
             let (text_tx, collecting) = collect_text(tx);
-            // Un fallo pasajero (límite de peticiones, red) se reintenta una vez:
-            // perder veinte minutos de review por un 429 es absurdo. Un timeout no
-            // se reintenta — ver `agents::is_retryable`.
-            let mut attempt = cancel.guard(runner.run(&stage.agent, &request.cwd, &prompt, text_tx.clone())).await.flatten();
-            if attempt.is_none() && !cancel.is_cancelled() {
+            // A passing failure (rate limit, network) is worth one more go:
+            // losing twenty minutes of review to a 429 is absurd. A timeout is
+            // not — it says the work did not fit the window, so trying again
+            // just burns another one. Which is which is `agents::is_retryable`,
+            // and answering it needs the reason, not just "it failed".
+            let mut attempt = cancel
+                .guard(runner.run(&stage.agent, &request.cwd, &prompt, text_tx.clone()))
+                .await
+                .unwrap_or(Err("review cancelada".into()));
+            let worth_retrying = attempt
+                .as_ref()
+                .err()
+                .is_some_and(|reason| crate::agents::is_retryable(reason));
+            if worth_retrying && !cancel.is_cancelled() {
                 let _ = tx.send(ReviewEvent::Tool(format!("reintentando {}", stage.agent))).await;
-                attempt = cancel.guard(runner.run(&stage.agent, &request.cwd, &prompt, text_tx.clone())).await.flatten();
+                // A beat before trying again: hitting a rate limit twice in the
+                // same instant is one attempt, not two.
+                tokio::time::sleep(RETRY_PAUSE).await;
+                attempt = cancel
+                    .guard(runner.run(&stage.agent, &request.cwd, &prompt, text_tx.clone()))
+                    .await
+                    .unwrap_or(Err("review cancelada".into()));
             }
             drop(text_tx);
             (attempt, collecting.await.unwrap_or_default())
@@ -395,7 +414,7 @@ async fn run_planned_cancellable(
     for (i, (stage, (attempt, streamed))) in plan.stages.iter().zip(attempts).enumerate() {
         let _ = tx.send(ReviewEvent::Batch { index: i + 1, total, label: stage.label.clone() }).await;
         match attempt {
-            Some((report, sid)) => {
+            Ok((report, sid)) => {
                 if let Some(id) = sid {
                     session = Some((stage.agent.clone(), id));
                 }
@@ -407,8 +426,11 @@ async fn run_planned_cancellable(
                 let _ = tx.send(ReviewEvent::Content(shown)).await;
                 reports.push((stage.label.clone(), report));
             }
-            None => {
-                let _ = tx.send(ReviewEvent::Error(format!("{} no encontrado o falló", stage.agent))).await;
+            // The agent's own words, not "not found or failed": that told you
+            // nothing about whether the binary was missing, the session was
+            // never logged in, or it answered with rubbish.
+            Err(reason) => {
+                let _ = tx.send(ReviewEvent::Error(reason)).await;
                 return;
             }
         }
@@ -470,10 +492,10 @@ async fn run_planned_cancellable(
             let _ = tx.send(ReviewEvent::Content(streamed)).await;
         }
         match attempt {
-            Some((_, Some(id))) => session = Some((agent, id)),
-            Some(_) => {}
-            None => {
-                let _ = tx.send(ReviewEvent::Error("síntesis falló".into())).await;
+            Ok((_, Some(id))) => session = Some((agent, id)),
+            Ok(_) => {}
+            Err(reason) => {
+                let _ = tx.send(ReviewEvent::Error(format!("la síntesis falló: {reason}"))).await;
                 return;
             }
         }
@@ -501,7 +523,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    type AgentResult = Option<(String, Option<String>)>;
+    type AgentResult = crate::agents::AgentOutcome;
 
     // ── plan_stages: qué se le manda a cada agente ────────────────────────────
 
@@ -554,7 +576,7 @@ mod tests {
             self.calls.lock().unwrap().push(format!("{agent}:{prompt}"));
             let next = self.reports.lock().unwrap().remove(0);
             Box::pin(async move {
-                if let Some((text, _)) = next.as_ref() {
+                if let Ok((text, _)) = next.as_ref() {
                     let _ = tx.send(text.clone()).await;
                 }
                 next
@@ -569,9 +591,9 @@ mod tests {
     async fn each_stages_text_arrives_before_the_next_stage_is_announced() {
         let runner = FakeRunner {
             reports: Mutex::new(vec![
-                Some(("informe de uno".into(), None)),
-                Some(("informe de dos".into(), None)),
-                Some(("la sintesis".into(), None)),
+                Ok(("informe de uno".into(), None)),
+                Ok(("informe de dos".into(), None)),
+                Ok(("la sintesis".into(), None)),
             ]),
             calls: Mutex::new(Vec::new()),
         };
@@ -617,9 +639,9 @@ mod tests {
     async fn three_agents_analyse_and_the_last_one_verifies_them() {
         let runner = FakeRunner {
             reports: Mutex::new(vec![
-                Some(("analisis uno".into(), None)),
-                Some(("analisis dos".into(), None)),
-                Some(("verificacion".into(), None)),
+                Ok(("analisis uno".into(), None)),
+                Ok(("analisis dos".into(), None)),
+                Ok(("verificacion".into(), None)),
             ]),
             calls: Mutex::new(Vec::new()),
         };
@@ -651,7 +673,7 @@ mod tests {
                 peak.fetch_max(now, SeqCst);
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 in_flight.fetch_sub(1, SeqCst);
-                Some(("informe".to_string(), None))
+                Ok(("informe".to_string(), None))
             })
         }
     }
@@ -766,7 +788,7 @@ mod tests {
                 let path = self.0.clone();
                 Box::pin(async move {
                     std::fs::write(path.join("uno.txt"), "editado a mitad").unwrap();
-                    Some(("informe".to_string(), None))
+                    Ok(("informe".to_string(), None))
                 })
             }
         }
@@ -857,7 +879,7 @@ mod tests {
                 Box::pin(async move {
                     started.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    Some(("informe".to_string(), None))
+                    Ok(("informe".to_string(), None))
                 })
             }
         }
@@ -916,7 +938,13 @@ mod tests {
     }
 
     fn report(text: &str, session: Option<&str>) -> AgentResult {
-        Some((text.to_string(), session.map(String::from)))
+        Ok((text.to_string(), session.map(String::from)))
+    }
+
+    /// A run that failed, and why — which is what decides whether it is tried
+    /// again.
+    fn failed(reason: &str) -> AgentResult {
+        Err(reason.to_string())
     }
 
     #[tokio::test]
@@ -953,7 +981,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_stage_is_retried_once_before_giving_up() {
         let runner = FakeRunner::default();
-        *runner.reports.lock().unwrap() = vec![None, report("a la segunda", None)];
+        *runner.reports.lock().unwrap() = vec![failed("rate limit exceeded"), report("a la segunda", None)];
         let (events, runner) = collect("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()], runner).await;
         assert_eq!(runner.calls.lock().unwrap().len(), 2, "reintenta la misma etapa");
         assert!(events.iter().any(|e| matches!(e, ReviewEvent::Content(t) if t == "a la segunda")));
@@ -961,9 +989,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_timeout_is_not_retried() {
+        // Un timeout dice que el trabajo no cabía en la ventana: repetirlo
+        // quema otra igual. Al migrar al motor se perdió la distinción y se
+        // reintentaba cualquier fallo.
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![failed("agent timeout"), report("nunca", None)];
+        let (events, runner) = collect("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()], runner).await;
+        assert_eq!(runner.calls.lock().unwrap().len(), 1, "un timeout no se reintenta");
+        assert!(!events.iter().any(|e| matches!(e, ReviewEvent::Content(t) if t == "nunca")));
+    }
+
+    #[tokio::test]
+    async fn a_deterministic_failure_is_not_retried_either() {
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![failed("invalid api key"), report("nunca", None)];
+        let (_, runner) = collect("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()], runner).await;
+        assert_eq!(runner.calls.lock().unwrap().len(), 1, "una clave mala no mejora repitiéndola");
+    }
+
+    #[tokio::test]
+    async fn the_agents_own_reason_reaches_the_error() {
+        // "claude no encontrado o falló" no dice si faltaba el binario, si no
+        // habías iniciado sesión o si devolvió basura.
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![failed("not logged in, run /login")];
+        let (events, _) = collect("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()], runner).await;
+        assert!(
+            events.iter().any(|e| matches!(e, ReviewEvent::Error(m) if m.contains("not logged in"))),
+            "el motivo del agente tiene que llegar: {events:?}",
+        );
+    }
+
+    #[tokio::test]
     async fn a_failing_agent_reports_the_error_and_stops() {
         let runner = FakeRunner::default();
-        *runner.reports.lock().unwrap() = vec![None, None];
+        *runner.reports.lock().unwrap() = vec![failed("claude: rate limit"), failed("claude: rate limit")];
         let (events, runner) = collect("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()], runner).await;
         assert!(events.iter().any(|e| matches!(e, ReviewEvent::Error(m) if m.contains("claude"))));
         assert!(!events.iter().any(|e| matches!(e, ReviewEvent::Done)), "no se anuncia un final que no hubo");
@@ -973,7 +1034,7 @@ mod tests {
     #[tokio::test]
     async fn a_failing_synthesis_keeps_the_reports_already_streamed() {
         let runner = FakeRunner::default();
-        *runner.reports.lock().unwrap() = vec![report("A", None), report("B", None), None];
+        *runner.reports.lock().unwrap() = vec![report("A", None), report("B", None), failed("opencode: se cayó")];
         let (events, _) = collect("d\n", &["claude".into(), "codex".into(), "opencode".into()], runner).await;
         assert!(events.iter().any(|e| matches!(e, ReviewEvent::Content(t) if t == "A")));
         assert!(events.iter().any(|e| matches!(e, ReviewEvent::Error(_))));
