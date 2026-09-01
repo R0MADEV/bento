@@ -49,6 +49,11 @@ pub struct CheckpointMeta {
     /// session. Listing an entry that cannot be resumed as if it could is
     /// worse than saying so.
     pub resumable: bool,
+    /// Whether the ref moved on since the review was made. The commit is
+    /// stamped on every checkpoint for exactly this; comparing it here means
+    /// the three clients say it the same way instead of each deciding.
+    #[serde(default)]
+    pub stale: bool,
 }
 
 fn checkpoints_dir() -> Option<PathBuf> {
@@ -80,22 +85,47 @@ pub fn list_checkpoint_metas(cwd: &str) -> Vec<CheckpointMeta> {
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
+    // Un `rev-parse` por rama, no por review: un proyecto con veinte reviews
+    // de la misma rama las resuelve todas con una llamada.
+    let mut heads: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
     let mut metas: Vec<CheckpointMeta> = entries
         .flatten()
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
         .filter_map(|raw| serde_json::from_str::<Checkpoint>(&raw).ok())
         .filter(|cp| cp.cwd == cwd)
-        .map(|cp| CheckpointMeta {
-            base: cp.base,
-            saved_at: cp.saved_at,
-            branch: cp.branch,
-            resumable: cp.session_id.is_some(),
-            run_id: cp.run_id,
+        .map(|cp| {
+            let reference = cp.branch.clone().unwrap_or_else(|| cp.base.clone());
+            let head = heads
+                .entry(reference.clone())
+                .or_insert_with(|| head_of(cwd, &reference))
+                .clone();
+            CheckpointMeta {
+                stale: is_stale(cp.commit.as_deref(), head.as_deref()),
+                base: cp.base,
+                saved_at: cp.saved_at,
+                branch: cp.branch,
+                resumable: cp.session_id.is_some(),
+                run_id: cp.run_id,
+            }
         })
         .collect();
     metas.sort_by(|a, b| time_key(&b.saved_at).cmp(&time_key(&a.saved_at)));
     metas
+}
+
+/// Dónde está ahora una rama, o `None` si no se puede saber.
+fn head_of(cwd: &str, reference: &str) -> Option<String> {
+    crate::vcs::git_cmd(cwd, &["rev-parse", reference])
+        .ok()
+        .map(|sha| sha.trim().to_string())
+        .filter(|sha| !sha.is_empty())
+}
+
+/// Si el código se movió desde que se hizo la review. Sin los dos shas no se
+/// afirma nada: no haber podido leer uno no es prueba de que algo cambiara.
+fn is_stale(saved: Option<&str>, head: Option<&str>) -> bool {
+    matches!((saved, head), (Some(saved), Some(head)) if saved != head)
 }
 
 /// A `saved_at` that sorts by time rather than by byte. The daemon stamps

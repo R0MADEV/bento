@@ -62,8 +62,11 @@ async function renderReviewHistory(dir){
     chip.style.cursor='pointer';
     const info=document.createElement('div');
     info.className='rv-hist-chip-info';
-    info.innerHTML='<span class="rv-hist-chip-branch">'+esc(item.base)+'</span>'
-      +(item.saved_at?'<span class="rv-hist-chip-date">'+esc(fmtRelDate(item.saved_at))+'</span>':'');
+    // "desfasada" = la rama se movió desde que se hizo; el informe habla de
+    // otro código. Lo decide el daemon, igual para los tres clientes.
+    info.innerHTML='<span class="rv-hist-chip-branch">'+esc(item.branch||item.base)+'</span>'
+      +(item.saved_at?'<span class="rv-hist-chip-date">'+esc(fmtRelDate(item.saved_at))+'</span>':'')
+      +(item.stale?'<span class="rv-hist-chip-stale" title="La rama se movió desde esta review">desfasada</span>':'');
     info.onclick=()=>{
       document.getElementById('rv-base').value=item.base;
       // This run, not the branch's newest: several reviews of one branch are

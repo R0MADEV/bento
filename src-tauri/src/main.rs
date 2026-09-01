@@ -119,8 +119,6 @@ fn main() {
             review::review_branch_context_check,
             review::review_branch_context_update,
             review::review_branch_context_release,
-            review::review_lexis_context,
-            review::review_validate_finding_path,
             review::review_checkpoint_save,
             review::review_checkpoint_get,
             review::review_checkpoints_list,

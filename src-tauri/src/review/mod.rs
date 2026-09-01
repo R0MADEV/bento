@@ -5,14 +5,12 @@
 pub mod run;
 mod worktree;
 
-use std::collections::HashSet;
 use std::path::PathBuf;
-use tokio::process::Command as AsyncCommand;
 
 pub(crate) use worktree::{is_managed_review_worktree, set_review_worktree_writable};
 use worktree::ReviewBranchContext;
 pub(crate) use worktree::release_managed_context_path;
-use worktree::{normalize_review_path, prepare_branch_context, validate_finding_path};
+use worktree::prepare_branch_context;
 
 #[tauri::command]
 pub fn review_checkpoint_save(
@@ -157,44 +155,4 @@ pub async fn review_branch_context_release(
     tokio::task::spawn_blocking(move || release_managed_context_path(&PathBuf::from(path)))
         .await
         .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-pub async fn review_validate_finding_path(
-    repo_path: String,
-    relative: String,
-    deleted_files: Vec<String>,
-) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let allowed_deleted = deleted_files.into_iter().filter_map(|path| normalize_review_path(&path).ok()).collect::<HashSet<_>>();
-        validate_finding_path(
-            &PathBuf::from(repo_path)
-                .canonicalize()
-                .map_err(|e| e.to_string())?,
-            &relative,
-            &allowed_deleted,
-        )
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub async fn review_lexis_context(path: String, question: String) -> Result<String, String> {
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        AsyncCommand::new("lexis")
-            .args([
-                "ask", "--path", &path, "--lang", "en", "--depth", "2", "--topk", "5", &question,
-            ])
-            .output(),
-    )
-    .await
-    .map_err(|_| "lexis context timeout".to_string())?
-    .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Ok(String::new());
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(text.chars().take(12_000).collect())
 }

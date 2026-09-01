@@ -18,6 +18,8 @@
 .rv-hist-chip-info{display:flex;flex-direction:column;gap:2px;min-width:0}
 .rv-hist-chip-branch{font-weight:600;color:var(--fg);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
 .rv-hist-chip-date{color:var(--dim);font-size:11px}
+/* La rama se movió desde esta review. */
+.rv-hist-chip-stale{color:var(--gold,#e0af68);font-size:10px}
 .rv-hist-chip-del{background:none;border:none;color:var(--dim);font-size:16px;line-height:1;padding:0 2px;cursor:pointer;flex-shrink:0;opacity:.6}
 .rv-hist-chip-del:hover{opacity:1;color:var(--fg)}
 .rv-agent-row{display:flex;align-items:center;gap:8px}

@@ -65,3 +65,15 @@ describe('el historial de reviews del escritorio', () => {
     expect(list.textContent).toContain('No saved review')
   })
 })
+
+describe('una review de código que ya se movió', () => {
+  it('lo dice en su fila', () => {
+    setup()
+    expect(formatCheckpointRow(meta({ stale: true }))).toContain('out of date')
+  })
+
+  it('y no lo dice cuando sigue al día', () => {
+    setup()
+    expect(formatCheckpointRow(meta({ stale: false }))).not.toContain('out of date')
+  })
+})

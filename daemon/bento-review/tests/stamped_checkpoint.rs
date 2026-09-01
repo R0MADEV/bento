@@ -90,3 +90,55 @@ fn what_the_client_already_knew_is_not_overwritten() {
         Some("0123456789abcdef0123456789abcdef01234567")
     );
 }
+
+#[test]
+fn the_listing_says_which_reviews_the_branch_already_left_behind() {
+    let _ = home();
+    let repo = repo_with_a_commit("stale-listing");
+    let cwd = repo.to_string_lossy().to_string();
+    let first = git(&repo, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let mut al_dia = checkpoint(&cwd);
+    al_dia.run_id = Some("run-al-dia".into());
+    al_dia.commit = Some(first.clone());
+    save_checkpoint(&al_dia).expect("guardar");
+
+    let mut vieja = checkpoint(&cwd);
+    vieja.run_id = Some("run-vieja".into());
+    vieja.commit = Some("0123456789abcdef0123456789abcdef01234567".into());
+    save_checkpoint(&vieja).expect("guardar");
+
+    let metas = bento_review::checkpoints::list_checkpoint_metas(&cwd);
+    let stale = |run: &str| {
+        metas.iter().find(|m| m.run_id.as_deref() == Some(run)).expect("la entrada").stale
+    };
+
+    assert!(!stale("run-al-dia"), "esa es del commit que hay");
+    assert!(stale("run-vieja"), "y esa de uno que la rama dejó atrás");
+}
+
+#[test]
+fn a_review_without_a_commit_is_not_called_stale() {
+    let _ = home();
+    let repo = repo_with_a_commit("stale-unknown");
+    let cwd = repo.to_string_lossy().to_string();
+
+    let mut sin_sha = checkpoint(&cwd);
+    sin_sha.run_id = Some("run-sin-sha".into());
+    save_checkpoint(&sin_sha).expect("guardar");
+
+    // `save_checkpoint` estampa el sha que falta, así que para probar esto hay
+    // que dejar el fichero sin él a mano.
+    let path = bento_review::checkpoints::checkpoint_path(&cwd, "main:run-sin-sha").expect("ruta");
+    let raw = std::fs::read_to_string(&path).expect("leer");
+    let sin: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    let mut sin = sin.as_object().cloned().expect("objeto");
+    sin.remove("commit");
+    std::fs::write(&path, serde_json::to_string(&sin).unwrap()).expect("escribir");
+
+    let metas = bento_review::checkpoints::list_checkpoint_metas(&cwd);
+    let entry = metas.iter().find(|m| m.run_id.as_deref() == Some("run-sin-sha")).expect("la entrada");
+
+    // No saber contra qué se hizo no es prueba de que algo cambiara.
+    assert!(!entry.stale);
+}

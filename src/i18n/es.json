@@ -131,6 +131,7 @@
     "filterPlaceholder": "Filtrar…",
     "noSavedReview": "Todavía no hay ninguna review guardada para esta rama",
     "staleReview": "Esta review es del commit {commit}, y la rama ya no está ahí.",
+    "staleShort": "desfasada",
     "history": "Historial",
     "historyResumable": "Se puede seguir preguntando",
     "historyDelete": "Borrar esta review",

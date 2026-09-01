@@ -8,6 +8,8 @@ export interface CheckpointMeta {
   run_id?: string | null
   /** Whether it can still be asked a follow-up: the verifier's session. */
   resumable: boolean
+  /** Whether the branch moved on since the review was made. */
+  stale?: boolean
 }
 
 interface HistoryHandlers {
@@ -29,7 +31,10 @@ function shortTimestamp(savedAt: string): string {
 // reader recognises, and the two differ between clients.
 export function formatCheckpointRow(meta: CheckpointMeta): string {
   const about = meta.branch || meta.base
-  return `${shortTimestamp(meta.saved_at)} · ${about}`
+  // Lo de "desfasada" lo decide el daemon comparando el commit guardado con
+  // el de la rama, para que los tres clientes lo digan igual.
+  const stale = meta.stale ? ` · ${reviewT('staleShort')}` : ''
+  return `${shortTimestamp(meta.saved_at)} · ${about}${stale}`
 }
 
 // The list of past reviews, for the drawer that shows the report they open.

@@ -172,7 +172,12 @@ pub(super) fn checkpoint_row(cp: &Value) -> String {
     let when = cp.get("saved_at").and_then(Value::as_str).unwrap_or("");
     let resumable = cp.get("resumable").and_then(Value::as_bool).unwrap_or(false);
     let mark = if resumable { " · se puede seguir" } else { "" };
-    format!("{} · {about}{mark}", short_timestamp(when))
+    // La rama se movió desde que se hizo: el informe habla de otro código.
+    let stale = match cp.get("stale").and_then(Value::as_bool).unwrap_or(false) {
+        true => " · desfasada",
+        false => "",
+    };
+    format!("{} · {about}{mark}{stale}", short_timestamp(when))
 }
 
 /// `2026-08-27T09:00:00Z` → `27/08 09:00`. Only the shape the store writes is
@@ -305,6 +310,15 @@ mod tests {
         // GitHub deja `line` a null cuando la línea comentada ya no existe.
         let data = json!([{ "user": { "login": "ada" }, "path": "src/a.rs", "line": null, "body": "x" }]);
         assert!(format_review_comments(&data).contains("`src/a.rs`"));
+    }
+
+    #[test]
+    fn a_review_of_code_that_moved_says_so() {
+        let cp = serde_json::json!({
+            "base": "main", "branch": "feat/x", "saved_at": "2026-08-27T09:05:00Z", "stale": true,
+        });
+
+        assert!(checkpoint_row(&cp).contains("desfasada"));
     }
 
     #[test]

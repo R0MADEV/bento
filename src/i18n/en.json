@@ -131,6 +131,7 @@
     "filterPlaceholder": "Filter…",
     "noSavedReview": "No saved review for this branch yet",
     "staleReview": "This review was made at commit {commit}; the branch has moved on.",
+    "staleShort": "out of date",
     "history": "History",
     "historyResumable": "Can still be asked a follow-up",
     "historyDelete": "Delete this review",
