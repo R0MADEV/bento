@@ -82,6 +82,11 @@ const run = (command, args, cwd, prompt) => new Promise(resolve => {
   running.add(stop)
 
   child.stdout.on('data', chunk => { output += chunk })
+  // El prompt se le escribe por stdin, y un agente que ya no está (no
+  // instalado, caído al arrancar, con su entrada cerrada) deja esa escritura
+  // con EPIPE. Sin nadie escuchándolo, ese error tumba el proceso entero: el
+  // hook de fin de sesión, no solo el resumen que no se pudo pedir.
+  child.stdin.on('error', () => finish(''))
   child.stdin.end(prompt)
   const timeout = setTimeout(stop, Math.max(10_000, Number(process.env.BENTO_MEMORY_SUMMARY_TIMEOUT_MS) || 180_000))
   child.on('close', code => finish(code === 0 ? output : ''))

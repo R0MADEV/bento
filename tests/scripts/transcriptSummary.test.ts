@@ -90,6 +90,15 @@ unix('el resumidor, con agentes de verdad', () => {
     expect(stillRunning(bin)).toBe(0)
   }, 30_000)
 
+  it('sobrevive a un agente que se va antes de leer el prompt', async () => {
+    // El prompt se le escribe por stdin. Un agente que ya no está (se cayó al
+    // arrancar, o cerró su entrada) deja esa escritura con EPIPE, y sin nadie
+    // escuchándolo el error tumbaba el proceso entero — no este resumen.
+    useAgent(agent('cortado', `process.stdin.destroy()\nprocess.exit(0)\n`))
+
+    await expect(generateTranscriptSummary('claude', dir, 'x'.repeat(200_000))).resolves.toBe('')
+  }, 30_000)
+
   it('mata a los agentes en marcha cuando se le pide salir', async () => {
     const bin = agent('lento', STUBBORN)
     useAgent(bin)
