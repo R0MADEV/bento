@@ -21,8 +21,12 @@ fn daemon_addr() -> String {
 /// The connection of every review in flight. Dropping it closes the socket,
 /// which is what the daemon reads as "cancel this run" — the agents are
 /// killed rather than left running for a stream nobody reads.
-fn running() -> &'static Mutex<HashMap<String, tokio::task::JoinHandle<()>>> {
-    static RUNNING: OnceLock<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>> = OnceLock::new();
+///
+/// Holds the `AbortHandle` rather than the task itself: the task is awaited by
+/// whoever emits `done`, so cancelling cuts the connection without taking that
+/// last event down with it.
+fn running() -> &'static Mutex<HashMap<String, tokio::task::AbortHandle>> {
+    static RUNNING: OnceLock<Mutex<HashMap<String, tokio::task::AbortHandle>>> = OnceLock::new();
     RUNNING.get_or_init(Default::default)
 }
 
@@ -56,23 +60,31 @@ pub async fn review_run(
         "branch": branch, "context": context, "agents": agents.join(","),
     });
 
-    let task = {
+    // Cancelling aborts this and only this: reading from the daemon.
+    let streaming = {
         let (app, id) = (app.clone(), id.clone());
         tokio::spawn(async move {
             if let Err(error) = stream_review(&app, &id, request).await {
                 emit(&app, &id, "error", json!({ "message": error }));
             }
-            // Always emitted, however the run ended: the frontend waits on it
-            // to render what it has.
-            emit(&app, &id, "done", json!({}));
-            if let Ok(mut runs) = running().lock() {
-                runs.remove(&id);
-            }
         })
     };
     if let Ok(mut runs) = running().lock() {
-        runs.insert(id, task);
+        runs.insert(id.clone(), streaming.abort_handle());
     }
+
+    // `done` waits on that task from outside it, because it has to go out
+    // however the run ended — cancelled included. It used to live inside the
+    // task `review_cancel` aborts, so Stop never emitted it: the panel waited
+    // for it forever, with a dead button and the worktree it had prepared
+    // never released.
+    tokio::spawn(async move {
+        let _ = streaming.await;
+        emit(&app, &id, "done", json!({}));
+        if let Ok(mut runs) = running().lock() {
+            runs.remove(&id);
+        }
+    });
     Ok(())
 }
 

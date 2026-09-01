@@ -340,6 +340,12 @@ describe('stop button', () => {
     // `review_cancel` is what reaches the agents; stopping only the listener
     // left them running and billing.
     await vi.waitFor(() => expect(mocks.invoke.mock.calls.some(([cmd]) => cmd === 'review_cancel')).toBe(true))
+    // Cancelling emits `done` too: that is what `engineRun.done` waits on to
+    // free the button and release the worktree. This line is not test dressing
+    // — the backend once did not emit it on cancel and the panel hung, which
+    // this test hid by emitting it itself. Remove it and you test something
+    // else.
     emitReview(currentRunId(), 'done', {})
+    await vi.waitFor(() => expect(h.dom.aiReviewBtn.disabled).toBe(false))
   })
 })
