@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { icon } from '../../ui/helpers/icons'
 import { reviewT } from './i18n'
 import { t as i18nT } from '../../i18n'
+import { redact } from '../../core/ai/agentClient'
 import { agentLabel, type AgentType } from '../../core/ai/config'
 import type { MultiAgentReviewRun } from '../../core/ai/techReview'
 import { buildReviewDocument, buildReviewOverview, resolveReviewFollowUpSession, type FollowUpSession } from './reviewDocument'
@@ -251,6 +252,15 @@ export function buildReviewAiRun(dom: ReviewAiRunDom, state: ReviewAiRunState): 
           // the findings that were already in.
           onRun: (_run, runs) => { lastBatchRuns = runs; persistReviewCheckpoint() },
           onStatus: text => { progressStatus.textContent = text },
+          // What the agent looked at is both the progress line and the
+          // evidence the follow-up chat is given. Redacted, because a tool
+          // call can carry a token in an argument, and deduped, because an
+          // agent reads the same file many times.
+          onTool: tool => {
+            const safeTool = redact(tool).slice(0, 1_000)
+            if (!reviewEvidence.includes(safeTool)) reviewEvidence.push(safeTool)
+            progressStatus.textContent = safeTool
+          },
           onChunk: text => {
             progressStream.textContent = ((progressStream.textContent ?? '') + text).slice(-40_000)
             progressStream.scrollTop = progressStream.scrollHeight

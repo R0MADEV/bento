@@ -17,6 +17,8 @@ export interface ReviewEngineCallbacks {
   onRun: (run: MultiAgentReviewRun, runs: MultiAgentReviewRun[]) => void
   /** Progress line for the drawer's status. */
   onStatus: (text: string) => void
+  /** A tool the agent just used: progress to show, and evidence to keep. */
+  onTool: (tool: string) => void
   /** Agent output as it arrives, for the progress stream. */
   onChunk: (text: string) => void
 }
@@ -115,7 +117,7 @@ export function runReviewOnEngine(
           collector.append(text)
           callbacks.onChunk(text)
         }),
-        on<{ tool: string }>('tool', ({ tool }) => callbacks.onStatus(tool)),
+        on<{ tool: string }>('tool', ({ tool }) => callbacks.onTool(tool)),
         on<{ sessionId: string }>('session', ({ sessionId }) => collector.setSession(sessionId)),
         on<{ message: string }>('error', ({ message }) => collector.fail(message, stageAgent)),
         on<Record<string, never>>('done', finish),

@@ -136,10 +136,11 @@ function currentRunId(): string {
 
 /// Stands in for the Rust command: replays a whole review as the engine would
 /// report it, one stage per agent plus the verification when there are two.
-function engineRun(reports: string[], options: { fail?: string } = {}) {
+function engineRun(reports: string[], options: { fail?: string; tools?: string[] } = {}) {
   return async () => {
     await Promise.resolve()
     const id = currentRunId()
+    for (const tool of options.tools ?? []) emitReview(id, 'tool', { tool })
     reports.forEach((report, index) => {
       emitReview(id, 'batch', { index: index + 1, total: reports.length, label: `Agente ${index + 1}/${reports.length}` })
       emitReview(id, 'chunk', { text: report })
@@ -225,6 +226,30 @@ describe('review context form', () => {
 })
 
 describe('happy path', () => {
+  it('keeps what the agent looked at as evidence for the follow-up chat', async () => {
+    // Every tool the agent used is what backs the report. It used to be
+    // collected and handed to the chat; moving to the shared engine dropped it
+    // on the floor — the list was still built, still passed, and never filled.
+    setup()
+    const h = makeHarness()
+    mockInvoke({
+      review_branch_context_prepare: { path: '/wt', commit: 'abc1234', managed: false },
+      review_snapshot: 'snap1',
+    })
+    const runEngine = engineRun(['All good.'], { tools: ['Read src/a.ts', 'Grep TODO', 'Read src/a.ts'] })
+    const loader = makeLoader(h)
+    await loader.handleAiReviewClick()
+    h.dom.reviewDrawerBody.querySelector<HTMLButtonElement>('.review-context-run')!.click()
+    await vi.waitFor(() => expect(listeners.size).toBeGreaterThan(0))
+    await runEngine()
+    await vi.waitFor(() => expect(mocks.askAi).toHaveBeenCalled())
+
+    const evidence = mocks.askAi.mock.calls[0].at(-1) as string[]
+    expect(evidence).toContain('Read src/a.ts')
+    expect(evidence).toContain('Grep TODO')
+    expect(evidence).toHaveLength(2)
+  })
+
   it('runs a single-agent review end to end and shows the result', async () => {
     setup()
     const h = makeHarness()
