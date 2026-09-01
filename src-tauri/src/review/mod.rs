@@ -44,8 +44,18 @@ pub fn review_checkpoint_save(
 }
 
 #[tauri::command]
-pub fn review_checkpoint_get(cwd: String, base: String) -> Option<bento_review::checkpoints::Checkpoint> {
-    bento_review::checkpoints::get_checkpoint(&cwd, &base)
+/// The review to reopen: the run named, or the newest of that branch when the
+/// caller does not name one — which is all this app could ask for before it
+/// could list them.
+pub fn review_checkpoint_get(
+    cwd: String,
+    base: String,
+    run_id: Option<String>,
+) -> Option<bento_review::checkpoints::Checkpoint> {
+    match run_id {
+        Some(run) => bento_review::checkpoints::get_run(&cwd, &base, &run),
+        None => bento_review::checkpoints::get_checkpoint(&cwd, &base),
+    }
 }
 
 #[tauri::command]

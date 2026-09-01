@@ -2,11 +2,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { icon } from '../../ui/helpers/icons'
 import { reviewT } from './i18n'
-import { renderMarkdown } from '../../core/notes/renderMarkdown'
-import type { AgentType } from '../../core/ai/config'
-import { loadReviewCheckpoint } from './reviewCheckpoints'
-import { askAi } from '../../ui/askAi'
-import { techReviewConversationKey, techReviewCheckpointKey } from '../../core/ai/chatHistory'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { buildReviewAgentControls } from './ReviewAgentControls'
 import { buildReviewCommentBubble, buildReviewLineForm } from './ReviewCommentBubble'
@@ -18,6 +13,7 @@ import { showReviewCiPopover } from './reviewCiPopover'
 import { buildReviewDiffView } from './ReviewDiffView'
 import { buildReviewDataLoader } from './reviewDataLoader'
 import { buildReviewAiRun } from './reviewAiRun'
+import { buildReviewDrawerActions } from './reviewDrawerActions'
 import type { GhComment, GhPr, SidebarMode, FileTypeFilter, ReviewChangeFile } from './reviewFormat'
 import {
   describeReviewPrState,
@@ -168,7 +164,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
   const diffView = document.createElement('div')
   diffView.className = 'review-diff-view'
   const { commentBar, prMetaEl, prBodyEl, discussionEl, commentInput, commentBtn, approveBtn, requestChangesBtn, commentStatus } = buildCommentBar()
-  const { reviewDrawer, reviewDrawerMeta, reviewDrawerBody, reviewDrawerCloseBtn } = buildReviewDrawer()
+  const { reviewDrawer, reviewDrawerMeta, reviewDrawerBody, reviewDrawerCloseBtn, reviewHistoryBtn } = buildReviewDrawer()
   const { emptyState, emptyOpenBtn } = buildEmptyState()
 
   detail.append(diffSearchInput, filterBar, diffView, commentBar)
@@ -192,41 +188,13 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     }
   }
 
-  const showReviewDrawer = (): void => {
-    reviewDrawer.classList.remove('hidden')
-    reviewDrawer.classList.add('visible')
-  }
-
-  const hideReviewDrawer = (): void => {
-    reviewDrawer.classList.remove('visible')
-    reviewDrawer.classList.add('hidden')
-  }
-
+  const { showReviewDrawer, hideReviewDrawer, openSavedReview, showReviewHistory } = buildReviewDrawerActions(
+    { reviewDrawer, reviewDrawerMeta, reviewDrawerBody, diffView },
+    { getRepoPath: () => repoPath, getSelectedBranch: () => selectedBranch },
+  )
   reviewDrawerCloseBtn.addEventListener('click', hideReviewDrawer)
-
-  // Re-open the last saved review for the selected branch. Findings are
-  // checkpointed after each stage, so a crash or reload never loses them —
-  // this restores the document (and re-wires its follow-up chat).
-  const openSavedReview = async (): Promise<void> => {
-    if (!repoPath || !selectedBranch) return
-    const checkpoint = await loadReviewCheckpoint(repoPath, selectedBranch, localStorage.getItem(techReviewCheckpointKey(repoPath, selectedBranch)))
-    if (!checkpoint) {
-      const note = Object.assign(document.createElement('div'), { className: 'review-error', textContent: reviewT('noSavedReview') })
-      diffView.prepend(note)
-      note.scrollIntoView({ block: 'start', behavior: 'smooth' })
-      return
-    }
-    reviewDrawerMeta.textContent = `${checkpoint.branch} · ${checkpoint.commit.slice(0, 7)}`
-    reviewDrawerBody.replaceChildren(Object.assign(document.createElement('div'), {
-      className: 'review-drawer-result',
-      innerHTML: renderMarkdown(checkpoint.content),
-    }))
-    showReviewDrawer()
-    const projectName = repoPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? repoPath
-    const followUpAgent = (checkpoint.sessionAgent ?? 'claude') as AgentType
-    askAi('', false, undefined, undefined, { role: 'assistant', content: checkpoint.content }, repoPath, followUpAgent, techReviewConversationKey(repoPath, selectedBranch), `${projectName} · ${checkpoint.branch}`, checkpoint.branch, checkpoint.commit, checkpoint.sessionId ?? undefined, checkpoint.sessionAgent ?? undefined, [])
-  }
-  reviewLastBtn.addEventListener('click', () => { openSavedReview() })
+  reviewLastBtn.addEventListener('click', () => { void openSavedReview() })
+  reviewHistoryBtn.addEventListener('click', () => { void showReviewHistory() })
 
   const showCommentStatus = (text: string, isError = false): void => {
     commentStatus.textContent = text

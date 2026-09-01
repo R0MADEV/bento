@@ -1,5 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(async () => null as unknown) }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 import { makeLocalStorage } from '../../helpers/localStorage'
 import { createReviewPanel, describeReviewNoBranchChanges, describeReviewPrState, filterReviewPrs } from '../../../src/panels/review/ReviewPanel'
 
@@ -56,6 +59,28 @@ describe('ReviewPanel', () => {
     // point at, which is what you read them against.
     expect(drawer?.parentElement?.className).toBe('review-body')
     expect(drawer?.previousElementSibling?.className).toBe('review-detail')
+  })
+
+  it('lists every saved review of the project, not only the last one', async () => {
+    setup()
+    const metas = [
+      { base: 'main', saved_at: '2026-08-27T09:00:00Z', branch: 'feat/x', run_id: 'run-1', resumable: true },
+      { base: 'main', saved_at: '2026-08-27T10:00:00Z', branch: 'feat/y', run_id: 'run-2', resumable: false },
+    ]
+    // Los demás comandos del panel devuelven listas: el panel arranca cargando
+    // ramas en cuanto tiene repo.
+    mocks.invoke.mockImplementation(async (cmd: string) => (cmd === 'review_checkpoints_list' ? metas : []))
+    const { element } = createReviewPanel('/repo')
+
+    element.querySelector<HTMLButtonElement>('.review-history-btn')!.click()
+    await vi.waitFor(() =>
+      expect(element.querySelectorAll('.review-history-row')).toHaveLength(2))
+
+    // Every client stamps a run id now, so a branch keeps every review. This
+    // app saved them and could reach none but the newest.
+    const rows = element.querySelectorAll('.review-history-open')
+    expect(rows[0]?.textContent).toContain('feat/x')
+    expect(rows[1]?.textContent).toContain('feat/y')
   })
 
   it('comment bar hidden until PR is loaded', () => {

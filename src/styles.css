@@ -4479,6 +4479,15 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
   cursor: pointer;
 }
 .review-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+/* La lista de reviews guardadas, en la misma columna que el informe que abre. */
+.review-history { display: flex; flex-direction: column; gap: 2px; }
+.review-history-empty { font-size: 11px; color: var(--fg-dim); padding: 6px 2px; }
+.review-history-row { display: flex; align-items: center; gap: 6px; }
+.review-history-open { flex: 1; min-width: 0; text-align: left; border: none; background: none; color: var(--fg-dim); font-size: 11px; padding: 5px 6px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-history-open:hover { background: var(--surface-hover, rgba(255,255,255,.05)); color: var(--fg); }
+.review-history-resumable { flex: none; font-size: 10px; color: var(--accent); }
+.review-history-delete { flex: none; border: none; background: none; color: var(--fg-dim); font-size: 10px; padding: 4px 6px; cursor: pointer; }
+.review-history-delete:hover { color: #f7768e; }
 .review-drawer-result { font-size: 11px; line-height: 1.55; color: var(--fg); }
 .review-ai-progress { margin: 8px 10px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 6px; background: var(--surface); }
 .review-ai-progress-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }

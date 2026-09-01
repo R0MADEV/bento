@@ -45,6 +45,7 @@ export function buildReviewDrawer(): {
   reviewDrawerMeta: HTMLElement
   reviewDrawerBody: HTMLElement
   reviewDrawerCloseBtn: HTMLButtonElement
+  reviewHistoryBtn: HTMLButtonElement
 } {
   const reviewDrawer = document.createElement('aside')
   reviewDrawer.className = 'review-drawer hidden'
@@ -57,14 +58,15 @@ export function buildReviewDrawer(): {
   reviewDrawerMeta.className = 'review-drawer-meta'
   const reviewDrawerActions = document.createElement('div')
   reviewDrawerActions.className = 'review-drawer-actions'
+  const reviewHistoryBtn = Object.assign(document.createElement('button'), { className: 'review-drawer-btn review-history-btn', textContent: reviewT('history') })
   const reviewDrawerCloseBtn = Object.assign(document.createElement('button'), { className: 'review-drawer-btn', textContent: i18nT('common.close') })
-  reviewDrawerActions.append(reviewDrawerCloseBtn)
+  reviewDrawerActions.append(reviewHistoryBtn, reviewDrawerCloseBtn)
   reviewDrawerHeader.append(reviewDrawerTitle, reviewDrawerMeta, reviewDrawerActions)
   const reviewDrawerBody = document.createElement('div')
   reviewDrawerBody.className = 'review-drawer-body'
   reviewDrawer.append(reviewDrawerHeader, reviewDrawerBody)
 
-  return { reviewDrawer, reviewDrawerMeta, reviewDrawerBody, reviewDrawerCloseBtn }
+  return { reviewDrawer, reviewDrawerMeta, reviewDrawerBody, reviewDrawerCloseBtn, reviewHistoryBtn }
 }
 
 export function buildEmptyState(): { emptyState: HTMLElement; emptyOpenBtn: HTMLButtonElement } {
