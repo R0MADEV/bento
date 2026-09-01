@@ -178,6 +178,9 @@ function startReview(){
       hasDocument=true;
       out.className='rv-md';
       out.innerHTML=mdToHtml(finalBuf);
+      // Se guarda aquí y no en [DONE]: una review que se cayó también trae
+      // documento, y para esa no hay [DONE].
+      saveReviewCheckpoint(dir,base,finalBuf);
       return;
     }
 
@@ -189,7 +192,7 @@ function startReview(){
         out.className='rv-md';
         out.innerHTML=mdToHtml(finalBuf);
       }
-      saveReviewCheckpoint(dir,base,finalBuf);
+      if(!hasDocument)saveReviewCheckpoint(dir,base,finalBuf);
       showChat();
       endReview();
       return;

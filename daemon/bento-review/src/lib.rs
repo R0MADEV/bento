@@ -17,6 +17,7 @@ pub mod reports;
 pub mod snapshot;
 pub mod stream;
 pub mod pr;
+pub mod plan;
 pub mod prompt;
 pub mod rebase;
 pub mod report;

@@ -192,6 +192,9 @@ pub(super) struct ReviewState {
     pr_status: String,
     checkpoints: Vec<Value>,
     checkpoints_selected: usize,
+    /// Si la review en curso ya mandó su documento, para no archivarla dos
+    /// veces ni dejar de archivarla con un daemon que todavía no lo manda.
+    has_document: bool,
 
     file_diff: String,
     file_scroll: u16,
@@ -250,6 +253,7 @@ impl ReviewState {
             pr_status: String::new(),
             checkpoints: Vec::new(),
             checkpoints_selected: 0,
+            has_document: false,
             file_diff: String::new(),
             file_scroll: 0,
         }

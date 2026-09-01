@@ -8,14 +8,9 @@ use std::pin::Pin;
 
 use tokio::sync::mpsc::Sender;
 
-use crate::diff::{batch_file_diffs, split_diff_into_file_diffs};
 use crate::prompt::{build_review_prompt, build_synthesis_prompt, ReviewPromptFile, ReviewPromptInput};
 use crate::vcs::{is_safe_branch, review_diff};
 use crate::worktree::{prepare_branch_context, release_managed_context_path, set_review_worktree_writable};
-
-/// One agent call is at most this much diff. Bigger changes are split so no
-/// single call is asked to hold more than it can actually reason about.
-const BATCH_BUDGET: usize = 60_000;
 
 /// A beat between a failed attempt and its retry.
 const RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(3);
@@ -55,71 +50,7 @@ pub struct ReviewRequest {
     pub agents: Vec<String>,
 }
 
-/// One agent call.
-#[derive(Debug)]
-pub struct Stage {
-    pub agent: String,
-    pub label: String,
-    pub diff: String,
-}
-
-#[derive(Debug)]
-pub struct Plan {
-    pub stages: Vec<Stage>,
-    pub synthesize: bool,
-    /// The agent that reads the others' analyses and writes the final report.
-    /// It does not analyse itself: with three agents that would be a fourth
-    /// call, and an opinion the same agent then grades.
-    pub verifier: Option<String>,
-}
-
-/// Decides the stages for a review: one per agent when several are compared
-/// (each sees the whole change), otherwise one per batch of the diff. Pure,
-/// so the decision is testable without running anything.
-pub fn plan_stages(diff: &str, agents: &[String]) -> Plan {
-    if agents.len() > 1 {
-        // The last one is the verifier and does not analyse; the rest each see
-        // the whole change.
-        let (analysts, verifier) = agents.split_at(agents.len() - 1);
-        let total = analysts.len();
-        let stages = analysts
-            .iter()
-            .enumerate()
-            .map(|(i, agent)| Stage {
-                agent: agent.clone(),
-                label: format!("Agente {}/{} ({})", i + 1, total, agent),
-                diff: diff.to_string(),
-            })
-            .collect();
-        return Plan { stages, synthesize: true, verifier: verifier.first().cloned() };
-    }
-
-    let agent = agents.first().cloned().unwrap_or_else(|| "claude".to_string());
-    let batches = batch_file_diffs(split_diff_into_file_diffs(diff), BATCH_BUDGET);
-    let total = batches.len();
-    let stages = batches
-        .into_iter()
-        .enumerate()
-        .map(|(i, batch)| Stage {
-            agent: agent.clone(),
-            label: format!("Batch {}/{}", i + 1, total),
-            diff: batch,
-        })
-        .collect();
-    Plan { stages, synthesize: total > 1, verifier: None }
-}
-
-/// Only the three agents the app knows how to drive, never client input
-/// verbatim.
-pub fn parse_agents(raw: &str) -> Vec<String> {
-    let known: Vec<String> = raw
-        .split(',')
-        .map(str::trim)
-        .filter(|s| matches!(*s, "claude" | "opencode" | "codex"))
-        .map(String::from)
-        .collect();
-    if known.is_empty() { vec!["claude".to_string()] } else { known }
-}
+pub use crate::plan::{parse_agents, plan_stages, Plan, Stage};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -343,6 +274,18 @@ fn lexis_question(diff: &str) -> String {
 }
 
 /// The orchestration itself, over an already-gathered diff.
+/// Cómo terminó la review, que es lo que decide si se anuncia el final.
+#[derive(PartialEq, Eq)]
+enum Outcome {
+    Finished,
+    /// Se paró: un agente falló, o la cancelaste. No es un final.
+    Stopped,
+}
+
+/// Corre el plan y manda el documento con lo que haya salido, acabe como acabe
+/// — una review que se cae a medias es justo cuando su informe parcial importa.
+/// `Done` sigue siendo solo para la que termina: anunciar un final que no hubo
+/// era peor que no anunciar nada.
 async fn run_planned_cancellable(
     request: &ReviewRequest,
     diff: &str,
@@ -351,13 +294,36 @@ async fn run_planned_cancellable(
     tx: &Sender<ReviewEvent>,
     cancel: &CancelToken,
 ) {
+    let mut runs: Vec<crate::report::ReviewRun> = Vec::new();
+    let outcome = run_stages(request, diff, runner, tx, cancel, &mut runs).await;
+    if !runs.is_empty() {
+        let meta = crate::report::ReviewDocumentMeta {
+            branch: branch.unwrap_or(&request.base).to_string(),
+            base: request.base.clone(),
+            commit: reviewed_commit(&request.cwd, branch),
+            compare_agents: runs.len() > 1,
+            fallback_agent_label: request.agents.first().cloned().unwrap_or_default(),
+        };
+        let _ = tx.send(ReviewEvent::Document(crate::report::build_document(&meta, &runs))).await;
+    }
+    if outcome == Outcome::Finished {
+        let _ = tx.send(ReviewEvent::Done).await;
+    }
+}
+
+async fn run_stages(
+    request: &ReviewRequest,
+    diff: &str,
+    runner: &dyn AgentRunner,
+    tx: &Sender<ReviewEvent>,
+    cancel: &CancelToken,
+    runs: &mut Vec<crate::report::ReviewRun>,
+) -> Outcome {
     let plan = plan_stages(diff, &request.agents);
     let total = plan.stages.len();
 
     let mut reports: Vec<(String, String)> = Vec::new();
     let mut session: Option<(String, String)> = None;
-    // The same runs the document is built from, filled as the review goes.
-    let mut runs: Vec<crate::report::ReviewRun> = Vec::new();
 
     // Every stage at once, the way the desktop panel does it: three agents one
     // after another take three times as long for the same result. Their text
@@ -422,7 +388,7 @@ async fn run_planned_cancellable(
     while let Some((attempt, streamed)) = futures::StreamExt::next(&mut attempts).await {
         if cancel.is_cancelled() {
             let _ = tx.send(ReviewEvent::Error("review cancelada".into())).await;
-            return;
+            return Outcome::Stopped;
         }
         let stage = &plan.stages[index];
         index += 1;
@@ -451,8 +417,15 @@ async fn run_planned_cancellable(
             // nothing about whether the binary was missing, the session was
             // never logged in, or it answered with rubbish.
             Err(reason) => {
+                runs.push(crate::report::ReviewRun {
+                    label: stage.label.clone(),
+                    agent: Some(stage.agent.clone()),
+                    session_id: None,
+                    report: None,
+                    error: Some(reason.clone()),
+                });
                 let _ = tx.send(ReviewEvent::Error(reason)).await;
-                return;
+                return Outcome::Stopped;
             }
         }
     }
@@ -469,7 +442,7 @@ async fn run_planned_cancellable(
             Ok(dir) => dir,
             Err(error) => {
                 let _ = tx.send(ReviewEvent::Error(format!("no se pudieron guardar los análisis: {error}"))).await;
-                return;
+                return Outcome::Stopped;
             }
         };
         let mut written: Vec<(String, String)> = Vec::new();
@@ -478,7 +451,7 @@ async fn run_planned_cancellable(
                 Ok(path) => written.push((label.clone(), path.display().to_string())),
                 Err(error) => {
                     let _ = tx.send(ReviewEvent::Error(format!("no se pudo guardar {label}: {error}"))).await;
-                    return;
+                    return Outcome::Stopped;
                 }
             }
         }
@@ -504,7 +477,7 @@ async fn run_planned_cancellable(
             Some(attempt) => attempt,
             None => {
                 let _ = tx.send(ReviewEvent::Error("review cancelada".into())).await;
-                return;
+                return Outcome::Stopped;
             }
         };
         drop(text_tx);
@@ -525,8 +498,11 @@ async fn run_planned_cancellable(
             Ok((_, Some(id))) => session = Some((agent, id)),
             Ok(_) => {}
             Err(reason) => {
+                if let Some(last) = runs.last_mut() {
+                    last.error = Some(reason.clone());
+                }
                 let _ = tx.send(ReviewEvent::Error(format!("la síntesis falló: {reason}"))).await;
-                return;
+                return Outcome::Stopped;
             }
         }
     }
@@ -545,18 +521,7 @@ async fn run_planned_cancellable(
     if let Some((agent, id)) = session {
         let _ = tx.send(ReviewEvent::Session { agent, id }).await;
     }
-    // Before `Done`, which is when a client saves what it has.
-    if !runs.is_empty() {
-        let meta = crate::report::ReviewDocumentMeta {
-            branch: branch.unwrap_or(&request.base).to_string(),
-            base: request.base.clone(),
-            commit: reviewed_commit(&request.cwd, branch),
-            compare_agents: runs.len() > 1,
-            fallback_agent_label: request.agents.first().cloned().unwrap_or_default(),
-        };
-        let _ = tx.send(ReviewEvent::Document(crate::report::build_document(&meta, &runs))).await;
-    }
-    let _ = tx.send(ReviewEvent::Done).await;
+    Outcome::Finished
 }
 
 /// The commit the review was made against, for the document's header. Best
@@ -576,39 +541,8 @@ mod tests {
 
     // ── plan_stages: qué se le manda a cada agente ────────────────────────────
 
-    #[test]
-    fn one_agent_and_a_small_diff_is_a_single_stage_without_synthesis() {
-        let plan = plan_stages("diff --git a/a.rs b/a.rs\n+x\n", &["claude".into()]);
-        assert_eq!(plan.stages.len(), 1);
-        assert!(!plan.synthesize, "una sola etapa no necesita síntesis");
-        assert_eq!(plan.stages[0].agent, "claude");
-    }
 
-    #[test]
-    fn several_agents_review_the_whole_diff_each() {
-        let diff = "diff --git a/a.rs b/a.rs\n+x\n";
-        // Three agents: two analyse, the third verifies them.
-        let plan = plan_stages(diff, &["claude".into(), "codex".into(), "opencode".into()]);
-        assert_eq!(plan.stages.len(), 2);
-        assert!(plan.synthesize, "con dos informes hay que consolidar");
-        assert_eq!(plan.stages[0].agent, "claude");
-        assert_eq!(plan.stages[1].agent, "codex");
-        assert_eq!(plan.stages[0].diff, diff, "cada agente ve el cambio entero");
-        assert_eq!(plan.stages[1].diff, diff);
-        assert!(plan.stages[0].label.contains("claude"));
-    }
 
-    #[test]
-    fn one_agent_and_a_big_diff_is_split_into_batches() {
-        let big: String = (0..40)
-            .map(|i| format!("diff --git a/f{i}.rs b/f{i}.rs\n{}\n", "+línea de relleno".repeat(200)))
-            .collect();
-        let plan = plan_stages(&big, &["claude".into()]);
-        assert!(plan.stages.len() > 1, "un diff grande no cabe en una sola llamada");
-        assert!(plan.synthesize, "varios batches se consolidan al final");
-        assert!(plan.stages[0].label.starts_with("Batch"));
-        assert!(plan.stages.iter().all(|s| s.agent == "claude"));
-    }
 
     // ── run: la orquestación, con un runner falso ─────────────────────────────
 
@@ -864,36 +798,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn with_several_agents_the_last_one_only_verifies() {
-        // Three agents means two analyses and one verification, not three
-        // analyses: the third's job is to judge the other two, and having it
-        // also analyse costs a fourth call for an opinion it then grades
-        // itself on.
-        let plan = plan_stages("diff", &["uno".into(), "dos".into(), "tres".into()]);
 
-        assert_eq!(plan.stages.len(), 2, "solo analizan los dos primeros");
-        assert_eq!(plan.stages[0].agent, "uno");
-        assert_eq!(plan.stages[1].agent, "dos");
-        assert_eq!(plan.verifier.as_deref(), Some("tres"));
-    }
 
-    #[test]
-    fn with_two_agents_one_analyses_and_the_other_reviews_it() {
-        let plan = plan_stages("diff", &["uno".into(), "dos".into()]);
-
-        assert_eq!(plan.stages.len(), 1);
-        assert_eq!(plan.stages[0].agent, "uno");
-        assert_eq!(plan.verifier.as_deref(), Some("dos"));
-    }
-
-    #[test]
-    fn a_single_agent_has_nobody_to_verify_it() {
-        let plan = plan_stages("diff --git a/x b/x\n+1\n", &["uno".into()]);
-
-        assert!(plan.verifier.is_none());
-        assert!(!plan.stages.is_empty());
-    }
 
     /// The verifier no longer analyses in the first round, so the synthesis
     /// call is its only look at the change. Handing it just the other reports
@@ -1161,18 +1067,7 @@ mod tests {
 
     // ── parse_agents ─────────────────────────────────────────────────────────
 
-    #[test]
-    fn parse_agents_keeps_only_known_names() {
-        assert_eq!(parse_agents("claude,codex"), vec!["claude", "codex"]);
-        assert_eq!(parse_agents(" claude , opencode "), vec!["claude", "opencode"]);
-    }
 
-    #[test]
-    fn parse_agents_drops_anything_else_and_never_returns_empty() {
-        assert_eq!(parse_agents("rm -rf /,claude"), vec!["claude"]);
-        assert_eq!(parse_agents(""), vec!["claude"]);
-        assert_eq!(parse_agents("desconocido"), vec!["claude"]);
-    }
 
     /// The document each client used to assemble on its own: the desktop from
     /// its own collector, the CLI by concatenating chunks, the phone by
@@ -1209,5 +1104,41 @@ mod tests {
         // The CLI saves its checkpoint on Done: a document that arrives after
         // it is a document nobody keeps.
         assert!(document_at < done_at, "{events:?}");
+    }
+
+    #[tokio::test]
+    async fn a_review_that_falls_over_halfway_still_leaves_its_document() {
+        // Es justo cuando más falta hace: hay informes hechos y una razón por
+        // la que no hay más. Hasta ahora el documento solo salía si terminaba
+        // bien, y el móvil y la TUI se quedaban con su propio apaño.
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![
+            report("lo que vio el primero", None),
+            failed("codex: no está instalado"),
+            failed("codex: no está instalado"),
+        ];
+
+        let (events, _) = collect(
+            "diff --git a/x b/x\n+1\n",
+            &["uno".into(), "dos".into()],
+            runner,
+        ).await;
+
+        let document = events.iter().find_map(|e| match e {
+            ReviewEvent::Document(text) => Some(text.clone()),
+            _ => None,
+        }).expect("documento con lo que hubo: {events:?}");
+        assert!(document.contains("lo que vio el primero"), "{document}");
+        assert!(document.contains("no está instalado"), "y por qué se paró: {document}");
+    }
+
+    #[tokio::test]
+    async fn a_review_that_falls_over_does_not_announce_a_finish() {
+        let runner = FakeRunner::default();
+        *runner.reports.lock().unwrap() = vec![failed("codex: no está instalado"); 3];
+
+        let (events, _) = collect("diff --git a/x b/x\n+1\n", &["uno".into()], runner).await;
+
+        assert!(!events.iter().any(|e| matches!(e, ReviewEvent::Done)), "{events:?}");
     }
 }

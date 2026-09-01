@@ -10,6 +10,7 @@ use crate::review_stream;
 impl ReviewState {
     pub(super) fn start_run(&mut self) {
         self.output.clear();
+        self.has_document = false;
         self.session_id = None;
         self.session_agent = None;
         let agents = self.review_agents();
@@ -79,15 +80,25 @@ impl ReviewState {
             }
             // The engine's own document, header and all. What the chunks
             // built was this app's version of the same review.
+            //
+            // Filed here rather than on `Done`: a review that fell over still
+            // has a document — its finished reports and why it stopped — and
+            // there is no `Done` for one that did not finish.
             ReviewEvent::Document(document) => {
                 self.output = document;
                 self.scroll = 0;
+                self.has_document = true;
+                if self.is_run_stream && !self.output.trim().is_empty() {
+                    self.save_checkpoint();
+                }
             }
             ReviewEvent::Done => {
                 self.running = false;
                 self.stream_rx = None;
                 self.stream_task = None;
-                if self.is_run_stream && !self.output.trim().is_empty() {
+                // Filed already if the document arrived; this is the fallback
+                // for a daemon too old to send one.
+                if self.is_run_stream && !self.has_document && !self.output.trim().is_empty() {
                     self.save_checkpoint();
                 }
             }
