@@ -56,6 +56,18 @@ pub fn review_checkpoint_get(
     }
 }
 
+/// Los perfiles de terminal, del almacén que comparte con el daemon: el shell
+/// que eliges aquí es con el que abre el móvil.
+#[tauri::command]
+pub fn terminal_profiles_get() -> Vec<bento_core::profiles::Profile> {
+    bento_core::profiles::list()
+}
+
+#[tauri::command]
+pub fn terminal_profiles_set(profiles: Vec<bento_core::profiles::Profile>) -> Result<(), String> {
+    bento_core::profiles::save(&profiles)
+}
+
 /// Los archivos ya revisados de un proyecto y una rama, del almacén que
 /// comparten el daemon y la CLI: marcarlos en un cliente y seguir en otro.
 #[tauri::command]

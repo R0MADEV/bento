@@ -121,6 +121,8 @@ fn main() {
             review::review_checkpoint_save,
             review::review_checkpoint_get,
             review::review_checkpoints_list,
+            review::terminal_profiles_get,
+            review::terminal_profiles_set,
             review::review_viewed_get,
             review::review_viewed_set,
             review::review_checkpoint_delete,

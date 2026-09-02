@@ -16,6 +16,8 @@ bench = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Solo por los perfiles de terminal: los PTY los abre el daemon.
+bento-core = { path = "../daemon/bento-core" }
 bento-db = { path = "../daemon/bento-db" }
 bento-docker = { path = "../daemon/bento-docker", features = ["ts"] }
 bento-memory = { path = "../daemon/bento-memory" }

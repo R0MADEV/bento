@@ -125,6 +125,7 @@ impl RemoteControl {
             .route("/api/terminals", post(new_terminal))
             .route("/api/terminals/:id", delete(kill_terminal))
             .route("/api/projects", get(inventory::projects_handler))
+            .route("/api/profiles", get(profiles))
             .route("/api/tasks", get(inventory::tasks_handler))
             .route("/api/docker", get(inventory::docker_handler))
             .route("/api/fs/dirs", get(fs_dirs_handler))
@@ -299,6 +300,20 @@ async fn kill_terminal(
     }
 }
 
+// GET /api/profiles
+//
+// Los perfiles de terminal, para que el móvil pueda abrir con tu shell y no
+// con el que el daemon tenga a mano.
+async fn profiles(
+    State(state): State<Arc<RemoteState>>,
+    Query(auth): Query<Auth>,
+) -> impl IntoResponse {
+    if !authorized(&state, &auth) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    Json(bento_core::profiles::list()).into_response()
+}
+
 /// Dónde abrir el terminal que pide el móvil: donde diga, si existe y es un
 /// directorio; si no, en casa. La ruta llega por HTTP, así que se comprueba
 /// aquí en vez de dársela al shell tal cual.
@@ -316,7 +331,12 @@ async fn new_terminal(
     if !authorized(&state, &auth) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    // Por id de perfil y no por shell: así lo que se ejecuta sale siempre de
+    // algo que ya estaba guardado, no de lo que llegue por la red.
+    let shell = params
+        .get("profile")
+        .and_then(|id| bento_core::profiles::shell_of(id))
+        .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()));
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     // Sin esto el móvil solo sabía abrir una shell en casa, que para trabajar
     // en un proyecto no vale de nada.

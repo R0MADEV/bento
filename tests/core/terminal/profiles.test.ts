@@ -1,5 +1,9 @@
-import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
-import { loadProfiles, saveProfiles, addProfile, removeProfile } from '../../../src/core/terminal/profiles'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(async () => null as unknown) }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
+
+import { addProfile, loadProfiles, loadProfilesFromStore, removeProfile, saveProfiles } from '../../../src/core/terminal/profiles'
 
 const makeLocalStorage = () => {
   const store = new Map<string, string>()
@@ -11,60 +15,89 @@ const makeLocalStorage = () => {
   }
 }
 
+// El almacén compartido con el daemon, como lo ven los comandos.
+function fakeStore(initial: unknown[] = []) {
+  let saved = [...initial]
+  mocks.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd === 'terminal_profiles_get') return saved
+    if (cmd === 'terminal_profiles_set') { saved = (args as { profiles: unknown[] }).profiles; return null }
+    return null
+  })
+  return () => saved
+}
+
+const dev = { name: 'Dev', shell: '/bin/zsh', theme: 'tokyo-night', fontSize: 14 }
+
 describe('profiles', () => {
   beforeEach(() => {
-    vi.useFakeTimers()
-    vi.stubGlobal('localStorage', makeLocalStorage())
-  })
-
-  afterEach(() => {
     vi.useRealTimers()
+    vi.stubGlobal('localStorage', makeLocalStorage())
+    fakeStore()
   })
 
-  it('loadProfiles returns [] when storage is empty', () => {
+  it('sin perfiles guardados no hay ninguno', async () => {
+    await loadProfilesFromStore()
     expect(loadProfiles()).toEqual([])
   })
 
-  it('loadProfiles returns [] on invalid JSON without throwing', () => {
-    localStorage.setItem('bento.terminal.profiles', '{not json')
-    expect(loadProfiles()).toEqual([])
+  it('lee los que hay en el almacén compartido', async () => {
+    fakeStore([{ id: 'a', ...dev }])
+
+    await loadProfilesFromStore()
+
+    expect(loadProfiles()).toEqual([{ id: 'a', ...dev }])
   })
 
-  it('saveProfiles / loadProfiles round-trips', () => {
-    const profiles = [{ id: 'a', name: 'Dev', shell: '/bin/zsh', theme: 'tokyo-night', fontSize: 14 }]
-    saveProfiles(profiles)
-    expect(loadProfiles()).toEqual(profiles)
+  it('lo que se añade aquí lo ve el daemon, que es quien abre desde el móvil', async () => {
+    const saved = fakeStore()
+    await loadProfilesFromStore()
+
+    const added = addProfile(dev)
+
+    expect(added).toMatchObject(dev)
+    expect(saved()).toEqual([added])
   })
 
-  it('addProfile appends and returns the new profile', () => {
-    const added = addProfile({ name: 'Dev', shell: '/bin/zsh', theme: 'tokyo-night', fontSize: 14 })
-    expect(added).toMatchObject({ name: 'Dev', shell: '/bin/zsh', theme: 'tokyo-night', fontSize: 14 })
-    expect(typeof added.id).toBe('string')
-    expect(added.id.length).toBeGreaterThan(0)
-    expect(loadProfiles()).toHaveLength(1)
-    expect(loadProfiles()[0]).toEqual(added)
-  })
-
-  it('addProfile appends to existing profiles', () => {
-    addProfile({ name: 'Dev', shell: '/bin/zsh', theme: 'tokyo-night', fontSize: 14 })
-    addProfile({ name: 'Prod', shell: '/bin/bash', theme: 'black', fontSize: 12 })
-    expect(loadProfiles()).toHaveLength(2)
-  })
-
-  it('removeProfile removes the matching profile', () => {
-    vi.setSystemTime(1000)
-    const a = addProfile({ name: 'Dev', shell: '/bin/zsh', theme: 'tokyo-night', fontSize: 14 })
-    vi.setSystemTime(2000)
+  it('borrar quita el que dices y deja el resto', async () => {
+    const saved = fakeStore()
+    await loadProfilesFromStore()
+    const a = addProfile(dev)
     const b = addProfile({ name: 'Prod', shell: '/bin/bash', theme: 'black', fontSize: 12 })
+
     removeProfile(a.id)
-    const remaining = loadProfiles()
-    expect(remaining).toHaveLength(1)
-    expect(remaining[0].id).toBe(b.id)
+
+    expect(loadProfiles()).toEqual([b])
+    expect(saved()).toEqual([b])
   })
 
-  it('removeProfile with unknown id leaves profiles unchanged', () => {
-    addProfile({ name: 'Dev', shell: '/bin/zsh', theme: 'tokyo-night', fontSize: 14 })
-    removeProfile('nonexistent')
-    expect(loadProfiles()).toHaveLength(1)
+  it('se lleva una vez lo que hubiera en el navegador y lo borra de allí', async () => {
+    // Los perfiles de antes de que hubiera almacén no se pierden; y al
+    // borrarlos de aquí no resucitan en el siguiente arranque.
+    localStorage.setItem('bento.terminal.profiles', JSON.stringify([{ id: 'viejo', ...dev }]))
+    const saved = fakeStore()
+
+    await loadProfilesFromStore()
+
+    expect(loadProfiles()).toEqual([{ id: 'viejo', ...dev }])
+    expect(saved()).toEqual([{ id: 'viejo', ...dev }])
+    expect(localStorage.getItem('bento.terminal.profiles')).toBeNull()
+  })
+
+  it('un almacén que no responde son cero perfiles, no un panel roto', async () => {
+    mocks.invoke.mockImplementation(async () => { throw new Error('sin daemon') })
+
+    await loadProfilesFromStore()
+
+    expect(loadProfiles()).toEqual([])
+  })
+
+  it('guardar la lista entera la deja como esté', async () => {
+    const saved = fakeStore()
+    await loadProfilesFromStore()
+
+    saveProfiles([{ id: 'a', ...dev }])
+
+    expect(loadProfiles()).toEqual([{ id: 'a', ...dev }])
+    expect(saved()).toEqual([{ id: 'a', ...dev }])
   })
 })

@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 portable-pty = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { version = "1", features = ["sync"] }
 sysinfo = { version = "0.30", default-features = false }
 

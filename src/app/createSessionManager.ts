@@ -12,7 +12,7 @@ import { createPanelLauncher } from '../ui/panelLauncher'
 import { createAgentStatusBar } from '../ui/agentStatusBar'
 import { emitAgentActivate } from '../core/terminal/agentDockState'
 import { createHomeView } from './createHomeView'
-import { loadProfiles } from '../core/terminal/profiles'
+import { loadProfiles, loadProfilesFromStore } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/state/decorationsPreference'
 import { setActiveProjectPath } from '../ui/state/activeProject'
 import { appT, getAppLocale, setAppLocale } from '../core/i18n'
@@ -206,6 +206,9 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       setActiveProjectPath(projectPath)
       if (savedLayout !== undefined) ensureView()
     }
+    // Los perfiles salen del almacén compartido con el daemon; el paleta los
+    // lista, así que se traen antes de construirla.
+    void loadProfilesFromStore()
     root.appendChild(createCommandPalette(buildCommands))
     render()
     root.dataset.ready = 'true'

@@ -415,3 +415,24 @@ describe('la lista de ficheros del móvil', () => {
     expect(client.isViewed('src/b.ts')).toBe(false)
   })
 })
+
+describe('abrir con un perfil desde el móvil', () => {
+  it('manda el perfil elegido, no el shell', () => {
+    const client = loadTerminal() as unknown as {
+      newTerminalUrl: (cwd: string | null, profile?: string | null) => string
+    }
+
+    // El shell sale del perfil guardado, en el daemon: si viajara por la red,
+    // abrir una terminal sería pedir la ejecución de lo que fuera.
+    expect(client.newTerminalUrl('/repo', 'perfil-1'))
+      .toBe('/api/terminals?token=t&cwd=%2Frepo&profile=perfil-1')
+  })
+
+  it('sin perfil, el daemon abre con el shell de siempre', () => {
+    const client = loadTerminal() as unknown as {
+      newTerminalUrl: (cwd: string | null, profile?: string | null) => string
+    }
+
+    expect(client.newTerminalUrl('/repo', null)).toBe('/api/terminals?token=t&cwd=%2Frepo')
+  })
+})

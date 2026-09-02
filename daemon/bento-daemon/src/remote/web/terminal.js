@@ -165,9 +165,28 @@ async function killTerminal(){
   goBack();
 }
 
-// Dónde abrir la nueva. Sin proyecto, la abre el daemon donde decida (casa).
-function newTerminalUrl(cwd){
-  return '/api/terminals'+q+(cwd?'&cwd='+encodeURIComponent(cwd):'');
+// Dónde y con qué abrir la nueva. Sin proyecto, la abre el daemon donde decida
+// (casa); sin perfil, con el shell de siempre. Va el id del perfil y no el
+// shell: el shell sale de lo que ya estaba guardado, no de la red.
+function newTerminalUrl(cwd,profile){
+  return '/api/terminals'+q
+    +(cwd?'&cwd='+encodeURIComponent(cwd):'')
+    +(profile?'&profile='+encodeURIComponent(profile):'');
+}
+
+// Con qué shell. Sin perfiles guardados no pregunta nada.
+async function pickProfile(){
+  let profiles=[];
+  try{
+    const r=await fetch('/api/profiles'+q);
+    if(r.ok)profiles=await r.json();
+  }catch(_){}
+  if(!profiles.length)return null;
+  const names=profiles.map((p,i)=>(i+1)+') '+p.name+' · '+p.shell);
+  const answer=prompt('¿Con qué perfil?\n\n0) El de siempre\n'+names.join('\n'),'0');
+  if(answer===null)return undefined;
+  const index=parseInt(answer,10);
+  return (index>=1&&index<=profiles.length)?profiles[index-1].id:null;
 }
 
 // Los proyectos son los directorios donde ya hay terminales abiertas, que es
@@ -190,9 +209,11 @@ async function newTerminal(){
   const btn=document.getElementById('newbtn');
   const cwd=await pickProject();
   if(cwd===undefined)return;
+  const profile=await pickProfile();
+  if(profile===undefined)return;
   btn.textContent='Abriendo…';btn.disabled=true;
   try{
-    const r=await fetch(newTerminalUrl(cwd),{method:'POST'});
+    const r=await fetch(newTerminalUrl(cwd,profile),{method:'POST'});
     if(!r.ok){btn.textContent='+ Nueva terminal';btn.disabled=false;return}
     const {id}=await r.json();
     await load();attach(id,id);
