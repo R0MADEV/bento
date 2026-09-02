@@ -83,6 +83,19 @@ pub fn list_open(cwd: &str) -> Result<String, String> {
     ])
 }
 
+/// La rama de un PR dentro del listado que devuelve `list_open`. Un comentario
+/// en línea se ancla a un commit, y el commit sale de la rama del PR: hace
+/// falta saber cuál es sin obligar al cliente a acordarse.
+pub fn head_ref_of(listing: &str, pr: u64) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(listing)
+        .ok()?
+        .as_array()?
+        .iter()
+        .find(|item| item.get("number").and_then(serde_json::Value::as_u64) == Some(pr))
+        .and_then(|item| item.get("headRefName").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+}
+
 /// Un check de CI tal y como lo devuelve `statusCheckRollup`: GitHub mezcla
 /// ahí dos formas distintas (checks y commit statuses), de ahí que casi todo
 /// sea opcional.
@@ -520,5 +533,24 @@ mod tests {
 
         let url = create(repo.0.to_str().unwrap(), "main").unwrap();
         assert_eq!(url, "https://github.com/acme/demo/compare/main...feat/x?expand=1");
+    }
+
+    #[test]
+    fn the_head_of_a_pr_comes_from_its_own_row_in_the_listing() {
+        let listing = r#"[
+            {"number": 7, "headRefName": "feat/x"},
+            {"number": 9, "headRefName": "fix/y"}
+        ]"#;
+
+        assert_eq!(head_ref_of(listing, 9).as_deref(), Some("fix/y"));
+        assert_eq!(head_ref_of(listing, 7).as_deref(), Some("feat/x"));
+    }
+
+    #[test]
+    fn a_pr_that_is_not_in_the_listing_has_no_head_to_anchor_to() {
+        // Comentar una línea exige el commit al que anclarla: inventarlo
+        // pondría el comentario en otro sitio.
+        assert_eq!(head_ref_of("[]", 7), None);
+        assert_eq!(head_ref_of("no es json", 7), None);
     }
 }

@@ -27,20 +27,26 @@ pub(super) fn draw_list(
     sidebar_width: u16,
     status: &str,
 ) {
-    draw_chrome(frame, items, selected, sidebar_width, status, false, false);
+    draw_chrome(frame, items, selected, sidebar_width, status, None);
 }
 
 /// Everything around the right column's contents: the rail, the status line
 /// and the empty framed box. Shared so the layout cannot drift between the
 /// list and the attached view — the rail must not shift when connecting.
+/// Lo que la cabecera necesita saber del terminal conectado. Fuera de él nada
+/// de esto significa nada, de ahí que vayan juntos y en un `Option`.
+struct Attachment<'a> {
+    looking_back: bool,
+    searching: Option<&'a str>,
+}
+
 fn draw_chrome(
     frame: &mut ratatui::Frame,
     items: &[TerminalInfo],
     selected: usize,
     sidebar_width: u16,
     status: &str,
-    attached: bool,
-    looking_back: bool,
+    attached: Option<Attachment>,
 ) {
     // The status line only takes room when it has something to say, so a
     // working panel is not permanently one row shorter for nothing.
@@ -66,14 +72,15 @@ fn draw_chrome(
     }
     .render(frame, cols[0]);
 
-    if attached {
+    if let Some(attached) = attached {
         Pane {
             title: items.get(selected).map(|t| t.title.as_str()).unwrap_or(""),
             // Mirando atrás lo que va llegando no se ve, y sin decirlo eso
             // parece un terminal colgado.
-            hint: match looking_back {
-                true => "mirando atrás · ⇧AvPág para volver al final",
-                false => "F5 nuevo · F12 lista · ⇧RePág mirar atrás",
+            hint: &match (attached.searching, attached.looking_back) {
+                (Some(term), _) => format!("buscar: {term}▏ (Enter siguiente · Esc salir)"),
+                (None, true) => "mirando atrás · ⇧AvPág para volver al final".to_string(),
+                (None, false) => "F5 nuevo · F12 lista · ⇧RePág atrás · F3 buscar".to_string(),
             },
             focused: true,
         }
@@ -104,8 +111,10 @@ pub(super) fn draw_attached(
     sidebar_width: u16,
     status: &str,
     screen: &super::screen::Screen,
+    searching: Option<&str>,
 ) {
-    draw_chrome(frame, items, selected, sidebar_width, status, true, screen.is_scrolled_back());
+    let attachment = Attachment { looking_back: screen.is_scrolled_back(), searching };
+    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment));
     let area = terminal_area(frame.area(), sidebar_width, status);
     screen.render(frame, area);
     if let Some((x, y)) = screen.cursor_in(area) {
@@ -295,6 +304,12 @@ pub(super) fn scrollback_keys(key: KeyEvent) -> Option<i32> {
         KeyCode::PageDown => Some(-10),
         _ => None,
     }
+}
+
+/// F3 abre el buscador y, con uno escrito, salta a la siguiente aparición.
+/// Una tecla de función porque cualquier letra es del programa de dentro.
+pub(super) fn is_search_key(key: KeyEvent) -> bool {
+    key.kind == KeyEventKind::Press && key.code == KeyCode::F(3)
 }
 
 pub(super) fn is_detach_key(key: KeyEvent) -> bool {
@@ -540,5 +555,11 @@ mod tests {
         // Sin Shift son del programa de dentro: `less` y `htop` las quieren.
         assert_eq!(scrollback_keys(press(KeyCode::PageUp, KeyModifiers::NONE)), None);
         assert_eq!(scrollback_keys(press(KeyCode::Char('a'), KeyModifiers::SHIFT)), None);
+    }
+
+    #[test]
+    fn f3_is_the_search_key_and_letters_belong_to_the_program() {
+        assert!(is_search_key(press(KeyCode::F(3), KeyModifiers::NONE)));
+        assert!(!is_search_key(press(KeyCode::Char('/'), KeyModifiers::NONE)));
     }
 }

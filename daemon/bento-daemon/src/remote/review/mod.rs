@@ -61,9 +61,10 @@ pub struct PrQuery {
 #[derive(Deserialize)]
 pub struct PrCommentBody {
     pub body: String,
-    #[allow(dead_code)]
+    /// Con fichero y línea el comentario se ancla ahí, como en el escritorio y
+    /// la TUI; sin ellos va al PR entero. Los dos campos llevaban aquí desde
+    /// el principio sin que nadie los leyera.
     pub file: Option<String>,
-    #[allow(dead_code)]
     pub line: Option<u64>,
 }
 
@@ -299,7 +300,23 @@ pub async fn review_pr_add_comment_handler(
         Some(n) => n,
         None => return (StatusCode::BAD_REQUEST, "missing pr").into_response(),
     };
-    match add_comment(&cwd, pr, &body.body) {
+    let anchored = body.file.as_deref().zip(body.line);
+    let Some((file, line)) = anchored else {
+        return match add_comment(&cwd, pr, &body.body) {
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        };
+    };
+    // El commit al que se ancla sale de la rama del PR, que el daemon busca en
+    // el listado: el móvil no tiene por qué acordarse de ella.
+    let head = list_prs(&cwd)
+        .ok()
+        .and_then(|listing| bento_review::pr::head_ref_of(&listing, pr))
+        .and_then(|branch| bento_review::vcs::git_cmd(&cwd, &["rev-parse", &branch]).ok());
+    let Some(sha) = head else {
+        return (StatusCode::BAD_REQUEST, "no se pudo resolver el commit del PR").into_response();
+    };
+    match add_review_comment(&cwd, pr, sha.trim(), file, line, None, &body.body) {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }

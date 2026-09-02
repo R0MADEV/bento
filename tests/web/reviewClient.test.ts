@@ -345,3 +345,42 @@ describe('buscar en el terminal del móvil', () => {
     expect(calls).toEqual([])
   })
 })
+
+describe('comentar una línea del PR desde el móvil', () => {
+  const DIFF = [
+    'diff --git a/src/a.ts b/src/a.ts',
+    '--- a/src/a.ts',
+    '+++ b/src/a.ts',
+    '@@ -10,3 +10,4 @@',
+    ' contexto',
+    '-lo viejo',
+    '+lo nuevo',
+    ' final',
+  ].join('\n')
+
+  function loadPrWithDiff() {
+    const client = loadPr() as unknown as {
+      diffAnchors: (text: string) => ({ file: string, line: number } | null)[]
+    }
+    return client
+  }
+
+  it('sabe a qué fichero y a qué línea del fichero nuevo apunta cada fila', () => {
+    const anchors = loadPrWithDiff().diffAnchors(DIFF)
+
+    expect(anchors[4]).toEqual({ file: 'src/a.ts', line: 10 })
+    expect(anchors[6]).toEqual({ file: 'src/a.ts', line: 11 })
+    expect(anchors[7]).toEqual({ file: 'src/a.ts', line: 12 })
+  })
+
+  it('no deja comentar donde GitHub no ancla nada', () => {
+    const anchors = loadPrWithDiff().diffAnchors(DIFF)
+
+    // Una línea borrada ya no está en la versión nueva; las cabeceras no son
+    // código.
+    expect(anchors[5]).toBeNull()
+    expect(anchors[0]).toBeNull()
+    expect(anchors[2]).toBeNull()
+    expect(anchors[3]).toBeNull()
+  })
+})

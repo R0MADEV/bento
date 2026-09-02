@@ -52,6 +52,28 @@ impl Screen {
         self.parser.screen_mut().set_scrollback(self.scrollback_offset);
     }
 
+    /// Busca `term` hacia arriba desde donde se esté mirando y deja la vista
+    /// donde aparezca. Devuelve si lo encontró; si no, no se mueve — saltar al
+    /// principio del buffer porque no hay nada es peor que quedarse quieto.
+    ///
+    /// Va pantalla a pantalla porque es lo que `vt100` sabe dar: el texto de lo
+    /// que se ve con un desplazamiento dado.
+    pub(crate) fn find_back(&mut self, term: &str) -> bool {
+        if term.is_empty() {
+            return false;
+        }
+        let start = self.scrollback_offset;
+        for offset in (start + 1)..=SCROLLBACK {
+            self.parser.screen_mut().set_scrollback(offset);
+            if self.parser.screen().contents().contains(term) {
+                self.scrollback_offset = offset;
+                return true;
+            }
+        }
+        self.parser.screen_mut().set_scrollback(start);
+        false
+    }
+
     /// Si se está mirando hacia atrás. Lo que llega mientras tanto no debe
     /// arrastrar la vista al fondo sin avisar.
     pub(crate) fn is_scrolled_back(&self) -> bool {
@@ -375,5 +397,33 @@ mod tests {
 
         // Ni se va a negativo ni se pierde por encima del principio.
         assert!(render_into(&screen, Rect::new(0, 0, 20, 4), 20, 4).join("\n").contains("una linea"));
+    }
+
+    #[test]
+    fn searching_walks_back_to_what_scrolled_away() {
+        let mut screen = Screen::new(4, 20);
+        for n in 1..=30 {
+            let text = if n == 3 { "aguja".to_string() } else { format!("linea {n}") };
+            screen.feed(format!("{text}\r\n").as_bytes());
+        }
+
+        assert!(screen.find_back("aguja"), "está más arriba, hay que ir a por ella");
+        assert!(
+            render_into(&screen, Rect::new(0, 0, 20, 4), 20, 4).join("\n").contains("aguja"),
+            "y la deja a la vista",
+        );
+    }
+
+    #[test]
+    fn searching_for_what_is_not_there_leaves_the_view_where_it_was() {
+        let mut screen = Screen::new(4, 20);
+        for n in 1..=30 {
+            screen.feed(format!("linea {n}\r\n").as_bytes());
+        }
+
+        assert!(!screen.find_back("no existe"));
+        // Saltar al principio del buffer porque no hay nada es peor que no
+        // moverse.
+        assert!(render_into(&screen, Rect::new(0, 0, 20, 4), 20, 4).join("\n").contains("linea 30"));
     }
 }

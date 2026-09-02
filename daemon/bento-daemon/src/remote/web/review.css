@@ -151,3 +151,7 @@
 .opt-approve .submit-option-label{color:var(--ag)}
 .opt-request .submit-option-label{color:var(--re)}
 .opt-comment .submit-option-label{color:var(--fg)}
+
+/* Una fila del diff que se puede comentar de un toque. */
+.dl-commentable{cursor:pointer}
+.dl-commentable:active{background:var(--surface-2,#16161e)}

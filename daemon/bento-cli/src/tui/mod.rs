@@ -59,6 +59,9 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
     let mut dragging_divider = false;
     // The review drawer's edge, dragged separately from the rail's.
     let mut dragging_drawer = false;
+    // Lo que se está buscando en lo que ya salió, mientras se escribe. Vive
+    // aquí porque mientras hay buscador las teclas son suyas y no del programa.
+    let mut searching: Option<String> = None;
     let mut status = String::new();
 
     loop {
@@ -182,7 +185,9 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
             Mode::Attached(attached) => {
                 let Attached { session, screen } = &mut **attached;
                 terminal.draw(|f| {
-                    terminals::draw_attached(f, &items, selected, sidebar_width, &status, screen)
+                    terminals::draw_attached(
+                        f, &items, selected, sidebar_width, &status, screen, searching.as_deref(),
+                    )
                 })?;
 
                 // The pty must wrap to the box it is painted in, and that box
@@ -196,6 +201,28 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
                         match event {
+                            // Con el buscador abierto las teclas son suyas:
+                            // se escribe el término, Enter salta a la
+                            // siguiente aparición y Esc lo cierra.
+                            Event::Key(key) if searching.is_some() => {
+                                let term = searching.get_or_insert_with(String::new);
+                                match key.code {
+                                    KeyCode::Esc => searching = None,
+                                    KeyCode::Enter => {
+                                        let found = screen.find_back(term);
+                                        status = match found {
+                                            true => String::new(),
+                                            false => format!("sin más «{term}» hacia atrás"),
+                                        };
+                                    }
+                                    KeyCode::Backspace => { term.pop(); }
+                                    KeyCode::Char(c) => term.push(c),
+                                    _ => {}
+                                }
+                            }
+                            Event::Key(key) if terminals::is_search_key(key) => {
+                                searching = Some(searching.take().unwrap_or_default());
+                            }
                             Event::Key(key) if terminals::is_detach_key(key) => {
                                 mode = Mode::List;
                                 items = terminals::fetch_terminals().await.unwrap_or_default();

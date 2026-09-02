@@ -45,6 +45,45 @@ function switchPRTab(name){
   if(name==='comments') loadPRComments();
 }
 
+// A qué fichero y a qué línea del fichero nuevo corresponde cada fila del
+// diff, o null donde GitHub no ancla nada: las cabeceras y las líneas borradas,
+// que ya no están en la versión nueva.
+function diffAnchors(text){
+  const anchors=[];
+  let file=null,line=0,inHunk=false;
+  for(const raw of text.split('\n')){
+    if(raw.startsWith('diff --git')){
+      const match=raw.match(/ b\/(.+)$/);
+      file=match?match[1]:null;inHunk=false;anchors.push(null);continue;
+    }
+    if(raw.startsWith('@@')){
+      const match=raw.match(/\+(\d+)/);
+      line=match?parseInt(match[1],10):0;inHunk=true;anchors.push(null);continue;
+    }
+    if(!inHunk||!file||raw.startsWith('+++')||raw.startsWith('---')){anchors.push(null);continue;}
+    if(raw.startsWith('-')){anchors.push(null);continue;}
+    anchors.push({file,line});
+    line++;
+  }
+  return anchors;
+}
+
+// Un toque en una línea comentable la comenta. El cuerpo por `prompt`, como el
+// resto de lo que se escribe desde el teléfono.
+async function commentOnLine(anchor){
+  const body=prompt('Comentario en '+anchor.file+':'+anchor.line);
+  if(!body||!body.trim())return;
+  const dir=cwd();
+  try{
+    const r=await fetch('/api/review/pr/comment'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR,{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({body:body.trim(),file:anchor.file,line:anchor.line}),
+    });
+    if(r.ok)loadPRComments();
+  }catch(_){}
+}
+
 async function loadPRDiff(){
   const dir=cwd();
   const el=document.getElementById('rv-pr-diff-content');
@@ -53,7 +92,17 @@ async function loadPRDiff(){
   try{
     const r=await fetch('/api/review/pr/diff'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR);
     const text=await r.text();
-    el.innerHTML=r.ok ? renderDiff(text) : `<span class="dl dl-del">${esc(text)}</span>`;
+    if(!r.ok){el.innerHTML=`<span class="dl dl-del">${esc(text)}</span>`;return}
+    el.innerHTML=renderDiff(text);
+    // Las filas comentables se marcan aquí y no en `renderDiff`, que lo
+    // comparten la review y el PR y solo aquí hay un PR al que comentar.
+    const anchors=diffAnchors(text);
+    [...el.children].forEach((row,index)=>{
+      const anchor=anchors[index];
+      if(!anchor)return;
+      row.classList.add('dl-commentable');
+      row.onclick=()=>commentOnLine(anchor);
+    });
   }catch(e){
     el.innerHTML='<span class="dl dl-del">Error de conexión.</span>';
   }
