@@ -56,6 +56,13 @@ impl ReviewState {
         self.running = false;
         self.last_progress.clear();
         self.showing_history = false;
+        // El listado ya dice cuáles dejó atrás la rama; al abrir una, se dice
+        // otra vez, que es cuando se va a leer el informe.
+        let stale = entry.get("stale").and_then(Value::as_bool).unwrap_or(false);
+        self.status = match stale {
+            true => "esta review es de un commit que la rama ya dejó atrás".into(),
+            false => String::new(),
+        };
     }
 
     /// Deletes the review selected in the history and asks for the list

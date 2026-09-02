@@ -71,7 +71,7 @@ async function renderReviewHistory(dir){
       document.getElementById('rv-base').value=item.base;
       // This run, not the branch's newest: several reviews of one branch are
       // kept now, so asking by base alone would always reopen the last.
-      void restoreReviewCheckpoint(dir,item.base,item.run_id);
+      void restoreReviewCheckpoint(dir,item.base,item.run_id,item.stale);
       void renderReviewHistory(dir);
     };
     const del=document.createElement('button');
@@ -95,7 +95,7 @@ async function renderReviewHistory(dir){
   });
 }
 
-async function restoreReviewCheckpoint(dir,base,runId){
+async function restoreReviewCheckpoint(dir,base,runId,stale){
   const out=document.getElementById('rv-output');
   if(!out)return;
   try{
@@ -109,7 +109,10 @@ async function restoreReviewCheckpoint(dir,base,runId){
     }
     const cp=await res.json();
     out.className='rv-md';
-    out.innerHTML=mdToHtml(cp.content||'');
+    // Lo mismo que dice el chip en el historial, repetido aquí: es al leer el
+    // informe cuando importa que hable de otro código.
+    const warning=stale?'<div class="rv-stale">Esta review es de un commit que la rama ya dejó atrás.</div>':'';
+    out.innerHTML=warning+mdToHtml(cp.content||'');
     showChat();
   }catch(_){}
 }

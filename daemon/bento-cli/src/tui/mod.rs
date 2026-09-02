@@ -105,7 +105,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                             }
                                         }
                                     }
-                                    Some(RailClick::Action) => match new_agent(&cwd).await {
+                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
                                         Ok((fetched, index)) => {
                                             status.clear();
                                             items = fetched;
@@ -139,7 +139,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     // next refresh tick, and the new row is selected.
                                     // A failure is reported: swallowing it made the key
                                     // look dead whenever the daemon was down.
-                                    KeyCode::Char('n') => match new_agent(&cwd).await {
+                                    KeyCode::Char('n') => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
                                         Ok((fetched, index)) => {
                                             status.clear();
                                             items = fetched;
@@ -233,7 +233,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             // Reserved before the pty sees it, so a new agent
                             // can be opened without first going back.
                             Event::Key(key) if terminals::is_new_agent_key(key) => {
-                                match new_agent(&cwd).await {
+                                match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
                                     Ok((fetched, index)) => {
                                         items = fetched;
                                         if let Some(index) = index {
@@ -311,7 +311,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     // Opening a new agent from inside a terminal
                                     // switches straight into it: that is what the
                                     // click asked for.
-                                    Some(RailClick::Action) => match new_agent(&cwd).await {
+                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
                                         Ok((fetched, index)) => {
                                             items = fetched;
                                             if let Some(index) = index {

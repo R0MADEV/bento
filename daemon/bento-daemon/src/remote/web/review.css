@@ -163,3 +163,6 @@
 #rv-files-count{margin-left:auto;color:var(--dim);font-size:11px}
 .file-viewed-mark{flex:none;width:20px;text-align:center;color:var(--dim)}
 .file-viewed{opacity:.55}
+
+/* La review abierta es de un commit que la rama ya dejó atrás. */
+.rv-stale{margin:0 0 10px;padding:6px 8px;border:1px solid var(--gold,#e0af68);border-radius:6px;color:var(--dim);font-size:12px}

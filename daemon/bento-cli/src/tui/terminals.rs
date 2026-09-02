@@ -17,7 +17,18 @@ use super::sidebar::{ItemStatus, Sidebar, SidebarItem};
 pub(super) struct TerminalInfo {
     pub(super) pty_id: String,
     title: String,
-    cwd: String,
+    pub(super) cwd: String,
+}
+
+/// Dónde abrir la nueva: donde esté la que tienes seleccionada, y si no hay
+/// ninguna, donde se lanzó la CLI. El móvil pregunta el proyecto; aquí la lista
+/// ya lo está enseñando, así que preguntarlo otra vez sobraría.
+pub(super) fn cwd_for_new(items: &[TerminalInfo], selected: usize, fallback: &str) -> String {
+    items
+        .get(selected)
+        .map(|item| item.cwd.clone())
+        .filter(|cwd| !cwd.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 pub(super) fn draw_list(
@@ -561,5 +572,22 @@ mod tests {
     fn f3_is_the_search_key_and_letters_belong_to_the_program() {
         assert!(is_search_key(press(KeyCode::F(3), KeyModifiers::NONE)));
         assert!(!is_search_key(press(KeyCode::Char('/'), KeyModifiers::NONE)));
+    }
+
+    fn info(cwd: &str) -> TerminalInfo {
+        TerminalInfo { pty_id: "1".into(), title: "t".into(), cwd: cwd.into() }
+    }
+
+    #[test]
+    fn a_new_terminal_opens_where_the_selected_one_lives() {
+        let items = vec![info("/repo/uno"), info("/repo/dos")];
+
+        assert_eq!(cwd_for_new(&items, 1, "/donde-sea"), "/repo/dos");
+    }
+
+    #[test]
+    fn with_no_terminals_it_falls_back_to_where_the_cli_started() {
+        assert_eq!(cwd_for_new(&[], 0, "/donde-sea"), "/donde-sea");
+        assert_eq!(cwd_for_new(&[info("")], 0, "/donde-sea"), "/donde-sea");
     }
 }
