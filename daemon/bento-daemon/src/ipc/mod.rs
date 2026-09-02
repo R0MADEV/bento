@@ -78,6 +78,10 @@ pub(crate) struct Request {
     pub(crate) recipes_dir: Option<String>,
     #[serde(default)]
     pub(crate) limit: Option<u32>,
+    /// La línea del fichero nuevo sobre la que se comenta, para
+    /// `review.pr_inline_comment`.
+    #[serde(default)]
+    pub(crate) line: Option<u64>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {

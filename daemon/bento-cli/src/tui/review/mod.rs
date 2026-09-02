@@ -59,6 +59,8 @@ pub(super) enum Focus {
 enum InputPurpose {
     Ask,
     PrComment,
+    /// Comentando una línea del diff: la del fichero nuevo a la que se ancla.
+    InlineComment(u64),
     /// Submitting a PR review: "APPROVE" | "REQUEST_CHANGES" | "COMMENT".
     PrReview(&'static str),
     /// Editing the author context injected into the review prompt — purely
@@ -197,6 +199,9 @@ pub(super) struct ReviewState {
     has_document: bool,
 
     file_diff: String,
+    /// El fichero cuyo diff se está mirando: un comentario en línea va contra
+    /// él, no contra el que esté seleccionado en la lista.
+    current_file: Option<String>,
     file_scroll: u16,
 }
 
@@ -255,6 +260,7 @@ impl ReviewState {
             checkpoints_selected: 0,
             has_document: false,
             file_diff: String::new(),
+            current_file: None,
             file_scroll: 0,
         }
     }

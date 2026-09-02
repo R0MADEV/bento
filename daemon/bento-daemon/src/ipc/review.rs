@@ -215,6 +215,25 @@ pub(crate) fn dispatch(
             _ => send(fail(&req.id, "cwd and base required".into())),
         },
 
+        // Comentar una línea concreta del diff, que es lo que el escritorio
+        // sabía hacer y la TUI no. El sha al que se ancla lo resuelve el
+        // daemon desde la rama, igual que hace el panel con `git_rev_parse`.
+        "review.pr_inline_comment" => match (&req.cwd, req.pr, &req.path, req.line, &req.data) {
+            (Some(cwd), Some(pr), Some(path), Some(line), Some(body)) => {
+                let reference = req.branch.clone().unwrap_or_else(|| "HEAD".into());
+                match bento_review::vcs::git_cmd(cwd, &["rev-parse", &reference]) {
+                    Ok(sha) => match crate::remote::review::add_review_comment(
+                        cwd, pr, sha.trim(), path, line, None, body,
+                    ) {
+                        Ok(url) => send(ok(&req.id, json!(url))),
+                        Err(e) => send(fail(&req.id, e)),
+                    },
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, pr, path, line and data required".into())),
+        },
+
         "review.pr_submit" => match (&req.cwd, req.pr, &req.event) {
             (Some(cwd), Some(pr), Some(event)) => {
                 match crate::remote::review::submit_review(cwd, pr, event, req.data.as_deref().unwrap_or_default()) {

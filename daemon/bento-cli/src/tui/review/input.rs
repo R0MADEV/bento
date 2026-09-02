@@ -199,6 +199,7 @@ impl ReviewState {
                         "id": "1", "cmd": "review.file", "cwd": self.cwd, "base": self.base, "path": path,
                     })).await;
                     self.file_diff = data.ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
+                    self.current_file = Some(path);
                     self.file_scroll = 0;
                     self.view = ReviewView::FileDetail;
                 }
@@ -218,6 +219,9 @@ impl ReviewState {
             KeyCode::Down => { self.file_scroll = self.file_scroll.saturating_add(1); false }
             KeyCode::PageUp => { self.file_scroll = self.file_scroll.saturating_sub(10); false }
             KeyCode::PageDown => { self.file_scroll = self.file_scroll.saturating_add(10); false }
+            // Comentar la línea marcada, que es lo que el escritorio sabía
+            // hacer y esta no.
+            KeyCode::Char('c') => { self.start_inline_comment(); false }
             KeyCode::Tab => true,
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.view = ReviewView::Browse;
@@ -281,6 +285,7 @@ impl ReviewState {
                         if !self.input.trim().is_empty() { self.start_ask(); }
                     }
                     Some(InputPurpose::PrComment) => self.submit_pr_comment().await,
+                    Some(InputPurpose::InlineComment(line)) => self.submit_inline_comment(line).await,
                     Some(InputPurpose::PrReview(event)) => self.submit_pr_review(event).await,
                     Some(InputPurpose::Context) => self.context = std::mem::take(&mut self.input),
                     Some(InputPurpose::Search) => {

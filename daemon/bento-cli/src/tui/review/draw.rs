@@ -229,12 +229,34 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
 }
 
 fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let inner = Pane { title: "", hint: "↑/↓ scroll · Esc volver", focused: true }
-        .render(frame, frame.area());
-    let paragraph = Paragraph::new(review.filtered(&review.file_diff))
+    let hint = match review.pr_status.is_empty() {
+        true => "↑/↓ mover · c comentar la línea marcada · Esc volver",
+        false => review.pr_status.as_str(),
+    };
+    let inner = Pane { title: "", hint, focused: true }.render(frame, frame.area());
+    // La primera fila visible lleva marca: es la que recibe el comentario, y
+    // sin verla no se sabe sobre cuál se está escribiendo.
+    let text = review.filtered(&review.file_diff);
+    let marked: Vec<Line> = text
+        .lines()
+        .enumerate()
+        .map(|(index, line)| match index == review.file_scroll as usize {
+            true => Line::from(vec![Span::styled("▸ ", FOCUSED), Span::raw(line.to_string())]),
+            false => Line::from(format!("  {line}")),
+        })
+        .collect();
+    let paragraph = Paragraph::new(marked)
         .wrap(Wrap { trim: false })
         .scroll((review.file_scroll, 0));
-    frame.render_widget(paragraph, inner);
+    // Escribiendo el comentario, el cuadro va debajo del diff: sin él se
+    // escribe a ciegas.
+    let Some(label) = pr_input_label(review) else {
+        frame.render_widget(paragraph, inner);
+        return;
+    };
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
+    frame.render_widget(paragraph, chunks[0]);
+    frame.render_widget(Paragraph::new(format!("{}▏", review.input)).block(pane_block(label)), chunks[1]);
 }
 
 fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
@@ -272,6 +294,7 @@ fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
         Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::Search) => Some("Buscar en el diff (Enter aplicar, Esc cancelar)"),
+        Some(InputPurpose::InlineComment(_)) => Some("Comentario en la línea (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::Ask) | Some(InputPurpose::Context) | None => None,
     }
 }

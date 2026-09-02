@@ -159,6 +159,50 @@ pub(super) fn short_path(path: &str, max: usize) -> String {
     }
 }
 
+/// La línea del fichero nuevo sobre la que caería un comentario puesto en la
+/// fila `row` del diff, tal y como se pinta. GitHub los ancla a la versión
+/// nueva, así que una línea borrada no admite comentario y una cabecera
+/// tampoco.
+pub(super) fn commentable_line(diff: &str, row: usize) -> Option<u64> {
+    let mut new_line = 0u64;
+    let mut inside_hunk = false;
+    for (index, line) in diff.lines().enumerate() {
+        if let Some(start) = hunk_start(line) {
+            new_line = start;
+            inside_hunk = true;
+            if index == row {
+                return None;
+            }
+            continue;
+        }
+        if !inside_hunk {
+            continue;
+        }
+        // `+++ b/fichero` empieza por `+` y no es código.
+        let is_header = line.starts_with("+++") || line.starts_with("---");
+        let counts_in_the_new_file = !is_header && (line.starts_with('+') || line.starts_with(' ') || line.is_empty());
+        if !counts_in_the_new_file {
+            if index == row {
+                return None;
+            }
+            continue;
+        }
+        if index == row {
+            return Some(new_line);
+        }
+        new_line += 1;
+    }
+    None
+}
+
+/// La primera línea del fichero nuevo que cubre un `@@ -a,b +c,d @@`.
+fn hunk_start(line: &str) -> Option<u64> {
+    let rest = line.strip_prefix("@@ ")?;
+    let plus = rest.split('+').nth(1)?;
+    let digits: String = plus.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
 /// One saved review, in a line: when it was made, what it is about, and
 /// whether it can still be asked a follow-up. The branch reviewed wins over
 /// the ref it is filed under — that is what the reader recognises.
@@ -343,5 +387,37 @@ mod tests {
         let cp = serde_json::json!({ "base": "main", "saved_at": "hace un rato" });
 
         assert_eq!(checkpoint_row(&cp), "hace un rato · main");
+    }
+
+    const DIFF: &str = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -10,4 +10,5 @@ fn cosa() {
+ contexto
+-lo viejo
++lo nuevo
++otra mas
+ final
+";
+
+    #[test]
+    fn a_comment_lands_on_the_line_of_the_new_file() {
+        // GitHub ancla los comentarios a la versión nueva: la fila 5 del diff
+        // es el contexto, que allí es la 10.
+        assert_eq!(commentable_line(DIFF, 4), Some(10));
+        assert_eq!(commentable_line(DIFF, 6), Some(11), "la añadida");
+        assert_eq!(commentable_line(DIFF, 7), Some(12));
+        assert_eq!(commentable_line(DIFF, 8), Some(13), "el contexto de después");
+    }
+
+    #[test]
+    fn there_is_nothing_to_comment_on_a_removed_line_or_a_header() {
+        // Una línea borrada ya no está en el fichero nuevo, y una cabecera no
+        // es código.
+        assert_eq!(commentable_line(DIFF, 5), None, "la borrada");
+        assert_eq!(commentable_line(DIFF, 0), None, "diff --git");
+        assert_eq!(commentable_line(DIFF, 3), None, "la cabecera del hunk");
+        assert_eq!(commentable_line(DIFF, 99), None, "fuera del diff");
     }
 }

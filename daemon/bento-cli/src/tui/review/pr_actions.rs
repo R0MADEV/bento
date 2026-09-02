@@ -53,6 +53,50 @@ impl ReviewState {
         self.view = ReviewView::PrDetail;
     }
 
+    /// Abre el cuadro para comentar la línea marcada. Con el filtro puesto no
+    /// se puede: las filas de la vista ya no son las del diff, y el comentario
+    /// acabaría en otra línea.
+    pub(super) fn start_inline_comment(&mut self) {
+        if !self.search.is_empty() {
+            self.pr_status = "quita el filtro (/) para comentar una línea".into();
+            return;
+        }
+        let Some(pr) = self.current_pr else {
+            self.pr_status = "abre antes el PR (p) para comentar en él".into();
+            return;
+        };
+        let _ = pr;
+        match super::format::commentable_line(&self.file_diff, self.file_scroll as usize) {
+            Some(line) => {
+                self.input_purpose = Some(super::InputPurpose::InlineComment(line));
+                self.input.clear();
+                self.pr_status = format!("comentando la línea {line}");
+            }
+            None => self.pr_status = "esa línea no existe en la versión nueva".into(),
+        }
+    }
+
+    /// Manda el comentario a la línea marcada. El sha al que se ancla lo
+    /// resuelve el daemon desde la rama, igual que el panel del escritorio.
+    pub(super) async fn submit_inline_comment(&mut self, line: u64) {
+        let body = std::mem::take(&mut self.input);
+        let (Some(pr), Some(path)) = (self.current_pr, self.current_file.clone()) else {
+            self.pr_status = "no hay PR o fichero abierto".into();
+            return;
+        };
+        let mut req = json!({
+            "id": "1", "cmd": "review.pr_inline_comment", "cwd": self.cwd,
+            "pr": pr, "path": path, "line": line, "data": body,
+        });
+        if let Some(branch) = &self.branch {
+            req["branch"] = json!(branch);
+        }
+        self.pr_status = match crate::request_data(req).await {
+            Ok(_) => format!("comentario puesto en la línea {line}"),
+            Err(error) => format!("no se pudo comentar: {error}"),
+        };
+    }
+
     pub(super) async fn submit_pr_comment(&mut self) {
         let Some(pr) = self.current_pr else { return };
         let body = std::mem::take(&mut self.input);

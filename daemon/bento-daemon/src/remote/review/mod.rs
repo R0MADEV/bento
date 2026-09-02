@@ -26,8 +26,8 @@ use std::sync::Arc;
 use super::{Auth, RemoteState, authorized};
 use bento_review::vcs::is_safe_branch;
 pub(crate) use bento_review::pr::{
-    add_comment, delete_comment, diff as pr_diff, discussion as pr_comments,
-    list_open as list_prs, submit_review, update_comment,
+    add_comment, add_review_comment, delete_comment, diff as pr_diff,
+    discussion as pr_comments, list_open as list_prs, submit_review, update_comment,
 };
 pub(crate) use bento_review::vcs::{file_diff, list_branches, list_files};
 
