@@ -384,3 +384,34 @@ describe('comentar una línea del PR desde el móvil', () => {
     expect(anchors[3]).toBeNull()
   })
 })
+
+describe('la lista de ficheros del móvil', () => {
+  function loadRunWithFiles() {
+    return loadRun() as unknown as {
+      matchesFileFilter: (status: string, filter: string) => boolean
+      isViewed: (path: string) => boolean
+      reviewViewed: string[]
+    }
+  }
+
+  it('filtra por estado con el mismo criterio que los otros dos clientes', () => {
+    const client = loadRunWithFiles()
+
+    // A = añadido, D = borrado, todo lo demás cuenta como modificado — R de
+    // renombrado incluido.
+    expect(client.matchesFileFilter('A', 'added')).toBe(true)
+    expect(client.matchesFileFilter('D', 'deleted')).toBe(true)
+    expect(client.matchesFileFilter('R', 'modified')).toBe(true)
+    expect(client.matchesFileFilter('M', 'modified')).toBe(true)
+    expect(client.matchesFileFilter('A', 'modified')).toBe(false)
+    expect(client.matchesFileFilter('D', 'all')).toBe(true)
+  })
+
+  it('sabe qué ficheros ya están revisados', () => {
+    const client = loadRunWithFiles()
+    client.reviewViewed = ['src/a.ts']
+
+    expect(client.isViewed('src/a.ts')).toBe(true)
+    expect(client.isViewed('src/b.ts')).toBe(false)
+  })
+})

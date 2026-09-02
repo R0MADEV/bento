@@ -66,6 +66,46 @@ pub async fn put_checkpoint_handler(
     }
 }
 
+// GET /api/review/viewed?cwd=…&base=…
+//
+// Los ficheros ya revisados. El almacén (`bento_review::viewed`) lo comparten
+// el escritorio y la CLI desde siempre; por HTTP no había forma de llegar a él,
+// así que desde el teléfono no se podía marcar nada.
+pub async fn get_viewed_handler(
+    State(state): State<Arc<RemoteState>>,
+    Query(auth): Query<Auth>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    if !authorized(&state, &auth) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let cwd = params.get("cwd").ok_or(StatusCode::BAD_REQUEST)?;
+    let base = params.get("base").ok_or(StatusCode::BAD_REQUEST)?;
+    Ok(Json(bento_review::viewed::get(cwd, base)))
+}
+
+// PUT /api/review/viewed  (body: { cwd, base, paths })
+pub async fn set_viewed_handler(
+    State(state): State<Arc<RemoteState>>,
+    Query(auth): Query<Auth>,
+    Json(body): Json<ViewedBody>,
+) -> StatusCode {
+    if !authorized(&state, &auth) {
+        return StatusCode::UNAUTHORIZED;
+    }
+    match bento_review::viewed::set(&body.cwd, &body.base, &body.paths) {
+        Ok(()) => StatusCode::NO_CONTENT,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ViewedBody {
+    pub cwd: String,
+    pub base: String,
+    pub paths: Vec<String>,
+}
+
 // DELETE /api/review/checkpoint?cwd=…&base=…[&run_id=…]
 pub async fn delete_checkpoint_handler(
     State(state): State<Arc<RemoteState>>,
@@ -163,6 +203,28 @@ mod tests {
             Query(std::collections::HashMap::new()),
         )
         .await;
+
+        assert!(matches!(answer, Err(StatusCode::BAD_REQUEST)));
+    }
+
+    #[tokio::test]
+    async fn marking_a_file_as_read_without_the_token_is_refused() {
+        let status = set_viewed_handler(
+            State(state("s3cr3t")),
+            Query(auth(None)),
+            Json(ViewedBody { cwd: "/repo".into(), base: "main".into(), paths: vec!["a.rs".into()] }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn asking_what_is_read_without_saying_against_what_is_a_bad_request() {
+        // Las marcas son por proyecto y rama: sin la rama no se sabe de qué
+        // diff se está hablando.
+        let params = std::collections::HashMap::from([("cwd".to_string(), "/repo".to_string())]);
+        let answer = get_viewed_handler(State(state("s3cr3t")), Query(auth(Some("s3cr3t"))), Query(params)).await;
 
         assert!(matches!(answer, Err(StatusCode::BAD_REQUEST)));
     }

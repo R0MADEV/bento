@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 
 use review::{
     ask_handler,
-    delete_checkpoint_handler, get_checkpoint_handler,
+    delete_checkpoint_handler, get_checkpoint_handler, get_viewed_handler, set_viewed_handler,
     list_checkpoints_handler, put_checkpoint_handler,
     review_branches_handler, review_files_handler, review_file_handler, review_handler,
     review_pr_add_comment_handler, review_pr_comments_handler,
@@ -139,6 +139,8 @@ impl RemoteControl {
             .route("/api/review/pr/comment/:id", axum::routing::put(review_pr_update_comment_handler))
             .route("/api/review/pr/comment/:id", delete(review_pr_delete_comment_handler))
             .route("/api/review/ask", get(ask_handler))
+        .route("/api/review/viewed", get(get_viewed_handler))
+        .route("/api/review/viewed", axum::routing::put(set_viewed_handler))
         .route("/api/review/checkpoints", get(list_checkpoints_handler))
         .route("/api/review/checkpoint", get(get_checkpoint_handler))
         .route("/api/review/checkpoint", axum::routing::put(put_checkpoint_handler))

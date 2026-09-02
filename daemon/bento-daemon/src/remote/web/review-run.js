@@ -263,6 +263,45 @@ function startReview(){
   };
 }
 
+// Los ficheros ya revisados de la rama que se está mirando, y el filtro por
+// estado. Las marcas viven en el almacén compartido con el escritorio y la CLI,
+// así que marcar aquí y seguir allí es lo mismo.
+let reviewViewed=[];
+let fileFilter='all';
+
+function isViewed(path){return reviewViewed.includes(path)}
+
+// Mismo criterio que `FileFilter` en la TUI y que los chips del escritorio:
+// A añadido, D borrado, y todo lo demás (M, R…) modificado.
+function matchesFileFilter(status,filter){
+  if(filter==='all')return true;
+  if(filter==='added')return status==='A';
+  if(filter==='deleted')return status==='D';
+  return status!=='A'&&status!=='D';
+}
+
+function setFileFilter(filter){
+  fileFilter=filter;
+  for(const btn of document.querySelectorAll('#rv-files-filter .chip'))
+    btn.classList.toggle('active',btn.dataset.filter===filter);
+  loadFiles();
+}
+
+async function toggleViewed(path,event){
+  event.stopPropagation();
+  const dir=cwd();
+  const base=document.getElementById('rv-files-base').value.trim()||'main';
+  reviewViewed=isViewed(path)?reviewViewed.filter(p=>p!==path):[...reviewViewed,path];
+  try{
+    await fetch('/api/review/viewed'+q,{
+      method:'PUT',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({cwd:dir,base,paths:reviewViewed}),
+    });
+  }catch(_){}
+  loadFiles();
+}
+
 async function loadFiles(){
   const dir=cwd();
   const base=document.getElementById('rv-files-base').value.trim()||'main';
@@ -282,16 +321,27 @@ async function loadFiles(){
   info.style.display='flex';
 
   try{
-    const r=await fetch('/api/review/files'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base));
-    if(!r.ok){el.innerHTML='<div class="empty err-msg">'+esc(await r.text())+'</div>';info.style.display='none';return}
-    const files=await r.json();
+    const [filesRes,viewedRes]=await Promise.all([
+      fetch('/api/review/files'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)),
+      fetch('/api/review/viewed'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)),
+    ]);
+    if(!filesRes.ok){el.innerHTML='<div class="empty err-msg">'+esc(await filesRes.text())+'</div>';info.style.display='none';return}
+    const files=await filesRes.json();
+    reviewViewed=viewedRes.ok?await viewedRes.json():[];
+    document.getElementById('rv-files-filter').style.display='flex';
+    document.getElementById('rv-files-count').textContent=files.filter(f=>isViewed(f.path)).length+'/'+files.length;
     if(!files.length){el.innerHTML='<div class="empty">Sin cambios respecto a <strong>'+esc(base)+'</strong>.</div>';return}
 
-    el.innerHTML=files.map(f=>{
+    const shown=files.filter(f=>matchesFileFilter(f.status||'M',fileFilter));
+    if(!shown.length){el.innerHTML='<div class="empty">Ningún fichero con ese estado.</div>';return}
+    el.innerHTML=shown.map(f=>{
       const badge=f.status||'M';
       const add=f.added>0?`<span class="stat-add">+${f.added}</span>`:'';
       const del=f.deleted>0?`<span class="stat-del"> -${f.deleted}</span>`:'';
-      return `<div class="file-item" onclick="openFileDiff(${esc(JSON.stringify(f.path))},${esc(JSON.stringify(base))})">
+      const path=esc(JSON.stringify(f.path));
+      const mark=isViewed(f.path)?'✓':'○';
+      return `<div class="file-item${isViewed(f.path)?' file-viewed':''}" onclick="openFileDiff(${path},${esc(JSON.stringify(base))})">
+        <span class="file-viewed-mark" onclick="toggleViewed(${path},event)">${mark}</span>
         <span class="file-badge badge-${badge}">${esc(badge)}</span>
         <span class="file-path">${esc(f.path)}</span>
         <span class="file-stat">${add}${del}</span>

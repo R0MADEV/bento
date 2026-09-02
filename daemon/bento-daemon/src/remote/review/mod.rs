@@ -4,8 +4,8 @@ mod checkpoints;
 pub use ask::ask_handler;
 pub(crate) use ask::ask;
 pub use checkpoints::{
-    delete_checkpoint_handler, get_checkpoint_handler,
-    list_checkpoints_handler, put_checkpoint_handler,
+    delete_checkpoint_handler, get_checkpoint_handler, get_viewed_handler,
+    list_checkpoints_handler, put_checkpoint_handler, set_viewed_handler,
 };
 pub(crate) use checkpoints::{
     delete_checkpoint, get_checkpoint, list_checkpoint_metas, now_iso8601, save_checkpoint,
