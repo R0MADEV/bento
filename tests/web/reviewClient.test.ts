@@ -315,3 +315,33 @@ describe('abrir una terminal desde el móvil', () => {
     expect(client.newTerminalUrl(null)).toBe('/api/terminals?token=t')
   })
 })
+
+describe('buscar en el terminal del móvil', () => {
+  it('busca hacia delante y hacia atrás con el mismo addon que el escritorio', () => {
+    const client = loadTerminal() as unknown as {
+      searchTerminal: (addon: unknown, term: string, backwards: boolean) => void
+    }
+    const calls: string[] = []
+    const addon = {
+      findNext: (t: string) => calls.push(`next:${t}`),
+      findPrevious: (t: string) => calls.push(`prev:${t}`),
+    }
+
+    client.searchTerminal(addon, 'error', false)
+    client.searchTerminal(addon, 'error', true)
+
+    expect(calls).toEqual(['next:error', 'prev:error'])
+  })
+
+  it('no busca una cadena vacía', () => {
+    const client = loadTerminal() as unknown as {
+      searchTerminal: (addon: unknown, term: string, backwards: boolean) => void
+    }
+    const calls: string[] = []
+    const addon = { findNext: () => calls.push('x'), findPrevious: () => calls.push('x') }
+
+    client.searchTerminal(addon, '   ', false)
+
+    expect(calls).toEqual([])
+  })
+})

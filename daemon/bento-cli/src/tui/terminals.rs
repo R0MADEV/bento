@@ -27,7 +27,7 @@ pub(super) fn draw_list(
     sidebar_width: u16,
     status: &str,
 ) {
-    draw_chrome(frame, items, selected, sidebar_width, status, false);
+    draw_chrome(frame, items, selected, sidebar_width, status, false, false);
 }
 
 /// Everything around the right column's contents: the rail, the status line
@@ -40,6 +40,7 @@ fn draw_chrome(
     sidebar_width: u16,
     status: &str,
     attached: bool,
+    looking_back: bool,
 ) {
     // The status line only takes room when it has something to say, so a
     // working panel is not permanently one row shorter for nothing.
@@ -68,7 +69,12 @@ fn draw_chrome(
     if attached {
         Pane {
             title: items.get(selected).map(|t| t.title.as_str()).unwrap_or(""),
-            hint: "F5 nuevo · F12 lista",
+            // Mirando atrás lo que va llegando no se ve, y sin decirlo eso
+            // parece un terminal colgado.
+            hint: match looking_back {
+                true => "mirando atrás · ⇧AvPág para volver al final",
+                false => "F5 nuevo · F12 lista · ⇧RePág mirar atrás",
+            },
             focused: true,
         }
         .render(frame, cols[1]);
@@ -99,7 +105,7 @@ pub(super) fn draw_attached(
     status: &str,
     screen: &super::screen::Screen,
 ) {
-    draw_chrome(frame, items, selected, sidebar_width, status, true);
+    draw_chrome(frame, items, selected, sidebar_width, status, true, screen.is_scrolled_back());
     let area = terminal_area(frame.area(), sidebar_width, status);
     screen.render(frame, area);
     if let Some((x, y)) = screen.cursor_in(area) {
@@ -277,6 +283,20 @@ pub(super) fn is_new_agent_key(key: KeyEvent) -> bool {
 /// remote program, so the way out has to be one almost nothing binds — and a
 /// bare function key, unlike telnet's Ctrl+], is typable on every keyboard
 /// layout (on a Spanish one "]" is already AltGr+"+").
+/// Cuántas líneas mover la vista, si esta tecla es de mirar hacia atrás.
+/// Con Shift, porque RePág y AvPág a secas son del programa de dentro — un
+/// `less` o un `htop` las quieren.
+pub(super) fn scrollback_keys(key: KeyEvent) -> Option<i32> {
+    if key.kind != KeyEventKind::Press || !key.modifiers.contains(KeyModifiers::SHIFT) {
+        return None;
+    }
+    match key.code {
+        KeyCode::PageUp => Some(10),
+        KeyCode::PageDown => Some(-10),
+        _ => None,
+    }
+}
+
 pub(super) fn is_detach_key(key: KeyEvent) -> bool {
     key.kind == KeyEventKind::Press && key.code == KeyCode::F(12)
 }
@@ -511,5 +531,14 @@ mod tests {
         assert_eq!(selection_after_close(3, 2), 1);
         assert_eq!(selection_after_close(3, 0), 0);
         assert_eq!(selection_after_close(1, 0), 0, "sin terminales, la primera fila");
+    }
+
+    #[test]
+    fn shift_pageup_looks_back_and_plain_pageup_belongs_to_the_program() {
+        assert_eq!(scrollback_keys(press(KeyCode::PageUp, KeyModifiers::SHIFT)), Some(10));
+        assert_eq!(scrollback_keys(press(KeyCode::PageDown, KeyModifiers::SHIFT)), Some(-10));
+        // Sin Shift son del programa de dentro: `less` y `htop` las quieren.
+        assert_eq!(scrollback_keys(press(KeyCode::PageUp, KeyModifiers::NONE)), None);
+        assert_eq!(scrollback_keys(press(KeyCode::Char('a'), KeyModifiers::SHIFT)), None);
     }
 }

@@ -32,3 +32,7 @@
 #inp:focus{border-color:var(--a)}
 #sendbtn{padding:11px 18px;background:var(--a);border:none;border-radius:12px;color:#07070f;font-weight:700;font-size:16px;cursor:pointer}
 #sendbtn:active{opacity:.8}
+
+/* Buscar en lo que ya salió, como en el escritorio. */
+#tsearch{display:none;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border,#2a2a3c);align-items:center}
+#tsearch-input{flex:1;min-width:0;background:var(--surface-2,#16161e);border:1px solid var(--border,#2a2a3c);border-radius:6px;color:inherit;font-size:13px;padding:6px 8px}

@@ -1,5 +1,28 @@
 // ── Terminal state ─────────────────────────────────────────────────────────────
-let ws,term,fit,ro,reconnTimer,reconnDelay,activeId,activeTitle,leaving=false;
+let ws,term,fit,search,ro,reconnTimer,reconnDelay,activeId,activeTitle,leaving=false;
+
+// Buscar en lo que ya salió, con el mismo addon que usa el escritorio. Una
+// cadena vacía no busca: xterm la trata como "todo" y salta al azar.
+function searchTerminal(addon,term_,backwards){
+  if(!addon||!term_.trim())return;
+  if(backwards)addon.findPrevious(term_);
+  else addon.findNext(term_);
+}
+
+function toggleSearch(){
+  const bar=document.getElementById('tsearch');
+  const open=bar.style.display!=='flex';
+  bar.style.display=open?'flex':'none';
+  if(open)document.getElementById('tsearch-input').focus();
+  else if(term)term.focus();
+}
+
+function onSearchKey(e){
+  if(e.key==='Escape'){toggleSearch();return}
+  if(e.key!=='Enter')return;
+  e.preventDefault();
+  searchTerminal(search,document.getElementById('tsearch-input').value,e.shiftKey);
+}
 
 // ── Terminals ─────────────────────────────────────────────────────────────────
 
@@ -108,7 +131,11 @@ function attach(id,title){
   con.innerHTML='';
   term=new Terminal({fontSize:13,fontFamily:'Menlo,Monaco,"Cascadia Code",monospace',theme:{background:'#000000',foreground:'#e2e8f8',cursor:'#a78bfa',selectionBackground:'#3a3a5c'},convertEol:false,cursorBlink:true,scrollback:2000});
   fit=new FitAddon.FitAddon();
-  term.loadAddon(fit);term.open(con);fit.fit();
+  term.loadAddon(fit);
+  // El buscador es opcional: si el addon no cargó, el terminal funciona igual.
+  search=window.SearchAddon?new window.SearchAddon.SearchAddon():null;
+  if(search)term.loadAddon(search);
+  term.open(con);fit.fit();
   enableTouchScroll(con);
   term.onData(d=>s(d));
   ro=new ResizeObserver(()=>{if(fit){fit.fit();sendResize()}});
@@ -117,6 +144,8 @@ function attach(id,title){
 }
 
 function goBack(){
+  const bar=document.getElementById('tsearch');
+  if(bar)bar.style.display='none';
   leaving=true;clearTimeout(reconnTimer);
   if(ro){ro.disconnect();ro=null}
   if(ws){ws.close();ws=null}

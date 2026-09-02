@@ -15,14 +15,26 @@ use ratatui::style::{Color, Modifier, Style};
 const MIN_ROWS: u16 = 2;
 const MIN_COLS: u16 = 2;
 
+/// Cuántas líneas se guardan de lo que ya salió de la pantalla. Las mismas que
+/// el móvil; el escritorio guarda otras tantas. Sin esto, lo que subía se
+/// perdía y esta era la única de las tres que no podía volver a leerlo.
+const SCROLLBACK: usize = 2_000;
+
 pub(crate) struct Screen {
     parser: vt100::Parser,
     wants_mouse: bool,
+    /// A cuántas líneas del fondo se está mirando. Cero es el fondo, que es
+    /// donde hay que estar para ver lo que va llegando.
+    scrollback_offset: usize,
 }
 
 impl Screen {
     pub(crate) fn new(rows: u16, cols: u16) -> Self {
-        Self { parser: vt100::Parser::new(rows.max(MIN_ROWS), cols.max(MIN_COLS), 0), wants_mouse: false }
+        Self {
+            parser: vt100::Parser::new(rows.max(MIN_ROWS), cols.max(MIN_COLS), SCROLLBACK),
+            wants_mouse: false,
+            scrollback_offset: 0,
+        }
     }
 
     pub(crate) fn feed(&mut self, bytes: &[u8]) {
@@ -30,6 +42,20 @@ impl Screen {
             self.wants_mouse = wanted;
         }
         self.parser.process(bytes);
+    }
+
+    /// Sube `lines` líneas por lo que ya salió de la pantalla; en negativo,
+    /// baja. Se para en los dos extremos en vez de irse de rango.
+    pub(crate) fn scroll_back(&mut self, lines: i32) {
+        let moved = self.scrollback_offset as i64 + i64::from(lines);
+        self.scrollback_offset = moved.clamp(0, SCROLLBACK as i64) as usize;
+        self.parser.screen_mut().set_scrollback(self.scrollback_offset);
+    }
+
+    /// Si se está mirando hacia atrás. Lo que llega mientras tanto no debe
+    /// arrastrar la vista al fondo sin avisar.
+    pub(crate) fn is_scrolled_back(&self) -> bool {
+        self.scrollback_offset > 0
     }
 
     /// Whether the remote program asked for the mouse. While it has it the
@@ -315,5 +341,39 @@ mod tests {
         screen.feed(b"\x1b[19;19H");
 
         assert_eq!(screen.cursor_in(Rect::new(0, 0, 5, 5)), None);
+    }
+
+    #[test]
+    fn what_scrolled_past_can_be_read_again() {
+        // Sin scrollback, lo que salía de la pantalla se perdía: el escritorio
+        // guarda 2000 líneas y el móvil otras tantas, y esta ninguna.
+        let mut screen = Screen::new(4, 20);
+        for n in 1..=20 {
+            screen.feed(format!("linea {n}\r\n").as_bytes());
+        }
+        let area = Rect::new(0, 0, 20, 4);
+
+        let now = render_into(&screen, area, 20, 4).join("\n");
+        assert!(!now.contains("linea 2 "), "eso ya salió de la pantalla");
+
+        screen.scroll_back(10);
+        let back = render_into(&screen, area, 20, 4).join("\n");
+        assert!(back.contains("linea 1"), "y se tiene que poder volver a leer: {back}");
+
+        screen.scroll_back(-10);
+        let bottom = render_into(&screen, area, 20, 4).join("\n");
+        assert!(bottom.contains("linea 20"), "y volver abajo: {bottom}");
+    }
+
+    #[test]
+    fn scrolling_past_the_ends_stops_there() {
+        let mut screen = Screen::new(4, 20);
+        screen.feed(b"una linea\r\n");
+
+        screen.scroll_back(-50);
+        screen.scroll_back(50);
+
+        // Ni se va a negativo ni se pierde por encima del principio.
+        assert!(render_into(&screen, Rect::new(0, 0, 20, 4), 20, 4).join("\n").contains("una linea"));
     }
 }
