@@ -243,7 +243,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         // mover la selección.
         hint: match resizing {
             true => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
-            false => "f filtro · espacio marcar · Enter diff · r correr · h reviews · s tamaño · → informe",
+            false => "/ buscar · f estado · espacio marcar · Enter diff · r correr · h reviews · s tamaño",
         },
         focused: matches!(review.focus, Focus::Files),
     }

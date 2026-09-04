@@ -448,12 +448,19 @@ impl ReviewState {
         self.request_sidebar_tab(SidebarTab::Branches);
     }
 
+    /// Los ficheros que pasan el filtro de estado (`f`) y la búsqueda (`/`).
+    /// El escritorio tiene su "Buscar archivos…" encima de la lista; aquí `/`
+    /// filtraba ramas y texto pero no esto, así que con noventa ficheros no
+    /// había forma de llegar a uno por su nombre.
     fn visible_files(&self) -> Vec<&Value> {
+        let needle = self.search.to_lowercase();
         self.files
             .iter()
             .filter(|f| {
                 let status = f.get("status").and_then(Value::as_str).unwrap_or("");
-                file_matches_filter(status, self.file_filter)
+                let path = f.get("path").and_then(Value::as_str).unwrap_or("");
+                let matches_search = needle.is_empty() || path.to_lowercase().contains(&needle);
+                matches_search && file_matches_filter(status, self.file_filter)
             })
             .collect()
     }

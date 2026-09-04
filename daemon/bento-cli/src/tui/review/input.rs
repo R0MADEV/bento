@@ -208,7 +208,15 @@ impl ReviewState {
                     false
                 }
                 KeyCode::Enter => {
-                    if let Some(pr) = self.prs.get(self.prs_selected).and_then(|p| p.get("number")).and_then(Value::as_u64) {
+                    let Some(entry) = self.prs.get(self.prs_selected).cloned() else { return false };
+                    // Abrir un PR deja la review puesta en su rama, como en el
+                    // escritorio: si no, mirabas el detalle del PR y la lista de
+                    // ficheros seguía siendo la de antes.
+                    if let Some(head) = entry.get("headRefName").and_then(Value::as_str) {
+                        self.branch = Some(head.to_string());
+                        self.refresh_files().await;
+                    }
+                    if let Some(pr) = entry.get("number").and_then(Value::as_u64) {
                         self.load_pr_detail(pr).await;
                     }
                     false
