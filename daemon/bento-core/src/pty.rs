@@ -62,6 +62,22 @@ const OUTPUT_BUFFER: usize = 2048;
 // Recent output kept per terminal so a reattaching client sees context.
 const SCROLLBACK_CAP: usize = 256 * 1024;
 
+/// Cómo se llama una terminal recién abierta. Quien la abre puede decirlo —el
+/// escritorio manda el nombre del panel o del agente—, y si no, vale más el
+/// directorio en el que está que su identificador: `bento` dice dónde estás,
+/// `pty-19` y `pty-mobile-233d02e8` no dicen nada.
+fn default_title(requested: Option<String>, cwd: &str, id: &str) -> String {
+    if let Some(title) = requested.filter(|t| !t.trim().is_empty()) {
+        return title;
+    }
+    std::path::Path::new(cwd)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| id.to_string())
+}
+
 impl PtyManager {
     pub fn new() -> Self {
         Self::default()
@@ -156,7 +172,7 @@ impl PtyManager {
         let (tx, _rx) = broadcast::channel(OUTPUT_BUFFER);
         let scrollback = Arc::new(Mutex::new(Vec::<u8>::new()));
         let cwd = start_dir.unwrap_or_default();
-        let title = opts.title.unwrap_or_else(|| id.clone());
+        let title = default_title(opts.title, &cwd, &id);
 
         {
             let mut guard = self.instances.lock().unwrap();
@@ -501,5 +517,29 @@ mod tests {
         manager.close(&id).unwrap();
         assert!(manager.list().is_empty());
         assert!(manager.close(&id).is_err());
+    }
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::default_title;
+
+    #[test]
+    fn a_terminal_is_named_after_the_folder_it_opens_in() {
+        // `pty-19` y `pty-mobile-233d02e8` no dicen nada; el directorio sí.
+        assert_eq!(default_title(None, "/Users/quien/Desktop/roma/bento", "pty-19"), "bento");
+    }
+
+    #[test]
+    fn what_the_client_asked_for_wins() {
+        assert_eq!(default_title(Some("Claude".into()), "/repo", "pty-19"), "Claude");
+        // Un nombre en blanco es no haber pedido nada.
+        assert_eq!(default_title(Some("  ".into()), "/repo", "pty-19"), "repo");
+    }
+
+    #[test]
+    fn with_no_folder_to_borrow_from_it_keeps_its_id() {
+        assert_eq!(default_title(None, "", "pty-19"), "pty-19");
+        assert_eq!(default_title(None, "/", "pty-19"), "pty-19");
     }
 }

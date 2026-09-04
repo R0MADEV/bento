@@ -68,6 +68,8 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
     // En modo tamaño las flechas mueven los bordes en vez de la selección, que
     // es la única forma de cambiarlos sin ratón.
     let mut resizing = false;
+    // El nombre que se está escribiendo, mientras se renombra una terminal.
+    let mut renaming: Option<String> = None;
     let profiles = bento_core::profiles::list();
     let mut profile: Option<usize> = None;
     let mut status = String::new();
@@ -81,6 +83,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         terminals::ListState {
                             profile: profile.map(|index| profiles[index].name.as_str()),
                             resizing,
+                            renaming: renaming.as_deref(),
                         },
                     )
                 })?;
@@ -93,6 +96,21 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                     }
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
+                        // Escribiendo un nombre, las teclas son suyas.
+                        if let (Event::Key(key), Some(name)) = (&event, renaming.take()) {
+                            renaming = match terminals::rename_key(name, key.code) {
+                                terminals::Rename::Typing(name) => Some(name),
+                                terminals::Rename::Cancel => None,
+                                terminals::Rename::Save(name) => {
+                                    if let Some(item) = items.get(selected) {
+                                        let _ = terminals::rename_terminal(&item.pty_id, &name).await;
+                                        items = terminals::fetch_terminals().await.unwrap_or_default();
+                                    }
+                                    None
+                                }
+                            };
+                            continue;
+                        }
                         // El modo tamaño se come las flechas mientras está
                         // puesto, así que va antes que nadie.
                         if let Event::Key(key) = event {
@@ -110,41 +128,26 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             }
                         }
                         match event {
+                            // Un clic en el raíl hace lo mismo aquí que
+                            // conectado: elegir fila abre esa terminal, el
+                            // botón abre una nueva y entra en ella.
                             Event::Mouse(mouse) => {
-                                let total = terminal.size()?.width;
+                                // El área se calcula antes: el raíl toma
+                                // prestado el ancho mientras dura el clic.
+                                let area = terminals::terminal_area(terminal.size()?.into(), sidebar_width, &status);
+                                let shell = profile.map(|index| profiles[index].shell.as_str());
                                 let rail = RailMouse {
                                     width: &mut sidebar_width,
                                     restored: &mut restored_width,
                                     dragging: &mut dragging_divider,
-                                    total,
+                                    total: terminal.size()?.width,
                                     height: terminal.size()?.height,
                                     rows: items.len(),
                                     header_lines: 0,
                                 };
-                                // Clicking a row connects to it, the way it does
-                                // in the desktop panel: selecting without
-                                // opening would leave the click half-done.
-                                match rail.handle(mouse) {
-                                    Some(RailClick::Select(index)) => {
-                                        selected = index;
-                                        if let Some(item) = items.get(index) {
-                                            let area = terminals::terminal_area(
-                                                terminal.size()?.into(), sidebar_width, &status,
-                                            );
-                                            match terminals::attach_to(&item.pty_id, area).await {
-                                                Ok(next) => { status.clear(); mode = next; }
-                                                Err(message) => status = message,
-                                            }
-                                        }
-                                    }
-                                    Some(RailClick::Action) => match terminals::new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
-                                        Ok((fetched, index)) => {
-                                            status.clear();
-                                            items = fetched;
-                                            if let Some(index) = index { selected = index; }
-                                        }
-                                        Err(message) => status = message,
-                                    },
+                                match terminals::rail_click(rail, mouse, &mut items, &mut selected, area, (&cwd, shell)).await {
+                                    Some(Ok(next)) => { status.clear(); mode = next; }
+                                    Some(Err(message)) => { status = message; mode = Mode::List; }
                                     None => {}
                                 }
                             }
@@ -194,6 +197,13 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                             }
                                         }
                                     }
+                                    // Renombrar la seleccionada, empezando por
+                                    // el nombre que ya tiene.
+                                    KeyCode::Char('r') => {
+                                        if items.get(selected).is_some() {
+                                            renaming = Some(String::new());
+                                        }
+                                    }
                                     // Saltar a una terminal por su número, que
                                     // es el que lleva pintado en el raíl.
                                     KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
@@ -204,6 +214,12 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     // la vuelta a la lista. Mismo gesto que
                                     // elegir agente en la pestaña de review.
                                     KeyCode::Char('p') => {
+                                        // Callarse cuando no hay ninguno es lo
+                                        // mismo que estar roto, visto desde fuera.
+                                        status = match profiles.is_empty() {
+                                            true => "no hay perfiles guardados (créalos en el escritorio con ⌘P)".to_string(),
+                                            false => String::new(),
+                                        };
                                         profile = terminals::next_profile(profiles.len(), profile);
                                     }
                                     KeyCode::Char('b') => {
@@ -316,51 +332,26 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             // The rail is still on screen while attached, so
                             // it still folds, resizes and — clicking another
                             // row — switches to that terminal.
+                            // Un clic en el raíl hace lo mismo aquí que
+                            // conectado: elegir fila abre esa terminal, el
+                            // botón abre una nueva y entra en ella.
                             Event::Mouse(mouse) => {
-                                let total = terminal.size()?.width;
+                                // El área se calcula antes: el raíl toma
+                                // prestado el ancho mientras dura el clic.
+                                let area = terminals::terminal_area(terminal.size()?.into(), sidebar_width, &status);
+                                let shell = profile.map(|index| profiles[index].shell.as_str());
                                 let rail = RailMouse {
                                     width: &mut sidebar_width,
                                     restored: &mut restored_width,
                                     dragging: &mut dragging_divider,
-                                    total,
+                                    total: terminal.size()?.width,
                                     height: terminal.size()?.height,
                                     rows: items.len(),
                                     header_lines: 0,
                                 };
-                                match rail.handle(mouse) {
-                                    Some(RailClick::Select(index)) => {
-                                        selected = index;
-                                        if let Some(item) = items.get(index) {
-                                            let area = terminals::terminal_area(
-                                                terminal.size()?.into(), sidebar_width, &status,
-                                            );
-                                            match terminals::attach_to(&item.pty_id, area).await {
-                                                Ok(next) => mode = next,
-                                                Err(message) => { status = message; mode = Mode::List; }
-                                            }
-                                        }
-                                    }
-                                    // Opening a new agent from inside a terminal
-                                    // switches straight into it: that is what the
-                                    // click asked for.
-                                    Some(RailClick::Action) => match terminals::new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
-                                        Ok((fetched, index)) => {
-                                            items = fetched;
-                                            if let Some(index) = index {
-                                                selected = index;
-                                                if let Some(item) = items.get(index) {
-                                                    let area = terminals::terminal_area(
-                                                        terminal.size()?.into(), sidebar_width, &status,
-                                                    );
-                                                    match terminals::attach_to(&item.pty_id, area).await {
-                                                        Ok(next) => mode = next,
-                                                        Err(message) => { status = message; mode = Mode::List; }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Err(message) => { status = message; mode = Mode::List; }
-                                    },
+                                match terminals::rail_click(rail, mouse, &mut items, &mut selected, area, (&cwd, shell)).await {
+                                    Some(Ok(next)) => { status.clear(); mode = next; }
+                                    Some(Err(message)) => { status = message; mode = Mode::List; }
                                     None => {}
                                 }
                             }

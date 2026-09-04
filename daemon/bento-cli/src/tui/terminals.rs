@@ -63,6 +63,8 @@ pub(super) fn draw_list(
 pub(super) struct ListState<'a> {
     pub(super) profile: Option<&'a str>,
     pub(super) resizing: bool,
+    /// El nombre que se está escribiendo, mientras se renombra una.
+    pub(super) renaming: Option<&'a str>,
 }
 
 /// Lo que la cabecera necesita saber del terminal conectado. Fuera de él nada
@@ -129,7 +131,7 @@ fn draw_chrome(
         .render(frame, cols[1]);
         return;
     }
-    draw_detail(frame, items.get(selected), cols[1], list.resizing);
+    draw_detail(frame, items.get(selected), cols[1], &list);
 }
 
 /// Where the remote terminal is painted: the right column, minus the border
@@ -156,7 +158,7 @@ pub(super) fn draw_attached(
     searching: Option<&str>,
 ) {
     let attachment = Attachment { looking_back: screen.is_scrolled_back(), searching };
-    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment), ListState { profile: None, resizing: false });
+    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment), ListState { profile: None, resizing: false, renaming: None });
     let area = terminal_area(frame.area(), sidebar_width, status);
     screen.render(frame, area);
     if let Some((x, y)) = screen.cursor_in(area) {
@@ -177,7 +179,7 @@ pub(super) async fn open_terminal(cwd: &str, shell: Option<&str>) -> std::io::Re
 
 /// The right column while nothing is attached: what Enter would connect to,
 /// and the keys that work here.
-fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area: Rect, resizing: bool) {
+fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area: Rect, list: &ListState) {
     let dim = Style::new().fg(Color::DarkGray);
     let body = match current {
         Some(t) => vec![
@@ -192,9 +194,10 @@ fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area:
         title: "",
         // En modo tamaño lo dice, porque las flechas dejan de mover la
         // selección: pulsar `s` y no ver nada es no haber pulsado nada.
-        hint: match resizing {
-            true => "MODO TAMAÑO · ←/→ ancho del raíl · s o Esc salir",
-            false => "1-9/↑↓ elegir · Enter conectar · n nuevo · k cerrar · p perfil · s tamaño · b plegar · Tab review · q salir",
+        hint: &match (list.renaming, list.resizing) {
+            (Some(name), _) => format!("nombre: {name}▏ (Enter guardar · Esc cancelar)"),
+            (None, true) => "MODO TAMAÑO · ←/→ ancho del raíl · s o Esc salir".to_string(),
+            (None, false) => "1-9/↑↓ elegir · Enter conectar · n nuevo · r renombrar · k cerrar · p perfil · s tamaño · Tab review · q salir".to_string(),
         },
         focused: false,
     }
@@ -216,6 +219,66 @@ fn short_cwd(cwd: &str, sidebar_width: u16) -> String {
     }
     let tail: String = shortened.chars().skip(shortened.chars().count() - (budget - 1)).collect();
     format!("…{tail}")
+}
+
+/// Un clic en el raíl, se esté conectado o no: elegir una fila abre esa
+/// terminal y el botón abre una nueva y entra en ella. Estaba escrito dos
+/// veces, una por modo, y las dos hacían lo mismo.
+///
+/// Devuelve el modo al que ir, o el aviso de por qué no se pudo.
+pub(super) async fn rail_click(
+    rail: super::rail::RailMouse<'_>,
+    mouse: crossterm::event::MouseEvent,
+    items: &mut Vec<TerminalInfo>,
+    selected: &mut usize,
+    area: ratatui::layout::Rect,
+    open: (&str, Option<&str>),
+) -> Option<Result<super::Mode, String>> {
+    let (cwd, shell) = open;
+    let index = match rail.handle(mouse)? {
+        super::rail::RailClick::Select(index) => index,
+        super::rail::RailClick::Action => {
+            let where_to = cwd_for_new(items, *selected, cwd);
+            match new_agent(&where_to, shell).await {
+                Ok((fetched, index)) => {
+                    *items = fetched;
+                    index?
+                }
+                Err(message) => return Some(Err(message)),
+            }
+        }
+    };
+    *selected = index;
+    let item = items.get(index)?;
+    Some(attach_to(&item.pty_id, area).await)
+}
+
+/// Lo que una tecla le hace al nombre que se está escribiendo: seguir
+/// escribiéndolo, guardarlo o dejarlo.
+pub(super) enum Rename {
+    Typing(String),
+    Save(String),
+    Cancel,
+}
+
+pub(super) fn rename_key(name: String, code: KeyCode) -> Rename {
+    let mut name = name;
+    match code {
+        KeyCode::Esc => Rename::Cancel,
+        KeyCode::Enter => Rename::Save(name),
+        KeyCode::Backspace => { name.pop(); Rename::Typing(name) }
+        KeyCode::Char(c) => { name.push(c); Rename::Typing(name) }
+        _ => Rename::Typing(name),
+    }
+}
+
+/// Le pone nombre a una terminal. El daemon ya sabía hacerlo —el escritorio lo
+/// usa— y por aquí no había forma de pedirlo.
+pub(super) async fn rename_terminal(pty_id: &str, title: &str) -> std::io::Result<()> {
+    crate::request_data(json!({
+        "id": "1", "cmd": "terminal.set_title", "pty_id": pty_id, "title": title,
+    })).await?;
+    Ok(())
 }
 
 /// Cierra un terminal. Lo mismo que hacen el escritorio y el móvil: los tres
@@ -542,7 +605,7 @@ mod tests {
         let (width, height) = (70u16, 12u16);
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| draw_list(frame, items, 0, 24, status, ListState { profile: None, resizing: false })).unwrap();
+        terminal.draw(|frame| draw_list(frame, items, 0, 24, status, ListState { profile: None, resizing: false, renaming: None })).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>())
@@ -668,5 +731,22 @@ mod tests {
     #[test]
     fn with_no_profiles_there_is_nothing_to_cycle() {
         assert_eq!(next_profile(0, None), None);
+    }
+
+    #[test]
+    fn typing_a_name_and_saving_it() {
+        let name = match rename_key(String::new(), KeyCode::Char('a')) {
+            Rename::Typing(name) => name,
+            _ => panic!("escribir no guarda ni cancela"),
+        };
+        assert_eq!(name, "a");
+        assert!(matches!(rename_key(name.clone(), KeyCode::Enter), Rename::Save(saved) if saved == "a"));
+        assert!(matches!(rename_key(name, KeyCode::Esc), Rename::Cancel));
+    }
+
+    #[test]
+    fn backspace_erases_instead_of_cancelling() {
+        // Borrarse una letra no puede tirar el nombre entero.
+        assert!(matches!(rename_key("ab".into(), KeyCode::Backspace), Rename::Typing(name) if name == "a"));
     }
 }
