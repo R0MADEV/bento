@@ -249,11 +249,20 @@ fn daemon_binary() -> Option<std::path::PathBuf> {
     }
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let bundled = dir.join(name);
-    if bundled.exists() {
-        return Some(bundled);
+    // El del árbol de desarrollo primero, cuando existe. Al lado del ejecutable
+    // hay una copia que solo se refresca al empaquetar (el sidecar), así que en
+    // desarrollo se quedaba vieja y la app resucitaba ese daemon: recompilabas,
+    // reiniciabas, y seguías hablando con el de hace tres horas. En una app
+    // instalada esta ruta no existe y manda la copia de al lado, que es la buena.
+    if let Some(dev) = dev_daemon(dir, name) {
+        return Some(dev);
     }
-    // Dev layout: <repo>/src-tauri/target/<profile>/ → <repo>/daemon/target/<profile>/
+    let bundled = dir.join(name);
+    bundled.exists().then_some(bundled)
+}
+
+/// `<repo>/src-tauri/target/<profile>/` → `<repo>/daemon/target/<profile>/`.
+fn dev_daemon(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     let profile = dir.file_name()?.to_string_lossy().into_owned();
     let candidate = dir
         .parent()? // .../src-tauri/target
