@@ -26,6 +26,24 @@ pub(crate) async fn daemon_start() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Para el daemon y lo vuelve a arrancar, que es lo que hace falta cada vez que
+/// se recompila: `start` con uno vivo no hace nada, y el que está corriendo
+/// sigue siendo el binario viejo.
+pub(crate) async fn daemon_restart() -> std::io::Result<()> {
+    if TcpStream::connect(addr()).await.is_ok() {
+        let _ = crate::request_data(serde_json::json!({ "id": "1", "cmd": "daemon.shutdown" })).await;
+        // Un puerto tarda un momento en soltarse; arrancar antes de que lo
+        // suelte deja al nuevo sin escuchar y al viejo muerto.
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if TcpStream::connect(addr()).await.is_err() {
+                break;
+            }
+        }
+    }
+    daemon_start().await
+}
+
 // ── Auto-start registration ───────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]

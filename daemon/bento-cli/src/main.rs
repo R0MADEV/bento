@@ -189,6 +189,7 @@ pub(crate) fn print_help() {
     eprintln!("  bento                      open the terminal panel (no args)");
     eprintln!("  bento daemon status        show daemon status");
     eprintln!("  bento daemon start         start the daemon in the background");
+    eprintln!("  bento daemon restart       stop it and start it again (after rebuilding)");
     eprintln!("  bento daemon install       register daemon as a login service");
     eprintln!("  bento daemon uninstall     remove the login service");
     eprintln!("  bento terminals            list open terminals");

@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 
 use crate::{attach, current_dir_string, flag, positional, print_help, print_text, request, request_data, stream_review, tui};
-use crate::service::{daemon_install, daemon_start, daemon_uninstall};
+use crate::service::{daemon_install, daemon_restart, daemon_start, daemon_uninstall};
 
 mod agent;
 mod docker;
@@ -17,6 +17,7 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
         Some("daemon") => match args.get(1).map(String::as_str) {
             Some("status")    => request(json!({ "id": "1", "cmd": "daemon.status" })).await,
             Some("start")     => daemon_start().await,
+            Some("restart")   => daemon_restart().await,
             Some("install")   => daemon_install(),
             Some("uninstall") => daemon_uninstall(),
             _ => { print_help(); Ok(()) }
