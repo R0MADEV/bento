@@ -78,7 +78,10 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 terminal.draw(|f| {
                     terminals::draw_list(
                         f, &items, selected, sidebar_width, &status,
-                        profile.map(|index| profiles[index].name.as_str()),
+                        terminals::ListState {
+                            profile: profile.map(|index| profiles[index].name.as_str()),
+                            resizing,
+                        },
                     )
                 })?;
                 tokio::select! {

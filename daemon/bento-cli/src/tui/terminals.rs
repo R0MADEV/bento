@@ -50,14 +50,21 @@ pub(super) fn draw_list(
     selected: usize,
     sidebar_width: u16,
     status: &str,
-    profile: Option<&str>,
+    list: ListState,
 ) {
-    draw_chrome(frame, items, selected, sidebar_width, status, None, profile);
+    draw_chrome(frame, items, selected, sidebar_width, status, None, list);
 }
 
 /// Everything around the right column's contents: the rail, the status line
 /// and the empty framed box. Shared so the layout cannot drift between the
 /// list and the attached view — the rail must not shift when connecting.
+/// Lo que la lista necesita saber del panel: con qué perfil abriría la
+/// siguiente y si las flechas están moviendo bordes en vez de la selección.
+pub(super) struct ListState<'a> {
+    pub(super) profile: Option<&'a str>,
+    pub(super) resizing: bool,
+}
+
 /// Lo que la cabecera necesita saber del terminal conectado. Fuera de él nada
 /// de esto significa nada, de ahí que vayan juntos y en un `Option`.
 struct Attachment<'a> {
@@ -72,7 +79,7 @@ fn draw_chrome(
     sidebar_width: u16,
     status: &str,
     attached: Option<Attachment>,
-    profile: Option<&str>,
+    list: ListState,
 ) {
     // The status line only takes room when it has something to say, so a
     // working panel is not permanently one row shorter for nothing.
@@ -98,7 +105,7 @@ fn draw_chrome(
         })
         .collect();
     Sidebar {
-        action: Some(&match profile {
+        action: Some(&match list.profile {
             Some(name) => format!("n nuevo · k cerrar · {name}"),
             None => "n nuevo · k cerrar · p perfil".to_string(),
         }),
@@ -122,7 +129,7 @@ fn draw_chrome(
         .render(frame, cols[1]);
         return;
     }
-    draw_detail(frame, items.get(selected), cols[1]);
+    draw_detail(frame, items.get(selected), cols[1], list.resizing);
 }
 
 /// Where the remote terminal is painted: the right column, minus the border
@@ -149,7 +156,7 @@ pub(super) fn draw_attached(
     searching: Option<&str>,
 ) {
     let attachment = Attachment { looking_back: screen.is_scrolled_back(), searching };
-    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment), None);
+    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment), ListState { profile: None, resizing: false });
     let area = terminal_area(frame.area(), sidebar_width, status);
     screen.render(frame, area);
     if let Some((x, y)) = screen.cursor_in(area) {
@@ -170,7 +177,7 @@ pub(super) async fn open_terminal(cwd: &str, shell: Option<&str>) -> std::io::Re
 
 /// The right column while nothing is attached: what Enter would connect to,
 /// and the keys that work here.
-fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area: Rect) {
+fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area: Rect, resizing: bool) {
     let dim = Style::new().fg(Color::DarkGray);
     let body = match current {
         Some(t) => vec![
@@ -183,7 +190,12 @@ fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area:
     };
     let inner = Pane {
         title: "",
-        hint: "1-9/↑↓ elegir · Enter conectar · n nuevo · k cerrar · p perfil · s tamaño · b plegar · Tab review · q salir",
+        // En modo tamaño lo dice, porque las flechas dejan de mover la
+        // selección: pulsar `s` y no ver nada es no haber pulsado nada.
+        hint: match resizing {
+            true => "MODO TAMAÑO · ←/→ ancho del raíl · s o Esc salir",
+            false => "1-9/↑↓ elegir · Enter conectar · n nuevo · k cerrar · p perfil · s tamaño · b plegar · Tab review · q salir",
+        },
         focused: false,
     }
     .render(frame, area);
@@ -530,7 +542,7 @@ mod tests {
         let (width, height) = (70u16, 12u16);
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| draw_list(frame, items, 0, 24, status, None)).unwrap();
+        terminal.draw(|frame| draw_list(frame, items, 0, 24, status, ListState { profile: None, resizing: false })).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>())
