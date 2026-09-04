@@ -12,7 +12,7 @@ import { createPanelLauncher } from '../ui/panelLauncher'
 import { createAgentStatusBar } from '../ui/agentStatusBar'
 import { emitAgentActivate } from '../core/terminal/agentDockState'
 import { createHomeView } from './createHomeView'
-import { loadProfiles, loadProfilesFromStore } from '../core/terminal/profiles'
+import { loadProfiles, loadProfilesFromStore, requestProfile } from '../core/terminal/profiles'
 import { getDecorations, setDecorations } from '../ui/state/decorationsPreference'
 import { setActiveProjectPath } from '../ui/state/activeProject'
 import { appT, getAppLocale, setAppLocale } from '../core/i18n'
@@ -147,7 +147,10 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
         id: `profile-${p.id}`,
         label: `Terminal: ${p.name}`,
         keywords: ['terminal', 'perfil', 'profile', p.shell, p.theme],
-        run: () => ensureView().addPanel('terminal'),
+        // El encargo va por delante: la terminal que nace lo recoge. Abrir sin
+        // pedirlo era lo que hacía este comando hasta ahora, así que elegir un
+        // perfil no cambiaba nada.
+        run: () => { requestProfile(p.id); ensureView().addPanel('terminal') },
       })),
       { id: 'new-tv', label: appT('newTv'), keywords: ['tv', 'canal'], run: () => ensureView().addPanel('tv') },
       { id: 'new-web', label: appT('newWeb'), keywords: ['web', 'navegador', 'url'], run: () => ensureView().addPanel('web') },

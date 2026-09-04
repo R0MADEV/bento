@@ -3,7 +3,7 @@ import { beforeEach, describe, it, expect, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(async () => null as unknown) }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 
-import { addProfile, loadProfiles, loadProfilesFromStore, removeProfile, saveProfiles } from '../../../src/core/terminal/profiles'
+import { addProfile, loadProfiles, loadProfilesFromStore, removeProfile, requestProfile, saveProfiles, takeRequestedProfile } from '../../../src/core/terminal/profiles'
 
 const makeLocalStorage = () => {
   const store = new Map<string, string>()
@@ -99,5 +99,29 @@ describe('profiles', () => {
 
     expect(loadProfiles()).toEqual([{ id: 'a', ...dev }])
     expect(saved()).toEqual([{ id: 'a', ...dev }])
+  })
+})
+
+describe('el perfil que pide la paleta', () => {
+  beforeEach(() => { fakeStore() })
+
+  it('lo recoge la siguiente terminal que se abre, una sola vez', async () => {
+    fakeStore([{ id: 'a', ...dev }])
+    await loadProfilesFromStore()
+
+    requestProfile('a')
+
+    // La paleta pide "Terminal: Dev" y la terminal que nace lo aplica; la
+    // siguiente ya no, o abriría con un perfil que nadie pidió.
+    expect(takeRequestedProfile()).toEqual({ id: 'a', ...dev })
+    expect(takeRequestedProfile()).toBeNull()
+  })
+
+  it('un perfil que ya no existe no pide nada', async () => {
+    await loadProfilesFromStore()
+
+    requestProfile('borrado')
+
+    expect(takeRequestedProfile()).toBeNull()
   })
 })

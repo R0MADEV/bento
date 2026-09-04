@@ -19,6 +19,8 @@ import { createAgentStatusTracker } from '../../core/terminal/agentStatusTracker
 import type { AgentStore } from '../../core/terminal/agentStore'
 import { parseOsc7Path, toDisplayPath } from '../../core/terminal/osc7'
 import { createSearchBar } from './searchBar'
+import { createTerminalProfileControls } from './profileControls'
+import { takeRequestedProfile } from '../../core/terminal/profiles'
 import { askAi } from '../../ui/askAi'
 import type { PanelApi } from '../registry'
 import 'xterm/css/xterm.css'
@@ -148,8 +150,42 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   fitAddon.fit()
 
+  const BASE_FONT_SIZE = 13
+  const MIN_FONT_SIZE = 8
+  const MAX_FONT_SIZE = 32
+
+  const setFontSize = (size: number) => {
+    term.options.fontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, size))
+    fit()
+  }
+
   const searchBar = createSearchBar(searchAddon)
   root.appendChild(searchBar.element)
+
+  // Los perfiles, donde se pueden usar: guardar cómo está esta terminal y
+  // abrir otra igual. Estaban escritos y sin montar en ningún sitio, así que
+  // no había dónde crear uno.
+  const profileControls = createTerminalProfileControls({
+    getSettings: () => ({
+      shell: currentShell,
+      theme: localTheme,
+      fontSize: term.options.fontSize ?? BASE_FONT_SIZE,
+      fontFamily: term.options.fontFamily,
+    }),
+    // El shell solo puede cambiar al abrir, así que aplicar un perfil aquí
+    // cambia lo que se ve y deja el shell para la siguiente.
+    onSelect: chosen => {
+      applyLocalTheme(chosen.theme)
+      setFontSize(chosen.fontSize)
+      if (chosen.fontFamily) term.options.fontFamily = chosen.fontFamily
+      currentShell = chosen.shell
+      profilesPanel.classList.add('hidden')
+    },
+  })
+  const profilesPanel = document.createElement('div')
+  profilesPanel.className = 'term-profiles-panel hidden'
+  profilesPanel.appendChild(profileControls.element)
+  root.appendChild(profilesPanel)
 
   // A stable id (persisted per agent/panel) lets the daemon reattach to the same
   // terminal after a reload instead of spawning a duplicate.
@@ -170,13 +206,23 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   // Saved cwd (restored terminal) wins; else the session's project folder.
   let lastCwd = (panelId && localStorage.getItem(CWD_KEY(panelId))) || projectPath || ''
 
+  // El perfil que pidió la paleta, si pidió alguno: su shell manda al abrir y
+  // su aspecto se aplica en cuanto hay terminal.
+  const profile = takeRequestedProfile()
+
   const spawnShell = (shellPath: string): Promise<boolean> => {
     const resolved = shellPath === 'auto' ? (navigator.platform.includes('Win') ? 'powershell.exe' : '/bin/sh') : shellPath
     return invoke<boolean>('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null, command: execCommand ?? null, title: ptyTitle ?? null })
       .catch(err => { term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`); return false })
   }
 
-  const spawned = spawnShell('auto')
+  let currentShell = profile?.shell || 'auto'
+  const spawned = spawnShell(currentShell)
+  if (profile) {
+    applyLocalTheme(profile.theme)
+    setFontSize(profile.fontSize)
+    if (profile.fontFamily) term.options.fontFamily = profile.fontFamily
+  }
 
   // A freshly-spawned shell discards input written during its startup, so
   // sendInput (Scripts panel) queues commands until the shell is ready —
@@ -300,14 +346,6 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     }).catch(() => {})
   })
 
-  const BASE_FONT_SIZE = 13
-  const MIN_FONT_SIZE = 8
-  const MAX_FONT_SIZE = 32
-
-  const setFontSize = (size: number) => {
-    term.options.fontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, size))
-    fit()
-  }
 
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true
@@ -339,6 +377,11 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     }
     if (mod && e.key === 'f') {
       searchBar.toggle()
+      return false
+    }
+    if (mod && e.key === 'p') {
+      profileControls.render()
+      profilesPanel.classList.toggle('hidden')
       return false
     }
     if (mod && e.key === 'j') {

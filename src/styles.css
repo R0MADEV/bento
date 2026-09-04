@@ -670,6 +670,15 @@ html, body, #app {
 }
 
 /* Terminal search bar */
+/* Los perfiles de terminal: guardar cómo está esta y abrir otra igual (⌘P). */
+.term-profiles-panel { position: absolute; top: 8px; right: 8px; z-index: 20; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; min-width: 200px; }
+.term-profiles-panel.hidden { display: none; }
+.term-profile-row { display: flex; align-items: center; gap: 6px; }
+.term-profile-name { flex: 1; min-width: 0; text-align: left; border: none; background: none; color: var(--fg); font-size: 11px; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+.term-profile-name:hover { background: var(--surface-hover, rgba(255,255,255,.05)); }
+.term-profile-delete, .term-profile-save { border: 1px solid var(--border); background: var(--surface-2); color: var(--fg-dim); font-size: 10px; border-radius: 999px; padding: 3px 8px; cursor: pointer; }
+.term-profile-save { width: 100%; margin-top: 6px; }
+
 .terminal-search {
   position: absolute;
   top: 8px;
