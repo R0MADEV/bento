@@ -319,7 +319,8 @@ fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
 fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
     match review.input_purpose {
         Some(InputPurpose::Context) => Some("Contexto para la review (Enter guardar, Esc cancelar)"),
-        Some(InputPurpose::Search) => Some("Buscar en ramas y ficheros (Enter aplicar, Esc cancelar)"),
+        Some(InputPurpose::Search) => Some("Filtrar ramas (Enter aplicar, Esc cancelar)"),
+        Some(InputPurpose::FileSearch) => Some("Buscar archivos (Enter aplicar, Esc cancelar)"),
         Some(InputPurpose::Ask) => Some("Pregunta sobre la review (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrComment) | Some(InputPurpose::PrReview(_))
         | Some(InputPurpose::InlineComment(_)) | None => None,
@@ -332,7 +333,8 @@ fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
         Some(InputPurpose::PrReview("APPROVE")) => Some("Aprobar — texto opcional (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),
-        Some(InputPurpose::Search) => Some("Buscar en el diff (Enter aplicar, Esc cancelar)"),
+        Some(InputPurpose::FileSearch) => Some("Buscar en el diff (Enter aplicar, Esc cancelar)"),
+        Some(InputPurpose::Search) => None,
         Some(InputPurpose::InlineComment(_)) => Some("Comentario en la línea (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::Ask) | Some(InputPurpose::Context) | None => None,
     }
@@ -389,12 +391,12 @@ mod tests {
         // Sin caja ni cursor, las teclas se van a un campo invisible y el panel
         // se lee como colgado: fue exactamente lo que pasó.
         let mut review = ReviewState::new("/repo".to_string());
-        review.input_purpose = Some(InputPurpose::Search);
+        review.input_purpose = Some(InputPurpose::FileSearch);
         review.input = "engine".to_string();
 
         let text = screen(&review, 80, 24);
 
-        assert!(text.contains("Buscar en ramas y ficheros"), "{text}");
+        assert!(text.contains("Buscar archivos"), "{text}");
         assert!(text.contains("engine"), "y lo que llevas escrito: {text}");
     }
 }

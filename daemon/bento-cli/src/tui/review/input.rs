@@ -9,9 +9,16 @@ use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
 
 impl ReviewState {
     /// Abre el buscador con lo que ya hubiera escrito, para poder afinarlo.
+    /// Abre el filtro de donde estés: el raíl filtra ramas, la derecha filtra
+    /// ficheros y líneas. Dos cosas distintas, como los dos campos del panel
+    /// del escritorio.
     fn start_search(&mut self) {
-        self.input_purpose = Some(InputPurpose::Search);
-        self.input = self.search.clone();
+        let on_files = !matches!(self.focus, Focus::Sidebar);
+        self.input_purpose = Some(match on_files {
+            true => InputPurpose::FileSearch,
+            false => InputPurpose::Search,
+        });
+        self.input = match on_files { true => self.file_search.clone(), false => self.search.clone() };
     }
 
     /// Handles one input event. Returns `true` if the panel should switch
@@ -353,6 +360,10 @@ impl ReviewState {
                     Some(InputPurpose::Search) => {
                         self.search = std::mem::take(&mut self.input);
                         self.branches_selected = 0;
+                    }
+                    Some(InputPurpose::FileSearch) => {
+                        self.file_search = std::mem::take(&mut self.input);
+                        self.files_selected = 0;
                     }
                     None => {}
                 }

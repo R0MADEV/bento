@@ -66,9 +66,10 @@ enum InputPurpose {
     /// Editing the author context injected into the review prompt — purely
     /// local state, no request fires on Enter.
     Context,
-    /// Filtering what is on screen: the branch list, or the lines of a diff.
-    /// Local too — nothing is fetched.
+    /// Filtrando el raíl: la lista de ramas. Local — no se pide nada.
     Search,
+    /// Filtrando la derecha: los ficheros y las líneas del diff.
+    FileSearch,
 }
 
 /// What a background request came back with. Requests used to be awaited on
@@ -187,6 +188,11 @@ pub(super) struct ReviewState {
     /// diff que estés mirando: en un diff de mil líneas, buscar es la
     /// diferencia entre revisar y rendirse.
     search: String,
+    /// Y el de la derecha: ficheros y líneas del diff. Son dos cosas distintas
+    /// —el escritorio tiene "Filtrar…" sobre las ramas y "Buscar archivos…"
+    /// sobre la lista—, y con uno solo, buscar una rama te vaciaba la lista de
+    /// ficheros.
+    file_search: String,
     branches: Vec<String>,
     branches_selected: usize,
     prs: Vec<Value>,
@@ -268,6 +274,7 @@ impl ReviewState {
             browse_dirs: Vec::new(),
             projects_selected: 0,
             search: String::new(),
+            file_search: String::new(),
             branches: Vec::new(),
             branches_selected: 0,
             prs: Vec::new(),
@@ -453,7 +460,7 @@ impl ReviewState {
     /// filtraba ramas y texto pero no esto, así que con noventa ficheros no
     /// había forma de llegar a uno por su nombre.
     fn visible_files(&self) -> Vec<&Value> {
-        let needle = self.search.to_lowercase();
+        let needle = self.file_search.to_lowercase();
         self.files
             .iter()
             .filter(|f| {
@@ -545,10 +552,10 @@ impl ReviewState {
     /// El texto con solo las líneas que contienen la búsqueda. Se aplica al
     /// diff de un archivo, al de un PR y a la salida de la review.
     pub(super) fn filtered(&self, text: &str) -> String {
-        if self.search.is_empty() {
+        if self.file_search.is_empty() {
             return text.to_string();
         }
-        let needle = self.search.to_lowercase();
+        let needle = self.file_search.to_lowercase();
         text.lines().filter(|l| l.to_lowercase().contains(&needle)).collect::<Vec<_>>().join("\n")
     }
 }
@@ -1012,7 +1019,10 @@ mod tests {
 
     #[test]
     fn the_diff_keeps_only_the_matching_lines() {
-        let state = state_with(&[], "todo");
+        // El diff va con la búsqueda de la derecha, la de ficheros: filtrar
+        // ramas en el raíl no debe tocar lo que estás leyendo.
+        let mut state = state_with(&[], "");
+        state.file_search = "todo".into();
         let diff = "+ hecho\n+ TODO: esto no\n- otra cosa\n";
         assert_eq!(state.filtered(diff), "+ TODO: esto no");
     }
