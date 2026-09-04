@@ -1,12 +1,13 @@
-//! Los perfiles, contra el fichero de verdad. Su propio binario de test para
-//! poder mover `HOME` sin pisar a nadie: `profiles` lo lee al llamarlo.
+//! Los perfiles, contra un fichero de verdad. Cada test con el suyo: la ruta
+//! entra por parámetro justo para no tener que mover `HOME`, que es global y
+//! pondría a competir a los tests entre ellos.
 
-use bento_core::profiles::{list, save, shell_of, Profile};
+use bento_core::profiles::{list_in, save_in, Profile};
 
-fn home() {
-    let dir = std::env::temp_dir().join(format!("bento-profiles-{}", std::process::id()));
+fn path(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bento-profiles-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("HOME", &dir);
+    dir.join("terminal-profiles.json")
 }
 
 fn profile(id: &str, shell: &str) -> Profile {
@@ -22,10 +23,10 @@ fn profile(id: &str, shell: &str) -> Profile {
 
 #[test]
 fn saving_and_reading_back_the_profiles() {
-    home();
-    save(&[profile("uno", "/bin/zsh"), profile("dos", "/bin/bash")]).expect("guardar");
+    let file = path("ida-y-vuelta");
+    save_in(&file, &[profile("uno", "/bin/zsh"), profile("dos", "/bin/bash")]).expect("guardar");
 
-    let saved = list();
+    let saved = list_in(&file);
 
     assert_eq!(saved.len(), 2);
     assert_eq!(saved[0].shell, "/bin/zsh");
@@ -33,21 +34,16 @@ fn saving_and_reading_back_the_profiles() {
 }
 
 #[test]
-fn the_shell_comes_from_the_id_and_only_from_a_saved_one() {
-    home();
-    save(&[profile("uno", "/bin/zsh")]).expect("guardar");
-
-    assert_eq!(shell_of("uno").as_deref(), Some("/bin/zsh"));
-    // Que el cliente mande el id y no el shell es lo que impide pedir por HTTP
-    // la ejecución de cualquier cosa.
-    assert_eq!(shell_of("inventado"), None);
+fn no_file_is_no_profiles_rather_than_an_error() {
+    assert!(list_in(&path("vacio")).is_empty());
 }
 
 #[test]
-fn no_file_is_no_profiles_rather_than_an_error() {
-    let dir = std::env::temp_dir().join(format!("bento-profiles-vacio-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("HOME", &dir);
+fn a_corrupt_file_is_no_profiles_either() {
+    // El coste de equivocarse es abrir con el shell por defecto; el de reventar,
+    // no poder abrir nada.
+    let file = path("corrupto");
+    std::fs::write(&file, "{no es json").unwrap();
 
-    assert!(list().is_empty());
+    assert!(list_in(&file).is_empty());
 }

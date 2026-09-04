@@ -20,6 +20,19 @@ pub(super) struct TerminalInfo {
     pub(super) cwd: String,
 }
 
+/// Con qué perfil abrir la siguiente, dando la vuelta a la lista: primero
+/// ninguno (el shell del daemon), luego cada perfil guardado. Es el mismo gesto
+/// que elegir agente en la pestaña de review, y evita un modal para elegir
+/// entre tres cosas.
+pub(super) fn next_profile(profiles: usize, current: Option<usize>) -> Option<usize> {
+    match current {
+        None if profiles > 0 => Some(0),
+        None => None,
+        Some(index) if index + 1 < profiles => Some(index + 1),
+        Some(_) => None,
+    }
+}
+
 /// Dónde abrir la nueva: donde esté la que tienes seleccionada, y si no hay
 /// ninguna, donde se lanzó la CLI. El móvil pregunta el proyecto; aquí la lista
 /// ya lo está enseñando, así que preguntarlo otra vez sobraría.
@@ -37,8 +50,9 @@ pub(super) fn draw_list(
     selected: usize,
     sidebar_width: u16,
     status: &str,
+    profile: Option<&str>,
 ) {
-    draw_chrome(frame, items, selected, sidebar_width, status, None);
+    draw_chrome(frame, items, selected, sidebar_width, status, None, profile);
 }
 
 /// Everything around the right column's contents: the rail, the status line
@@ -58,6 +72,7 @@ fn draw_chrome(
     sidebar_width: u16,
     status: &str,
     attached: Option<Attachment>,
+    profile: Option<&str>,
 ) {
     // The status line only takes room when it has something to say, so a
     // working panel is not permanently one row shorter for nothing.
@@ -77,7 +92,10 @@ fn draw_chrome(
         })
         .collect();
     Sidebar {
-        action: Some("+ Nuevo agente  (n·F5)"),
+        action: Some(&match profile {
+            Some(name) => format!("+ Nuevo  (n·F5) · {name}"),
+            None => "+ Nuevo agente  (n·F5) · p perfil".to_string(),
+        }),
         empty_message: "No hay terminales",
         ..Sidebar::new("TERMINAL", &rows, selected)
     }
@@ -125,7 +143,7 @@ pub(super) fn draw_attached(
     searching: Option<&str>,
 ) {
     let attachment = Attachment { looking_back: screen.is_scrolled_back(), searching };
-    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment));
+    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment), None);
     let area = terminal_area(frame.area(), sidebar_width, status);
     screen.render(frame, area);
     if let Some((x, y)) = screen.cursor_in(area) {
@@ -135,8 +153,12 @@ pub(super) fn draw_attached(
 
 /// Opens a terminal in `cwd` and returns its pty id, so the caller can select
 /// the row that is about to appear instead of guessing where it landed.
-pub(super) async fn open_terminal(cwd: &str) -> std::io::Result<String> {
-    let data = crate::request_data(json!({ "id": "1", "cmd": "terminal.open", "cwd": cwd })).await?;
+pub(super) async fn open_terminal(cwd: &str, shell: Option<&str>) -> std::io::Result<String> {
+    let mut body = json!({ "id": "1", "cmd": "terminal.open", "cwd": cwd });
+    if let Some(shell) = shell {
+        body["shell"] = json!(shell);
+    }
+    let data = crate::request_data(body).await?;
     Ok(data.get("pty_id").and_then(Value::as_str).unwrap_or_default().to_string())
 }
 
@@ -475,7 +497,7 @@ mod tests {
         let (width, height) = (70u16, 12u16);
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| draw_list(frame, items, 0, 24, status)).unwrap();
+        terminal.draw(|frame| draw_list(frame, items, 0, 24, status, None)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>())
@@ -589,5 +611,17 @@ mod tests {
     fn with_no_terminals_it_falls_back_to_where_the_cli_started() {
         assert_eq!(cwd_for_new(&[], 0, "/donde-sea"), "/donde-sea");
         assert_eq!(cwd_for_new(&[info("")], 0, "/donde-sea"), "/donde-sea");
+    }
+
+    #[test]
+    fn the_profile_cycles_through_the_saved_ones_and_back_to_none() {
+        assert_eq!(next_profile(2, None), Some(0));
+        assert_eq!(next_profile(2, Some(0)), Some(1));
+        assert_eq!(next_profile(2, Some(1)), None, "y vuelve al shell de siempre");
+    }
+
+    #[test]
+    fn with_no_profiles_there_is_nothing_to_cycle() {
+        assert_eq!(next_profile(0, None), None);
     }
 }

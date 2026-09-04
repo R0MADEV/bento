@@ -27,10 +27,12 @@ fn profiles_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".bento").join("terminal-profiles.json"))
 }
 
-/// Los perfiles guardados. Un fichero ilegible o corrupto es "no hay
-/// ninguno": el coste de equivocarse es abrir con el shell por defecto.
-pub fn list() -> Vec<Profile> {
-    let Some(path) = profiles_path() else { return Vec::new() };
+/// Los perfiles de un fichero. Uno ilegible o corrupto es "no hay ninguno": el
+/// coste de equivocarse es abrir con el shell por defecto.
+///
+/// La ruta va por parámetro para que un test no tenga que mover `HOME`, que es
+/// global y los pone a competir entre ellos.
+pub fn list_in(path: &std::path::Path) -> Vec<Profile> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str::<Vec<Profile>>(&raw).ok())
@@ -38,13 +40,21 @@ pub fn list() -> Vec<Profile> {
 }
 
 /// Reemplaza la lista entera, que es como la edita quien la edita.
-pub fn save(profiles: &[Profile]) -> Result<(), String> {
-    let path = profiles_path().ok_or_else(|| "no home dir".to_string())?;
+pub fn save_in(path: &std::path::Path, profiles: &[Profile]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let raw = serde_json::to_string(profiles).map_err(|e| e.to_string())?;
     std::fs::write(path, raw).map_err(|e| e.to_string())
+}
+
+pub fn list() -> Vec<Profile> {
+    profiles_path().map(|path| list_in(&path)).unwrap_or_default()
+}
+
+pub fn save(profiles: &[Profile]) -> Result<(), String> {
+    let path = profiles_path().ok_or_else(|| "no home dir".to_string())?;
+    save_in(&path, profiles)
 }
 
 /// El shell de un perfil. Que el cliente mande el id y no el shell es lo que

@@ -62,12 +62,22 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
     // Lo que se está buscando en lo que ya salió, mientras se escribe. Vive
     // aquí porque mientras hay buscador las teclas son suyas y no del programa.
     let mut searching: Option<String> = None;
+    // Los perfiles guardados, del mismo fichero que escribe el escritorio, y
+    // cuál se usará al abrir la siguiente. Se leen una vez: cambian poco y
+    // releerlos por fotograma sería un fichero por fotograma.
+    let profiles = bento_core::profiles::list();
+    let mut profile: Option<usize> = None;
     let mut status = String::new();
 
     loop {
         match &mut mode {
             Mode::List => {
-                terminal.draw(|f| terminals::draw_list(f, &items, selected, sidebar_width, &status))?;
+                terminal.draw(|f| {
+                    terminals::draw_list(
+                        f, &items, selected, sidebar_width, &status,
+                        profile.map(|index| profiles[index].name.as_str()),
+                    )
+                })?;
                 tokio::select! {
                     _ = refresh.tick() => {
                         items = terminals::fetch_terminals().await.unwrap_or_default();
@@ -105,7 +115,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                             }
                                         }
                                     }
-                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
+                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                         Ok((fetched, index)) => {
                                             status.clear();
                                             items = fetched;
@@ -139,7 +149,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     // next refresh tick, and the new row is selected.
                                     // A failure is reported: swallowing it made the key
                                     // look dead whenever the daemon was down.
-                                    KeyCode::Char('n') => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
+                                    KeyCode::Char('n') => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                         Ok((fetched, index)) => {
                                             status.clear();
                                             items = fetched;
@@ -161,6 +171,12 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                                 Err(error) => status = format!("No se pudo cerrar: {error}"),
                                             }
                                         }
+                                    }
+                                    // Con qué perfil abrir la siguiente, dando
+                                    // la vuelta a la lista. Mismo gesto que
+                                    // elegir agente en la pestaña de review.
+                                    KeyCode::Char('p') => {
+                                        profile = terminals::next_profile(profiles.len(), profile);
                                     }
                                     KeyCode::Char('b') => {
                                         sidebar_width = toggle_sidebar(sidebar_width, &mut restored_width);
@@ -233,7 +249,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             // Reserved before the pty sees it, so a new agent
                             // can be opened without first going back.
                             Event::Key(key) if terminals::is_new_agent_key(key) => {
-                                match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
+                                match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                     Ok((fetched, index)) => {
                                         items = fetched;
                                         if let Some(index) = index {
@@ -311,7 +327,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     // Opening a new agent from inside a terminal
                                     // switches straight into it: that is what the
                                     // click asked for.
-                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd)).await {
+                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                         Ok((fetched, index)) => {
                                             items = fetched;
                                             if let Some(index) = index {
@@ -449,8 +465,11 @@ async fn attach_to(pty_id: &str, area: ratatui::layout::Rect) -> Result<Mode, St
 
 /// Opens a terminal and reports where it landed in the refreshed list, so the
 /// caller can select it. Shared by the "n" key and the rail's action button.
-async fn new_agent(cwd: &str) -> Result<(Vec<terminals::TerminalInfo>, Option<usize>), String> {
-    match terminals::open_terminal(cwd).await {
+async fn new_agent(
+    cwd: &str,
+    shell: Option<&str>,
+) -> Result<(Vec<terminals::TerminalInfo>, Option<usize>), String> {
+    match terminals::open_terminal(cwd, shell).await {
         Ok(pty_id) => {
             let items = terminals::fetch_terminals().await.unwrap_or_default();
             let index = items.iter().position(|t| t.pty_id == pty_id);
