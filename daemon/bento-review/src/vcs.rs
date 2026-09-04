@@ -218,7 +218,7 @@ pub fn list_files_of(cwd: &str, base: &str, branch: Option<&str>) -> Result<Vec<
     if !is_safe_branch(branch) {
         return Err("rama inválida".into());
     }
-    let range = format!("{base}..{branch}");
+    let range = format!("{base}...{branch}");
     let name_status = git_cmd(cwd, &["diff", "--name-status", &range])?;
     let numstat = git_cmd(cwd, &["diff", "--numstat", &range]).unwrap_or_default();
     Ok(build_file_list(&name_status, &numstat, &[]))
@@ -246,7 +246,12 @@ pub fn review_diff(cwd: &str, base: &str, branch: Option<&str>) -> Result<String
         if !is_safe_branch(branch) {
             return Err("rama inválida".into());
         }
-        return git_cmd(cwd, &["diff", &format!("{base}..{branch}")]);
+        // Tres puntos: lo que la rama añade desde que se separó, que es lo que
+        // se revisa. Con dos, git enseña además todo lo que la base ganó por su
+        // cuenta como si la rama lo hubiera borrado — una rama vieja salía con
+        // seiscientos ficheros "eliminados". El panel del escritorio usa tres
+        // desde siempre (`log::diff_between_refs`).
+        return git_cmd(cwd, &["diff", &format!("{base}...{branch}")]);
     }
     let tracked = git_cmd(cwd, &["diff", base])?;
     let untracked = untracked_files(cwd)
@@ -376,5 +381,35 @@ mod tests {
         assert!(error.contains("no es un repositorio git"), "{error}");
         assert!(!error.contains("--no-index"), "y no el de git: {error}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_branch_is_compared_from_where_it_forked_not_against_the_whole_base() {
+        // Con dos puntos, todo lo que la base ganó después sale como si la rama
+        // lo hubiera borrado: una rama vieja aparecía con cientos de ficheros
+        // eliminados que nunca tocó.
+        let repository = crate::test_support::repo("tres-puntos");
+        let root = &repository.0;
+        std::fs::write(root.join("comun.txt"), "uno").unwrap();
+        crate::test_support::run(root, &["add", "."]);
+        crate::test_support::run(root, &["commit", "-qm", "base"]);
+        let principal = crate::branches::default_branch(&root.to_string_lossy());
+        crate::test_support::run(root, &["checkout", "-qb", "rama"]);
+        std::fs::write(root.join("de-la-rama.txt"), "x").unwrap();
+        crate::test_support::run(root, &["add", "."]);
+        crate::test_support::run(root, &["commit", "-qm", "rama"]);
+        crate::test_support::run(root, &["checkout", "-q", &principal]);
+        std::fs::write(root.join("posterior.txt"), "y").unwrap();
+        crate::test_support::run(root, &["add", "."]);
+        crate::test_support::run(root, &["commit", "-qm", "después"]);
+
+        let cwd = root.to_string_lossy().to_string();
+        let files = list_files_of(&cwd, &principal, Some("rama")).expect("los ficheros de la rama");
+        let paths: Vec<String> = files
+            .iter()
+            .filter_map(|f| f.get("path").and_then(Value::as_str).map(String::from))
+            .collect();
+
+        assert_eq!(paths, vec!["de-la-rama.txt"], "solo lo que la rama añadió: {paths:?}");
     }
 }
