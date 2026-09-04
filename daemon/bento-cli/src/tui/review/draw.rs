@@ -103,7 +103,7 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
         // mientras se elige, y en 24 columnas la cabecera no cabe.
         action: Some(match (review.running, &review.sidebar_tab) {
             (true, _) => "■ Parar (c)",
-            (false, SidebarTab::Projects) => "Enter entra · espacio elige",
+            (false, SidebarTab::Projects) => "Enter entra · espacio elige ●",
             (false, _) => "▶ Correr review (r)",
         }),
         ..Sidebar::new(&title, &items, selected)

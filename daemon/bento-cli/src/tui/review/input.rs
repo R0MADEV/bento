@@ -134,14 +134,23 @@ impl ReviewState {
                     }
                     false
                 }
+                // Espacio elige la carpeta marcada, que es lo que hace un
+                // selector: entrar en ella para luego elegirla era un paso de
+                // más, y no se adivina.
                 KeyCode::Char(' ') => {
+                    let chosen = match self.browse_dirs.get(self.projects_selected).map(String::as_str) {
+                        Some("..") => self.browse_path.parent().map(std::path::Path::to_path_buf),
+                        Some(name) => Some(self.browse_path.join(name)),
+                        None => Some(self.browse_path.clone()),
+                    };
+                    let Some(chosen) = chosen else { return false };
                     // Sin repositorio no hay nada que revisar, y git contestaría
                     // con su propio error pegado en el panel.
-                    if !super::format::is_repo(&self.browse_path) {
-                        self.status = "esa carpeta no es un repositorio git".into();
+                    if !super::format::is_repo(&chosen) {
+                        self.status = format!("{} no es un repositorio git", chosen.display());
                         return false;
                     }
-                    self.cwd = self.browse_path.display().to_string();
+                    self.cwd = chosen.display().to_string();
                     // Cada proyecto tiene su rama principal: quedarse con la
                     // base del anterior es comparar contra algo que aquí igual
                     // ni existe.
