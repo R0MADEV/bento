@@ -539,6 +539,7 @@ fn batch_heading(msg: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyCode;
 
     fn state_with(branches: &[&str], search: &str) -> ReviewState {
         let mut state = ReviewState::new("/repo".to_string());
@@ -977,5 +978,32 @@ mod tests {
         let state = state_with(&[], "");
         let diff = "+ a\n- b";
         assert_eq!(state.filtered(diff), diff);
+    }
+
+    #[tokio::test]
+    async fn a_letter_typed_into_a_box_is_a_letter_and_not_a_shortcut() {
+        // El modo tamaño mira las teclas antes que el panel; escribiendo, no
+        // debe mirarlas, o "s" nunca se podría teclear.
+        let mut state = ReviewState::new("/repo".into());
+        state.handle_event(press(KeyCode::Char('c'))).await;
+        assert!(state.is_typing(), "la 'c' abre el cuadro de contexto");
+
+        state.handle_event(press(KeyCode::Char('s'))).await;
+
+        assert_eq!(state.input, "s");
+    }
+
+    #[tokio::test]
+    async fn with_no_box_open_the_keys_are_the_panels() {
+        let state = ReviewState::new("/repo".into());
+
+        assert!(!state.is_typing());
+    }
+
+    fn press(code: KeyCode) -> crossterm::event::Event {
+        crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+            code,
+            crossterm::event::KeyModifiers::NONE,
+        ))
     }
 }

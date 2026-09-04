@@ -109,6 +109,13 @@ impl ReviewState {
         self.drawer_open = true;
     }
 
+    /// Si hay un cuadro de texto abierto (contexto, pregunta, buscar). Mientras
+    /// lo haya, las teclas son suyas: los atajos del panel que las miran antes
+    /// —el modo tamaño— tienen que apartarse, o una "s" no se podría teclear.
+    pub(in crate::tui) fn is_typing(&self) -> bool {
+        self.input_purpose.is_some()
+    }
+
     /// Shows the drawer, so a report never lands somewhere invisible.
     pub(super) fn open_drawer(&mut self) {
         self.drawer_open = true;

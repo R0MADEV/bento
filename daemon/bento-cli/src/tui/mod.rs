@@ -443,8 +443,11 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             continue;
                         }
                         // El mismo modo tamaño que en la lista: aquí hay dos
-                        // bordes que mover, el del raíl y el del informe.
+                        // bordes que mover, el del raíl y el del informe. Con un
+                        // cuadro de texto abierto no, que ahí una "s" es una "s".
+                        let typing = review.is_typing();
                         if let Event::Key(key) = event {
+                          if !typing {
                             let total = terminal.size()?.width;
                             match rail::resize_key(key, resizing) {
                                 Some(rail::Resize::Toggle) => { resizing = !resizing; continue }
@@ -456,6 +459,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                 Some(rail::Resize::Drawer(delta)) => { review.nudge_drawer(delta, total); continue }
                                 None => {}
                             }
+                          }
                         }
                         // Painted before the call, because the call itself
                         // blocks this loop: without a frame in between, a slow
