@@ -100,6 +100,15 @@ impl ReviewState {
         }
     }
 
+    /// Mueve el borde del informe con el teclado, con los mismos topes que el
+    /// ratón: es la única forma de cambiarlo sin ratón.
+    pub(in crate::tui) fn nudge_drawer(&mut self, delta: i16, total: u16) {
+        let moved = i32::from(self.drawer_width) + i32::from(delta);
+        let column = u16::try_from(i32::from(total) - moved.max(0)).unwrap_or(0);
+        self.drawer_width = crate::tui::drawer::width_after_drag(column, total);
+        self.drawer_open = true;
+    }
+
     /// Shows the drawer, so a report never lands somewhere invisible.
     pub(super) fn open_drawer(&mut self) {
         self.drawer_open = true;

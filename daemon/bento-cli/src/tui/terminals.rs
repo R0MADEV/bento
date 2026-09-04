@@ -83,18 +83,24 @@ fn draw_chrome(
         frame.render_widget(Paragraph::new(line), body[1]);
     }
     let cols = Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(1)]).split(body[0]);
+    // Cada fila lleva su número: `1`…`9` salta directo, que es más rápido que
+    // bajar con las flechas cuando tienes ocho terminales abiertas.
     let rows: Vec<SidebarItem> = items
         .iter()
-        .map(|t| SidebarItem {
-            label: t.title.clone(),
+        .enumerate()
+        .map(|(index, t)| SidebarItem {
+            label: match index < 9 {
+                true => format!("{} {}", index + 1, t.title),
+                false => t.title.clone(),
+            },
             detail: short_cwd(&t.cwd, sidebar_width),
             status: ItemStatus::Active,
         })
         .collect();
     Sidebar {
         action: Some(&match profile {
-            Some(name) => format!("+ Nuevo  (n·F5) · {name}"),
-            None => "+ Nuevo agente  (n·F5) · p perfil".to_string(),
+            Some(name) => format!("n nuevo · k cerrar · {name}"),
+            None => "n nuevo · k cerrar · p perfil".to_string(),
         }),
         empty_message: "No hay terminales",
         ..Sidebar::new("TERMINAL", &rows, selected)
@@ -177,7 +183,7 @@ fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area:
     };
     let inner = Pane {
         title: "",
-        hint: "↑/↓ navegar · Enter conectar · n nuevo · k cerrar · b plegar · Tab review · q salir",
+        hint: "1-9/↑↓ elegir · Enter conectar · n nuevo · k cerrar · p perfil · s tamaño · b plegar · Tab review · q salir",
         focused: false,
     }
     .render(frame, area);
@@ -385,6 +391,33 @@ fn key_event_to_bytes(key: KeyEvent) -> Vec<u8> {
         KeyCode::F(3) => b"\x1bOR".to_vec(),
         KeyCode::F(4) => b"\x1bOS".to_vec(),
         _ => Vec::new(),
+    }
+}
+
+/// row, and switching while already attached.
+pub(super) async fn attach_to(pty_id: &str, area: ratatui::layout::Rect) -> Result<super::Mode, String> {
+    match Session::connect(pty_id, area.height, area.width).await {
+        Ok(session) => Ok(super::Mode::Attached(Box::new(super::Attached {
+            session,
+            screen: super::screen::Screen::new(area.height, area.width),
+        }))),
+        Err(error) => Err(format!("No se pudo conectar: {error}")),
+    }
+}
+
+/// Opens a terminal and reports where it landed in the refreshed list, so the
+/// caller can select it. Shared by the "n" key and the rail's action button.
+pub(super) async fn new_agent(
+    cwd: &str,
+    shell: Option<&str>,
+) -> Result<(Vec<TerminalInfo>, Option<usize>), String> {
+    match open_terminal(cwd, shell).await {
+        Ok(pty_id) => {
+            let items = fetch_terminals().await.unwrap_or_default();
+            let index = items.iter().position(|t| t.pty_id == pty_id);
+            Ok((items, index))
+        }
+        Err(error) => Err(format!("No se pudo abrir: {error}")),
     }
 }
 

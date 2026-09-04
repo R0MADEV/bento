@@ -200,6 +200,16 @@ pub(crate) fn width_after_drag(column: u16, total_width: u16) -> u16 {
     (column + 1).clamp(MIN_WIDTH, max)
 }
 
+/// El ancho del raíl tras mover `delta` columnas con el teclado, dentro de los
+/// mismos límites que respeta el ratón. Con teclado se puede pedir cualquier
+/// cosa —mantener pulsada una flecha— así que los topes son parte de la regla,
+/// no del gesto.
+pub(crate) fn width_after_nudge(current: u16, delta: i16, total_width: u16) -> u16 {
+    let max = (total_width * MAX_WIDTH_PERCENT / 100).max(MIN_WIDTH);
+    let moved = i32::from(current) + i32::from(delta);
+    moved.clamp(i32::from(MIN_WIDTH), i32::from(max)) as u16
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,5 +425,18 @@ mod tests {
         // Dragging out from the stub must land on something readable rather
         // than the 3-column stub plus one.
         assert_eq!(width_after_drag(1, 100), MIN_WIDTH);
+    }
+
+    #[test]
+    fn nudging_the_rail_moves_it_within_the_same_limits_as_dragging() {
+        assert_eq!(width_after_nudge(24, 2, 100), 26);
+        assert_eq!(width_after_nudge(24, -2, 100), 22);
+    }
+
+    #[test]
+    fn nudging_stops_at_the_ends_instead_of_running_off() {
+        // Con teclado se puede pedir cualquier cosa: dejar la flecha pulsada.
+        assert_eq!(width_after_nudge(MIN_WIDTH, -50, 100), MIN_WIDTH);
+        assert_eq!(width_after_nudge(24, 500, 100), 100 * MAX_WIDTH_PERCENT / 100);
     }
 }

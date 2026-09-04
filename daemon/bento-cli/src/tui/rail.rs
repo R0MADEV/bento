@@ -75,6 +75,36 @@ pub(super) fn toggle_sidebar(current: u16, restored: &mut u16) -> u16 {
     *restored
 }
 
+/// Qué pide una tecla al modo tamaño, si es que le pide algo. Lo mismo en las
+/// dos pestañas: entrar y salir, y mover cada borde.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Resize {
+    Toggle,
+    Exit,
+    /// Columnas que crece (o mengua, en negativo) el raíl.
+    Rail(i16),
+    /// Lo mismo para el informe de la review.
+    Drawer(i16),
+}
+
+/// Con el modo apagado solo `s` significa algo: las flechas siguen siendo de
+/// quien mueve la selección.
+pub(super) fn resize_key(key: crossterm::event::KeyEvent, active: bool) -> Option<Resize> {
+    use crossterm::event::{KeyCode, KeyEventKind};
+    if key.kind != KeyEventKind::Press {
+        return None;
+    }
+    match (key.code, active) {
+        (KeyCode::Char('s'), _) => Some(Resize::Toggle),
+        (KeyCode::Esc, true) => Some(Resize::Exit),
+        (KeyCode::Left, true) => Some(Resize::Rail(-2)),
+        (KeyCode::Right, true) => Some(Resize::Rail(2)),
+        (KeyCode::Up, true) => Some(Resize::Drawer(2)),
+        (KeyCode::Down, true) => Some(Resize::Drawer(-2)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +127,28 @@ mod tests {
         let once = toggle_sidebar(sidebar::COLLAPSED_WIDTH, &mut restored);
         assert_eq!(once, 40);
         assert_eq!(restored, 40);
+    }
+
+    fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn s_toggles_the_resize_mode_from_either_side() {
+        use crossterm::event::KeyCode;
+        assert_eq!(resize_key(key(KeyCode::Char('s')), false), Some(Resize::Toggle));
+        assert_eq!(resize_key(key(KeyCode::Char('s')), true), Some(Resize::Toggle));
+    }
+
+    #[test]
+    fn the_arrows_only_move_edges_while_the_mode_is_on() {
+        use crossterm::event::KeyCode;
+        // Apagado son de quien mueve la selección, que es lo que se espera de
+        // ellas en una lista.
+        assert_eq!(resize_key(key(KeyCode::Left), false), None);
+        assert_eq!(resize_key(key(KeyCode::Left), true), Some(Resize::Rail(-2)));
+        assert_eq!(resize_key(key(KeyCode::Up), true), Some(Resize::Drawer(2)));
+        assert_eq!(resize_key(key(KeyCode::Esc), true), Some(Resize::Exit));
+        assert_eq!(resize_key(key(KeyCode::Esc), false), None);
     }
 }

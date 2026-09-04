@@ -136,6 +136,31 @@ impl Screen {
     }
 }
 
+/// Lo que una tecla le hace al buscador abierto sobre el buffer: escribirlo,
+/// buscar hacia atrás o cerrarlo. Devuelve el término que queda —`None` si se
+/// cerró— y el aviso que hay que enseñar.
+pub(crate) fn search_key(
+    screen: &mut Screen,
+    term: String,
+    code: crossterm::event::KeyCode,
+) -> (Option<String>, String) {
+    use crossterm::event::KeyCode;
+    let mut term = term;
+    match code {
+        KeyCode::Esc => (None, String::new()),
+        KeyCode::Enter => match screen.find_back(&term) {
+            true => (Some(term), String::new()),
+            // Decirlo y no moverse: saltar al principio del buffer porque no
+            // queda nada es peor que quedarse quieto.
+            false => { let aviso = format!("sin más «{term}» hacia atrás"); (Some(term), aviso) }
+        },
+        KeyCode::Backspace => { term.pop(); (Some(term), String::new()) }
+        KeyCode::Char(c) => { term.push(c); (Some(term), String::new()) }
+        _ => (Some(term), String::new()),
+    }
+}
+
+
 fn cell_style(cell: &vt100::Cell) -> Style {
     let mut style = Style::default();
     if let Some(color) = convert(cell.fgcolor()) {

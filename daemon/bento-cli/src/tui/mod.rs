@@ -65,6 +65,9 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
     // Los perfiles guardados, del mismo fichero que escribe el escritorio, y
     // cuál se usará al abrir la siguiente. Se leen una vez: cambian poco y
     // releerlos por fotograma sería un fichero por fotograma.
+    // En modo tamaño las flechas mueven los bordes en vez de la selección, que
+    // es la única forma de cambiarlos sin ratón.
+    let mut resizing = false;
     let profiles = bento_core::profiles::list();
     let mut profile: Option<usize> = None;
     let mut status = String::new();
@@ -87,6 +90,22 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                     }
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
+                        // El modo tamaño se come las flechas mientras está
+                        // puesto, así que va antes que nadie.
+                        if let Event::Key(key) = event {
+                            let total = terminal.size()?.width;
+                            match rail::resize_key(key, resizing) {
+                                Some(rail::Resize::Toggle) => { resizing = !resizing; continue }
+                                Some(rail::Resize::Exit) => { resizing = false; continue }
+                                Some(rail::Resize::Rail(delta)) => {
+                                    sidebar_width = sidebar::width_after_nudge(sidebar_width, delta, total);
+                                    continue;
+                                }
+                                // El informe es de la otra pestaña.
+                                Some(rail::Resize::Drawer(_)) => continue,
+                                None => {}
+                            }
+                        }
                         match event {
                             Event::Mouse(mouse) => {
                                 let total = terminal.size()?.width;
@@ -109,13 +128,13 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                             let area = terminals::terminal_area(
                                                 terminal.size()?.into(), sidebar_width, &status,
                                             );
-                                            match attach_to(&item.pty_id, area).await {
+                                            match terminals::attach_to(&item.pty_id, area).await {
                                                 Ok(next) => { status.clear(); mode = next; }
                                                 Err(message) => status = message,
                                             }
                                         }
                                     }
-                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
+                                    Some(RailClick::Action) => match terminals::new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                         Ok((fetched, index)) => {
                                             status.clear();
                                             items = fetched;
@@ -138,7 +157,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                             let area = terminals::terminal_area(
                                                 terminal.size()?.into(), sidebar_width, &status,
                                             );
-                                            match attach_to(&item.pty_id, area).await {
+                                            match terminals::attach_to(&item.pty_id, area).await {
                                                 Ok(next) => { status.clear(); mode = next; }
                                                 Err(message) => status = message,
                                             }
@@ -149,7 +168,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     // next refresh tick, and the new row is selected.
                                     // A failure is reported: swallowing it made the key
                                     // look dead whenever the daemon was down.
-                                    KeyCode::Char('n') => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
+                                    KeyCode::Char('n') => match terminals::new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                         Ok((fetched, index)) => {
                                             status.clear();
                                             items = fetched;
@@ -171,6 +190,12 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                                 Err(error) => status = format!("No se pudo cerrar: {error}"),
                                             }
                                         }
+                                    }
+                                    // Saltar a una terminal por su número, que
+                                    // es el que lleva pintado en el raíl.
+                                    KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                                        let index = c as usize - '1' as usize;
+                                        if index < items.len() { selected = index; }
                                     }
                                     // Con qué perfil abrir la siguiente, dando
                                     // la vuelta a la lista. Mismo gesto que
@@ -217,24 +242,12 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
                         match event {
-                            // Con el buscador abierto las teclas son suyas:
-                            // se escribe el término, Enter salta a la
-                            // siguiente aparición y Esc lo cierra.
+                            // Con el buscador abierto las teclas son suyas.
                             Event::Key(key) if searching.is_some() => {
-                                let term = searching.get_or_insert_with(String::new);
-                                match key.code {
-                                    KeyCode::Esc => searching = None,
-                                    KeyCode::Enter => {
-                                        let found = screen.find_back(term);
-                                        status = match found {
-                                            true => String::new(),
-                                            false => format!("sin más «{term}» hacia atrás"),
-                                        };
-                                    }
-                                    KeyCode::Backspace => { term.pop(); }
-                                    KeyCode::Char(c) => term.push(c),
-                                    _ => {}
-                                }
+                                let term = searching.take().unwrap_or_default();
+                                let (left, aviso) = screen::search_key(screen, term, key.code);
+                                searching = left;
+                                status = aviso;
                             }
                             Event::Key(key) if terminals::is_search_key(key) => {
                                 searching = Some(searching.take().unwrap_or_default());
@@ -249,7 +262,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             // Reserved before the pty sees it, so a new agent
                             // can be opened without first going back.
                             Event::Key(key) if terminals::is_new_agent_key(key) => {
-                                match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
+                                match terminals::new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                     Ok((fetched, index)) => {
                                         items = fetched;
                                         if let Some(index) = index {
@@ -258,7 +271,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                                 let area = terminals::terminal_area(
                                                     terminal.size()?.into(), sidebar_width, &status,
                                                 );
-                                                match attach_to(&item.pty_id, area).await {
+                                                match terminals::attach_to(&item.pty_id, area).await {
                                                     Ok(next) => mode = next,
                                                     Err(message) => { status = message; mode = Mode::List; }
                                                 }
@@ -318,7 +331,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                             let area = terminals::terminal_area(
                                                 terminal.size()?.into(), sidebar_width, &status,
                                             );
-                                            match attach_to(&item.pty_id, area).await {
+                                            match terminals::attach_to(&item.pty_id, area).await {
                                                 Ok(next) => mode = next,
                                                 Err(message) => { status = message; mode = Mode::List; }
                                             }
@@ -327,7 +340,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     // Opening a new agent from inside a terminal
                                     // switches straight into it: that is what the
                                     // click asked for.
-                                    Some(RailClick::Action) => match new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
+                                    Some(RailClick::Action) => match terminals::new_agent(&terminals::cwd_for_new(&items, selected, &cwd), profile.map(|index| profiles[index].shell.as_str())).await {
                                         Ok((fetched, index)) => {
                                             items = fetched;
                                             if let Some(index) = index {
@@ -336,7 +349,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                                     let area = terminals::terminal_area(
                                                         terminal.size()?.into(), sidebar_width, &status,
                                                     );
-                                                    match attach_to(&item.pty_id, area).await {
+                                                    match terminals::attach_to(&item.pty_id, area).await {
                                                         Ok(next) => mode = next,
                                                         Err(message) => { status = message; mode = Mode::List; }
                                                     }
@@ -362,7 +375,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 }
             }
             Mode::Review => {
-                terminal.draw(|f| review::draw(f, &review, sidebar_width))?;
+                terminal.draw(|f| review::draw(f, &review, sidebar_width, resizing))?;
                 tokio::select! {
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
@@ -429,6 +442,21 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             }
                             continue;
                         }
+                        // El mismo modo tamaño que en la lista: aquí hay dos
+                        // bordes que mover, el del raíl y el del informe.
+                        if let Event::Key(key) = event {
+                            let total = terminal.size()?.width;
+                            match rail::resize_key(key, resizing) {
+                                Some(rail::Resize::Toggle) => { resizing = !resizing; continue }
+                                Some(rail::Resize::Exit) => { resizing = false; continue }
+                                Some(rail::Resize::Rail(delta)) => {
+                                    sidebar_width = sidebar::width_after_nudge(sidebar_width, delta, total);
+                                    continue;
+                                }
+                                Some(rail::Resize::Drawer(delta)) => { review.nudge_drawer(delta, total); continue }
+                                None => {}
+                            }
+                        }
                         // Painted before the call, because the call itself
                         // blocks this loop: without a frame in between, a slow
                         // daemon looks like a hang. The header's own count
@@ -447,34 +475,5 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 }
             }
         }
-    }
-}
-
-/// Connects to `pty_id` and returns the attached mode, or the message to show
-/// when it fails. Shared by every route into a terminal — Enter, a click on a
-/// row, and switching while already attached.
-async fn attach_to(pty_id: &str, area: ratatui::layout::Rect) -> Result<Mode, String> {
-    match terminals::Session::connect(pty_id, area.height, area.width).await {
-        Ok(session) => Ok(Mode::Attached(Box::new(Attached {
-            session,
-            screen: screen::Screen::new(area.height, area.width),
-        }))),
-        Err(error) => Err(format!("No se pudo conectar: {error}")),
-    }
-}
-
-/// Opens a terminal and reports where it landed in the refreshed list, so the
-/// caller can select it. Shared by the "n" key and the rail's action button.
-async fn new_agent(
-    cwd: &str,
-    shell: Option<&str>,
-) -> Result<(Vec<terminals::TerminalInfo>, Option<usize>), String> {
-    match terminals::open_terminal(cwd, shell).await {
-        Ok(pty_id) => {
-            let items = terminals::fetch_terminals().await.unwrap_or_default();
-            let index = items.iter().position(|t| t.pty_id == pty_id);
-            Ok((items, index))
-        }
-        Err(error) => Err(format!("No se pudo abrir: {error}")),
     }
 }

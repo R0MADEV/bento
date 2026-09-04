@@ -13,9 +13,9 @@ use super::super::pane::Pane;
 use super::super::sidebar::{ItemStatus, Sidebar, SidebarItem};
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
 
-pub(crate) fn draw(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16) {
+pub(crate) fn draw(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16, resizing: bool) {
     match review.view {
-        ReviewView::Browse => draw_browse(frame, review, sidebar_width),
+        ReviewView::Browse => draw_browse(frame, review, sidebar_width, resizing),
         ReviewView::FileDetail => draw_file_detail(frame, review),
         ReviewView::PrDetail => draw_pr_detail(frame, review),
     }
@@ -29,7 +29,7 @@ const FOCUSED: Style = Style::new().fg(Color::Indexed(4));
 /// when they have no effect.
 const DIM: Style = Style::new().fg(Color::DarkGray);
 
-fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16) {
+fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16, resizing: bool) {
     let area = frame.area();
     // Three columns: what you can pick, what you picked, and the report about
     // it. The drawer only takes width when there is something in it — running
@@ -44,7 +44,7 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
     ])
     .split(area);
     draw_sidebar(frame, review, cols[0]);
-    draw_file_browser(frame, review, cols[1]);
+    draw_file_browser(frame, review, cols[1], resizing);
     if drawer_width > 0 && review.showing_history {
         // The history lives where the report does, so picking which review to
         // read is one column, not a trip to the rail. Drawn with the drawer's
@@ -193,7 +193,7 @@ fn on_off(v: bool) -> &'static str {
     if v { "sí" } else { "no" }
 }
 
-fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect) {
+fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect, resizing: bool) {
     let visible = review.visible_files();
     let items: Vec<ListItem> = if visible.is_empty() {
         vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))]
@@ -219,7 +219,12 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
             "ARCHIVOS {}/{} · {} revisados",
             visible.len(), review.files.len(), review.reviewed.len(),
         ),
-        hint: "f filtro · espacio marcar · Enter diff · r correr · h reviews · → informe",
+        // En modo tamaño el pie dice qué hacen las flechas, porque dejan de
+        // mover la selección.
+        hint: match resizing {
+            true => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
+            false => "f filtro · espacio marcar · Enter diff · r correr · h reviews · s tamaño · → informe",
+        },
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);
@@ -308,7 +313,7 @@ mod tests {
 
     fn screen(review: &ReviewState, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| draw(frame, review, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, review, 24, false)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>())
