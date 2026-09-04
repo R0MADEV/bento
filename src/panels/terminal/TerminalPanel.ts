@@ -282,7 +282,14 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   // The shell exited on its own (the user typed `exit`): close the panel. Skip
   // if we're already disposing (closing the panel kills the PTY, firing this too).
   // Renombrada desde la CLI o el móvil: el daemon avisa y la pestaña se entera.
-  listenTo<string>(`pty-title-${id}`, event => { if (!disposed) titleCallback?.(event.payload) })
+  // Va por el tracker y no directo al título, porque el tracker lo repinta en
+  // cuanto llega salida (para el punto de "hay algo nuevo") y volvería a poner
+  // el nombre viejo. Y al almacén, para que sobreviva a reabrir la app.
+  listenTo<string>(`pty-title-${id}`, event => {
+    if (disposed || !event.payload) return
+    tracker.setBase(event.payload)
+    store?.setTitle(id, event.payload)
+  })
   listenTo(`pty-exit-${id}`, () => { if (!disposed) onExit?.() })
 
   let inputCallback: ((line: string) => void) | undefined
