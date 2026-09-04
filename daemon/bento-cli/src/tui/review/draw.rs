@@ -146,6 +146,9 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
             "Filtro: {} (/)",
             if review.search.is_empty() { "—".to_string() } else { review.search.clone() },
         )),
+        // Las pestañas, que en el escritorio son botones y aquí eran teclas sin
+        // anunciar: `p` no aparecía por ningún lado.
+        Line::from("Ver: b ramas · p PRs · h reviews").style(DIM),
     ];
     if review.loading {
         header.push(Line::from("Cargando…").style(FOCUSED));
