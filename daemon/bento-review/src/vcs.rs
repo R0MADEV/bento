@@ -269,11 +269,27 @@ pub fn review_diff(cwd: &str, base: &str, branch: Option<&str>) -> Result<String
 /// The diff for a single file vs `base` (tracked change, or a fully-added
 /// diff for an untracked file).
 pub fn file_diff(cwd: &str, path: &str, base: &str) -> Result<String, String> {
+    file_diff_of(cwd, path, base, None)
+}
+
+/// El diff de un fichero: el de `branch` desde que se separó de `base`, o el de
+/// tus cambios sin commitear cuando no hay rama.
+///
+/// Sin la rama, abrir un fichero de la lista de una rama enseñaba el diff del
+/// árbol de trabajo — casi siempre vacío, que es peor que un error.
+pub fn file_diff_of(cwd: &str, path: &str, base: &str, branch: Option<&str>) -> Result<String, String> {
     if !is_safe_relative_path(path) {
         return Err("ruta insegura".into());
     }
     if !is_safe_branch(base) {
         return Err("rama insegura".into());
+    }
+    if let Some(branch) = branch {
+        if !is_safe_branch(branch) {
+            return Err("rama inválida".into());
+        }
+        // Tres puntos, como el resto de la review.
+        return git_cmd(cwd, &["diff", &format!("{base}...{branch}"), "--", path]);
     }
     let diff = git_cmd(cwd, &["diff", base, "--", path]).unwrap_or_default();
     if !diff.is_empty() {
@@ -411,5 +427,30 @@ mod tests {
             .collect();
 
         assert_eq!(paths, vec!["de-la-rama.txt"], "solo lo que la rama añadió: {paths:?}");
+    }
+
+    #[test]
+    fn a_file_of_a_branch_shows_that_branchs_diff_and_not_your_working_tree() {
+        // Sin la rama salía el diff del árbol de trabajo: casi siempre vacío,
+        // que se lee como "este fichero no cambió" cuando sí cambió.
+        let repository = crate::test_support::repo("diff-fichero-rama");
+        let root = &repository.0;
+        std::fs::write(root.join("a.txt"), "uno\n").unwrap();
+        crate::test_support::run(root, &["add", "."]);
+        crate::test_support::run(root, &["commit", "-qm", "base"]);
+        let principal = crate::branches::default_branch(&root.to_string_lossy());
+        crate::test_support::run(root, &["checkout", "-qb", "rama"]);
+        std::fs::write(root.join("a.txt"), "dos\n").unwrap();
+        crate::test_support::run(root, &["add", "."]);
+        crate::test_support::run(root, &["commit", "-qm", "en la rama"]);
+        crate::test_support::run(root, &["checkout", "-q", &principal]);
+
+        let cwd = root.to_string_lossy().to_string();
+        let diff = file_diff_of(&cwd, "a.txt", &principal, Some("rama")).expect("el diff de la rama");
+
+        assert!(diff.contains("+dos"), "el cambio de la rama: {diff}");
+        // Y el del árbol de trabajo no lo trae: ahí no hay ningún "dos".
+        let working = file_diff_of(&cwd, "a.txt", &principal, None).unwrap();
+        assert!(!working.contains("+dos"), "eso es de la rama, no de tu árbol: {working}");
     }
 }

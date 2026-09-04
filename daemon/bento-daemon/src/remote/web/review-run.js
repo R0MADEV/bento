@@ -321,8 +321,12 @@ async function loadFiles(){
   info.style.display='flex';
 
   try{
+    // La rama que se está revisando, si hay una: sin ella el listado son tus
+    // cambios sin commitear, aunque hayas elegido rama para correr la review.
+    const branch=(document.getElementById('rv-branch').value||'').trim();
+    const forBranch=branch?'&branch='+encodeURIComponent(branch):'';
     const [filesRes,viewedRes]=await Promise.all([
-      fetch('/api/review/files'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)),
+      fetch('/api/review/files'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)+forBranch),
       fetch('/api/review/viewed'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)),
     ]);
     if(!filesRes.ok){el.innerHTML='<div class="empty err-msg">'+esc(await filesRes.text())+'</div>';info.style.display='none';return}
@@ -358,7 +362,9 @@ async function openFileDiff(path, base){
   overlay.classList.add('on');
 
   try{
-    const r=await fetch('/api/review/file'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)+'&path='+encodeURIComponent(path));
+    const branch=(document.getElementById('rv-branch').value||'').trim();
+    const r=await fetch('/api/review/file'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)
+      +'&path='+encodeURIComponent(path)+(branch?'&branch='+encodeURIComponent(branch):''));
     const text=await r.text();
     document.getElementById('rv-diff-content').innerHTML=r.ok ? renderDiff(text) : `<span class="dl dl-del">${esc(text)}</span>`;
   }catch(e){

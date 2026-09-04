@@ -39,7 +39,7 @@ pub(crate) fn dispatch(
         "review.file" => match (&req.cwd, &req.path) {
             (Some(cwd), Some(path)) => {
                 let base = req.base.as_deref().unwrap_or("main");
-                match crate::remote::review::file_diff(cwd, path, base) {
+                match bento_review::vcs::file_diff_of(cwd, path, base, req.branch.as_deref()) {
                     Ok(diff) => send(ok(&req.id, json!(diff))),
                     Err(e) => send(fail(&req.id, e)),
                 }

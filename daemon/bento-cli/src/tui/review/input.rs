@@ -240,9 +240,15 @@ impl ReviewState {
             }
             KeyCode::Enter => {
                 if let Some(path) = self.visible_files().get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str).map(String::from) {
-                    let data = crate::request_data(json!({
+                    let mut body = json!({
                         "id": "1", "cmd": "review.file", "cwd": self.cwd, "base": self.base, "path": path,
-                    })).await;
+                    });
+                    // Con rama elegida, el diff es el suyo; sin ella, el del
+                    // árbol de trabajo. Sin mandarla se abría el segundo.
+                    if let Some(branch) = &self.branch {
+                        body["branch"] = json!(branch);
+                    }
+                    let data = crate::request_data(body).await;
                     self.file_diff = data.ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
                     self.current_file = Some(path);
                     self.file_scroll = 0;

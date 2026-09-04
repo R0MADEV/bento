@@ -29,7 +29,6 @@ pub(crate) use bento_review::pr::{
     add_comment, add_review_comment, delete_comment, diff as pr_diff,
     discussion as pr_comments, list_open as list_prs, submit_review, update_comment,
 };
-pub(crate) use bento_review::vcs::{file_diff, list_files};
 // Las mismas que enseña el escritorio: locales y remotas, sin cortar a 20. La
 // otra (`vcs::list_branches`) es "las 20 más recientes", que para elegir base
 // se queda corta — `origin/main` ni aparecía.
@@ -53,6 +52,8 @@ pub struct ReviewFileQuery {
     pub cwd: Option<String>,
     pub base: Option<String>,
     pub path: Option<String>,
+    /// La rama que se revisa, si se revisa una. Sin ella, el árbol de trabajo.
+    pub branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -191,7 +192,7 @@ pub async fn review_files_handler(
     if !is_safe_branch(&base) {
         return (StatusCode::BAD_REQUEST, "unsafe base").into_response();
     }
-    match list_files(&cwd, &base) {
+    match bento_review::vcs::list_files_of(&cwd, &base, q.branch.as_deref()) {
         Ok(list) => Json(list).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
@@ -215,7 +216,7 @@ pub async fn review_file_handler(
         None => return (StatusCode::BAD_REQUEST, "missing path").into_response(),
     };
     let base = q.base.unwrap_or_else(|| "main".into());
-    match file_diff(&cwd, &path, &base) {
+    match bento_review::vcs::file_diff_of(&cwd, &path, &base, q.branch.as_deref()) {
         Ok(diff) => (StatusCode::OK, [("content-type", "text/plain")], diff).into_response(),
         Err(_) => (StatusCode::BAD_REQUEST, "unsafe path or base").into_response(),
     }
