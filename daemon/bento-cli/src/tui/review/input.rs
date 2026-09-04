@@ -135,6 +135,12 @@ impl ReviewState {
                     false
                 }
                 KeyCode::Char(' ') => {
+                    // Sin repositorio no hay nada que revisar, y git contestaría
+                    // con su propio error pegado en el panel.
+                    if !super::format::is_repo(&self.browse_path) {
+                        self.status = "esa carpeta no es un repositorio git".into();
+                        return false;
+                    }
                     self.cwd = self.browse_path.display().to_string();
                     // Cada proyecto tiene su rama principal: quedarse con la
                     // base del anterior es comparar contra algo que aquí igual

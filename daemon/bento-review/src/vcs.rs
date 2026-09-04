@@ -199,6 +199,7 @@ pub fn list_files(cwd: &str, base: &str) -> Result<Vec<Value>, String> {
     if !is_safe_branch(base) {
         return Err("unsafe base".into());
     }
+    check_repo(cwd)?;
     let name_status = git_cmd(cwd, &["diff", "--name-status", base])?;
     let numstat = git_cmd(cwd, &["diff", "--numstat", base]).unwrap_or_default();
     Ok(build_file_list(&name_status, &numstat, &untracked_files(cwd)))
@@ -207,7 +208,18 @@ pub fn list_files(cwd: &str, base: &str) -> Result<Vec<Value>, String> {
 /// The whole change under review: a branch against `base` (committed work
 /// only), or the working tree against `base` plus anything untracked — the
 /// case where you review before committing, which is most of them.
+/// Que la carpeta sea un repositorio, dicho en una frase. Sin esto git contesta
+/// con su `warning: Not a git repository. Use --no-index…usage: git …`, que se
+/// acaba pegando tal cual en el panel del cliente que preguntó.
+pub fn check_repo(cwd: &str) -> Result<(), String> {
+    match crate::branches::is_git_repo(cwd) {
+        true => Ok(()),
+        false => Err(format!("{cwd} no es un repositorio git")),
+    }
+}
+
 pub fn review_diff(cwd: &str, base: &str, branch: Option<&str>) -> Result<String, String> {
+    check_repo(cwd)?;
     if !is_safe_branch(base) {
         return Err("rama base inválida".into());
     }
@@ -330,5 +342,20 @@ mod tests {
     fn file_diff_rejects_an_unsafe_path_or_base() {
         assert!(file_diff("/tmp", "../../etc/passwd", "main").is_err());
         assert!(file_diff("/tmp", "src/a.rs", "main..evil").is_err());
+    }
+
+    #[test]
+    fn a_folder_that_is_not_a_repo_says_so_instead_of_leaking_gits_error() {
+        // Sin esto llega `warning: Not a git repository. Use --no-index…usage:
+        // git`, y el cliente lo pega tal cual en su panel.
+        let dir = std::env::temp_dir().join(format!("bento-norepo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+
+        let error = list_files(&cwd, "main").expect_err("no hay repositorio");
+
+        assert!(error.contains("no es un repositorio git"), "{error}");
+        assert!(!error.contains("--no-index"), "y no el de git: {error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

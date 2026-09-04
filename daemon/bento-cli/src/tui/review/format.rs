@@ -224,6 +224,13 @@ pub(super) fn subdirs(path: &std::path::Path) -> Vec<String> {
     }
 }
 
+/// Si una carpeta es un repositorio. Se mira su `.git` en vez de preguntarle a
+/// git: esto se llama una vez por fila de la lista, y arrancar un proceso por
+/// carpeta para pintar un punto no sale a cuenta.
+pub(super) fn is_repo(path: &std::path::Path) -> bool {
+    path.join(".git").exists()
+}
+
 /// One saved review, in a line: when it was made, what it is about, and
 /// whether it can still be asked a follow-up. The branch reviewed wins over
 /// the ref it is filed under — that is what the reader recognises.
@@ -461,5 +468,17 @@ diff --git a/a.rs b/a.rs
     #[test]
     fn a_folder_that_cannot_be_read_is_empty_rather_than_a_crash() {
         assert!(subdirs(std::path::Path::new("/no/existe/esto")).contains(&"..".to_string()));
+    }
+
+    #[test]
+    fn a_folder_with_a_git_inside_is_a_repo() {
+        let root = std::env::temp_dir().join(format!("bento-isrepo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("con/.git")).unwrap();
+        std::fs::create_dir_all(root.join("sin")).unwrap();
+
+        assert!(is_repo(&root.join("con")));
+        assert!(!is_repo(&root.join("sin")));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

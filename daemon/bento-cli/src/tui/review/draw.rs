@@ -163,7 +163,16 @@ pub(crate) fn sidebar_rows(review: &ReviewState) -> (String, Vec<SidebarItem>, u
     match review.sidebar_tab {
         SidebarTab::Projects => (
             format!("[o] {}", short_path(&review.browse_path.display().to_string(), 18)),
-            review.browse_dirs.iter().map(|name| row(name.clone(), String::new())).collect(),
+            // El punto verde marca las que son repositorios: elegir una que no
+            // lo es no lleva a ninguna parte, y así se ve antes de intentarlo.
+            review.browse_dirs.iter().map(|name| SidebarItem {
+                label: name.clone(),
+                detail: String::new(),
+                status: match crate::tui::review::format::is_repo(&review.browse_path.join(name)) {
+                    true => ItemStatus::Active,
+                    false => ItemStatus::Idle,
+                },
+            }).collect(),
             review.projects_selected,
         ),
         SidebarTab::Branches => (
