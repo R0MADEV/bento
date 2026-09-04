@@ -12,6 +12,7 @@ mod format;
 mod input;
 mod pr_actions;
 mod run_state;
+mod visible;
 
 pub(super) use draw::draw;
 use format::{file_matches_filter, FileFilter};
@@ -424,6 +425,31 @@ impl ReviewState {
         });
     }
 
+    pub(super) fn save_reviewed(&self) {
+        let body = json!({
+            "id": "1", "cmd": "review.viewed_set", "cwd": self.cwd, "base": self.base,
+            "paths": self.reviewed.iter().cloned().collect::<Vec<_>>(),
+        });
+        tokio::spawn(async move {
+            let _ = crate::request_data(body).await;
+        });
+    }
+}
+
+impl ReviewState {
+    /// Vuelve a pedir lo que se ve ahora mismo: los archivos y la pestaña
+    /// activa del sidebar. Sin esto, un commit o un `git add` hechos en otra
+    /// terminal no aparecían hasta salir y volver a entrar.
+    /// Both halves of the panel, asked for at once and off the loop.
+    pub(super) fn request_refresh(&mut self) {
+        self.request_files();
+        let tab = std::mem::replace(&mut self.sidebar_tab, SidebarTab::Branches);
+        self.request_sidebar_tab(tab);
+    }
+}
+
+impl ReviewState {
+
     pub(super) async fn refresh_files(&mut self) {
         let mut body = json!({
             "id": "1", "cmd": "review.files", "cwd": self.cwd, "base": self.base,
@@ -455,109 +481,6 @@ impl ReviewState {
         self.request_sidebar_tab(SidebarTab::Branches);
     }
 
-    /// Los ficheros que pasan el filtro de estado (`f`) y la búsqueda (`/`).
-    /// El escritorio tiene su "Buscar archivos…" encima de la lista; aquí `/`
-    /// filtraba ramas y texto pero no esto, así que con noventa ficheros no
-    /// había forma de llegar a uno por su nombre.
-    fn visible_files(&self) -> Vec<&Value> {
-        let needle = self.file_search.to_lowercase();
-        self.files
-            .iter()
-            .filter(|f| {
-                let status = f.get("status").and_then(Value::as_str).unwrap_or("");
-                let path = f.get("path").and_then(Value::as_str).unwrap_or("");
-                let matches_search = needle.is_empty() || path.to_lowercase().contains(&needle);
-                matches_search && file_matches_filter(status, self.file_filter)
-            })
-            .collect()
-    }
-}
-
-impl ReviewState {
-    /// Fire-and-forget: guarda la lista de revisados para este proyecto+base.
-    pub(super) fn save_reviewed(&self) {
-        let body = json!({
-            "id": "1", "cmd": "review.viewed_set", "cwd": self.cwd, "base": self.base,
-            "paths": self.reviewed.iter().cloned().collect::<Vec<_>>(),
-        });
-        tokio::spawn(async move {
-            let _ = crate::request_data(body).await;
-        });
-    }
-}
-
-impl ReviewState {
-    /// Vuelve a pedir lo que se ve ahora mismo: los archivos y la pestaña
-    /// activa del sidebar. Sin esto, un commit o un `git add` hechos en otra
-    /// terminal no aparecían hasta salir y volver a entrar.
-    /// Both halves of the panel, asked for at once and off the loop.
-    pub(super) fn request_refresh(&mut self) {
-        self.request_files();
-        let tab = std::mem::replace(&mut self.sidebar_tab, SidebarTab::Branches);
-        self.request_sidebar_tab(tab);
-    }
-}
-
-impl ReviewState {
-    /// How many lines of fixed context the rail paints above its rows, taken
-    /// from the very list that gets rendered — counting them by hand here is
-    /// how the clicks drifted off by a row in the first place.
-    pub(super) fn header_lines(&self) -> u16 {
-        // The width only affects how the project path is shortened, never how
-        // many lines there are.
-        draw::sidebar_header(self, 24).len() as u16
-    }
-
-    /// How many rows the rail is showing for the tab that is open. The click
-    /// handler needs it to reject clicks past the end of the list.
-    pub(super) fn sidebar_len(&self) -> usize {
-        match self.sidebar_tab {
-            SidebarTab::Projects => self.browse_dirs.len(),
-            SidebarTab::Branches => self.visible_branches().len(),
-            SidebarTab::Prs => self.prs.len(),
-        }
-    }
-
-    /// How many saved reviews the history is showing, for the same reason.
-    pub(in crate::tui) fn checkpoints_len(&self) -> usize {
-        self.checkpoints.len()
-    }
-
-    /// Picks one of them, ignoring a row that is not there.
-    pub(in crate::tui) fn select_checkpoint(&mut self, index: usize) {
-        if index < self.checkpoints.len() {
-            self.checkpoints_selected = index;
-        }
-    }
-
-    /// Moves the selection of the open tab, ignoring a row that is not there.
-    /// Each tab keeps its own cursor, so switching back finds it where it was.
-    pub(super) fn select_sidebar(&mut self, index: usize) {
-        if index >= self.sidebar_len() {
-            return;
-        }
-        match self.sidebar_tab {
-            SidebarTab::Projects => self.projects_selected = index,
-            SidebarTab::Branches => self.branches_selected = index,
-            SidebarTab::Prs => self.prs_selected = index,
-        }
-    }
-
-    /// Las ramas que pasan el filtro escrito con `/`.
-    pub(super) fn visible_branches(&self) -> Vec<&String> {
-        let needle = self.search.to_lowercase();
-        self.branches.iter().filter(|b| needle.is_empty() || b.to_lowercase().contains(&needle)).collect()
-    }
-
-    /// El texto con solo las líneas que contienen la búsqueda. Se aplica al
-    /// diff de un archivo, al de un PR y a la salida de la review.
-    pub(super) fn filtered(&self, text: &str) -> String {
-        if self.file_search.is_empty() {
-            return text.to_string();
-        }
-        let needle = self.file_search.to_lowercase();
-        text.lines().filter(|l| l.to_lowercase().contains(&needle)).collect::<Vec<_>>().join("\n")
-    }
 }
 
 /// Identifies one review run. Only has to be unique among the runs of a
@@ -1059,5 +982,22 @@ mod tests {
             code,
             crossterm::event::KeyModifiers::NONE,
         ))
+    }
+
+    #[test]
+    fn the_marked_branch_is_the_one_you_see_not_the_one_underneath() {
+        // Con filtro, la fila 0 de lo que ves es otra rama de la lista entera:
+        // pulsabas Enter sobre una y se revisaba otra.
+        let mut state = state_with(&["main", "feat/uno", "feat/dos"], "dos");
+        state.branches_selected = 0;
+
+        assert_eq!(state.selected_branch().as_deref(), Some("feat/dos"));
+    }
+
+    #[test]
+    fn with_nothing_matching_there_is_no_branch_to_mark() {
+        let state = state_with(&["main"], "no-existe");
+
+        assert_eq!(state.selected_branch(), None);
     }
 }

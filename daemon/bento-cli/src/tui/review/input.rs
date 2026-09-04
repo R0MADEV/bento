@@ -176,14 +176,18 @@ impl ReviewState {
             SidebarTab::Branches => match code {
                 KeyCode::Up => { self.branches_selected = self.branches_selected.saturating_sub(1); false }
                 KeyCode::Down => {
-                    if self.branches_selected + 1 < self.branches.len() { self.branches_selected += 1; }
+                    // Contra las que se ven: con filtro, bajar más allá dejaba
+                    // el cursor fuera de la lista.
+                    if self.branches_selected + 1 < self.visible_branches().len() {
+                        self.branches_selected += 1;
+                    }
                     false
                 }
                 // Enter revisa esa rama contra la base, que es lo que hace la
                 // lista del escritorio. Antes la ponía como base, así que la
                 // misma fila hacía cosas distintas en cada cliente.
                 KeyCode::Enter => {
-                    if let Some(b) = self.branches.get(self.branches_selected).cloned() {
+                    if let Some(b) = self.selected_branch() {
                         self.branch = Some(b);
                         self.refresh_files().await;
                         self.focus = Focus::Sidebar;
@@ -193,7 +197,7 @@ impl ReviewState {
                 // Y espacio la usa de base, que es el otro gesto que hace falta
                 // y en el escritorio es el campo de arriba.
                 KeyCode::Char(' ') => {
-                    if let Some(b) = self.branches.get(self.branches_selected).cloned() {
+                    if let Some(b) = self.selected_branch() {
                         self.base = b;
                         self.branch = None;
                         self.refresh_files().await;
@@ -203,7 +207,7 @@ impl ReviewState {
                 KeyCode::Char('v') => {
                     // Volver al árbol de trabajo: sin rama, la lista son tus
                     // cambios sin commitear contra la base.
-                    if let Some(b) = self.branches.get(self.branches_selected).cloned() {
+                    if let Some(b) = self.selected_branch() {
                         self.branch = if self.branch.as_deref() == Some(b.as_str()) { None } else { Some(b) };
                         self.refresh_files().await;
                     }
