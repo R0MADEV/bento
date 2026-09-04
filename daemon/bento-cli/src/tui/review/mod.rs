@@ -418,9 +418,14 @@ impl ReviewState {
     }
 
     pub(super) async fn refresh_files(&mut self) {
-        self.files = self.fetch_list(json!({
+        let mut body = json!({
             "id": "1", "cmd": "review.files", "cwd": self.cwd, "base": self.base,
-        })).await;
+        });
+        // Con rama elegida, sus ficheros; sin ella, lo que tengas sin commitear.
+        if let Some(branch) = &self.branch {
+            body["branch"] = json!(branch);
+        }
+        self.files = self.fetch_list(body).await;
         self.files_selected = 0;
         // Persistido por proyecto+base en el mismo almacén que los
         // checkpoints: la marca sobrevive al refresco y al reinicio.

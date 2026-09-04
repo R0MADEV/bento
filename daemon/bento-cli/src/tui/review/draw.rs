@@ -104,6 +104,7 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
         action: Some(match (review.running, &review.sidebar_tab) {
             (true, _) => "■ Parar (c)",
             (false, SidebarTab::Projects) => "Enter entra · espacio elige ●",
+            (false, SidebarTab::Branches) => "Enter revisa la rama · espacio la usa de base",
             (false, _) => "▶ Correr review (r)",
         }),
         ..Sidebar::new(&title, &items, selected)

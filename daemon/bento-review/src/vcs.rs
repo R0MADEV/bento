@@ -196,13 +196,32 @@ pub fn build_file_list(name_status: &str, numstat: &str, untracked: &[String]) -
 /// validated here, not at the transport layer, so every caller gets the same
 /// flag-injection protection regardless of how it arrived.
 pub fn list_files(cwd: &str, base: &str) -> Result<Vec<Value>, String> {
+    list_files_of(cwd, base, None)
+}
+
+/// Los ficheros que cambian respecto a `base`: los de `branch` si se nombra una,
+/// y si no los del árbol de trabajo más lo que esté sin seguir.
+///
+/// Sin el `branch`, elegir una rama en un cliente enseñaba los cambios sin
+/// commitear en vez de los de esa rama — que es lo que enseña el panel del
+/// escritorio, y por eso las dos listas no coincidían nunca.
+pub fn list_files_of(cwd: &str, base: &str, branch: Option<&str>) -> Result<Vec<Value>, String> {
     if !is_safe_branch(base) {
         return Err("unsafe base".into());
     }
     check_repo(cwd)?;
-    let name_status = git_cmd(cwd, &["diff", "--name-status", base])?;
-    let numstat = git_cmd(cwd, &["diff", "--numstat", base]).unwrap_or_default();
-    Ok(build_file_list(&name_status, &numstat, &untracked_files(cwd)))
+    let Some(branch) = branch else {
+        let name_status = git_cmd(cwd, &["diff", "--name-status", base])?;
+        let numstat = git_cmd(cwd, &["diff", "--numstat", base]).unwrap_or_default();
+        return Ok(build_file_list(&name_status, &numstat, &untracked_files(cwd)));
+    };
+    if !is_safe_branch(branch) {
+        return Err("rama inválida".into());
+    }
+    let range = format!("{base}..{branch}");
+    let name_status = git_cmd(cwd, &["diff", "--name-status", &range])?;
+    let numstat = git_cmd(cwd, &["diff", "--numstat", &range]).unwrap_or_default();
+    Ok(build_file_list(&name_status, &numstat, &[]))
 }
 
 /// The whole change under review: a branch against `base` (committed work

@@ -169,18 +169,33 @@ impl ReviewState {
                     if self.branches_selected + 1 < self.branches.len() { self.branches_selected += 1; }
                     false
                 }
+                // Enter revisa esa rama contra la base, que es lo que hace la
+                // lista del escritorio. Antes la ponía como base, así que la
+                // misma fila hacía cosas distintas en cada cliente.
                 KeyCode::Enter => {
-                    if let Some(b) = self.branches.get(self.branches_selected) {
-                        self.base = b.clone();
+                    if let Some(b) = self.branches.get(self.branches_selected).cloned() {
+                        self.branch = Some(b);
                         self.refresh_files().await;
                         self.focus = Focus::Sidebar;
                     }
                     false
                 }
+                // Y espacio la usa de base, que es el otro gesto que hace falta
+                // y en el escritorio es el campo de arriba.
+                KeyCode::Char(' ') => {
+                    if let Some(b) = self.branches.get(self.branches_selected).cloned() {
+                        self.base = b;
+                        self.branch = None;
+                        self.refresh_files().await;
+                    }
+                    false
+                }
                 KeyCode::Char('v') => {
-                    // Revisar esa rama contra la base, en vez del working tree.
+                    // Volver al árbol de trabajo: sin rama, la lista son tus
+                    // cambios sin commitear contra la base.
                     if let Some(b) = self.branches.get(self.branches_selected).cloned() {
                         self.branch = if self.branch.as_deref() == Some(b.as_str()) { None } else { Some(b) };
+                        self.refresh_files().await;
                     }
                     false
                 }

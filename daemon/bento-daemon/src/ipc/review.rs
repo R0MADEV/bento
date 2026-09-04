@@ -28,7 +28,7 @@ pub(crate) fn dispatch(
         "review.files" => match &req.cwd {
             Some(cwd) => {
                 let base = req.base.as_deref().unwrap_or("main");
-                match crate::remote::review::list_files(cwd, base) {
+                match bento_review::vcs::list_files_of(cwd, base, req.branch.as_deref()) {
                     Ok(list) => send(ok(&req.id, json!(list))),
                     Err(e) => send(fail(&req.id, e)),
                 }
