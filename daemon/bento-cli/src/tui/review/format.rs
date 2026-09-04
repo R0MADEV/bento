@@ -203,6 +203,27 @@ fn hunk_start(line: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
+/// Las carpetas que hay dentro de `path`, con ".." delante cuando hay dónde
+/// subir. Las ocultas fuera: elegir `.git` como proyecto no es lo que nadie
+/// quiere, y ensucian la lista.
+pub(super) fn subdirs(path: &std::path::Path) -> Vec<String> {
+    let mut rows: Vec<String> = std::fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| !name.starts_with('.'))
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.sort();
+    match path.parent().is_some() {
+        true => std::iter::once("..".to_string()).chain(rows).collect(),
+        false => rows,
+    }
+}
+
 /// One saved review, in a line: when it was made, what it is about, and
 /// whether it can still be asked a follow-up. The branch reviewed wins over
 /// the ref it is filed under — that is what the reader recognises.
@@ -419,5 +440,26 @@ diff --git a/a.rs b/a.rs
         assert_eq!(commentable_line(DIFF, 0), None, "diff --git");
         assert_eq!(commentable_line(DIFF, 3), None, "la cabecera del hunk");
         assert_eq!(commentable_line(DIFF, 99), None, "fuera del diff");
+    }
+
+    #[test]
+    fn a_folder_lists_the_ones_inside_with_a_way_back_up() {
+        let root = std::env::temp_dir().join(format!("bento-subdirs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("uno")).unwrap();
+        std::fs::create_dir_all(root.join("dos")).unwrap();
+        std::fs::create_dir_all(root.join(".oculta")).unwrap();
+        std::fs::write(root.join("un-fichero"), "x").unwrap();
+
+        let rows = subdirs(&root);
+
+        // Ficheros y ocultas fuera: elegir `.git` como proyecto no lo quiere nadie.
+        assert_eq!(rows, vec!["..", "dos", "uno"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_read_is_empty_rather_than_a_crash() {
+        assert!(subdirs(std::path::Path::new("/no/existe/esto")).contains(&"..".to_string()));
     }
 }

@@ -119,21 +119,31 @@ impl ReviewState {
             SidebarTab::Projects => match code {
                 KeyCode::Up => { self.projects_selected = self.projects_selected.saturating_sub(1); false }
                 KeyCode::Down => {
-                    if self.projects_selected + 1 < self.projects.len() { self.projects_selected += 1; }
+                    if self.projects_selected + 1 < self.browse_dirs.len() { self.projects_selected += 1; }
                     false
                 }
+                // Enter entra en la carpeta; espacio se queda con la que estás
+                // mirando. Es el mismo gesto que el navegador del móvil.
                 KeyCode::Enter => {
-                    if let Some(cwd) = self.projects.get(self.projects_selected).and_then(|p| p.get("cwd")).and_then(Value::as_str) {
-                        self.cwd = cwd.to_string();
-                        // Cada proyecto tiene su rama principal: quedarse con la
-                        // base del anterior es comparar contra algo que aquí
-                        // igual ni existe.
-                        self.base = super::default_base(&self.cwd);
-                        self.branch = None;
-                        self.enter();
-                        self.focus = Focus::Sidebar;
-                        self.sidebar_tab = SidebarTab::Branches;
+                    if let Some(name) = self.browse_dirs.get(self.projects_selected).cloned() {
+                        self.browse_path = match name.as_str() {
+                            ".." => self.browse_path.parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| self.browse_path.clone()),
+                            name => self.browse_path.join(name),
+                        };
+                        self.refresh_browse();
                     }
+                    false
+                }
+                KeyCode::Char(' ') => {
+                    self.cwd = self.browse_path.display().to_string();
+                    // Cada proyecto tiene su rama principal: quedarse con la
+                    // base del anterior es comparar contra algo que aquí igual
+                    // ni existe.
+                    self.base = super::default_base(&self.cwd);
+                    self.branch = None;
+                    self.enter();
+                    self.focus = Focus::Sidebar;
+                    self.sidebar_tab = SidebarTab::Branches;
                     false
                 }
                 _ => false,

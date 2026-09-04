@@ -84,7 +84,6 @@ pub(super) enum ReviewUpdate {
 
 pub(super) enum Fetched {
     Files { files: Vec<Value>, viewed: Vec<String> },
-    Projects(Vec<Value>),
     Branches(Vec<String>),
     Prs(Vec<Value>),
     Checkpoints(Vec<Value>),
@@ -178,7 +177,11 @@ pub(super) struct ReviewState {
     /// old daemon that doesn't know a `review.*`/`projects.*` command is
     /// indistinguishable from "este proyecto no tiene ramas".
     status: String,
-    projects: Vec<Value>,
+    /// La carpeta que se está mirando al elegir proyecto, y lo que hay dentro.
+    /// El escritorio abre el diálogo del sistema y el móvil su navegador; esta
+    /// enseñaba solo los proyectos con terminal abierta, que no es elegir.
+    browse_path: std::path::PathBuf,
+    browse_dirs: Vec<String>,
     projects_selected: usize,
     /// Lo que se ha escrito con `/`. Filtra la lista de ramas y las líneas del
     /// diff que estés mirando: en un diff de mil líneas, buscar es la
@@ -221,6 +224,7 @@ fn default_base(cwd: &str) -> String {
 impl ReviewState {
     pub(super) fn new(cwd: String) -> Self {
         let base = default_base(&cwd);
+        let browse_path = std::path::PathBuf::from(&cwd);
         let (work_tx, work_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             cwd,
@@ -259,7 +263,8 @@ impl ReviewState {
             restored_drawer_width: crate::tui::drawer::DEFAULT_WIDTH,
             loading: false,
             status: String::new(),
-            projects: Vec::new(),
+            browse_path,
+            browse_dirs: Vec::new(),
             projects_selected: 0,
             search: String::new(),
             branches: Vec::new(),
@@ -311,7 +316,6 @@ impl ReviewState {
                 self.view = ReviewView::Browse;
                 self.status.clear();
             }
-            Fetched::Projects(projects) => { self.projects = projects; self.projects_selected = 0; self.status.clear() }
             Fetched::Branches(branches) => { self.branches = branches; self.branches_selected = 0; self.status.clear() }
             Fetched::Prs(prs) => { self.prs = prs; self.prs_selected = 0; self.status.clear() }
             Fetched::Checkpoints(checkpoints) => {
@@ -325,15 +329,28 @@ impl ReviewState {
 
     /// Switches tab now and asks for its contents in the background — the tab
     /// is usable immediately, and the rows appear when the daemon answers.
+    /// Relee la carpeta que se está mirando.
+    pub(super) fn refresh_browse(&mut self) {
+        self.browse_dirs = format::subdirs(&self.browse_path);
+        self.projects_selected = 0;
+    }
+
     pub(super) fn request_sidebar_tab(&mut self, tab: SidebarTab) {
+        if matches!(tab, SidebarTab::Projects) {
+            self.refresh_browse();
+            self.sidebar_tab = tab;
+            self.focus = Focus::Sidebar;
+            return;
+        }
         let cwd = self.cwd.clone();
         let body = match &tab {
-            SidebarTab::Projects => json!({ "id": "1", "cmd": "projects.list" }),
+            // Se atiende arriba: la carpeta se lee del disco, no del daemon.
+            SidebarTab::Projects => return,
             SidebarTab::Branches => json!({ "id": "1", "cmd": "review.branches", "cwd": cwd }),
             SidebarTab::Prs => json!({ "id": "1", "cmd": "review.prs", "cwd": cwd }),
         };
         let wrap: fn(Vec<Value>) -> Fetched = match &tab {
-            SidebarTab::Projects => Fetched::Projects,
+            SidebarTab::Projects => return,
             SidebarTab::Branches => |rows| {
                 Fetched::Branches(rows.into_iter().filter_map(|v| v.as_str().map(String::from)).collect())
             },
@@ -475,7 +492,7 @@ impl ReviewState {
     /// handler needs it to reject clicks past the end of the list.
     pub(super) fn sidebar_len(&self) -> usize {
         match self.sidebar_tab {
-            SidebarTab::Projects => self.projects.len(),
+            SidebarTab::Projects => self.browse_dirs.len(),
             SidebarTab::Branches => self.visible_branches().len(),
             SidebarTab::Prs => self.prs.len(),
         }
@@ -718,7 +735,7 @@ mod tests {
         state.begin_request();
         state.begin_request();
 
-        state.apply_fetched(Fetched::Projects(vec![]));
+        state.apply_fetched(Fetched::Branches(vec![]));
         assert!(state.loading, "queda una petición fuera");
 
         state.apply_fetched(Fetched::Prs(vec![]));

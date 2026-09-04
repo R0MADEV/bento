@@ -99,7 +99,13 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
         empty_message: "Nada que mostrar.",
         // The panel's whole point, and the migration to this component had
         // dropped the only place that said which key runs it.
-        action: Some(if review.running { "■ Parar (c)" } else { "▶ Correr review (r)" }),
+        // Navegando carpetas el botón explica ese gesto: es donde se mira
+        // mientras se elige, y en 24 columnas la cabecera no cabe.
+        action: Some(match (review.running, &review.sidebar_tab) {
+            (true, _) => "■ Parar (c)",
+            (false, SidebarTab::Projects) => "Enter entra · espacio elige",
+            (false, _) => "▶ Correr review (r)",
+        }),
         ..Sidebar::new(&title, &items, selected)
     }
     .render(frame, area);
@@ -156,13 +162,8 @@ pub(crate) fn sidebar_rows(review: &ReviewState) -> (String, Vec<SidebarItem>, u
     let row = |label: String, detail: String| SidebarItem { label, detail, status: ItemStatus::Idle };
     match review.sidebar_tab {
         SidebarTab::Projects => (
-            format!("[o] PROYECTOS ({})", review.projects.len()),
-            review.projects.iter().map(|p| {
-                row(
-                    short_path(p.get("cwd").and_then(Value::as_str).unwrap_or("?"), 18),
-                    p.get("branch").and_then(Value::as_str).unwrap_or("").to_string(),
-                )
-            }).collect(),
+            format!("[o] {}", short_path(&review.browse_path.display().to_string(), 18)),
+            review.browse_dirs.iter().map(|name| row(name.clone(), String::new())).collect(),
             review.projects_selected,
         ),
         SidebarTab::Branches => (
