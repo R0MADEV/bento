@@ -18,7 +18,10 @@ pub(crate) fn dispatch(
 ) {
     match cmd {
         "review.branches" => match &req.cwd {
-            Some(cwd) => send(ok(&req.id, json!(crate::remote::review::list_branches(cwd)))),
+            Some(cwd) => match crate::remote::review::list_branches(cwd) {
+                Ok(branches) => send(ok(&req.id, json!(branches))),
+                Err(error) => send(fail(&req.id, error)),
+            },
             None => send(fail(&req.id, "cwd required".into())),
         },
 

@@ -29,7 +29,11 @@ pub(crate) use bento_review::pr::{
     add_comment, add_review_comment, delete_comment, diff as pr_diff,
     discussion as pr_comments, list_open as list_prs, submit_review, update_comment,
 };
-pub(crate) use bento_review::vcs::{file_diff, list_branches, list_files};
+pub(crate) use bento_review::vcs::{file_diff, list_files};
+// Las mismas que enseña el escritorio: locales y remotas, sin cortar a 20. La
+// otra (`vcs::list_branches`) es "las 20 más recientes", que para elegir base
+// se queda corta — `origin/main` ni aparecía.
+pub(crate) use bento_review::branches::review_branches as list_branches;
 
 // ── Query param structs ───────────────────────────────────────────────────────
 
@@ -410,5 +414,5 @@ pub async fn review_branches_handler(
         Some(c) => c,
         None => return (StatusCode::BAD_REQUEST, "missing cwd").into_response(),
     };
-    Json(list_branches(&cwd)).into_response()
+    Json(list_branches(&cwd).unwrap_or_default()).into_response()
 }

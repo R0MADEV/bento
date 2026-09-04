@@ -215,7 +215,8 @@ pub(super) struct ReviewState {
 fn default_base(cwd: &str) -> String {
     let branch = bento_review::branches::default_branch(cwd);
     let remote = format!("origin/{branch}");
-    match bento_review::vcs::list_branches(cwd).contains(&remote) {
+    let branches = bento_review::branches::review_branches(cwd).unwrap_or_default();
+    match branches.contains(&remote) {
         true => remote,
         false => branch,
     }
