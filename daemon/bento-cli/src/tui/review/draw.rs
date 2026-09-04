@@ -143,7 +143,7 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
         // sharing a line got cut off mid-word, hiding the key that works it.
         Line::from(format!("Contexto: {} (c)", if review.context.is_empty() { "no" } else { "sí" })),
         Line::from(format!(
-            "Filtro: {} (/)",
+            "Filtro: {} (F3)",
             if review.search.is_empty() { "—".to_string() } else { review.search.clone() },
         )),
         // Las pestañas, que en el escritorio son botones y aquí eran teclas sin
@@ -243,7 +243,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         // mover la selección.
         hint: match resizing {
             true => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
-            false => "/ buscar · f estado · espacio marcar · Enter diff · r correr · h reviews · s tamaño",
+            false => "F3 buscar · f estado · espacio marcar · Enter diff · r correr · h reviews · s tamaño",
         },
         focused: matches!(review.focus, Focus::Files),
     }

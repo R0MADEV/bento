@@ -51,7 +51,10 @@ impl ReviewState {
                 false
             }
             KeyCode::F(5) => { self.request_refresh(); false }
-            KeyCode::Char('/') => { self.start_search(); false }
+            // F3 además de `/`: en un teclado español la barra es Shift+7 y en
+            // algunas distribuciones no llega, así que la búsqueda se quedaba
+            // sin tecla. F3 es la misma que busca en la pestaña de terminales.
+            KeyCode::F(3) | KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('w') => { self.toggle_drawer(); false }
             // The saved reviews, in the drawer where their reports live. The
@@ -269,7 +272,7 @@ impl ReviewState {
     }
 
     fn handle_file_detail_key(&mut self, code: KeyCode) -> bool {
-        if code == KeyCode::Char('/') {
+        if matches!(code, KeyCode::F(3) | KeyCode::Char('/')) {
             self.start_search();
             return false;
         }
@@ -291,7 +294,7 @@ impl ReviewState {
     }
 
     fn handle_pr_detail_key(&mut self, code: KeyCode) -> bool {
-        if code == KeyCode::Char('/') {
+        if matches!(code, KeyCode::F(3) | KeyCode::Char('/')) {
             self.start_search();
             return false;
         }
