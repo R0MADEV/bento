@@ -76,11 +76,14 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
         .render(frame, cols[2]);
     }
 
-    if matches!(review.input_purpose, Some(InputPurpose::Context)) {
+    // Cualquier cuadro de texto abierto se pinta. Solo se pintaba el del
+    // contexto, así que al abrir el buscador las teclas se iban a un campo
+    // invisible: ni cursor, ni caja, ni las flechas moviendo nada. Se ve
+    // exactamente igual que un panel colgado.
+    if let Some(label) = browse_input_label(review) {
         let bottom = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area)[1];
-        let input = Paragraph::new(review.input.as_str()).block(
-            pane_block("Contexto para la review (Enter guardar, Esc cancelar)").border_style(FOCUSED),
-        );
+        let input = Paragraph::new(review.input.as_str())
+            .block(pane_block(label).border_style(FOCUSED));
         frame.render_widget(input, bottom);
         // A real cursor rather than a drawn "▏": on a tall screen the box
         // opens far from where the eye is, and without a blinking cursor it
@@ -312,6 +315,17 @@ fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
     }
 }
 
+/// Qué cuadro está abierto en la vista principal, si hay alguno.
+fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
+    match review.input_purpose {
+        Some(InputPurpose::Context) => Some("Contexto para la review (Enter guardar, Esc cancelar)"),
+        Some(InputPurpose::Search) => Some("Buscar en ramas y ficheros (Enter aplicar, Esc cancelar)"),
+        Some(InputPurpose::Ask) => Some("Pregunta sobre la review (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::PrComment) | Some(InputPurpose::PrReview(_))
+        | Some(InputPurpose::InlineComment(_)) | None => None,
+    }
+}
+
 fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
     match review.input_purpose {
         Some(InputPurpose::PrComment) => Some("Comentario (Enter enviar, Esc cancelar)"),
@@ -367,5 +381,20 @@ mod tests {
 
         let text = screen(&review, 80, 24);
         assert!(text.contains("revisa el manejo de errores"), "no se ve lo que se escribe:\n{text}");
+    }
+
+
+    #[test]
+    fn the_search_box_is_painted_so_the_panel_does_not_look_frozen() {
+        // Sin caja ni cursor, las teclas se van a un campo invisible y el panel
+        // se lee como colgado: fue exactamente lo que pasó.
+        let mut review = ReviewState::new("/repo".to_string());
+        review.input_purpose = Some(InputPurpose::Search);
+        review.input = "engine".to_string();
+
+        let text = screen(&review, 80, 24);
+
+        assert!(text.contains("Buscar en ramas y ficheros"), "{text}");
+        assert!(text.contains("engine"), "y lo que llevas escrito: {text}");
     }
 }
