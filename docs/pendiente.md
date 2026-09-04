@@ -217,10 +217,48 @@ estos comandos. `agent_socket_path` no aparecía en ningún sitio.
 parecen muertos y no lo están — el primero lo usa `scripts/e2e-tasks.mjs`, y los
 otros se construyen a mano en `dbEngine.ts` (`db_docker_${engine}_${op}`).
 
+## 8. La review y el terminal, iguales en los tres — resuelto
+
+El objetivo era que la tech review y el terminal hicieran lo mismo desde el
+escritorio, el móvil y la CLI. Idéntica no puede ser la interfaz —xterm.js en
+dos, un emulador propio en ratatui en la otra—, así que lo que se persiguió fue
+lo demás: las mismas capacidades, los mismos conceptos y los mismos nombres.
+
+**Terminal.** Cerrar una terminal solo lo sabía hacer el escritorio y el móvil;
+la TUI ahora también (`k`). Abrir eligiendo dónde: el móvil pregunta el proyecto
+(los directorios donde ya hay terminales) y la TUI abre donde vive la que tienes
+seleccionada, que es lo que ya está enseñando. La TUI no guardaba nada de lo que
+salía de pantalla —scrollback cero— y ahora guarda 2000 líneas como los otros
+dos, con ⇧RePág/⇧AvPág y aviso en la cabecera de que estás mirando atrás. Buscar
+lo tenía solo el escritorio: el móvil carga el mismo addon de xterm y la TUI
+busca sobre su buffer con F3.
+
+**Review.** Comentar una línea del diff era solo del escritorio; ahora la TUI lo
+hace con `c` sobre la línea marcada y el móvil de un toque sobre la fila. Los
+ficheros vistos y el filtro por estado llegaron al móvil (el almacén ya existía;
+faltaba el puerto HTTP). El aviso de que una review es de un commit que la rama
+dejó atrás lo dan los tres, tanto en el listado como al abrirla.
+
+**Los perfiles de terminal** vivían en el `localStorage` del escritorio, así que
+fuera de esa ventana no existían: ahora están en `~/.bento/terminal-profiles.json`
+(`bento_core::profiles`). El escritorio los crea y aplica desde el panel (⌘P) y
+desde la paleta; el móvil pregunta con cuál abrir mandando **el id, no el shell**
+—lo que se ejecuta sale de algo ya guardado, no de la red—; la TUI los recorre
+con `p`.
+
+Lo que se quedó fuera a propósito: tema y tamaño de letra en el móvil (el
+escritorio es el único que pinta con ellos) y la vista partida, el árbol de
+ficheros, copiar el diff y saltar entre comentarios, que son comodidades de una
+GUI grande.
+
 ## Lo que sigue abierto
 
 Nada bloqueante. `src/core` está al 97,6 % de líneas con el umbral en 85, y el
-cliente web del móvil ya tiene tests en sus cuatro ficheros.
+cliente web del móvil tiene tests en sus cuatro ficheros.
+
+`createTerminalAppearanceControls` (el popover de tema, shell y fuente del
+terminal) sigue escrito, probado y sin montar en ningún panel — el mismo caso
+que tenían los perfiles antes de este trabajo. O se monta o se borra.
 
 ## Decidido que no
 
@@ -263,6 +301,10 @@ Aprendidas a base de que pasaran:
   `write` da EPIPE, y sin un `on('error')` no se cae el resumen sino el hook
   entero. Salió como un fallo intermitente de la suite completa que no se
   reproducía corriendo el fichero solo.
+- **Un test que mueve `HOME` compite con los demás del mismo binario.** Los de
+  perfiles pasaban sueltos y fallaban en la suite completa. El patrón del repo
+  es que la función acepte la ruta (`list_in`, `save_in`, `viewed::get_in`) y el
+  envoltorio la saque de `HOME`.
 - **CI corre en Windows.** `process.kill(-pid)` (grupo de procesos) y los
   scripts `.sh` en tests no valen allí. El patrón del repo es una función pura
   que recibe la plataforma, como `crossPlatformProcess.mjs`.
