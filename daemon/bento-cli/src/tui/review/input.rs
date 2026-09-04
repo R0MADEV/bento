@@ -125,6 +125,11 @@ impl ReviewState {
                 KeyCode::Enter => {
                     if let Some(cwd) = self.projects.get(self.projects_selected).and_then(|p| p.get("cwd")).and_then(Value::as_str) {
                         self.cwd = cwd.to_string();
+                        // Cada proyecto tiene su rama principal: quedarse con la
+                        // base del anterior es comparar contra algo que aquí
+                        // igual ni existe.
+                        self.base = super::default_base(&self.cwd);
+                        self.branch = None;
                         self.enter();
                         self.focus = Focus::Sidebar;
                         self.sidebar_tab = SidebarTab::Branches;

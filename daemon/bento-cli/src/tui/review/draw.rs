@@ -117,11 +117,17 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
     let extra_style = if review.compare { Style::default() } else { DIM };
     let none = "Ninguno";
     let mut header = vec![
+        // Cada línea con su tecla: sin ellas no hay forma de saber que el
+        // proyecto y la base se cambian, y son lo primero que hay que cambiar.
         Line::from(format!(
-            "Proyecto: {}",
-            short_path(&review.cwd, width.saturating_sub("Proyecto: ".len() as u16 + 2) as usize),
+            "Proyecto: {} (o)",
+            short_path(&review.cwd, width.saturating_sub("Proyecto:  (o)".len() as u16 + 2) as usize),
         )),
-        Line::from(format!("Base: {} ← {}", review.base, review.branch.as_deref().unwrap_or("sin commitear"))),
+        Line::from(format!(
+            "Base: {} ← {} (b)",
+            review.base,
+            review.branch.as_deref().unwrap_or("sin commitear"),
+        )),
         Line::from(format!("Agente: {} (g)", review.agent)),
         Line::from(format!("Comparar: {} (x)", on_off(review.compare))),
         Line::from(format!("  2º: {} (G)", review.secondary.as_deref().unwrap_or(none))).style(extra_style),

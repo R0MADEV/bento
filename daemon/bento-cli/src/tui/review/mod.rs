@@ -205,12 +205,26 @@ pub(super) struct ReviewState {
     file_scroll: u16,
 }
 
+/// Contra qué se compara al abrir: `origin/<la principal>` si existe, y si no
+/// la principal a secas. Es lo mismo que elige el panel del escritorio; la TUI
+/// tenía "main" escrito a mano, así que en un repo cuya principal es otra —o
+/// estando en la principal, con todo commiteado— no enseñaba ni un fichero.
+fn default_base(cwd: &str) -> String {
+    let branch = bento_review::branches::default_branch(cwd);
+    let remote = format!("origin/{branch}");
+    match bento_review::vcs::list_branches(cwd).contains(&remote) {
+        true => remote,
+        false => branch,
+    }
+}
+
 impl ReviewState {
     pub(super) fn new(cwd: String) -> Self {
+        let base = default_base(&cwd);
         let (work_tx, work_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             cwd,
-            base: "main".to_string(),
+            base,
             branch: None,
             agent: AGENTS[0].id.to_string(),
             secondary: None,
