@@ -158,6 +158,22 @@ function goBack(){
   load();
 }
 
+async function renameTerminal(){
+  if(!activeId)return;
+  const name=prompt('Nombre de la terminal',activeTitle||'');
+  if(name===null||!name.trim())return;
+  try{
+    await fetch('/api/terminals/'+encodeURIComponent(activeId)+q,{
+      method:'PATCH',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({title:name.trim()}),
+    });
+    // El daemon avisa a todos por su cuenta; esto es solo para no esperar.
+    activeTitle=name.trim();
+    document.getElementById('ttitle').textContent=activeTitle;
+  }catch(_){}
+}
+
 async function killTerminal(){
   if(!activeId)return;
   if(!confirm('&#191;Cerrar "'+activeTitle+'"?'))return;

@@ -118,6 +118,14 @@ impl PtyManager {
                                 let _ = app.emit(&format!("pty-output-{id}"), data.to_string());
                             }
                         }
+                        "terminal.title" => {
+                            if let (Some(id), Some(title)) = (
+                                value.get("pty_id").and_then(Value::as_str),
+                                value.get("title").and_then(Value::as_str),
+                            ) {
+                                let _ = app.emit(&format!("pty-title-{id}"), title.to_string());
+                            }
+                        }
                         "terminal.exit" => {
                             if let Some(id) = value.get("pty_id").and_then(Value::as_str) {
                                 let _ = app.emit(&format!("pty-exit-{id}"), ());

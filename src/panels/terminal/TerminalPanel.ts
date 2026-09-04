@@ -281,6 +281,8 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   // The shell exited on its own (the user typed `exit`): close the panel. Skip
   // if we're already disposing (closing the panel kills the PTY, firing this too).
+  // Renombrada desde la CLI o el móvil: el daemon avisa y la pestaña se entera.
+  listenTo<string>(`pty-title-${id}`, event => { if (!disposed) titleCallback?.(event.payload) })
   listenTo(`pty-exit-${id}`, () => { if (!disposed) onExit?.() })
 
   let inputCallback: ((line: string) => void) | undefined

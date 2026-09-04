@@ -278,7 +278,14 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                                         json!({ "event": "terminal.output", "pty_id": pty_id, "data": text }).to_string(),
                                     );
                                 }
-                                Ok(PtyEvent::TitleChanged(_)) => {}
+                                // Renombrar desde un cliente tiene que verse en
+                                // los otros: el HTTP ya lo mandaba y por aquí se
+                                // tiraba, así que el escritorio no se enteraba.
+                                Ok(PtyEvent::TitleChanged(title)) => {
+                                    let _ = out.send(
+                                        json!({ "event": "terminal.title", "pty_id": pty_id, "title": title }).to_string(),
+                                    );
+                                }
                                 Ok(PtyEvent::Exit(code)) => {
                                     let _ = out.send(
                                         json!({ "event": "terminal.exit", "pty_id": pty_id, "code": code }).to_string(),
