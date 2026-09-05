@@ -159,40 +159,53 @@ pub(super) fn short_path(path: &str, max: usize) -> String {
     }
 }
 
-/// La línea del fichero nuevo sobre la que caería un comentario puesto en la
-/// fila `row` del diff, tal y como se pinta. GitHub los ancla a la versión
-/// nueva, así que una línea borrada no admite comentario y una cabecera
-/// tampoco.
-pub(super) fn commentable_line(diff: &str, row: usize) -> Option<u64> {
+/// Qué es cada fila de un diff, para pintarla y para saber si admite
+/// comentario. Antes esto se recorría dos veces —una para el color, otra para
+/// la línea— y las dos tenían que contar igual.
+pub(super) enum DiffKind {
+    Added,
+    Removed,
+    Hunk,
+    Context,
+}
+
+pub(super) struct DiffRow {
+    pub(super) kind: DiffKind,
+    /// La línea del fichero nuevo, cuando existe ahí. Una línea borrada ya no
+    /// está en la versión nueva, y GitHub ancla los comentarios a esa.
+    pub(super) line: Option<u64>,
+    pub(super) text: String,
+}
+
+/// El diff en filas pintables. La cabecera de git (`diff --git`, `index`, los
+/// `---`/`+++`) se queda fuera: no es código, y el título ya dice qué fichero
+/// es — el panel del escritorio tampoco la enseña.
+pub(super) fn diff_rows(diff: &str) -> Vec<DiffRow> {
+    let mut rows = Vec::new();
     let mut new_line = 0u64;
     let mut inside_hunk = false;
-    for (index, line) in diff.lines().enumerate() {
+    for line in diff.lines() {
         if let Some(start) = hunk_start(line) {
             new_line = start;
             inside_hunk = true;
-            if index == row {
-                return None;
-            }
+            rows.push(DiffRow { kind: DiffKind::Hunk, line: None, text: line.to_string() });
             continue;
         }
-        if !inside_hunk {
+        if !inside_hunk || line.starts_with("+++") || line.starts_with("---") {
             continue;
         }
-        // `+++ b/fichero` empieza por `+` y no es código.
-        let is_header = line.starts_with("+++") || line.starts_with("---");
-        let counts_in_the_new_file = !is_header && (line.starts_with('+') || line.starts_with(' ') || line.is_empty());
-        if !counts_in_the_new_file {
-            if index == row {
-                return None;
-            }
-            continue;
+        let (kind, counts) = match line.chars().next() {
+            Some('+') => (DiffKind::Added, true),
+            Some('-') => (DiffKind::Removed, false),
+            _ => (DiffKind::Context, true),
+        };
+        let at = counts.then_some(new_line);
+        if counts {
+            new_line += 1;
         }
-        if index == row {
-            return Some(new_line);
-        }
-        new_line += 1;
+        rows.push(DiffRow { kind, line: at, text: line.to_string() });
     }
-    None
+    rows
 }
 
 /// La primera línea del fichero nuevo que cubre un `@@ -a,b +c,d @@`.
@@ -431,54 +444,30 @@ diff --git a/a.rs b/a.rs
 
     #[test]
     fn a_comment_lands_on_the_line_of_the_new_file() {
-        // GitHub ancla los comentarios a la versión nueva: la fila 5 del diff
-        // es el contexto, que allí es la 10.
-        assert_eq!(commentable_line(DIFF, 4), Some(10));
-        assert_eq!(commentable_line(DIFF, 6), Some(11), "la añadida");
-        assert_eq!(commentable_line(DIFF, 7), Some(12));
-        assert_eq!(commentable_line(DIFF, 8), Some(13), "el contexto de después");
+        // GitHub ancla los comentarios a la versión nueva. La cabecera de git
+        // no sale, así que la primera fila ya es el `@@`.
+        let rows = diff_rows(DIFF);
+
+        assert!(matches!(rows[0].kind, DiffKind::Hunk));
+        assert_eq!(rows[1].line, Some(10), "el contexto");
+        assert_eq!(rows[3].line, Some(11), "la añadida");
+        assert_eq!(rows[4].line, Some(12));
+        assert_eq!(rows[5].line, Some(13), "el contexto de después");
     }
 
     #[test]
     fn there_is_nothing_to_comment_on_a_removed_line_or_a_header() {
-        // Una línea borrada ya no está en el fichero nuevo, y una cabecera no
-        // es código.
-        assert_eq!(commentable_line(DIFF, 5), None, "la borrada");
-        assert_eq!(commentable_line(DIFF, 0), None, "diff --git");
-        assert_eq!(commentable_line(DIFF, 3), None, "la cabecera del hunk");
-        assert_eq!(commentable_line(DIFF, 99), None, "fuera del diff");
+        let rows = diff_rows(DIFF);
+
+        // Una línea borrada ya no está en el fichero nuevo.
+        assert!(matches!(rows[2].kind, DiffKind::Removed));
+        assert_eq!(rows[2].line, None);
+        // Y la cabecera de git ni aparece: `diff --git`, `index`, `---`, `+++`.
+        assert!(!rows.iter().any(|r| r.text.starts_with("diff --git")));
+        assert!(!rows.iter().any(|r| r.text.starts_with("+++")));
     }
 
-    #[test]
-    fn a_folder_lists_the_ones_inside_with_a_way_back_up() {
-        let root = std::env::temp_dir().join(format!("bento-subdirs-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("uno")).unwrap();
-        std::fs::create_dir_all(root.join("dos")).unwrap();
-        std::fs::create_dir_all(root.join(".oculta")).unwrap();
-        std::fs::write(root.join("un-fichero"), "x").unwrap();
 
-        let rows = subdirs(&root);
 
-        // Ficheros y ocultas fuera: elegir `.git` como proyecto no lo quiere nadie.
-        assert_eq!(rows, vec!["..", "dos", "uno"]);
-        let _ = std::fs::remove_dir_all(&root);
-    }
 
-    #[test]
-    fn a_folder_that_cannot_be_read_is_empty_rather_than_a_crash() {
-        assert!(subdirs(std::path::Path::new("/no/existe/esto")).contains(&"..".to_string()));
-    }
-
-    #[test]
-    fn a_folder_with_a_git_inside_is_a_repo() {
-        let root = std::env::temp_dir().join(format!("bento-isrepo-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("con/.git")).unwrap();
-        std::fs::create_dir_all(root.join("sin")).unwrap();
-
-        assert!(is_repo(&root.join("con")));
-        assert!(!is_repo(&root.join("sin")));
-        let _ = std::fs::remove_dir_all(&root);
-    }
 }

@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use serde_json::Value;
 
-use super::format::{checkpoint_row, short_path};
+use super::format::{checkpoint_row, diff_rows, short_path, DiffKind};
 use super::super::drawer::{Drawer, History};
 use super::super::pane::Pane;
 use super::super::sidebar::{ItemStatus, Sidebar, SidebarItem};
@@ -262,15 +262,34 @@ fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
         false => review.pr_status.as_str(),
     };
     let inner = Pane { title: "", hint, focused: true }.render(frame, frame.area());
+    // Con color y número de línea, como el panel del escritorio: en un diff a
+    // un solo color hay que leer el primer carácter de cada línea para saber
+    // qué pasó ahí.
+    //
     // La primera fila visible lleva marca: es la que recibe el comentario, y
     // sin verla no se sabe sobre cuál se está escribiendo.
-    let text = review.filtered(&review.file_diff);
-    let marked: Vec<Line> = text
-        .lines()
+    let marked: Vec<Line> = diff_rows(&review.filtered(&review.file_diff))
+        .into_iter()
         .enumerate()
-        .map(|(index, line)| match index == review.file_scroll as usize {
-            true => Line::from(vec![Span::styled("▸ ", FOCUSED), Span::raw(line.to_string())]),
-            false => Line::from(format!("  {line}")),
+        .map(|(index, row)| {
+            // Fondo tenue además del color de letra, como el panel: es lo que
+            // deja ver de un vistazo dónde empieza y acaba un bloque añadido
+            // sin leer el primer carácter de cada línea.
+            let style = match row.kind {
+                DiffKind::Added => Style::new().fg(Color::Green).bg(Color::Indexed(22)),
+                DiffKind::Removed => Style::new().fg(Color::Red).bg(Color::Indexed(52)),
+                DiffKind::Hunk => Style::new().fg(Color::Indexed(4)),
+                DiffKind::Context => Style::default(),
+            };
+            let gutter = match row.line {
+                Some(line) => format!("{line:>5} "),
+                None => "      ".to_string(),
+            };
+            let marker = match index == review.file_scroll as usize {
+                true => Span::styled("▸ ", FOCUSED),
+                false => Span::raw("  "),
+            };
+            Line::from(vec![marker, Span::styled(gutter, DIM), Span::styled(row.text, style)])
         })
         .collect();
     let paragraph = Paragraph::new(marked)

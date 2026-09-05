@@ -66,7 +66,8 @@ impl ReviewState {
             return;
         };
         let _ = pr;
-        match super::format::commentable_line(&self.file_diff, self.file_scroll as usize) {
+        let rows = super::format::diff_rows(&self.file_diff);
+        match rows.get(self.file_scroll as usize).and_then(|row| row.line) {
             Some(line) => {
                 self.input_purpose = Some(super::InputPurpose::InlineComment(line));
                 self.input.clear();
