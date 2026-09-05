@@ -73,20 +73,69 @@ Benefits:
 - **Phone remote without the app** — `bento daemon start` is enough
 - **CLI access** — list, open and attach to terminals from any shell
 
+### The three clients
+
+Terminals do not live in the desktop app or in the CLI: they live in the daemon.
+Each client is a window onto the same thing, so a terminal opened in one shows
+up in the others — same id, same title, same scrollback.
+
+```bash
+bento daemon start           # 1. the daemon — everything else talks to it
+bento                        # 2. the CLI, no arguments: the terminal panel (TUI)
+npm run tauri:dev            # 3. the desktop app
+```
+
+The phone has no command of its own: turn its server on from the desktop's
+Phone Remote panel, which is what asks the daemon to start it.
+
+The desktop app starts the daemon itself when none is answering. The CLI does
+not: run `bento daemon start` first, or `bento daemon install` once and let
+launchd/systemd keep it up — that is also what brings it back if it dies.
+
+After rebuilding the daemon, `bento daemon restart`: otherwise the old binary
+keeps serving. Restarting it kills every terminal it holds — the shells are its
+child processes.
+
+Inside the TUI, `Tab` switches between terminals and tech review, and every
+pane's footer lists its keys.
+
 ### CLI
 
 ```bash
+bento                        # open the terminal panel (TUI)
+
 bento daemon status          # show daemon status
 bento daemon start           # start the daemon in the background
+bento daemon restart         # stop and start it again (after rebuilding)
 bento daemon install         # register as a login service (launchd / systemd)
 bento daemon uninstall       # remove the login service
 
 bento terminals              # list open terminals
 bento open [--cwd <dir>]     # open a new terminal
 bento attach <id>            # attach stdin/stdout to a terminal
+
+bento review branches        # recent branches of this repo
+bento review files [--base <ref>]        # files changed vs base
+bento review file <path> [--base <ref>]  # one file's diff
+bento review run [--agents claude,codex] # a full AI review
 ```
 
+`bento --help` lists the rest: tasks, docker, memory, notes and agent sessions.
+
 `bento daemon install` writes a launchd plist on macOS or a systemd user service on Linux so the daemon starts at login — independent of the Bento app.
+
+### Running from a dev checkout
+
+The binaries are not on your `PATH` until you install them. From the repo:
+
+```bash
+cargo build --release --manifest-path daemon/Cargo.toml
+./daemon/target/release/bento                # the CLI
+./daemon/target/release/bento daemon start   # the daemon
+
+# or put it on your PATH:
+ln -s "$PWD/daemon/target/release/bento" /usr/local/bin/bento
+```
 
 ---
 
