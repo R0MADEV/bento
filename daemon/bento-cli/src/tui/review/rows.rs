@@ -1,5 +1,4 @@
 //! Cómo se pinta cada fila del panel de archivos: la del fichero, y las del
-//! diff que tenga desplegado — a lo ancho, o en dos columnas.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};

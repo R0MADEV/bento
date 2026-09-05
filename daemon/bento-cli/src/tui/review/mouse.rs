@@ -1,6 +1,5 @@
 //! El panel de archivos visto desde el ratón: en qué chip o en qué fila cayó
 //! un clic. El raíl y el cajón ya se manejaban con el ratón; esto es lo que
-//! faltaba para que el panel se use como el del escritorio.
 
 use ratatui::layout::Rect;
 

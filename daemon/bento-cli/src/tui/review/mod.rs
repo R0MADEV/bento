@@ -4,7 +4,6 @@
 //! panel, plus full-screen drill-downs for a file's diff, a PR's
 //! diff/comments, and a running/loaded review — all via the same
 //! `review.*`/`projects.*` IPC commands the one-shot `bento review`
-//! subcommands already use.
 
 mod draw;
 mod drawer_state;
@@ -36,11 +35,6 @@ async fn recv_optional<T>(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<T
 /// Los agentes que ofrece el TUI. La lista vive en `bento_review::agents`:
 /// tenerla aquí otra vez era pedir que se separaran.
 use bento_review::agents::AGENTS;
-
-enum ReviewView {
-    Browse,
-    PrDetail,
-}
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum SidebarTab {
@@ -121,7 +115,6 @@ pub(super) struct ReviewState {
     /// mirrors desktop's "Contexto para la review" textarea.
     context: String,
 
-    view: ReviewView,
     focus: Focus,
     sidebar_tab: SidebarTab,
 
@@ -211,7 +204,6 @@ pub(super) struct ReviewState {
     prs_selected: usize,
     current_pr: Option<u64>,
     pr_detail: String,
-    pr_scroll: u16,
     pr_status: String,
     checkpoints: Vec<Value>,
     checkpoints_selected: usize,
@@ -252,7 +244,6 @@ impl ReviewState {
             tertiary: None,
             compare: false,
             context: String::new(),
-            view: ReviewView::Browse,
             focus: Focus::Files,
             sidebar_tab: SidebarTab::Branches,
             files: Vec::new(),
@@ -293,7 +284,6 @@ impl ReviewState {
             prs_selected: 0,
             current_pr: None,
             pr_detail: String::new(),
-            pr_scroll: 0,
             pr_status: String::new(),
             checkpoints: Vec::new(),
             checkpoints_selected: 0,
@@ -331,7 +321,6 @@ impl ReviewState {
                 self.files = files;
                 self.files_selected = 0;
                 self.reviewed = viewed.into_iter().collect();
-                self.view = ReviewView::Browse;
                 self.status.clear();
             }
             Fetched::Branches(branches) => { self.branches = branches; self.branches_selected = 0; self.status.clear() }
@@ -484,7 +473,6 @@ impl ReviewState {
             .iter()
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
-        self.view = ReviewView::Browse;
     }
 
     /// Populates both panes for a fresh entry into the Review tab (List →
@@ -594,7 +582,7 @@ mod tests {
         state.handle_event(press(KeyCode::Enter)).await;
 
         assert!(state.expanded.is_empty(), "Enter sobre un fichero abierto lo cierra");
-        assert!(matches!(state.view, ReviewView::Browse), "y no se va a otra pantalla");
+        assert!(state.expanded.is_empty(), "y no se va a otra pantalla: sigue siendo la lista");
     }
 
     #[tokio::test]
@@ -947,6 +935,31 @@ mod tests {
     }
 
     #[test]
+    fn a_pr_is_read_in_the_file_list_not_in_a_screen_of_its_own() {
+        // El escritorio no abre otra pantalla: pone la review en la rama del
+        // PR y lo lees en la misma lista de archivos, con su diff desplegable
+        // y sus dos columnas. Un volcado del diff en crudo no es eso.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.pr_detail = "# #291 rebranding\n\n## Checks\n- ✗ jenkins (ERROR)".into();
+        state.current_pr = Some(291);
+
+        assert_eq!(state.drawer_body(), state.pr_detail, "el PR va al cajón, donde va el informe");
+        assert!(state.drawer_title().contains("291"), "y el cajón dice de qué PR es");
+    }
+
+    #[test]
+    fn running_a_review_takes_the_drawer_back() {
+        // El cajón es uno: mientras corre una review enseña la review, que es
+        // lo que estás esperando ver.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.pr_detail = "lo del PR".into();
+        state.output = "lo de la review".into();
+        state.running = true;
+
+        assert_eq!(state.drawer_body(), "lo de la review");
+    }
+
+    #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there
         // would duplicate the work, the billing and the output.
@@ -1158,8 +1171,8 @@ mod tests {
         let mut state = ReviewState::new("/repo".to_string());
         state.start_run();
 
-        assert!(matches!(state.view, ReviewView::Browse), "sigue en el panel");
-        assert!(state.drawer_width > crate::tui::drawer::COLLAPSED_WIDTH, "y el cajón se abre");
+        assert!(state.drawer_width > crate::tui::drawer::COLLAPSED_WIDTH, "el cajón se abre");
+        assert_eq!(state.drawer_body(), state.output, "y enseña la review, sin tapar el panel");
     }
 
     #[tokio::test]

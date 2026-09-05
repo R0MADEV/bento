@@ -1,4 +1,3 @@
-//! Pure formatting helpers for the Review tab — no state, no IPC, no drawing.
 
 use serde_json::Value;
 

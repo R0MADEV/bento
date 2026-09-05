@@ -1,10 +1,9 @@
 //! Rendering for the Review tab: the split-pane browser and the three
-//! full-screen drill-downs (a file's diff, a PR, a running review).
 
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 use serde_json::Value;
 
 use super::format::{checkpoint_row, short_path};
@@ -12,13 +11,10 @@ use super::super::drawer::{Drawer, History};
 use super::super::pane::Pane;
 use super::super::sidebar::{ItemStatus, Sidebar, SidebarItem};
 use super::rows::{filter_bar, pane_row_item};
-use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
+use super::{Focus, InputPurpose, ReviewState, SidebarTab};
 
 pub(crate) fn draw(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16, resizing: bool) {
-    match review.view {
-        ReviewView::Browse => draw_browse(frame, review, sidebar_width, resizing),
-        ReviewView::PrDetail => draw_pr_detail(frame, review),
-    }
+    draw_browse(frame, review, sidebar_width, resizing);
 }
 
 
@@ -58,18 +54,16 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
         }
         .render(frame, cols[2]);
     } else if drawer_width > 0 {
-        let title = if review.running {
-            match review.last_progress.is_empty() {
-                true => "REVIEW · corriendo…".to_string(),
-                false => format!("REVIEW · {}", review.last_progress),
-            }
-        } else {
-            "REVIEW".to_string()
+        let title = review.drawer_title();
+        let hint = match (review.running, review.current_pr.is_some()) {
+            (true, _) => "c parar · w plegar",
+            (false, true) => "a comentar · y aprobar · n pedir cambios · w plegar",
+            (false, false) => "↑/↓ scroll · a preguntar · w plegar",
         };
         Drawer {
             title: &title,
-            hint: if review.running { "c parar · w plegar" } else { "↑/↓ scroll · a preguntar · w plegar" },
-            body: &review.output,
+            hint,
+            body: review.drawer_body(),
             scroll: review.scroll,
             focused: matches!(review.focus, Focus::Drawer),
         }
@@ -293,59 +287,24 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     frame.render_stateful_widget(list, rest, &mut state);
 }
 
-fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let area = frame.area();
-    let title = if review.pr_status.is_empty() {
-        "↑/↓ scroll · a: comentar · y: aprobar · n: pedir cambios · m: comentar review · Esc: volver".to_string()
-    } else {
-        review.pr_status.clone()
-    };
-    let block = pane_block(&title);
-
-    if let Some(label) = pr_input_label(review) {
-        let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area);
-        let paragraph = Paragraph::new(review.filtered(&review.pr_detail))
-            .wrap(Wrap { trim: false })
-            .scroll((review.pr_scroll, 0))
-            .block(block);
-        frame.render_widget(paragraph, chunks[0]);
-        let input = Paragraph::new(format!("{}▏", review.input))
-            .block(pane_block(label));
-        frame.render_widget(input, chunks[1]);
-    } else {
-        let paragraph = Paragraph::new(review.filtered(&review.pr_detail))
-            .wrap(Wrap { trim: false })
-            .scroll((review.pr_scroll, 0))
-            .block(block);
-        frame.render_widget(paragraph, area);
-    }
-}
 
 /// Qué cuadro está abierto en la vista principal, si hay alguno.
+/// Qué dice el cuadro de texto abierto. Sin él, las teclas se van a un campo
+/// invisible y el panel se lee como colgado.
 fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
     match review.input_purpose {
         Some(InputPurpose::Context) => Some("Contexto para la review (Enter guardar, Esc cancelar)"),
         Some(InputPurpose::Search) => Some("Filtrar ramas (Enter aplicar, Esc cancelar)"),
         Some(InputPurpose::FileSearch) => Some("Buscar archivos (Enter aplicar, Esc cancelar)"),
         Some(InputPurpose::Ask) => Some("Pregunta sobre la review (Enter enviar, Esc cancelar)"),
-        Some(InputPurpose::PrComment) | Some(InputPurpose::PrReview(_))
-        | Some(InputPurpose::InlineComment(_)) | None => None,
-    }
-}
-
-fn pr_input_label(review: &ReviewState) -> Option<&'static str> {
-    match review.input_purpose {
-        Some(InputPurpose::PrComment) => Some("Comentario (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::PrComment) => Some("Comentario en el PR (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("APPROVE")) => Some("Aprobar — texto opcional (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),
-        Some(InputPurpose::FileSearch) => Some("Buscar en el diff (Enter aplicar, Esc cancelar)"),
-        Some(InputPurpose::Search) => None,
         Some(InputPurpose::InlineComment(_)) => Some("Comentario en la línea (Enter enviar, Esc cancelar)"),
-        Some(InputPurpose::Ask) | Some(InputPurpose::Context) | None => None,
+        None => None,
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -404,5 +363,18 @@ mod tests {
 
         assert!(text.contains("Buscar archivos"), "{text}");
         assert!(text.contains("engine"), "y lo que llevas escrito: {text}");
+    }
+
+    #[test]
+    fn approving_a_pr_paints_its_box_in_the_panel() {
+        // Aprobar y pedir cambios se hacían en una pantalla aparte que ya no
+        // existe: si su cuadro no se pinta aquí, la tecla no hace nada visible.
+        let mut review = ReviewState::new("/repo".to_string());
+        review.current_pr = Some(291);
+        review.input_purpose = Some(InputPurpose::PrReview("APPROVE"));
+
+        let text = screen(&review, 80, 24);
+
+        assert!(text.contains("Aprobar"), "{text}");
     }
 }

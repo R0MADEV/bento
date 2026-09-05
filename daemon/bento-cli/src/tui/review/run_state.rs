@@ -1,10 +1,9 @@
 //! Running a review: starting it, following the daemon's stream, stopping it,
 //! and filing what it produced. Split out of `mod.rs`, which had grown past
-//! the size budget while this panel gained its report column and its history.
 
 use serde_json::{json, Value};
 
-use super::{batch_heading, new_run_id, ReviewEvent, ReviewState, ReviewView};
+use super::{batch_heading, new_run_id, ReviewEvent, ReviewState};
 use crate::review_stream;
 
 impl ReviewState {
@@ -48,7 +47,6 @@ impl ReviewState {
         // Stays in Browse: the report goes to the drawer beside the files
         // rather than replacing the panel, so the rail and the file list are
         // still there while it runs.
-        self.view = ReviewView::Browse;
         self.open_drawer();
     }
 

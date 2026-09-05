@@ -1,6 +1,5 @@
 //! The report column: whether it is showing a review or the list of past
 //! ones, how wide it is, and where the focus goes. Split out of `mod.rs` for
-//! size; the drawing itself lives in `crate::tui::drawer`.
 
 use serde_json::{json, Value};
 
@@ -29,6 +28,32 @@ impl ReviewState {
     /// Scrolls the report. `saturating_add_signed` on an unsigned counter
     /// already stops at the top, which is what scrolling up past the
     /// beginning should do.
+    /// Qué se lee en el cajón. Es uno solo: mientras corre una review enseña
+    /// la review —que es lo que estás esperando—, y si no, el PR abierto.
+    /// El diff del PR no va aquí: ese se lee en la lista de archivos, que ya
+    /// está puesta en su rama.
+    pub(super) fn drawer_body(&self) -> &str {
+        match self.running || self.pr_detail.is_empty() {
+            true => &self.output,
+            false => &self.pr_detail,
+        }
+    }
+
+    pub(super) fn drawer_title(&self) -> String {
+        if !self.running && !self.pr_detail.is_empty() {
+            if let Some(pr) = self.current_pr {
+                return format!("PR #{pr}");
+            }
+        }
+        if !self.running {
+            return "REVIEW".to_string();
+        }
+        match self.last_progress.is_empty() {
+            true => "REVIEW · corriendo…".to_string(),
+            false => format!("REVIEW · {}", self.last_progress),
+        }
+    }
+
     pub(super) fn scroll_drawer(&mut self, delta: i16) {
         self.scroll = self.scroll.saturating_add_signed(delta);
     }

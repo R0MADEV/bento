@@ -2,7 +2,6 @@
 //!
 //! Aparte porque son las respuestas a "¿qué estoy mirando?" y "¿sobre qué voy a
 //! actuar?", y confundirlas fue justo el fallo: con un filtro puesto, la fila
-//! marcada de lo que ves no es la misma de la lista entera.
 
 use serde_json::Value;
 

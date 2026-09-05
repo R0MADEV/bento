@@ -1,11 +1,10 @@
 //! Key handling for the Review tab, one handler per view. Every handler
-//! returns `true` when the panel should go back to the terminals list.
 
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use serde_json::{json, Value};
 
 use super::format::{next_agent, next_optional_agent};
-use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
+use super::{Focus, InputPurpose, ReviewState, SidebarTab};
 
 impl ReviewState {
     /// Abre el buscador con lo que ya hubiera escrito, para poder afinarlo.
@@ -32,10 +31,7 @@ impl ReviewState {
             self.handle_text_input(key.code).await;
             return false;
         }
-        match self.view {
-            ReviewView::Browse => self.handle_browse_key(key.code).await,
-            ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
-        }
+        self.handle_browse_key(key.code).await
     }
 
     async fn handle_browse_key(&mut self, code: KeyCode) -> bool {
@@ -63,6 +59,28 @@ impl ReviewState {
             KeyCode::F(3) | KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('w') => { self.toggle_drawer(); false }
+            // Las acciones del PR, donde se lee el PR. Sólo con uno abierto:
+            // sin él, `a` sigue siendo preguntarle a la review.
+            KeyCode::Char('y') if self.current_pr.is_some() => {
+                self.input_purpose = Some(InputPurpose::PrReview("APPROVE"));
+                self.input.clear();
+                false
+            }
+            KeyCode::Char('n') if self.current_pr.is_some() => {
+                self.input_purpose = Some(InputPurpose::PrReview("REQUEST_CHANGES"));
+                self.input.clear();
+                false
+            }
+            KeyCode::Char('m') if self.current_pr.is_some() => {
+                self.input_purpose = Some(InputPurpose::PrReview("COMMENT"));
+                self.input.clear();
+                false
+            }
+            KeyCode::Char('a') if self.current_pr.is_some() => {
+                self.input_purpose = Some(InputPurpose::PrComment);
+                self.input.clear();
+                false
+            }
             // Dos columnas: lo que había y lo que hay, una al lado de la otra.
             KeyCode::Char('2') => {
                 self.split = !self.split;
@@ -338,46 +356,6 @@ impl ReviewState {
             .unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
         self.expanded.insert(path, diff);
     }
-
-    fn handle_pr_detail_key(&mut self, code: KeyCode) -> bool {
-        if matches!(code, KeyCode::F(3) | KeyCode::Char('/')) {
-            self.start_search();
-            return false;
-        }
-        match code {
-            KeyCode::Up => { self.pr_scroll = self.pr_scroll.saturating_sub(1); false }
-            KeyCode::Down => { self.pr_scroll = self.pr_scroll.saturating_add(1); false }
-            KeyCode::PageUp => { self.pr_scroll = self.pr_scroll.saturating_sub(10); false }
-            KeyCode::PageDown => { self.pr_scroll = self.pr_scroll.saturating_add(10); false }
-            KeyCode::Char('a') => {
-                self.input_purpose = Some(InputPurpose::PrComment);
-                self.input.clear();
-                false
-            }
-            KeyCode::Char('y') => {
-                self.input_purpose = Some(InputPurpose::PrReview("APPROVE"));
-                self.input.clear();
-                false
-            }
-            KeyCode::Char('n') => {
-                self.input_purpose = Some(InputPurpose::PrReview("REQUEST_CHANGES"));
-                self.input.clear();
-                false
-            }
-            KeyCode::Char('m') => {
-                self.input_purpose = Some(InputPurpose::PrReview("COMMENT"));
-                self.input.clear();
-                false
-            }
-            KeyCode::Tab => true,
-            KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = ReviewView::Browse;
-                false
-            }
-            _ => false,
-        }
-    }
-
 
     async fn handle_text_input(&mut self, code: KeyCode) {
         match code {
