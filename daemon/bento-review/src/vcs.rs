@@ -5,6 +5,8 @@
 //! in both codebases, so a hardening fix in one never reached the other.
 
 use std::process::Command;
+
+use crate::gh_account;
 use std::sync::OnceLock;
 
 use serde_json::{json, Value};
@@ -73,17 +75,61 @@ pub fn git_cmd_exit1_ok(cwd: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Corre `gh` en ese proyecto. Si el repositorio no lo ve la cuenta activa
+/// —que en `gh` es una sola para toda la máquina, aunque git cambie con la
+/// carpeta— prueba las demás cuentas que ya tiene guardadas y se queda con la
+/// que sirva. Sin eso, en un repo de otra organización no hay PRs que revisar
+/// hasta cambiar de cuenta a mano, y cambiarla afecta a todo lo demás.
 pub fn gh_cmd(cwd: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(gh_bin()?)
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .map_err(|e| format!("gh not found: {e}"))?;
+    let remembered = gh_account::remembered(cwd);
+    let error = match run_gh(cwd, args, remembered.as_deref()) {
+        Ok(out) => return Ok(out),
+        Err(error) => error,
+    };
+    if !gh_account::is_not_visible(&error) {
+        return Err(error);
+    }
+    with_another_account(cwd, args).ok_or(error)
+}
+
+/// Prueba las cuentas de `gh auth status` hasta que una vea el repositorio.
+fn with_another_account(cwd: &str, args: &[&str]) -> Option<String> {
+    let status = run_gh(cwd, &["auth", "status"], None).ok()?;
+    for account in gh_account::accounts_in(&status) {
+        let Ok(out) = run_gh(cwd, args, Some(&account)) else { continue };
+        gh_account::remember(cwd, &account);
+        return Some(out);
+    }
+    None
+}
+
+/// El token nunca se guarda: se le pide a `gh` para esa cuenta y viaja sólo en
+/// el entorno del proceso hijo.
+fn run_gh(cwd: &str, args: &[&str], account: Option<&str>) -> Result<String, String> {
+    let mut command = Command::new(gh_bin()?);
+    command.current_dir(cwd).args(args);
+    if let Some(account) = account {
+        let token = token_of(cwd, account)?;
+        command.env("GH_TOKEN", token);
+    }
+    let out = command.output().map_err(|e| format!("gh not found: {e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
+}
+
+fn token_of(cwd: &str, account: &str) -> Result<String, String> {
+    let out = Command::new(gh_bin()?)
+        .current_dir(cwd)
+        .args(["auth", "token", "--user", account])
+        .output()
+        .map_err(|e| format!("gh not found: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("gh no da el token de {account}"));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// A client-supplied git ref used as a `git diff` argument. Rejects
