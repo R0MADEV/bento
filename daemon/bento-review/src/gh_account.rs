@@ -45,6 +45,12 @@ fn account_name(rest: &str) -> Option<String> {
     rest.split("account ").nth(1)?.split_whitespace().next().map(str::to_string)
 }
 
+/// Las que quedan por probar: todas menos la que acaba de fallar. Con una
+/// sola cuenta —lo normal— eso es ninguna, y no se hace ni una llamada más.
+pub(crate) fn others(accounts: &[String], failed: &str) -> Vec<String> {
+    accounts.iter().filter(|a| *a != failed).cloned().collect()
+}
+
 /// La cuenta que ya se sabe que funciona en este proyecto.
 pub(crate) fn remembered(cwd: &str) -> Option<String> {
     known().lock().ok()?.get(cwd).cloned()
@@ -92,6 +98,17 @@ mod tests {
         assert!(super::is_not_visible("GraphQL: Could not resolve to a Repository with the name 'x/y'."));
         assert!(!super::is_not_visible("gh: command not found"));
         assert!(!super::is_not_visible("fatal: not a git repository"));
+    }
+
+    #[test]
+    fn the_account_that_already_failed_is_not_tried_again() {
+        // Con una sola cuenta —lo normal— no hay nada que probar: repetirla
+        // es una llamada de más en cada pulsación, y el resultado ya se sabe.
+        let one = vec!["R0MADEV".to_string()];
+        assert!(super::others(&one, "R0MADEV").is_empty());
+
+        let two = vec!["R0MADEV".to_string(), "R0MANDEV".to_string()];
+        assert_eq!(super::others(&two, "R0MADEV"), vec!["R0MANDEV"]);
     }
 
     #[test]

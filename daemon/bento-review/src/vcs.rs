@@ -89,13 +89,18 @@ pub fn gh_cmd(cwd: &str, args: &[&str]) -> Result<String, String> {
     if !gh_account::is_not_visible(&error) {
         return Err(error);
     }
-    with_another_account(cwd, args).ok_or(error)
+    with_another_account(cwd, args, remembered.as_deref()).ok_or(error)
 }
 
-/// Prueba las cuentas de `gh auth status` hasta que una vea el repositorio.
-fn with_another_account(cwd: &str, args: &[&str]) -> Option<String> {
+/// Prueba las demás cuentas de `gh auth status` hasta que una vea el
+/// repositorio. Quien tenga una sola —lo normal— no llega ni a intentarlo.
+fn with_another_account(cwd: &str, args: &[&str], failed: Option<&str>) -> Option<String> {
     let status = run_gh(cwd, &["auth", "status"], None).ok()?;
-    for account in gh_account::accounts_in(&status) {
+    let accounts = gh_account::accounts_in(&status);
+    // La que falló es la recordada, y si no había ninguna, la activa: es con
+    // la que `gh` responde por su cuenta, y va la primera de la lista.
+    let failed = failed.map(str::to_string).or_else(|| accounts.first().cloned())?;
+    for account in gh_account::others(&accounts, &failed) {
         let Ok(out) = run_gh(cwd, args, Some(&account)) else { continue };
         gh_account::remember(cwd, &account);
         return Some(out);
