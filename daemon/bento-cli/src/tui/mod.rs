@@ -128,6 +128,13 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             }
                         }
                         match event {
+                            // La rueda recorre la lista: el raíl sólo atiende
+                            // clics, así que girarla no hacía nada.
+                            Event::Mouse(mouse)
+                                if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) =>
+                            {
+                                selected = terminals::scrolled(selected, items.len(), matches!(mouse.kind, MouseEventKind::ScrollUp));
+                            }
                             // Un clic en el raíl hace lo mismo aquí que
                             // conectado: elegir fila abre esa terminal, el
                             // botón abre una nueva y entra en ella.
@@ -329,6 +336,17 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                     }
                                 }
                             }
+                            // Sin un programa que pida el ratón, la rueda es
+                            // lo mismo que ⇧RePág: mirar lo que ya salió.
+                            Event::Mouse(mouse)
+                                if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) =>
+                            {
+                                let lines = match mouse.kind {
+                                    MouseEventKind::ScrollUp => 3,
+                                    _ => -3,
+                                };
+                                screen.scroll_back(lines);
+                            }
                             // The rail is still on screen while attached, so
                             // it still folds, resizes and — clicking another
                             // row — switches to that terminal.
@@ -378,6 +396,14 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         // which panel you are looking at.
                         if let Event::Mouse(mouse) = event {
                             let total = terminal.size()?.width;
+                            // La rueda la recibe la aplicación mientras el
+                            // ratón está capturado, así que sin atenderla aquí
+                            // girarla no mueve nada.
+                            if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
+                                let up = matches!(mouse.kind, MouseEventKind::ScrollUp);
+                                review.scroll_wheel(mouse.column, sidebar_width, total, up);
+                                continue;
+                            }
                             // The drawer's own edge and chevron, checked first:
                             // they sit to the right of everything the rail owns.
                             let drawer_left = total.saturating_sub(review.drawer_width);

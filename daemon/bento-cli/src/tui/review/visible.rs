@@ -50,6 +50,40 @@ impl ReviewState {
         rows
     }
 
+    /// La rueda mueve lo que haya bajo el puntero: el informe si está sobre
+    /// el cajón, y si no la lista de esa zona. La TUI captura el ratón, así
+    /// que la rueda no la atiende el terminal — sin esto no hace nada.
+    pub(in crate::tui) fn scroll_wheel(&mut self, column: u16, sidebar_width: u16, total: u16, up: bool) {
+        let step = if up { -3 } else { 3 };
+        let drawer_left = total.saturating_sub(self.drawer_width);
+        let on_drawer = self.drawer_width > 0 && column >= drawer_left;
+        if on_drawer {
+            self.scroll_drawer(step);
+            return;
+        }
+        match column < sidebar_width {
+            true => self.select_sidebar_by(step),
+            false => self.select_file_by(step),
+        }
+    }
+
+    /// Mueve el cursor del panel de archivos sin salirse de la lista.
+    pub(in crate::tui) fn select_file_by(&mut self, delta: i16) {
+        let last = self.pane_rows().len().saturating_sub(1);
+        self.files_selected = self.files_selected.saturating_add_signed(delta as isize).min(last);
+    }
+
+    /// Lo mismo para la lista del raíl, sea cual sea la pestaña abierta.
+    pub(in crate::tui) fn select_sidebar_by(&mut self, delta: i16) {
+        let current = match self.sidebar_tab {
+            SidebarTab::Projects => self.projects_selected,
+            SidebarTab::Branches => self.branches_selected,
+            SidebarTab::Prs => self.prs_selected,
+        };
+        let last = self.sidebar_len().saturating_sub(1);
+        self.select_sidebar(current.saturating_add_signed(delta as isize).min(last));
+    }
+
     /// Si el diff de un fichero está desplegado bajo su fila.
     pub(super) fn is_expanded(&self, path: &str) -> bool {
         self.expanded.contains_key(path)

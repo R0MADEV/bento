@@ -616,6 +616,49 @@ mod tests {
         assert!(matches!(state.input_purpose, Some(InputPurpose::InlineComment(7))));
     }
 
+    #[tokio::test]
+    async fn page_down_moves_the_list_you_are_looking_at_not_the_report() {
+        // La TUI captura el ratón, así que la rueda del terminal no baja
+        // nada: RePág/AvPág son la única forma de recorrer un diff largo, y
+        // movían el informe estuvieras donde estuvieras.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+        let diff = format!("@@ -1,0 +1,40 @@\n{}", (0..40).map(|n| format!("+{n}")).collect::<Vec<_>>().join("\n"));
+        state.expanded.insert("a.rs".to_string(), diff);
+
+        state.handle_event(press(KeyCode::PageDown)).await;
+
+        assert_eq!(state.files_selected, 10);
+        assert_eq!(state.scroll, 0, "el informe se queda donde estaba");
+    }
+
+    #[test]
+    fn the_wheel_moves_whatever_is_under_the_pointer() {
+        // Con el ratón capturado la rueda la recibe la aplicación: si no la
+        // atiende nadie, girarla no hace absolutamente nada.
+        let mut state = state_with_files(&["a.rs", "b.rs", "c.rs"]);
+        state.drawer_width = 30;
+
+        state.scroll_wheel(80, 20, 100, false); // sobre el cajón
+        assert_eq!(state.scroll, 3, "sobre el informe, la rueda lo desplaza");
+
+        state.scroll_wheel(40, 20, 100, false); // sobre los archivos
+        assert_eq!(state.files_selected, 2);
+
+        state.scroll_wheel(40, 20, 100, true);
+        assert_eq!(state.files_selected, 0, "y hacia arriba vuelve");
+    }
+
+    #[test]
+    fn the_wheel_over_the_rail_moves_the_branch_list() {
+        let mut state = state_with(&["main", "otra", "tercera"], "");
+        state.sidebar_tab = SidebarTab::Branches;
+
+        state.scroll_wheel(5, 20, 100, false);
+
+        assert_eq!(state.branches_selected, 2);
+    }
+
     #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there

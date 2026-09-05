@@ -75,8 +75,6 @@ impl ReviewState {
                 self.input.clear();
                 false
             }
-            KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(10); false }
-            KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(10); false }
             KeyCode::Char('c') if self.running => { self.cancel_run(); false }
             // Sobre una línea del diff, `c` la comenta; el contexto de la
             // review se sigue escribiendo con `c` desde cualquier otro sitio.
@@ -92,7 +90,7 @@ impl ReviewState {
             KeyCode::Char('o') => { self.request_sidebar_tab(SidebarTab::Projects); false }
             KeyCode::Char('b') => { self.request_sidebar_tab(SidebarTab::Branches); false }
             KeyCode::Char('p') => { self.request_sidebar_tab(SidebarTab::Prs); false }
-            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') | KeyCode::Char('z') => {
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') | KeyCode::Char('z') | KeyCode::PageUp | KeyCode::PageDown => {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
                     Focus::Files => self.handle_files_key(code).await,
@@ -118,6 +116,8 @@ impl ReviewState {
                         match code {
                             KeyCode::Up => self.scroll_drawer(-1),
                             KeyCode::Down => self.scroll_drawer(1),
+                            KeyCode::PageUp => self.scroll_drawer(-10),
+                            KeyCode::PageDown => self.scroll_drawer(10),
                             _ => {}
                         }
                         false
@@ -130,6 +130,12 @@ impl ReviewState {
     }
 
     async fn handle_sidebar_key(&mut self, code: KeyCode) -> bool {
+        // Una página son diez filas en cualquiera de las tres pestañas: con
+        // cuarenta y cinco ramas, ir de una en una no es forma de llegar.
+        if matches!(code, KeyCode::PageUp | KeyCode::PageDown) {
+            self.select_sidebar_by(if code == KeyCode::PageUp { -10 } else { 10 });
+            return false;
+        }
         match self.sidebar_tab {
             SidebarTab::Projects => match code {
                 KeyCode::Up => { self.projects_selected = self.projects_selected.saturating_sub(1); false }
@@ -255,6 +261,8 @@ impl ReviewState {
                 if self.files_selected + 1 < rows { self.files_selected += 1; }
                 false
             }
+            KeyCode::PageUp => { self.select_file_by(-10); false }
+            KeyCode::PageDown => { self.select_file_by(10); false }
             KeyCode::Char(' ') => {
                 if let Some(path) = self.selected_path() {
                     if !self.reviewed.remove(&path) { self.reviewed.insert(path); }
