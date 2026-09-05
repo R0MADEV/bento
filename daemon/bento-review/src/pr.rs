@@ -81,18 +81,41 @@ pub fn list_open(cwd: &str) -> Result<String, String> {
         "pr", "list", "--state", "open", "--limit", "30",
         "--json", "number,title,url,author,headRefName,baseRefName",
     ])
-    .map_err(|error| explain_gh_error(&error))
+    .map_err(|error| explain_gh_error(&error, active_account(cwd).as_deref()))
+}
+
+/// La cuenta de GitHub con la que `gh` está trabajando ahora mismo. Es global:
+/// no cambia con la carpeta, aunque git sí lo haga, y ese desajuste es
+/// exactamente lo que rompe el listado en un repo de otra organización.
+fn active_account(cwd: &str) -> Option<String> {
+    // `--active` en vez de leer la lista entera: con dos cuentas, cuál está
+    // activa no es la primera que sale, es la que lo diga.
+    let status = gh_cmd(cwd, &["auth", "status", "--active"]).ok()?;
+    account_in(&status)
+}
+
+/// La cuenta que nombra un `gh auth status --active`.
+fn account_in(status: &str) -> Option<String> {
+    let line = status.lines().find(|l| l.contains("Logged in to"))?;
+    line.split("account ").nth(1)?.split_whitespace().next().map(str::to_string)
 }
 
 /// Lo que dice `gh` cuando el remoto no es un repositorio de GitHub al que se
 /// tenga acceso, en algo que se pueda leer. El resto pasa tal cual: traducir
 /// de más esconde el problema real.
-fn explain_gh_error(error: &str) -> String {
+fn explain_gh_error(error: &str, account: Option<&str>) -> String {
     let Some(rest) = error.split("Could not resolve to a Repository with the name ").nth(1) else {
         return error.to_string();
     };
     let name = rest.trim_start_matches('\'').split('\'').next().unwrap_or("").trim();
-    format!("GitHub no encuentra {name}: si el remoto no es de GitHub, o gh no tiene acceso, aquí no hay PRs")
+    // Con la cuenta delante, el caso habitual se ve solo: `gh` es global y
+    // dos cuentas se pisan al saltar de un proyecto a otro.
+    match account {
+        Some(user) => format!(
+            "GitHub no encuentra {name} con la cuenta {user}: cámbiala con `gh auth switch` si el repo es de otra"
+        ),
+        None => format!("GitHub no encuentra {name}: si el remoto no es de GitHub, o gh no tiene acceso, aquí no hay PRs"),
+    }
 }
 
 /// La rama de un PR dentro del listado que devuelve `list_open`. Un comentario
@@ -426,7 +449,7 @@ mod tests {
         // lo único que importa: que ese repo no está en GitHub.
         let raw = "GraphQL: Could not resolve to a Repository with the name 'irontec-comms/deitu'. (repository)";
 
-        let said = super::explain_gh_error(raw);
+        let said = super::explain_gh_error(raw, None);
 
         assert!(said.contains("irontec-comms/deitu"), "el nombre del repo se conserva");
         assert!(said.contains("GitHub"));
@@ -434,9 +457,30 @@ mod tests {
     }
 
     #[test]
+    fn the_active_account_is_read_from_what_gh_prints() {
+        let status = "github.com\n  ✓ Logged in to github.com account R0MADEV (keyring)\n  - Active account: true\n";
+
+        assert_eq!(super::account_in(status).as_deref(), Some("R0MADEV"));
+        assert_eq!(super::account_in("not logged in"), None);
+    }
+
+    #[test]
+    fn with_two_accounts_it_names_the_one_that_was_used() {
+        // `gh` tiene una cuenta activa global mientras que git cambia con la
+        // carpeta: en un repo de otra organización el listado falla sin decir
+        // por qué, y la cuenta es justamente el porqué.
+        let raw = "GraphQL: Could not resolve to a Repository with the name 'irontec-comms/deitu'. (repository)";
+
+        let said = super::explain_gh_error(raw, Some("R0MADEV"));
+
+        assert!(said.contains("R0MADEV"), "dice con cuál lo ha intentado");
+        assert!(said.contains("gh auth switch"), "y cómo cambiarla");
+    }
+
+    #[test]
     fn an_error_we_do_not_know_is_passed_through_untouched() {
         // Traducir de más esconde el problema real.
-        assert_eq!(super::explain_gh_error("gh: not logged in"), "gh: not logged in");
+        assert_eq!(super::explain_gh_error("gh: not logged in", None), "gh: not logged in");
     }
     use super::*;
 

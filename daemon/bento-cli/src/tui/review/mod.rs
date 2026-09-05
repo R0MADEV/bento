@@ -381,6 +381,10 @@ impl ReviewState {
 
     /// Runs one list request off the event loop and posts its result back.
     fn spawn_list_request(&mut self, body: Value, wrap: fn(Vec<Value>) -> Fetched) {
+        // Lo que se ve es siempre de la petición en curso: si esta falla, la
+        // lista anterior se quedaba en pantalla bajo el nombre del proyecto
+        // nuevo — el raíl decía "PRs (1)" de un repo y enseñaba el de otro.
+        self.apply_fetched(wrap(Vec::new()));
         self.begin_request();
         let tx = self.work_tx.clone();
         tokio::spawn(async move {
@@ -922,6 +926,24 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("irontec-comms/deitu")), "el nombre del repo se lee");
         assert!(lines.iter().any(|l| l.contains("no hay PRs")), "y el final también");
         assert!(lines.iter().all(|l| l.chars().count() <= 24), "ninguna se sale del raíl");
+    }
+
+    #[tokio::test]
+    async fn asking_for_another_project_empties_the_list_before_it_answers() {
+        // Si la petición falla, la lista se quedaba con la del proyecto
+        // anterior: el raíl decía "PRs (1)" de un repositorio y enseñaba el
+        // PR de otro.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.prs = vec![serde_json::json!({"number": 10, "title": "de otro proyecto"})];
+
+        state.request_sidebar_tab(SidebarTab::Prs);
+
+        assert!(state.prs.is_empty(), "lo que se ve es siempre de la petición en curso");
+
+        state.apply_fetched(Fetched::Failed("gh no encuentra el repo".into()));
+
+        assert!(state.prs.is_empty(), "y un error no resucita la anterior");
+        assert!(state.status.contains("gh no encuentra"));
     }
 
     #[test]
