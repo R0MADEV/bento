@@ -109,12 +109,31 @@ impl ReviewState {
     /// que se pulsó, o la fila que se marcó — y si es la de un fichero,
     /// además despliega o cierra su diff.
     pub(in crate::tui) async fn handle_files_mouse(&mut self, mouse: MouseEvent, area: Rect) -> bool {
-        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+        let dragging = matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left));
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && !dragging {
             return false;
         }
         let Some(click) = file_click(self, mouse.column, mouse.row, area) else { return false };
+        // Arrastrando sólo se estira la selección: abrir el diff de cada
+        // fichero por el que pasas no es lo que estás pidiendo.
+        if dragging {
+            let FileClick::Row(row) = click else { return false };
+            self.select_row(row, area.height);
+            return true;
+        }
+        // Un clic empieza una selección nueva desde esa fila.
         self.apply_file_click(click, area.height).await;
+        self.drag_anchor = Some(self.files_selected);
         true
+    }
+
+    /// Mueve el cursor a una fila de las que se ven, sin tocar el ancla.
+    fn select_row(&mut self, row: usize, height: u16) {
+        let listed = usize::from(height.saturating_sub(3));
+        let index = visible_offset(self.files_selected, listed) + row;
+        if index < self.pane_rows().len() {
+            self.files_selected = index;
+        }
     }
 
     async fn apply_file_click(&mut self, click: FileClick, height: u16) {

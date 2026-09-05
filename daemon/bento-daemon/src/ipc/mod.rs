@@ -82,6 +82,11 @@ pub(crate) struct Request {
     /// `review.pr_inline_comment`.
     #[serde(default)]
     pub(crate) line: Option<u64>,
+    /// La primera de un comentario a varias líneas, como el que se deja
+    /// arrastrando en GitHub. `bento_review` ya sabía anclarlo; el socket no
+    /// lo dejaba pasar, así que sólo se podía comentar una línea suelta.
+    #[serde(default)]
+    pub(crate) start_line: Option<u64>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {

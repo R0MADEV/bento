@@ -284,7 +284,17 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     let rows = review.pane_rows();
     let items: Vec<ListItem> = match rows.is_empty() {
         true => vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))],
-        false => rows.iter().map(|row| pane_row_item(review, row, inner_width)).collect(),
+        false => rows
+            .iter()
+            .enumerate()
+            .flat_map(|(index, row)| {
+                let mut items = vec![pane_row_item(review, row, inner_width, index)];
+                if index == review.files_selected {
+                    items.extend(super::rows::comment_box(review));
+                }
+                items
+            })
+            .collect(),
     };
     let mut state = ListState::default();
     if !rows.is_empty() {
@@ -349,7 +359,9 @@ fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
         Some(InputPurpose::PrReview("APPROVE")) => Some("Aprobar — texto opcional (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),
-        Some(InputPurpose::InlineComment(_)) => Some("Comentario en la línea (Enter enviar, Esc cancelar)"),
+        // El comentario de una línea tiene su caja bajo la línea, dentro del
+        // diff: aquí abajo saldría por duplicado.
+        Some(InputPurpose::InlineComment(_)) => None,
         None => None,
     }
 }

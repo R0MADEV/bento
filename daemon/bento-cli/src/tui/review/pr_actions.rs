@@ -107,7 +107,10 @@ impl ReviewState {
                 self.current_file = Some(path);
                 self.input_purpose = Some(super::InputPurpose::InlineComment(line));
                 self.input.clear();
-                self.pr_status = format!("comentando la línea {line}");
+                self.pr_status = match self.comment_range() {
+                    Some((first, last)) => format!("comentando las líneas {first}-{last}"),
+                    None => format!("comentando la línea {line}"),
+                };
             }
             None => self.pr_status = "marca una línea del diff (Enter abre el fichero)".into(),
         }
@@ -128,10 +131,21 @@ impl ReviewState {
         if let Some(branch) = &self.branch {
             req["branch"] = json!(branch);
         }
+        // Con varias líneas seleccionadas, el comentario abarca el bloque
+        // entero, como el que se deja arrastrando en GitHub.
+        let range = self.comment_range();
+        if let Some((first, _)) = range {
+            req["start_line"] = json!(first);
+        }
+        let done = match range {
+            Some((first, last)) => format!("comentario puesto en las líneas {first}-{last}"),
+            None => format!("comentario puesto en la línea {line}"),
+        };
         self.pr_status = match crate::request_data(req).await {
-            Ok(_) => format!("comentario puesto en la línea {line}"),
+            Ok(_) => done,
             Err(error) => format!("no se pudo comentar: {error}"),
         };
+        self.drag_anchor = None;
     }
 
     pub(super) async fn submit_pr_comment(&mut self) {

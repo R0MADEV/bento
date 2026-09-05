@@ -122,6 +122,35 @@ impl ReviewState {
         }
     }
 
+    /// Las líneas que abarca la selección, si abarca más de una. GitHub las
+    /// quiere en orden —la primera antes que la última—, y arrastrar hacia
+    /// arriba las da al revés.
+    pub(in crate::tui) fn comment_range(&self) -> Option<(u64, u64)> {
+        let anchor = self.drag_anchor?;
+        let from = self.line_at(anchor)?;
+        let to = self.selected_diff_line()?;
+        let (first, last) = match from <= to {
+            true => (from, to),
+            false => (to, from),
+        };
+        (first != last).then_some((first, last))
+    }
+
+    /// Si una fila cae dentro del bloque seleccionado.
+    pub(in crate::tui) fn row_in_comment_range(&self, row: usize) -> bool {
+        let Some((first, last)) = self.comment_range() else { return false };
+        matches!(self.line_at(row), Some(line) if line >= first && line <= last)
+    }
+
+    /// La línea del fichero nuevo de una fila cualquiera.
+    fn line_at(&self, row: usize) -> Option<u64> {
+        match self.pane_rows().get(row)? {
+            PaneRow::Diff { row, .. } => row.line,
+            PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
+            PaneRow::File(_) => None,
+        }
+    }
+
     /// La línea del fichero nuevo bajo el cursor, si está sobre una del diff.
     pub(super) fn selected_diff_line(&self) -> Option<u64> {
         match self.pane_rows().get(self.files_selected)? {

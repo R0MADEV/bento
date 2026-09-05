@@ -7,17 +7,25 @@ use serde_json::Value;
 
 use super::format::{split_rows, DiffKind, DiffRow, FileFilter, SplitRow};
 use super::visible::PaneRow;
-use super::{ReviewState, SidebarTab};
+use super::{InputPurpose, ReviewState, SidebarTab};
 
 const DIM: Style = Style::new().fg(Color::Indexed(8));
 
 /// Pinta una fila: un fichero, o una línea del diff del que tenga abierto.
-pub(super) fn pane_row_item<'a>(review: &ReviewState, row: &'a PaneRow<'a>, width: u16) -> ListItem<'a> {
+pub(super) fn pane_row_item<'a>(review: &ReviewState, row: &'a PaneRow<'a>, width: u16, index: usize) -> ListItem<'a> {
     match row {
         PaneRow::File(file) => file_item(review, file),
-        PaneRow::Diff { row, .. } => ListItem::new(unified_line(row)),
-        PaneRow::Split { row, .. } => ListItem::new(split_line(row, width)),
+        PaneRow::Diff { row, .. } => ListItem::new(prefixed(comment_marker(review, index), unified_line(row))),
+        PaneRow::Split { row, .. } => ListItem::new(prefixed(comment_marker(review, index), split_line(row, width))),
     }
+}
+
+/// La fila con su marca de comentar delante, sin descolocar el resto: el hueco
+/// está siempre, con signo o sin él.
+fn prefixed(marker: &'static str, line: Line<'static>) -> Line<'static> {
+    let mut spans = vec![Span::styled(marker, Style::new().fg(Color::Indexed(4)))];
+    spans.extend(line.spans);
+    Line::from(spans)
 }
 
 fn file_item<'a>(review: &ReviewState, file: &'a Value) -> ListItem<'a> {
@@ -49,8 +57,8 @@ fn kind_style(kind: DiffKind) -> Style {
 /// nueva.
 fn unified_line(row: &DiffRow) -> Line<'static> {
     let gutter = match row.line {
-        Some(line) => format!("    {line:>5} "),
-        None => "          ".to_string(),
+        Some(line) => format!("  {line:>5} "),
+        None => "        ".to_string(),
     };
     Line::from(vec![
         Span::styled(gutter, DIM),
@@ -244,4 +252,43 @@ pub(super) fn buttons_line() -> Line<'static> {
         })
         .collect::<Vec<_>>();
     Line::from(spans)
+}
+
+/// Las filas que abre un comentario en curso, bajo la línea que comenta. En el
+/// escritorio la caja sale ahí mismo: abajo del todo no se ve sobre qué línea
+/// estás escribiendo, que es lo que hay que tener delante al escribirlo.
+pub(super) fn comment_box(review: &ReviewState) -> Vec<ListItem<'static>> {
+    let Some(InputPurpose::InlineComment(line)) = review.input_purpose else {
+        return Vec::new();
+    };
+    let what = match review.comment_range() {
+        Some((first, last)) => format!("líneas {first}-{last}"),
+        None => format!("línea {line}"),
+    };
+    let title = format!("    ╭ comentario en {what} · Enter enviar · Esc cancelar");
+    vec![
+        ListItem::new(Line::from(Span::styled(title, Style::new().fg(Color::Indexed(4))))),
+        ListItem::new(Line::from(vec![
+            Span::styled("    │ ", Style::new().fg(Color::Indexed(4))),
+            Span::raw(format!("{}▏", review.input)),
+        ])),
+    ]
+}
+
+/// El `+` del escritorio: dice que esa línea admite comentario. Sólo con un PR
+/// abierto, que es cuando hay dónde mandarlo.
+pub(super) fn comment_marker(review: &ReviewState, row: usize) -> &'static str {
+    if review.current_pr.is_none() {
+        return "  ";
+    }
+    // Una franja para el bloque arrastrado, como el resaltado de GitHub: sin
+    // ella no se ve hasta dónde llega lo que vas a comentar.
+    if review.row_in_comment_range(row) {
+        return "┃ ";
+    }
+    let on_it = review.files_selected == row;
+    match on_it && review.selected_diff_line().is_some() {
+        true => "+ ",
+        false => "  ",
+    }
 }

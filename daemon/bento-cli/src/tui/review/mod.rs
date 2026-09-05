@@ -207,6 +207,9 @@ pub(super) struct ReviewState {
     /// Lo que va en la franja de debajo de los archivos: de qué PR es y cómo
     /// va su CI. En el escritorio es la barra con el título y el `× CI`.
     pr_summary: String,
+    /// La fila donde empezó un arrastre por el diff: con ella y la marcada
+    /// sale el rango que se comenta, como al arrastrar en GitHub.
+    drag_anchor: Option<usize>,
     pr_status: String,
     checkpoints: Vec<Value>,
     checkpoints_selected: usize,
@@ -288,6 +291,7 @@ impl ReviewState {
             current_pr: None,
             pr_detail: String::new(),
             pr_summary: String::new(),
+            drag_anchor: None,
             pr_status: String::new(),
             checkpoints: Vec::new(),
             checkpoints_selected: 0,
@@ -1045,6 +1049,111 @@ mod tests {
 
         assert_eq!(key, Some('y'), "el segundo botón es Aprobar");
         assert_eq!(state.button_key_at(click(approve, 5), 100, 20), None, "arriba no hay botones");
+    }
+
+    #[test]
+    fn the_line_comment_box_opens_under_its_line() {
+        // En el escritorio la caja sale bajo la línea que estás comentando.
+        // Abajo del todo no se ve sobre cuál escribes, que es justo lo que
+        // hay que tener delante al escribirlo.
+        let mut state = state_with_files(&["a.rs"]);
+        state.current_pr = Some(291);
+        state.expanded.insert("a.rs".into(), "@@ -1,0 +43,1 @@\n+  const x = 1;".into());
+        state.files_selected = 2;
+        state.input_purpose = Some(InputPurpose::InlineComment(43));
+        state.input = "esto sobra".into();
+
+        let text = super::draw::tests::screen(&state, 90, 16);
+        let lines: Vec<&str> = text.lines().collect();
+        let line_row = lines.iter().position(|l| l.contains("const x = 1;")).expect("la línea");
+
+        assert!(lines[line_row + 1].contains("línea 43"), "{text}");
+        assert!(!text.contains("Comentario en la línea (Enter"), "y no por duplicado abajo: {text}");
+        assert!(lines[line_row + 2].contains("esto sobra"), "y lo que llevas escrito: {text}");
+    }
+
+    #[test]
+    fn a_commentable_line_says_so_while_you_are_on_it() {
+        // El escritorio saca un `+` al pasar por encima. Sin nada, no hay
+        // forma de saber que esa línea admite comentario.
+        let mut state = state_with_files(&["a.rs"]);
+        state.current_pr = Some(291);
+        state.expanded.insert("a.rs".into(), "@@ -1,0 +43,1 @@\n+  const x = 1;".into());
+        state.files_selected = 2;
+
+        let text = super::draw::tests::screen(&state, 90, 16);
+        let marked = text.lines().find(|l| l.contains("const x = 1;")).expect("la línea");
+
+        assert!(marked.contains('+'), "el signo de comentar: {marked}");
+    }
+
+    fn drag(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    fn state_with_diff() -> ReviewState {
+        let mut state = state_with_files(&["a.rs"]);
+        state.current_pr = Some(291);
+        state.expanded.insert(
+            "a.rs".into(),
+            "@@ -1,0 +43,3 @@\n+  uno\n+  dos\n+  tres".into(),
+        );
+        state
+    }
+
+    #[tokio::test]
+    async fn dragging_over_the_diff_selects_a_range_of_lines() {
+        // Como en GitHub: arrastras por las líneas que quieres y comentas
+        // sobre todas. Una sola línea no siempre es lo que hay que señalar.
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+
+        state.handle_files_mouse(click(40, 4), area).await; // la línea 43
+        state.handle_files_mouse(drag(40, 6), area).await; // hasta la 45
+
+        assert_eq!(state.comment_range(), Some((43, 45)));
+    }
+
+    #[tokio::test]
+    async fn dragging_upwards_still_gives_the_range_in_order() {
+        // GitHub quiere start_line < line: al revés lo rechaza.
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+
+        state.handle_files_mouse(click(40, 6), area).await;
+        state.handle_files_mouse(drag(40, 4), area).await;
+
+        assert_eq!(state.comment_range(), Some((43, 45)));
+    }
+
+    #[tokio::test]
+    async fn a_click_on_a_single_line_is_not_a_range() {
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+
+        state.handle_files_mouse(click(40, 4), area).await;
+
+        assert_eq!(state.comment_range(), None, "una sola línea se comenta como siempre");
+        assert_eq!(state.selected_diff_line(), Some(43));
+    }
+
+    #[tokio::test]
+    async fn the_selected_block_is_marked_down_the_margin() {
+        // Sin verlo, no se sabe hasta dónde llega lo que vas a comentar.
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+        state.handle_files_mouse(click(40, 4), area).await;
+        state.handle_files_mouse(drag(40, 6), area).await;
+
+        let text = super::draw::tests::screen(&state, 90, 16);
+        let marked = text.lines().filter(|l| l.contains('┃')).count();
+
+        assert_eq!(marked, 3, "las tres líneas del bloque: {text}");
     }
 
     #[test]

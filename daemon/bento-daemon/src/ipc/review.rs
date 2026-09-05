@@ -226,7 +226,7 @@ pub(crate) fn dispatch(
                 let reference = req.branch.clone().unwrap_or_else(|| "HEAD".into());
                 match bento_review::vcs::git_cmd(cwd, &["rev-parse", &reference]) {
                     Ok(sha) => match crate::remote::review::add_review_comment(
-                        cwd, pr, sha.trim(), path, line, None, body,
+                        cwd, pr, sha.trim(), path, line, req.start_line, body,
                     ) {
                         Ok(url) => send(ok(&req.id, json!(url))),
                         Err(e) => send(fail(&req.id, e)),
