@@ -61,6 +61,17 @@ pub(super) fn next_optional_agent(current: Option<&str>) -> Option<String> {
 
 /// El estado de los checks de CI, en una línea por check. Sin esto había que
 /// salir a GitHub para saber si el PR pasaba.
+/// Cómo va la CI en una palabra, contando sobre los checks ya formateados:
+/// el escritorio pone un `× CI` al lado del título y el detalle a un clic.
+pub(super) fn checks_badge(checks: &str) -> String {
+    let failed = checks.lines().filter(|l| l.contains('✗')).count();
+    match failed {
+        0 if checks.trim().is_empty() => "sin CI".to_string(),
+        0 => "✓ CI".to_string(),
+        n => format!("✗ CI ({n} fallan)"),
+    }
+}
+
 pub(super) fn format_checks(data: &Value) -> String {
     let checks = data.as_array().map(Vec::as_slice).unwrap_or_default();
     if checks.is_empty() {
@@ -347,6 +358,17 @@ fn short_timestamp(saved_at: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_ci_badge_counts_what_failed() {
+        // El detalle no cabe en una franja de una línea; lo que hay que ver de
+        // un vistazo es si se puede aprobar o no.
+        let checks = "\n## Checks\n\n- ✗ jenkins (ERROR)\n- ✗ cypress (FAILURE)\n- ✓ build (SUCCESS)\n";
+
+        assert_eq!(super::checks_badge(checks), "✗ CI (2 fallan)");
+        assert_eq!(super::checks_badge("- ✓ build (SUCCESS)"), "✓ CI");
+        assert_eq!(super::checks_badge(""), "sin CI", "un PR sin CI no es un PR roto");
+    }
 
     #[test]
     fn a_row_carries_the_line_it_had_before_and_the_one_it_has_now() {

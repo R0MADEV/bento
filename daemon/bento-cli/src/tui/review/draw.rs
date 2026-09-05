@@ -26,7 +26,14 @@ const FOCUSED: Style = Style::new().fg(Color::Indexed(4));
 const DIM: Style = Style::new().fg(Color::DarkGray);
 
 fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16, resizing: bool) {
-    let area = frame.area();
+    // El cuadro de texto se queda con las tres últimas líneas en vez de
+    // pintarse encima: como capa tapaba las últimas filas de la lista y la
+    // franja del PR, que es justo lo que estás mirando al comentar.
+    let [area, bottom] = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(input_height(review)),
+    ])
+    .areas(frame.area());
     // Three columns: what you can pick, what you picked, and the report about
     // it. The drawer only takes width when there is something in it — running
     // a review no longer replaces the panel with a full-screen view.
@@ -75,7 +82,6 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
     // invisible: ni cursor, ni caja, ni las flechas moviendo nada. Se ve
     // exactamente igual que un panel colgado.
     if let Some(label) = browse_input_label(review) {
-        let bottom = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(area)[1];
         let input = Paragraph::new(review.input.as_str())
             .block(pane_block(label).border_style(FOCUSED));
         frame.render_widget(input, bottom);
@@ -273,22 +279,43 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         // mover la selección.
         hint: match resizing {
             true => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
-            false => "Enter despliega · 2 dos columnas · z todos · espacio marcar · c comentar · f estado · F3 buscar",
+            false => "Enter despliega · 2 dos columnas · espacio marcar · c comentar · f estado · F3 buscar",
         },
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);
     // La barra se queda con la primera línea de dentro del marco; la lista
     // ocupa el resto.
-    let [bar, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+    // Con un PR abierto, su franja se queda con la última línea: el título y
+    // la CI van debajo de los archivos, como la barra del escritorio, y no en
+    // una columna aparte que los tape.
+    let strip = u16::from(!review.pr_summary.is_empty());
+    let [bar, rest, pr] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(strip),
+    ])
+    .areas(inner);
     frame.render_widget(Paragraph::new(filter_bar(review)), bar);
     let list = List::new(items)
         .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
     frame.render_stateful_widget(list, rest, &mut state);
+    if strip > 0 {
+        frame.render_widget(Paragraph::new(Line::from(review.pr_summary.clone()).style(FOCUSED)), pr);
+    }
 }
 
 
 /// Qué cuadro está abierto en la vista principal, si hay alguno.
+/// Las líneas que se lleva el cuadro de texto, ninguna si no hay ninguno
+/// abierto. El panel se dibuja en lo que queda.
+pub(super) fn input_height(review: &ReviewState) -> u16 {
+    match browse_input_label(review).is_some() {
+        true => 3,
+        false => 0,
+    }
+}
+
 /// Qué dice el cuadro de texto abierto. Sin él, las teclas se van a un campo
 /// invisible y el panel se lee como colgado.
 fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
@@ -307,12 +334,14 @@ fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    fn screen(review: &ReviewState, width: u16, height: u16) -> String {
+    /// La pantalla ya pintada, en texto. La usan también las pruebas del
+    /// panel: comprobar contra lo que se pinta es lo único que ve un descuadre.
+    pub(in crate::tui::review) fn screen(review: &ReviewState, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| draw(frame, review, 24, false)).unwrap();
         let buffer = terminal.backend().buffer().clone();

@@ -31,10 +31,47 @@ impl ReviewState {
             .unwrap_or_default();
         let header = self.pr_header(pr);
         self.pr_detail = format!("{header}{checks}{inline}\n## Comentarios\n\n{comments}");
+        self.pr_summary = self.pr_strip(pr, &checks);
         self.scroll = 0;
         self.current_pr = Some(pr);
         self.pr_status.clear();
-        self.drawer_open = true;
+    }
+
+    /// La franja de debajo de los archivos: de qué PR es y cómo va su CI. Lo
+    /// largo —los checks uno a uno, los comentarios— sigue en el cajón, para
+    /// quien lo abra.
+    #[cfg(test)]
+    pub(super) fn pr_strip_for_test(&self, pr: u64, checks: &str) -> String {
+        self.pr_strip(pr, checks)
+    }
+
+    fn pr_strip(&self, pr: u64, checks: &str) -> String {
+        let title = self
+            .prs
+            .iter()
+            .find(|p| p.get("number").and_then(Value::as_u64) == Some(pr))
+            .and_then(|p| p.get("title").and_then(Value::as_str))
+            .unwrap_or("");
+        let ci = super::format::checks_badge(checks);
+        match self.missing_branch() {
+            Some(branch) => format!("PR #{pr}: {title} · {branch} no está en tu copia: haz `git fetch`"),
+            None => format!("PR #{pr}: {title} · {ci}"),
+        }
+    }
+
+    /// La rama de git con la que comparar un PR.
+    pub(super) fn pr_branch(&self, head_ref: &str) -> String {
+        bento_review::branches::branch_for(&self.branches, head_ref)
+    }
+
+    /// Lo que falta por traerse, si es que falta. Un PR abierto después de tu
+    /// último fetch no tiene rama que comparar: la lista sale vacía y parece
+    /// que el PR no cambia nada. El aviso va en la franja del PR y no en el
+    /// raíl, porque el refresco de la lista limpia el del raíl.
+    fn missing_branch(&self) -> Option<&str> {
+        let branch = self.branch.as_deref()?;
+        let listed = self.branches.iter().any(|b| b == branch);
+        (!listed).then_some(branch)
     }
 
     /// De qué PR es lo que estás leyendo, con lo que ya trae la lista.

@@ -204,6 +204,9 @@ pub(super) struct ReviewState {
     prs_selected: usize,
     current_pr: Option<u64>,
     pr_detail: String,
+    /// Lo que va en la franja de debajo de los archivos: de qué PR es y cómo
+    /// va su CI. En el escritorio es la barra con el título y el `× CI`.
+    pr_summary: String,
     pr_status: String,
     checkpoints: Vec<Value>,
     checkpoints_selected: usize,
@@ -284,6 +287,7 @@ impl ReviewState {
             prs_selected: 0,
             current_pr: None,
             pr_detail: String::new(),
+            pr_summary: String::new(),
             pr_status: String::new(),
             checkpoints: Vec::new(),
             checkpoints_selected: 0,
@@ -957,6 +961,44 @@ mod tests {
         state.running = true;
 
         assert_eq!(state.drawer_body(), "lo de la review");
+    }
+
+    #[test]
+    fn the_open_pr_is_a_strip_under_the_files_not_a_panel_of_its_own() {
+        // En el escritorio el PR va debajo de la lista —título, estado de CI y
+        // los botones—, no en una columna aparte que tape los archivos.
+        let mut state = state_with_files(&["a.rs"]);
+        state.current_pr = Some(291);
+        state.pr_summary = "PR #291: rebranding deitu · ✗ CI (2 fallan)".into();
+
+        let text = super::draw::tests::screen(&state, 100, 20);
+
+        assert!(text.contains("PR #291"), "{text}");
+        assert!(text.contains("✗ CI"), "y cómo va la CI: {text}");
+        assert!(!state.drawer_open, "elegir un PR no abre el cajón encima de nada");
+
+        // Y al comentar sigue viéndose: el cuadro se pintaba encima y tapaba
+        // justo la franja del PR sobre el que estabas escribiendo.
+        state.input_purpose = Some(InputPurpose::PrComment);
+        let text = super::draw::tests::screen(&state, 100, 20);
+
+        assert!(text.contains("PR #291"), "el cuadro no la tapa: {text}");
+        assert!(text.contains("Comentario en el PR"), "{text}");
+    }
+
+    #[test]
+    fn a_pr_whose_branch_you_do_not_have_says_to_fetch() {
+        // Un PR abierto después de tu último fetch no tiene rama que comparar:
+        // la lista sale vacía y parece que el PR no cambia nada.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.branches = vec!["main".into(), "origin/main".into()];
+        state.prs = vec![serde_json::json!({"number": 9, "title": "recién abierto"})];
+
+        state.branch = Some(state.pr_branch("DEITU-9999-recien-abierta"));
+
+        assert_eq!(state.branch.as_deref(), Some("origin/DEITU-9999-recien-abierta"));
+        let strip = state.pr_strip_for_test(9, "");
+        assert!(strip.contains("git fetch"), "avisa de qué hacer: {strip}");
     }
 
     #[test]

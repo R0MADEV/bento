@@ -47,6 +47,19 @@ pub fn all_remote_branches(cwd: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// La rama de git que hay que comparar para ver un PR. La del PR es la de
+/// quien lo abrió y en tu copia normalmente no existe: lo que sí está es su
+/// remota. Pedir el diff contra el nombre a secas no devuelve ningún fichero,
+/// y un PR con sesenta y seis se ve vacío.
+pub fn branch_for(branches: &[String], head_ref: &str) -> String {
+    let remote = format!("origin/{head_ref}");
+    branches
+        .iter()
+        .find(|b| *b == head_ref || b.ends_with(&format!("/{head_ref}")))
+        .cloned()
+        .unwrap_or(remote)
+}
+
 /// Las ramas que se pueden revisar: primero las locales (las tareas), después
 /// las remotas cualificadas tipo `origin/main`.
 pub fn review_branches(cwd: &str) -> Result<Vec<String>, String> {
@@ -80,6 +93,44 @@ fn parse_review_branches(local: &str, remote: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_prs_branch_resolves_to_the_remote_one_that_git_has() {
+        // La rama de un PR es la de quien lo abrió: en tu copia no existe,
+        // sólo su remota. Pedir el diff contra el nombre a secas no devuelve
+        // ningún fichero, que es como se ve un PR vacío sin serlo.
+        let branches = vec![
+            "main".to_string(),
+            "origin/main".to_string(),
+            "origin/DEITU-1450-rebranding-dashboard".to_string(),
+        ];
+
+        assert_eq!(
+            super::branch_for(&branches, "DEITU-1450-rebranding-dashboard"),
+            "origin/DEITU-1450-rebranding-dashboard",
+        );
+    }
+
+    #[test]
+    fn a_branch_you_do_have_locally_is_used_as_is() {
+        let branches = vec!["mi-rama".to_string(), "origin/mi-rama".to_string()];
+
+        assert_eq!(super::branch_for(&branches, "mi-rama"), "mi-rama", "la local va primero");
+    }
+
+    #[test]
+    fn without_the_branch_listed_it_falls_back_to_origin() {
+        // Recién abierto el PR, un fetch viejo puede no tenerla todavía.
+        assert_eq!(super::branch_for(&[], "nueva"), "origin/nueva");
+    }
+
+    #[test]
+    fn a_branch_ending_the_same_is_not_the_same_branch() {
+        // "origin/otra-mi-rama" acaba en "mi-rama" pero no es esa rama.
+        let branches = vec!["origin/otra-mi-rama".to_string()];
+
+        assert_eq!(super::branch_for(&branches, "mi-rama"), "origin/mi-rama");
+    }
     use super::*;
 
     #[test]

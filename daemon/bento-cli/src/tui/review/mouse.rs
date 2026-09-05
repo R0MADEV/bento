@@ -61,6 +61,9 @@ impl ReviewState {
     pub(in crate::tui) fn files_area(&self, total: u16, height: u16, sidebar_width: u16) -> Rect {
         let drawer = if self.drawer_open { self.drawer_width } else { 0 };
         let width = total.saturating_sub(sidebar_width).saturating_sub(drawer);
+        // Menos lo que se lleve un cuadro de texto abierto, o el clic caería
+        // una fila más abajo de lo que se ve.
+        let height = height.saturating_sub(super::draw::input_height(self));
         Rect::new(sidebar_width, 0, width, height)
     }
 

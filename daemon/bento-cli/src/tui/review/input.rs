@@ -260,11 +260,19 @@ impl ReviewState {
                 }
                 KeyCode::Enter => {
                     let Some(entry) = self.prs.get(self.prs_selected).cloned() else { return false };
-                    // Abrir un PR deja la review puesta en su rama, como en el
-                    // escritorio: si no, mirabas el detalle del PR y la lista de
-                    // ficheros seguía siendo la de antes.
-                    if let Some(head) = entry.get("headRefName").and_then(Value::as_str) {
-                        self.branch = Some(head.to_string());
+                    // Abrir un PR deja la review puesta en su rama y en su
+                    // base, como en el escritorio: si no, mirabas el PR y la
+                    // lista de ficheros seguía siendo la de antes.
+                    //
+                    // Por su rama de git, no por el nombre que trae el PR: esa
+                    // es la de quien lo abrió y en tu copia no existe, así que
+                    // el diff salía sin un solo fichero.
+                    let field = |key: &str| entry.get(key).and_then(Value::as_str).map(String::from);
+                    if let Some(base) = field("baseRefName") {
+                        self.base = self.pr_branch(&base);
+                    }
+                    if let Some(head) = field("headRefName") {
+                        self.branch = Some(self.pr_branch(&head));
                         self.refresh_files().await;
                     }
                     if let Some(pr) = entry.get("number").and_then(Value::as_u64) {
