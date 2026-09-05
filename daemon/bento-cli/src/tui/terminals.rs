@@ -496,6 +496,15 @@ pub(super) async fn new_agent(
     }
 }
 
+/// La fila marcada tras girar la rueda tres muescas, sin salirse de la lista.
+pub(crate) fn scrolled(selected: usize, rows: usize, up: bool) -> usize {
+    let last = rows.saturating_sub(1);
+    match up {
+        true => selected.saturating_sub(3),
+        false => (selected + 3).min(last),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -755,14 +764,5 @@ mod tests {
     fn backspace_erases_instead_of_cancelling() {
         // Borrarse una letra no puede tirar el nombre entero.
         assert!(matches!(rename_key("ab".into(), KeyCode::Backspace), Rename::Typing(name) if name == "a"));
-    }
-}
-
-/// La fila marcada tras girar la rueda tres muescas, sin salirse de la lista.
-pub(crate) fn scrolled(selected: usize, rows: usize, up: bool) -> usize {
-    let last = rows.saturating_sub(1);
-    match up {
-        true => selected.saturating_sub(3),
-        false => (selected + 3).min(last),
     }
 }

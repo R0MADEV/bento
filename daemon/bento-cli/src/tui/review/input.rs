@@ -63,6 +63,14 @@ impl ReviewState {
             KeyCode::F(3) | KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('w') => { self.toggle_drawer(); false }
+            // Dos columnas: lo que había y lo que hay, una al lado de la otra.
+            KeyCode::Char('2') => {
+                self.split = !self.split;
+                // Partida, una sustitución es una fila y no dos: el cursor se
+                // quedaba apuntando más abajo del final de la lista.
+                self.select_file_by(0);
+                false
+            }
             // The saved reviews, in the drawer where their reports live. The
             // rail had a second copy of this list whose Enter ignored the run
             // id, so it opened the newest review of that branch rather than

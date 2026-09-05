@@ -33,6 +33,7 @@ impl ReviewState {
 pub(super) enum PaneRow<'a> {
     File(&'a Value),
     Diff { path: String, row: super::format::DiffRow },
+    Split { path: String, row: super::format::SplitRow },
 }
 
 impl ReviewState {
@@ -43,9 +44,7 @@ impl ReviewState {
             rows.push(PaneRow::File(file));
             let Some(path) = file.get("path").and_then(Value::as_str) else { continue };
             let Some(diff) = self.expanded.get(path) else { continue };
-            for row in super::format::diff_rows(&self.filtered(diff)) {
-                rows.push(PaneRow::Diff { path: path.to_string(), row });
-            }
+            rows.extend(super::rows::diff_pane_rows(self, path, &self.filtered(diff)));
         }
         rows
     }
@@ -93,7 +92,7 @@ impl ReviewState {
     pub(super) fn selected_path(&self) -> Option<String> {
         match self.pane_rows().get(self.files_selected)? {
             PaneRow::File(file) => file.get("path").and_then(Value::as_str).map(String::from),
-            PaneRow::Diff { path, .. } => Some(path.clone()),
+            PaneRow::Diff { path, .. } | PaneRow::Split { path, .. } => Some(path.clone()),
         }
     }
 
@@ -101,6 +100,9 @@ impl ReviewState {
     pub(super) fn selected_diff_line(&self) -> Option<u64> {
         match self.pane_rows().get(self.files_selected)? {
             PaneRow::Diff { row, .. } => row.line,
+            // El comentario se ancla a la línea del fichero nuevo, que es la
+            // columna derecha.
+            PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
             PaneRow::File(_) => None,
         }
     }

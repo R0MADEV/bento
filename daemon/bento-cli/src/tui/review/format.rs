@@ -162,6 +162,7 @@ pub(super) fn short_path(path: &str, max: usize) -> String {
 /// Qué es cada fila de un diff, para pintarla y para saber si admite
 /// comentario. Antes esto se recorría dos veces —una para el color, otra para
 /// la línea— y las dos tenían que contar igual.
+#[derive(Clone, Copy)]
 pub(super) enum DiffKind {
     Added,
     Removed,
@@ -169,8 +170,12 @@ pub(super) enum DiffKind {
     Context,
 }
 
+#[derive(Clone)]
 pub(super) struct DiffRow {
     pub(super) kind: DiffKind,
+    /// La línea del fichero viejo, cuando existía ahí. Es la numeración de la
+    /// columna izquierda de la vista partida.
+    pub(super) old: Option<u64>,
     /// La línea del fichero nuevo, cuando existe ahí. Una línea borrada ya no
     /// está en la versión nueva, y GitHub ancla los comentarios a esa.
     pub(super) line: Option<u64>,
@@ -183,36 +188,84 @@ pub(super) struct DiffRow {
 pub(super) fn diff_rows(diff: &str) -> Vec<DiffRow> {
     let mut rows = Vec::new();
     let mut new_line = 0u64;
+    let mut old_line = 0u64;
     let mut inside_hunk = false;
     for line in diff.lines() {
-        if let Some(start) = hunk_start(line) {
-            new_line = start;
+        if let Some((from, to)) = hunk_start(line) {
+            old_line = from;
+            new_line = to;
             inside_hunk = true;
-            rows.push(DiffRow { kind: DiffKind::Hunk, line: None, text: line.to_string() });
+            rows.push(DiffRow { kind: DiffKind::Hunk, old: None, line: None, text: line.to_string() });
             continue;
         }
         if !inside_hunk || line.starts_with("+++") || line.starts_with("---") {
             continue;
         }
-        let (kind, counts) = match line.chars().next() {
-            Some('+') => (DiffKind::Added, true),
-            Some('-') => (DiffKind::Removed, false),
-            _ => (DiffKind::Context, true),
+        // Una línea añadida no estaba en el fichero viejo y una borrada ya no
+        // está en el nuevo: cada lado avanza sólo con las suyas.
+        let (kind, in_old, in_new) = match line.chars().next() {
+            Some('+') => (DiffKind::Added, false, true),
+            Some('-') => (DiffKind::Removed, true, false),
+            _ => (DiffKind::Context, true, true),
         };
-        let at = counts.then_some(new_line);
-        if counts {
-            new_line += 1;
-        }
-        rows.push(DiffRow { kind, line: at, text: line.to_string() });
+        let before = in_old.then_some(old_line);
+        let after = in_new.then_some(new_line);
+        old_line += u64::from(in_old);
+        new_line += u64::from(in_new);
+        rows.push(DiffRow { kind, old: before, line: after, text: line.to_string() });
     }
     rows
 }
 
-/// La primera línea del fichero nuevo que cubre un `@@ -a,b +c,d @@`.
-fn hunk_start(line: &str) -> Option<u64> {
+/// Una fila de la vista partida: el fichero viejo a la izquierda y el nuevo a
+/// la derecha. Un cambio es un par —lo que había y lo que hay—, y en la vista
+/// unificada eso son dos filas que hay que leer una detrás de otra.
+pub(super) struct SplitRow {
+    pub(super) left: Option<DiffRow>,
+    pub(super) right: Option<DiffRow>,
+}
+
+/// Empareja las filas de un diff en dos columnas. Un bloque de borradas
+/// seguido de añadidas es una sustitución: van una al lado de la otra, y el
+/// lado que se quede corto queda vacío.
+pub(super) fn split_rows(rows: Vec<DiffRow>) -> Vec<SplitRow> {
+    let mut out = Vec::new();
+    let mut removed: Vec<DiffRow> = Vec::new();
+    let mut added: Vec<DiffRow> = Vec::new();
+    for row in rows {
+        match row.kind {
+            DiffKind::Removed => removed.push(row),
+            DiffKind::Added => added.push(row),
+            // Cualquier otra cosa cierra el bloque que se estuviera juntando.
+            _ => {
+                flush_pairs(&mut removed, &mut added, &mut out);
+                out.push(SplitRow { left: Some(row.clone()), right: Some(row) });
+            }
+        }
+    }
+    flush_pairs(&mut removed, &mut added, &mut out);
+    out
+}
+
+fn flush_pairs(removed: &mut Vec<DiffRow>, added: &mut Vec<DiffRow>, out: &mut Vec<SplitRow>) {
+    let pairs = removed.len().max(added.len());
+    let mut lefts = removed.drain(..);
+    let mut rights = added.drain(..);
+    for _ in 0..pairs {
+        out.push(SplitRow { left: lefts.next(), right: rights.next() });
+    }
+}
+
+/// Las primeras líneas del fichero viejo y del nuevo que cubre un
+/// `@@ -a,b +c,d @@`. La vista partida numera las dos columnas.
+fn hunk_start(line: &str) -> Option<(u64, u64)> {
     let rest = line.strip_prefix("@@ ")?;
-    let plus = rest.split('+').nth(1)?;
-    let digits: String = plus.chars().take_while(char::is_ascii_digit).collect();
+    Some((number_after(rest, '-')?, number_after(rest, '+')?))
+}
+
+fn number_after(rest: &str, sign: char) -> Option<u64> {
+    let tail = rest.split(sign).nth(1)?;
+    let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
 }
 
@@ -279,6 +332,49 @@ fn short_timestamp(saved_at: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_row_carries_the_line_it_had_before_and_the_one_it_has_now() {
+        // La vista partida pone el fichero viejo a la izquierda con su propia
+        // numeración: contar sólo la nueva deja esa columna sin números.
+        let rows = super::diff_rows("@@ -10,3 +20,3 @@\n contexto\n-vieja\n+nueva");
+
+        assert_eq!((rows[1].old, rows[1].line), (Some(10), Some(20)), "el contexto está en las dos");
+        assert_eq!((rows[2].old, rows[2].line), (Some(11), None), "la borrada sólo en la vieja");
+        assert_eq!((rows[3].old, rows[3].line), (None, Some(21)), "la añadida sólo en la nueva");
+    }
+
+    #[test]
+    fn a_replaced_line_shows_the_old_beside_the_new() {
+        // Un bloque de borradas seguido de añadidas es una sustitución: en dos
+        // columnas van emparejadas, no una debajo de otra.
+        let rows = super::split_rows(super::diff_rows("@@ -1,2 +1,2 @@\n-antes\n+después"));
+
+        let pair = &rows[1];
+        assert_eq!(pair.left.as_ref().map(|r| r.text.as_str()), Some("-antes"));
+        assert_eq!(pair.right.as_ref().map(|r| r.text.as_str()), Some("+después"));
+    }
+
+    #[test]
+    fn an_added_line_leaves_the_old_side_empty() {
+        let rows = super::split_rows(super::diff_rows("@@ -1,1 +1,2 @@\n uno\n+dos"));
+
+        assert!(rows[1].left.is_some() && rows[1].right.is_some(), "el contexto va en las dos");
+        assert!(rows[2].left.is_none(), "lo que se añadió no estaba en el fichero viejo");
+        assert_eq!(rows[2].right.as_ref().map(|r| r.text.as_str()), Some("+dos"));
+    }
+
+    #[test]
+    fn more_removed_than_added_still_pairs_row_by_row() {
+        // Tres fuera y una dentro: las dos sobrantes se quedan solas a la
+        // izquierda, sin desplazar lo que venga después.
+        let rows = super::split_rows(super::diff_rows("@@ -1,3 +1,1 @@\n-a\n-b\n-c\n+d\n fin"));
+
+        assert_eq!(rows.len(), 5, "cabecera, tres pares y el contexto");
+        assert_eq!(rows[1].right.as_ref().map(|r| r.text.as_str()), Some("+d"));
+        assert!(rows[2].right.is_none() && rows[3].right.is_none());
+        assert!(rows[4].left.is_some() && rows[4].right.is_some());
+    }
     use super::*;
     use serde_json::json;
 

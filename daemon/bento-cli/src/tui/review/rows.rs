@@ -1,0 +1,115 @@
+//! Cómo se pinta cada fila del panel de archivos: la del fichero, y las del
+//! diff que tenga desplegado — a lo ancho, o en dos columnas.
+
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::ListItem;
+use serde_json::Value;
+
+use super::format::{split_rows, DiffKind, DiffRow, SplitRow};
+use super::visible::PaneRow;
+use super::ReviewState;
+
+const DIM: Style = Style::new().fg(Color::Indexed(8));
+
+/// Pinta una fila: un fichero, o una línea del diff del que tenga abierto.
+pub(super) fn pane_row_item<'a>(review: &ReviewState, row: &'a PaneRow<'a>, width: u16) -> ListItem<'a> {
+    match row {
+        PaneRow::File(file) => file_item(review, file),
+        PaneRow::Diff { row, .. } => ListItem::new(unified_line(row)),
+        PaneRow::Split { row, .. } => ListItem::new(split_line(row, width)),
+    }
+}
+
+fn file_item<'a>(review: &ReviewState, file: &'a Value) -> ListItem<'a> {
+    let status = file.get("status").and_then(Value::as_str).unwrap_or("?");
+    let path = file.get("path").and_then(Value::as_str).unwrap_or("");
+    let added = file.get("added").and_then(Value::as_i64).unwrap_or(0);
+    let deleted = file.get("deleted").and_then(Value::as_i64).unwrap_or(0);
+    let checkbox = if review.reviewed.contains(path) { "[x]" } else { "[ ]" };
+    // El triángulo dice si el diff está desplegado, que es lo único que
+    // distingue una fila abierta de una cerrada cuando el diff queda fuera de
+    // pantalla.
+    let caret = if review.is_expanded(path) { "▾" } else { "▸" };
+    ListItem::new(format!("{caret} {checkbox} {status}  {path}  +{added}/-{deleted}"))
+}
+
+/// El color de una línea según lo que le pasó. Fondo además de letra: es lo
+/// que deja ver de un vistazo dónde empieza y acaba un bloque sin leer el
+/// primer carácter de cada línea.
+fn kind_style(kind: DiffKind) -> Style {
+    match kind {
+        DiffKind::Added => Style::new().fg(Color::Green).bg(Color::Indexed(22)),
+        DiffKind::Removed => Style::new().fg(Color::Red).bg(Color::Indexed(52)),
+        DiffKind::Hunk => Style::new().fg(Color::Indexed(4)),
+        DiffKind::Context => Style::default(),
+    }
+}
+
+/// El diff a lo ancho, sangrado bajo su fichero y con el número de la línea
+/// nueva.
+fn unified_line(row: &DiffRow) -> Line<'static> {
+    let gutter = match row.line {
+        Some(line) => format!("    {line:>5} "),
+        None => "          ".to_string(),
+    };
+    Line::from(vec![
+        Span::styled(gutter, DIM),
+        Span::styled(row.text.clone(), kind_style(row.kind)),
+    ])
+}
+
+/// El diff en dos columnas. La cabecera de un bloque no pertenece a ninguna de
+/// las dos, así que va a lo ancho.
+fn split_line(row: &SplitRow, width: u16) -> Line<'static> {
+    let is_hunk = matches!(row.left.as_ref().map(|r| r.kind), Some(DiffKind::Hunk));
+    if is_hunk {
+        return unified_line(row.left.as_ref().expect("la cabecera está en los dos lados"));
+    }
+    // Menos el separador, y menos el sangrado que alinea con el unificado.
+    let half = usize::from(width.saturating_sub(5)) / 2;
+    let mut spans = vec![Span::raw("    ")];
+    spans.extend(half_spans(row.left.as_ref(), half, true));
+    spans.push(Span::styled("│", DIM));
+    spans.extend(half_spans(row.right.as_ref(), half, false));
+    Line::from(spans)
+}
+
+/// Una mitad: su número de línea y su texto, recortados al ancho de la columna
+/// para que un lado largo no empuje al otro fuera de la pantalla.
+fn half_spans(row: Option<&DiffRow>, width: usize, old_side: bool) -> Vec<Span<'static>> {
+    let Some(row) = row else {
+        return vec![Span::raw(" ".repeat(width))];
+    };
+    let number = if old_side { row.old } else { row.line };
+    let gutter = match number {
+        Some(line) => format!("{line:>5} "),
+        None => "      ".to_string(),
+    };
+    let text = fit(&row.text, width.saturating_sub(gutter.chars().count()));
+    vec![Span::styled(gutter, DIM), Span::styled(text, kind_style(row.kind))]
+}
+
+/// El texto en exactamente `width` columnas: cortado si sobra, rellenado si
+/// falta — el relleno es lo que pinta el fondo de la línea hasta el borde.
+fn fit(text: &str, width: usize) -> String {
+    let mut out: String = text.chars().take(width).collect();
+    let painted = out.chars().count();
+    out.extend(std::iter::repeat_n(' ', width.saturating_sub(painted)));
+    out
+}
+
+/// Las filas del diff de un fichero, en el modo que esté puesto.
+pub(super) fn diff_pane_rows(state: &ReviewState, path: &str, diff: &str) -> Vec<PaneRow<'static>> {
+    let rows = super::format::diff_rows(diff);
+    match state.split {
+        true => split_rows(rows)
+            .into_iter()
+            .map(|row| PaneRow::Split { path: path.to_string(), row })
+            .collect(),
+        false => rows
+            .into_iter()
+            .map(|row| PaneRow::Diff { path: path.to_string(), row })
+            .collect(),
+    }
+}

@@ -11,6 +11,7 @@ mod drawer_state;
 mod format;
 mod input;
 mod pr_actions;
+mod rows;
 mod run_state;
 mod visible;
 
@@ -128,6 +129,9 @@ pub(super) struct ReviewState {
     /// El diff de cada fichero abierto, por ruta. Varios a la vez, que es lo
     /// que permite comparar dos sitios de un cambio sin ir y volver.
     expanded: std::collections::HashMap<String, String>,
+    /// Vista partida: el fichero viejo a la izquierda y el nuevo a la derecha,
+    /// como el botón de dos columnas del escritorio.
+    split: bool,
     file_filter: FileFilter,
     reviewed: std::collections::HashSet<String>,
 
@@ -251,6 +255,7 @@ impl ReviewState {
             files: Vec::new(),
             files_selected: 0,
             expanded: std::collections::HashMap::new(),
+            split: false,
             file_filter: FileFilter::All,
             reviewed: std::collections::HashSet::new(),
             output: String::new(),
@@ -657,6 +662,34 @@ mod tests {
         state.scroll_wheel(5, 20, 100, false);
 
         assert_eq!(state.branches_selected, 2);
+    }
+
+    #[tokio::test]
+    async fn two_columns_pair_a_replacement_into_one_row_and_keep_the_cursor_inside() {
+        // Partida, una sustitución es una fila en vez de dos: el cursor puede
+        // quedarse apuntando a una fila que ya no existe.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+        state.expanded.insert("a.rs".to_string(), "@@ -1,1 +1,1 @@\n-antes\n+después".to_string());
+        state.files_selected = 3; // la última fila del modo a lo ancho
+
+        state.handle_event(press(KeyCode::Char('2'))).await;
+
+        assert!(state.split);
+        assert_eq!(state.pane_rows().len(), 3, "fichero, cabecera y el par");
+        assert!(state.files_selected < 3, "el cursor no se queda fuera de la lista");
+    }
+
+    #[test]
+    fn a_comment_in_two_columns_still_lands_on_the_new_line() {
+        // La izquierda es el fichero viejo; GitHub ancla los comentarios a la
+        // numeración del nuevo, que es la columna derecha.
+        let mut state = state_with_files(&["a.rs"]);
+        state.split = true;
+        state.expanded.insert("a.rs".to_string(), "@@ -1,1 +7,1 @@\n-antes\n+después".to_string());
+        state.files_selected = 2;
+
+        assert_eq!(state.selected_diff_line(), Some(7));
     }
 
     #[test]
