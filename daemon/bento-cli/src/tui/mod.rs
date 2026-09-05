@@ -10,10 +10,9 @@ mod screen;
 mod sidebar;
 mod terminals;
 
-use rail::{toggle_sidebar, RailClick, RailMouse};
+use rail::{toggle_sidebar, RailMouse};
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind, MouseButton,
-    MouseEventKind,
+    DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
 };
 use crossterm::execute;
 use tokio_stream::StreamExt;
@@ -130,10 +129,9 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         match event {
                             // La rueda recorre la lista: el raíl sólo atiende
                             // clics, así que girarla no hacía nada.
-                            Event::Mouse(mouse)
-                                if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) =>
-                            {
-                                selected = terminals::scrolled(selected, items.len(), matches!(mouse.kind, MouseEventKind::ScrollUp));
+                            Event::Mouse(mouse) if rail::wheel(mouse).is_some() => {
+                                let step = rail::wheel(mouse).unwrap_or(0);
+                                selected = terminals::scrolled(selected, items.len(), step);
                             }
                             // Un clic en el raíl hace lo mismo aquí que
                             // conectado: elegir fila abre esa terminal, el
@@ -337,15 +335,11 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                                 }
                             }
                             // Sin un programa que pida el ratón, la rueda es
-                            // lo mismo que ⇧RePág: mirar lo que ya salió.
-                            Event::Mouse(mouse)
-                                if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) =>
-                            {
-                                let lines = match mouse.kind {
-                                    MouseEventKind::ScrollUp => 3,
-                                    _ => -3,
-                                };
-                                screen.scroll_back(lines);
+                            // lo mismo que ⇧RePág: mirar lo que ya salió. El
+                            // scrollback cuenta al revés, hacia atrás.
+                            Event::Mouse(mouse) if rail::wheel(mouse).is_some() => {
+                                let step = rail::wheel(mouse).unwrap_or(0);
+                                screen.scroll_back(-i32::from(step));
                             }
                             // The rail is still on screen while attached, so
                             // it still folds, resizes and — clicking another
@@ -391,75 +385,20 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 tokio::select! {
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
-                        // The rail is the same component here, so it gets the
-                        // same mouse: folding and dragging must not depend on
-                        // which panel you are looking at.
+                        // Todo el ratón de la review en un sitio: el raíl es
+                        // el mismo componente aquí, así que plegar y arrastrar
+                        // no pueden depender de qué panel estés mirando.
                         if let Event::Mouse(mouse) = event {
-                            let total = terminal.size()?.width;
-                            // La rueda la recibe la aplicación mientras el
-                            // ratón está capturado, así que sin atenderla aquí
-                            // girarla no mueve nada.
-                            if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
-                                let up = matches!(mouse.kind, MouseEventKind::ScrollUp);
-                                review.scroll_wheel(mouse.column, sidebar_width, total, up);
-                                continue;
-                            }
-                            // The drawer's own edge and chevron, checked first:
-                            // they sit to the right of everything the rail owns.
-                            let drawer_left = total.saturating_sub(review.drawer_width);
-                            if review.drawer_width > 0 {
-                                match mouse.kind {
-                                    MouseEventKind::Down(MouseButton::Left)
-                                        if drawer::grabs_chevron(mouse.column, mouse.row, drawer_left) =>
-                                    {
-                                        review.toggle_drawer();
-                                        continue;
-                                    }
-                                    MouseEventKind::Down(MouseButton::Left)
-                                        if drawer::grabs_divider(mouse.column, drawer_left) =>
-                                    {
-                                        dragging_drawer = true;
-                                        continue;
-                                    }
-                                    MouseEventKind::Drag(MouseButton::Left) if dragging_drawer => {
-                                        review.drawer_width = drawer::width_after_drag(mouse.column, total);
-                                        continue;
-                                    }
-                                    MouseEventKind::Up(MouseButton::Left) if dragging_drawer => {
-                                        dragging_drawer = false;
-                                        continue;
-                                    }
-                                    // Listing past reviews, its rows are the
-                                    // point of the column: reachable by mouse
-                                    // like every other list in the panel.
-                                    MouseEventKind::Down(MouseButton::Left)
-                                        if review.showing_history && mouse.column > drawer_left =>
-                                    {
-                                        if let Some(index) = drawer::history_row_at(
-                                            mouse.row,
-                                            review.checkpoints_len(),
-                                        ) {
-                                            review.select_checkpoint(index);
-                                        }
-                                        continue;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            let rail = RailMouse {
+                            review::ReviewMouse {
                                 width: &mut sidebar_width,
                                 restored: &mut restored_width,
-                                dragging: &mut dragging_divider,
-                                total,
+                                dragging_rail: &mut dragging_divider,
+                                dragging_drawer: &mut dragging_drawer,
+                                total: terminal.size()?.width,
                                 height: terminal.size()?.height,
-                                rows: review.sidebar_len(),
-                                header_lines: review.header_lines(),
-                            };
-                            match rail.handle(mouse) {
-                                Some(RailClick::Select(index)) => review.select_sidebar(index),
-                                Some(RailClick::Action) => review.toggle_run(),
-                                None => {}
                             }
+                            .handle(&mut review, mouse)
+                            .await;
                             continue;
                         }
                         // El mismo modo tamaño que en la lista: aquí hay dos

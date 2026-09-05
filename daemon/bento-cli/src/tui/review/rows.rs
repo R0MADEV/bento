@@ -132,15 +132,40 @@ pub(super) fn filter_bar(review: &ReviewState) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Un filtro con su recuento. El puesto va en vídeo inverso: en un terminal
-/// sin ratón es lo único que dice cuál de los cuatro está actuando.
-fn chip(filter: FileFilter, count: usize, active: bool) -> Span<'static> {
-    let text = match filter {
+/// Dónde empieza y acaba cada chip en la barra, midiendo lo mismo que se
+/// pinta: llevan el recuento dentro, así que su ancho cambia y una tabla de
+/// posiciones fijas señalaría al de al lado.
+pub(super) fn chip_ranges(review: &ReviewState) -> Vec<(u16, u16)> {
+    let search = match review.file_search.is_empty() {
+        true => "todos".to_string(),
+        false => review.file_search.clone(),
+    };
+    // En caracteres, no en bytes: el `·` de la barra ocupa dos, y contarlo
+    // como dos columnas señalaba al chip de al lado.
+    let prefix = "Buscar (F3): ".chars().count() + "  ·  ".chars().count();
+    let mut left = (prefix + search.chars().count()) as u16;
+    let mut ranges = Vec::new();
+    for (filter, count) in review.filter_counts() {
+        let width = chip_text(filter, count).chars().count() as u16;
+        ranges.push((left, left + width));
+        left += width + 1;
+    }
+    ranges
+}
+
+fn chip_text(filter: FileFilter, count: usize) -> String {
+    match filter {
         FileFilter::All => format!(" Todos {count} "),
         FileFilter::Added => format!(" +{count} nuevos "),
         FileFilter::Modified => format!(" ~{count} modificados "),
         FileFilter::Deleted => format!(" -{count} borrados "),
-    };
+    }
+}
+
+/// Un filtro con su recuento. El puesto va en vídeo inverso: en un terminal
+/// sin ratón es lo único que dice cuál de los cuatro está actuando.
+fn chip(filter: FileFilter, count: usize, active: bool) -> Span<'static> {
+    let text = chip_text(filter, count);
     let style = match active {
         true => Style::new().add_modifier(ratatui::style::Modifier::REVERSED),
         false => DIM,

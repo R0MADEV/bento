@@ -80,8 +80,7 @@ impl ReviewState {
     /// La rueda mueve lo que haya bajo el puntero: el informe si está sobre
     /// el cajón, y si no la lista de esa zona. La TUI captura el ratón, así
     /// que la rueda no la atiende el terminal — sin esto no hace nada.
-    pub(in crate::tui) fn scroll_wheel(&mut self, column: u16, sidebar_width: u16, total: u16, up: bool) {
-        let step = if up { -3 } else { 3 };
+    pub(in crate::tui) fn scroll_wheel(&mut self, column: u16, sidebar_width: u16, total: u16, step: i16) {
         let drawer_left = total.saturating_sub(self.drawer_width);
         let on_drawer = self.drawer_width > 0 && column >= drawer_left;
         if on_drawer {

@@ -64,6 +64,19 @@ impl RailMouse<'_> {
     }
 }
 
+/// Cuánto pide mover la rueda, si el evento es de rueda: negativo hacia
+/// arriba. El paso es el mismo en todas partes a propósito — la rueda tiene
+/// que sentirse igual en la review, en la lista de terminales y en el
+/// scrollback, y cada panel decide qué mueve con él.
+pub(super) fn wheel(mouse: crossterm::event::MouseEvent) -> Option<i16> {
+    const STEP: i16 = 3;
+    match mouse.kind {
+        MouseEventKind::ScrollUp => Some(-STEP),
+        MouseEventKind::ScrollDown => Some(STEP),
+        _ => None,
+    }
+}
+
 /// Folds the rail away, or unfolds it back to the width it had before —
 /// remembered in `restored`, so a rail the user widened does not come back
 /// as the default.
@@ -107,6 +120,18 @@ pub(super) fn resize_key(key: crossterm::event::KeyEvent, active: bool) -> Optio
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_wheel_reads_the_same_in_every_panel() {
+        // El paso vivía copiado en tres sitios con tres signos distintos; la
+        // rueda tiene que sentirse igual en los tres.
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
+
+        assert_eq!(super::wheel(at(MouseEventKind::ScrollDown)), Some(3));
+        assert_eq!(super::wheel(at(MouseEventKind::ScrollUp)), Some(-3), "arriba es hacia atrás");
+        assert_eq!(super::wheel(at(MouseEventKind::Moved)), None, "sólo la rueda");
+    }
     use super::*;
 
     #[test]

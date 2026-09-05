@@ -269,6 +269,22 @@ fn number_after(rest: &str, sign: char) -> Option<u64> {
     digits.parse().ok()
 }
 
+/// La tecla que una línea de la cabecera del raíl anuncia entre paréntesis al
+/// final: "Agente: claude (g)". Se lee de lo que está pintado, así que un clic
+/// hace exactamente lo mismo que la tecla y no hay una segunda tabla que se
+/// desincronice del dibujo. Una línea que no anuncia ninguna no es un botón.
+pub(super) fn key_in(line: &str) -> Option<crossterm::event::KeyCode> {
+    use crossterm::event::KeyCode;
+
+    let inside = line.trim_end().strip_suffix(')')?.rsplit_once('(')?.1.to_string();
+    if let Some(number) = inside.strip_prefix('F') {
+        return number.parse().ok().map(KeyCode::F);
+    }
+    let mut chars = inside.chars();
+    let key = chars.next()?;
+    chars.next().is_none().then_some(KeyCode::Char(key))
+}
+
 /// Las carpetas que hay dentro de `path`, con ".." delante cuando hay dónde
 /// subir. Las ocultas fuera: elegir `.git` como proyecto no es lo que nadie
 /// quiere, y ensucian la lista.

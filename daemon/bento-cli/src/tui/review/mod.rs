@@ -10,6 +10,8 @@ mod draw;
 mod drawer_state;
 mod format;
 mod input;
+mod mouse;
+pub(in crate::tui) use mouse::ReviewMouse;
 mod pr_actions;
 mod rows;
 mod run_state;
@@ -644,13 +646,13 @@ mod tests {
         let mut state = state_with_files(&["a.rs", "b.rs", "c.rs"]);
         state.drawer_width = 30;
 
-        state.scroll_wheel(80, 20, 100, false); // sobre el cajón
+        state.scroll_wheel(80, 20, 100, 3); // sobre el cajón
         assert_eq!(state.scroll, 3, "sobre el informe, la rueda lo desplaza");
 
-        state.scroll_wheel(40, 20, 100, false); // sobre los archivos
+        state.scroll_wheel(40, 20, 100, 3); // sobre los archivos
         assert_eq!(state.files_selected, 2);
 
-        state.scroll_wheel(40, 20, 100, true);
+        state.scroll_wheel(40, 20, 100, -3);
         assert_eq!(state.files_selected, 0, "y hacia arriba vuelve");
     }
 
@@ -659,7 +661,7 @@ mod tests {
         let mut state = state_with(&["main", "otra", "tercera"], "");
         state.sidebar_tab = SidebarTab::Branches;
 
-        state.scroll_wheel(5, 20, 100, false);
+        state.scroll_wheel(5, 20, 100, 3);
 
         assert_eq!(state.branches_selected, 2);
     }
@@ -739,6 +741,121 @@ mod tests {
             .collect();
 
         assert_eq!(highlighted, vec![" ~0 modificados "]);
+    }
+
+    #[test]
+    fn a_header_line_says_which_key_it_is_and_that_is_what_a_click_sends() {
+        // Cada línea de la cabecera lleva su tecla escrita al final; leerla de
+        // ahí evita una segunda tabla de posiciones que se desincronice del
+        // dibujo.
+        use super::format::key_in;
+
+        assert_eq!(key_in("Agente: claude (g)"), Some(KeyCode::Char('g')));
+        assert_eq!(key_in("Filtro: — (F3)"), Some(KeyCode::F(3)));
+        assert_eq!(key_in("Ver: b ramas · p PRs · h reviews"), None, "esa línea no es un botón");
+        assert_eq!(key_in(""), None);
+    }
+
+    #[test]
+    fn clicking_a_chip_puts_that_filter_and_clicking_a_row_picks_it() {
+        // El escritorio se maneja a ratón: aquí sólo respondían el raíl y el
+        // cajón, y los archivos y sus filtros no hacían nada.
+        use super::mouse::{file_click, FileClick};
+        let state = ReviewState::new("/repo".to_string());
+        let area = ratatui::layout::Rect::new(20, 0, 60, 20);
+        // "Buscar (F3): todos  ·  " ocupa 23 columnas antes del primer chip.
+        let first_chip = area.x + 1 + 23;
+
+        assert_eq!(file_click(&state, first_chip, 1, area), Some(FileClick::Chip(0)));
+        assert_eq!(file_click(&state, 1, 1, area), None, "eso es el raíl, no el panel");
+        assert_eq!(file_click(&state, 30, 2, area), Some(FileClick::Row(0)), "la lista empieza debajo");
+        assert_eq!(file_click(&state, 30, 5, area), Some(FileClick::Row(3)));
+        assert_eq!(file_click(&state, 30, 19, area), None, "el borde de abajo no es una fila");
+    }
+
+    #[test]
+    fn clicking_far_down_a_long_list_picks_the_row_you_see_not_the_one_underneath() {
+        // La lista se desplaza sola para no perder de vista la fila marcada,
+        // así que la de arriba deja de ser la primera del listado.
+        use super::mouse::visible_offset;
+
+        assert_eq!(visible_offset(3, 10), 0, "cabe entera: no se ha desplazado");
+        assert_eq!(visible_offset(12, 10), 3, "con la 12 marcada y diez de alto, arriba está la 3");
+    }
+
+    fn click(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    /// Lo que hay escrito en una fila de la pantalla tras pintar el panel.
+    fn painted(state: &ReviewState, width: u16, height: u16, row: u16) -> String {
+        let backend = ratatui::backend::TestBackend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::draw::draw(f, state, 24, false)).unwrap();
+        let buf = terminal.backend().buffer();
+        (0..width).map(|c| buf[(c, row)].symbol()).collect()
+    }
+
+    #[tokio::test]
+    async fn clicking_a_file_row_picks_the_file_that_is_painted_there() {
+        // Una geometría que señale a otra fila es peor que no poder pulsar:
+        // se marca un fichero distinto del que estás señalando.
+        let mut state = state_with_files(&["uno.rs", "dos.rs", "tres.rs", "cuatro.rs"]);
+        let area = state.files_area(100, 20, 24);
+        let row = 4;
+        assert!(painted(&state, 100, 20, row).contains("tres.rs"), "la fila 4 es la de tres.rs");
+
+        state.handle_files_mouse(click(40, row), area).await;
+
+        assert_eq!(state.selected_path().as_deref(), Some("tres.rs"));
+        assert!(matches!(state.focus, Focus::Files), "y el panel se queda con el foco");
+    }
+
+    #[tokio::test]
+    async fn clicking_a_file_opens_its_diff_and_clicking_again_closes_it() {
+        // Como el desplegable del escritorio: se pulsa el fichero y se abre.
+        let mut state = state_with_files(&["uno.rs"]);
+        let area = state.files_area(100, 20, 24);
+
+        state.handle_files_mouse(click(40, 2), area).await;
+        assert!(state.is_expanded("uno.rs"));
+
+        state.handle_files_mouse(click(40, 2), area).await;
+        assert!(!state.is_expanded("uno.rs"));
+    }
+
+    #[tokio::test]
+    async fn clicking_a_chip_switches_to_that_filter() {
+        let mut state = state_with_files(&["uno.rs"]);
+        let area = state.files_area(100, 20, 24);
+        let chip = area.x + 1 + super::rows::chip_ranges(&state)[3].0;
+
+        state.handle_files_mouse(click(chip, 1), area).await;
+
+        assert_eq!(state.file_filter, FileFilter::Deleted);
+    }
+
+    #[test]
+    fn clicking_an_option_in_the_rail_runs_its_key() {
+        // La cabecera anuncia la tecla de cada opción; el clic manda esa misma
+        // tecla, así que las dos vías no pueden divergir.
+        let state = ReviewState::new("/repo".to_string());
+        let header = super::draw::sidebar_header(&state, 24);
+        let agent_line = header.iter().position(|l| l.to_string().starts_with("Agente:")).unwrap();
+
+        let key = state.header_key_at(click(3, agent_line as u16 + 1), 24);
+
+        assert_eq!(key, Some(KeyCode::Char('g')));
+        assert_eq!(
+            state.header_key_at(click(23, agent_line as u16 + 1), 24),
+            None,
+            "esa columna es el divisor: arrastrarlo no cambia de agente",
+        );
     }
 
     #[test]

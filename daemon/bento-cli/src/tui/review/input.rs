@@ -86,7 +86,7 @@ impl ReviewState {
             KeyCode::Char('c') if self.running => { self.cancel_run(); false }
             // Sobre una línea del diff, `c` la comenta; el contexto de la
             // review se sigue escribiendo con `c` desde cualquier otro sitio.
-            KeyCode::Char('c') if self.selected_diff_line().is_some() => {
+            KeyCode::Char('c') if matches!(self.focus, Focus::Files) && self.selected_diff_line().is_some() => {
                 self.start_inline_comment();
                 false
             }
@@ -321,7 +321,7 @@ impl ReviewState {
     /// Abre el diff de un fichero bajo su fila, o lo cierra si ya lo estaba.
     /// El escritorio deja tener varios abiertos a la vez; por eso es un mapa y
     /// no un fichero "actual".
-    async fn toggle_file(&mut self, path: String) {
+    pub(super) async fn toggle_file(&mut self, path: String) {
         if self.expanded.remove(&path).is_some() {
             return;
         }
