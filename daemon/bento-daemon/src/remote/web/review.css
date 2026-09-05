@@ -157,7 +157,11 @@
 .dl-commentable:active{background:var(--surface-2,#16161e)}
 
 /* Filtro por estado y marca de revisado, como en el escritorio y la TUI. */
-#rv-files-filter{display:none;gap:6px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--b);flex-shrink:0}
+#rv-files-filter{display:none;gap:6px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--b);flex-shrink:0;flex-wrap:wrap}
+/* El buscador se lleva su propia línea: con los cuatro chips al lado no cabe
+   nada legible en un móvil. 16px porque menos hace que iOS acerque la página
+   al enfocarlo. */
+#rv-files-search{flex:1 0 100%;background:var(--s);border:1px solid var(--b);border-radius:6px;color:var(--fg,#e2e8f8);font-size:16px;padding:6px 10px}
 #rv-files-filter .chip{background:var(--s);border:1px solid var(--b);border-radius:999px;color:var(--dim);font-size:11px;padding:4px 10px}
 #rv-files-filter .chip.active{color:var(--fg,#e2e8f8);border-color:var(--ac,#a78bfa)}
 #rv-files-count{margin-left:auto;color:var(--dim);font-size:11px}

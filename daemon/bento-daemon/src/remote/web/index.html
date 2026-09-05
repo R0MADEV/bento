@@ -168,10 +168,11 @@
       <span id="rv-branch-base" style="font-family:Menlo,Monaco,monospace"></span>
     </div>
     <div id="rv-files-filter" style="display:none">
-      <button class="chip active" data-filter="all" onclick="setFileFilter('all')">Todos</button>
-      <button class="chip" data-filter="added" onclick="setFileFilter('added')">Añadidos</button>
-      <button class="chip" data-filter="modified" onclick="setFileFilter('modified')">Modificados</button>
-      <button class="chip" data-filter="deleted" onclick="setFileFilter('deleted')">Borrados</button>
+      <input id="rv-files-search" type="search" placeholder="Buscar archivos…" oninput="renderFiles()" aria-label="Buscar archivos">
+      <button class="chip active" data-filter="all" data-label="Todos" onclick="setFileFilter('all')">Todos</button>
+      <button class="chip" data-filter="added" data-label="Añadidos" onclick="setFileFilter('added')">Añadidos</button>
+      <button class="chip" data-filter="modified" data-label="Modificados" onclick="setFileFilter('modified')">Modificados</button>
+      <button class="chip" data-filter="deleted" data-label="Borrados" onclick="setFileFilter('deleted')">Borrados</button>
       <span id="rv-files-count"></span>
     </div>
     <div id="rv-files-list"><div class="empty">Selecciona un proyecto y pulsa Ver.</div></div>

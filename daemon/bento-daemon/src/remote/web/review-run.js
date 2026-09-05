@@ -268,6 +268,8 @@ function startReview(){
 // así que marcar aquí y seguir allí es lo mismo.
 let reviewViewed=[];
 let fileFilter='all';
+// La última lista cargada: buscar y cambiar de filtro trabajan sobre ella.
+let reviewFiles=[];
 
 function isViewed(path){return reviewViewed.includes(path)}
 
@@ -284,7 +286,47 @@ function setFileFilter(filter){
   fileFilter=filter;
   for(const btn of document.querySelectorAll('#rv-files-filter .chip'))
     btn.classList.toggle('active',btn.dataset.filter===filter);
-  loadFiles();
+  // Sin volver a pedir la lista: es la misma, sólo se enseña otra parte.
+  renderFiles();
+}
+
+// Los que pasan el buscador, sea cual sea su estado. Los recuentos de los
+// chips se cuentan sobre esto para que cuadren con la lista de debajo.
+function searchedFiles(){
+  const needle=(document.getElementById('rv-files-search')?.value||'').trim().toLowerCase();
+  if(!needle)return reviewFiles;
+  return reviewFiles.filter(f=>(f.path||'').toLowerCase().includes(needle));
+}
+
+function renderFiles(){
+  const el=document.getElementById('rv-files-list');
+  const base=document.getElementById('rv-files-base').value.trim()||'main';
+  const searched=searchedFiles();
+  // Cuántos hay de cada tipo, como el escritorio: cambiar de chip a ciegas no
+  // dice si no hay nada de ese estado o si el filtro se comió la lista.
+  for(const btn of document.querySelectorAll('#rv-files-filter .chip')){
+    const count=searched.filter(f=>matchesFileFilter(f.status||'M',btn.dataset.filter)).length;
+    btn.textContent=btn.dataset.label+' '+count;
+  }
+  document.getElementById('rv-files-count').textContent=
+    searched.filter(f=>isViewed(f.path)).length+'/'+reviewFiles.length;
+  if(!reviewFiles.length){el.innerHTML='<div class="empty">Sin cambios respecto a <strong>'+esc(base)+'</strong>.</div>';return}
+
+  const shown=searched.filter(f=>matchesFileFilter(f.status||'M',fileFilter));
+  if(!shown.length){el.innerHTML='<div class="empty">Ningún fichero con ese estado.</div>';return}
+  el.innerHTML=shown.map(f=>{
+    const badge=f.status||'M';
+    const add=f.added>0?`<span class="stat-add">+${f.added}</span>`:'';
+    const del=f.deleted>0?`<span class="stat-del"> -${f.deleted}</span>`:'';
+    const path=esc(JSON.stringify(f.path));
+    const mark=isViewed(f.path)?'✓':'○';
+    return `<div class="file-item${isViewed(f.path)?' file-viewed':''}" onclick="openFileDiff(${path},${esc(JSON.stringify(base))})">
+      <span class="file-viewed-mark" onclick="toggleViewed(${path},event)">${mark}</span>
+      <span class="file-badge badge-${badge}">${esc(badge)}</span>
+      <span class="file-path">${esc(f.path)}</span>
+      <span class="file-stat">${add}${del}</span>
+    </div>`;
+  }).join('');
 }
 
 async function toggleViewed(path,event){
@@ -299,7 +341,9 @@ async function toggleViewed(path,event){
       body:JSON.stringify({cwd:dir,base,paths:reviewViewed}),
     });
   }catch(_){}
-  loadFiles();
+  // La lista ya está en memoria: repintar en vez de volver a pedirla, que
+  // recargar borraba la búsqueda escrita.
+  renderFiles();
 }
 
 async function loadFiles(){
@@ -330,27 +374,10 @@ async function loadFiles(){
       fetch('/api/review/viewed'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)),
     ]);
     if(!filesRes.ok){el.innerHTML='<div class="empty err-msg">'+esc(await filesRes.text())+'</div>';info.style.display='none';return}
-    const files=await filesRes.json();
+    reviewFiles=await filesRes.json();
     reviewViewed=viewedRes.ok?await viewedRes.json():[];
     document.getElementById('rv-files-filter').style.display='flex';
-    document.getElementById('rv-files-count').textContent=files.filter(f=>isViewed(f.path)).length+'/'+files.length;
-    if(!files.length){el.innerHTML='<div class="empty">Sin cambios respecto a <strong>'+esc(base)+'</strong>.</div>';return}
-
-    const shown=files.filter(f=>matchesFileFilter(f.status||'M',fileFilter));
-    if(!shown.length){el.innerHTML='<div class="empty">Ningún fichero con ese estado.</div>';return}
-    el.innerHTML=shown.map(f=>{
-      const badge=f.status||'M';
-      const add=f.added>0?`<span class="stat-add">+${f.added}</span>`:'';
-      const del=f.deleted>0?`<span class="stat-del"> -${f.deleted}</span>`:'';
-      const path=esc(JSON.stringify(f.path));
-      const mark=isViewed(f.path)?'✓':'○';
-      return `<div class="file-item${isViewed(f.path)?' file-viewed':''}" onclick="openFileDiff(${path},${esc(JSON.stringify(base))})">
-        <span class="file-viewed-mark" onclick="toggleViewed(${path},event)">${mark}</span>
-        <span class="file-badge badge-${badge}">${esc(badge)}</span>
-        <span class="file-path">${esc(f.path)}</span>
-        <span class="file-stat">${add}${del}</span>
-      </div>`;
-    }).join('');
+    renderFiles();
   }catch(e){el.innerHTML='<div class="empty err-msg">Error de conexión.</div>'}
 }
 
