@@ -11,7 +11,7 @@ use super::format::{checkpoint_row, short_path};
 use super::super::drawer::{Drawer, History};
 use super::super::pane::Pane;
 use super::super::sidebar::{ItemStatus, Sidebar, SidebarItem};
-use super::rows::pane_row_item;
+use super::rows::{filter_bar, pane_row_item};
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
 
 pub(crate) fn draw(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16, resizing: bool) {
@@ -243,9 +243,13 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);
+    // La barra se queda con la primera línea de dentro del marco; la lista
+    // ocupa el resto.
+    let [bar, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+    frame.render_widget(Paragraph::new(filter_bar(review)), bar);
     let list = List::new(items)
         .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
-    frame.render_stateful_widget(list, inner, &mut state);
+    frame.render_stateful_widget(list, rest, &mut state);
 }
 
 fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {

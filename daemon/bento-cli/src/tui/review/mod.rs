@@ -693,6 +693,55 @@ mod tests {
     }
 
     #[test]
+    fn the_filters_say_how_many_files_are_of_each_kind() {
+        // El escritorio los tiene siempre a la vista con su recuento; aquí `f`
+        // cambiaba de filtro a ciegas, sin decir cuántos ibas a encontrar.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.files = [("A", "uno.rs"), ("A", "dos.rs"), ("M", "tres.rs"), ("R", "cuatro.rs")]
+            .iter()
+            .map(|(status, path)| serde_json::json!({"status": status, "path": path}))
+            .collect();
+
+        let counts = state.filter_counts();
+
+        assert_eq!(counts[0], (FileFilter::All, 4));
+        assert_eq!(counts[1], (FileFilter::Added, 2));
+        assert_eq!(counts[2], (FileFilter::Modified, 2), "un renombrado cuenta como modificado");
+        assert_eq!(counts[3], (FileFilter::Deleted, 0));
+    }
+
+    #[test]
+    fn the_counts_follow_the_search_so_they_match_the_list_below() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.files = [("A", "uno.rs"), ("A", "dos.rs"), ("M", "tres.rs")]
+            .iter()
+            .map(|(status, path)| serde_json::json!({"status": status, "path": path}))
+            .collect();
+        state.file_search = "os".to_string();
+
+        assert_eq!(state.filter_counts()[0], (FileFilter::All, 1), "sólo dos.rs pasa la búsqueda");
+        assert_eq!(state.filter_counts()[1], (FileFilter::Added, 1));
+    }
+
+    #[test]
+    fn the_filter_in_use_is_the_one_highlighted_in_the_bar() {
+        // Los cuatro se ven a la vez, así que el texto no dice cuál actúa:
+        // sin el resaltado no hay forma de saberlo.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.file_filter = FileFilter::Modified;
+
+        let bar = super::rows::filter_bar(&state);
+        let highlighted: Vec<&str> = bar
+            .spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(ratatui::style::Modifier::REVERSED))
+            .map(|s| s.content.as_ref())
+            .collect();
+
+        assert_eq!(highlighted, vec![" ~0 modificados "]);
+    }
+
+    #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there
         // would duplicate the work, the billing and the output.

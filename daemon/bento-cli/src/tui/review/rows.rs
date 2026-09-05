@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 use serde_json::Value;
 
-use super::format::{split_rows, DiffKind, DiffRow, SplitRow};
+use super::format::{split_rows, DiffKind, DiffRow, FileFilter, SplitRow};
 use super::visible::PaneRow;
 use super::ReviewState;
 
@@ -112,4 +112,38 @@ pub(super) fn diff_pane_rows(state: &ReviewState, path: &str, diff: &str) -> Vec
             .map(|row| PaneRow::Diff { path: path.to_string(), row })
             .collect(),
     }
+}
+
+/// La barra de encima de la lista: la búsqueda y los cuatro filtros con su
+/// recuento, como el escritorio. `f` cambiaba de filtro sin decir cuántos
+/// ficheros había de cada tipo ni si quedaba una búsqueda puesta.
+pub(super) fn filter_bar(review: &ReviewState) -> Line<'static> {
+    let mut spans = vec![Span::styled("Buscar (F3): ", DIM)];
+    match review.file_search.is_empty() {
+        true => spans.push(Span::styled("todos", DIM)),
+        false => spans.push(Span::styled(review.file_search.clone(), Style::new().fg(Color::Yellow))),
+    }
+    spans.push(Span::styled("  ·  ", DIM));
+    for (filter, count) in review.filter_counts() {
+        spans.push(chip(filter, count, filter == review.file_filter));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled("(f)", DIM));
+    Line::from(spans)
+}
+
+/// Un filtro con su recuento. El puesto va en vídeo inverso: en un terminal
+/// sin ratón es lo único que dice cuál de los cuatro está actuando.
+fn chip(filter: FileFilter, count: usize, active: bool) -> Span<'static> {
+    let text = match filter {
+        FileFilter::All => format!(" Todos {count} "),
+        FileFilter::Added => format!(" +{count} nuevos "),
+        FileFilter::Modified => format!(" ~{count} modificados "),
+        FileFilter::Deleted => format!(" -{count} borrados "),
+    };
+    let style = match active {
+        true => Style::new().add_modifier(ratatui::style::Modifier::REVERSED),
+        false => DIM,
+    };
+    Span::styled(text, style)
 }

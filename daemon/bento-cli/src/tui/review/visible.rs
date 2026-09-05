@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 
-use super::{draw, file_matches_filter, ReviewState, SidebarTab};
+use super::{draw, file_matches_filter, FileFilter, ReviewState, SidebarTab};
 
 impl ReviewState {
     /// Los ficheros que pasan el filtro de estado (`f`) y la búsqueda (`/`).
@@ -14,16 +14,44 @@ impl ReviewState {
     /// filtraba ramas y texto pero no esto, así que con noventa ficheros no
     /// había forma de llegar a uno por su nombre.
     pub(super) fn visible_files(&self) -> Vec<&Value> {
+        self.searched_files()
+            .into_iter()
+            .filter(|f| {
+                let status = f.get("status").and_then(Value::as_str).unwrap_or("");
+                file_matches_filter(status, self.file_filter)
+            })
+            .collect()
+    }
+
+    /// Los que pasan la búsqueda, sea cual sea su estado.
+    fn searched_files(&self) -> Vec<&Value> {
         let needle = self.file_search.to_lowercase();
         self.files
             .iter()
             .filter(|f| {
-                let status = f.get("status").and_then(Value::as_str).unwrap_or("");
                 let path = f.get("path").and_then(Value::as_str).unwrap_or("");
-                let matches_search = needle.is_empty() || path.to_lowercase().contains(&needle);
-                matches_search && file_matches_filter(status, self.file_filter)
+                needle.is_empty() || path.to_lowercase().contains(&needle)
             })
             .collect()
+    }
+
+    /// Cuántos ficheros hay de cada tipo, para los cuatro filtros que el
+    /// escritorio tiene siempre a la vista sobre la lista. Cuenta sobre lo que
+    /// pasa la búsqueda: si no, los números no cuadran con la lista de debajo.
+    pub(super) fn filter_counts(&self) -> [(FileFilter, usize); 4] {
+        let searched = self.searched_files();
+        let count = |filter: FileFilter| {
+            searched
+                .iter()
+                .filter(|f| file_matches_filter(f.get("status").and_then(Value::as_str).unwrap_or(""), filter))
+                .count()
+        };
+        [
+            (FileFilter::All, count(FileFilter::All)),
+            (FileFilter::Added, count(FileFilter::Added)),
+            (FileFilter::Modified, count(FileFilter::Modified)),
+            (FileFilter::Deleted, count(FileFilter::Deleted)),
+        ]
     }
 }
 
