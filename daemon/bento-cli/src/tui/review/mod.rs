@@ -865,6 +865,7 @@ mod tests {
         // ayuda: "Ver: b ramas · p PRs" no dice cuál estás mirando.
         let mut state = ReviewState::new("/repo".to_string());
         state.sidebar_tab = SidebarTab::Prs;
+        state.showing_history = true; // el cajón abierto no cambia la pestaña
 
         let line = super::rows::tabs_line(&state);
         let marked: Vec<&str> = line
@@ -884,10 +885,12 @@ mod tests {
         let state = ReviewState::new("/repo".to_string());
         let row = super::draw::TABS_ROW as u16 + 1;
         // La columna 0 es el borde del marco: la cabecera empieza en la 1.
-        let prs = super::rows::tab_ranges()[1].0 + 1;
+        let ranges = super::rows::tab_ranges();
+        let prs = ranges.iter().find(|(_, _, key)| *key == 'p').unwrap().0 + 1;
+        let first = ranges[0];
 
         assert_eq!(state.header_key_at(click(prs, row), 24), Some(KeyCode::Char('p')));
-        assert_eq!(state.header_key_at(click(1, row), 24), Some(KeyCode::Char('b')), "la primera es Ramas");
+        assert_eq!(state.header_key_at(click(1, row), 24), Some(KeyCode::Char(first.2)));
         assert_eq!(state.header_key_at(click(0, row), 24), None, "el borde no es una pestaña");
     }
 
@@ -899,6 +902,26 @@ mod tests {
         let header = super::draw::sidebar_header(&state, 24);
 
         assert!(header[super::draw::TABS_ROW].to_string().contains("Ramas"));
+    }
+
+    #[test]
+    fn a_long_error_is_wrapped_instead_of_cut_off_at_the_rail_edge() {
+        // Un error de gh no cabe en veinticuatro columnas: cortado, lo único
+        // que se lee es el principio, que es la parte que menos dice.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.status = "GitHub no encuentra irontec-comms/deitu: si el remoto no es de GitHub, aquí no hay PRs".into();
+
+        let header = super::draw::sidebar_header(&state, 24);
+        // Las del error: las que son un trozo del mensaje.
+        let lines: Vec<String> = header
+            .iter()
+            .map(|l| l.to_string())
+            .filter(|l| !l.is_empty() && state.status.contains(l.as_str()))
+            .collect();
+
+        assert!(lines.iter().any(|l| l.contains("irontec-comms/deitu")), "el nombre del repo se lee");
+        assert!(lines.iter().any(|l| l.contains("no hay PRs")), "y el final también");
+        assert!(lines.iter().all(|l| l.chars().count() <= 24), "ninguna se sale del raíl");
     }
 
     #[test]

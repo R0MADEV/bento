@@ -177,22 +177,16 @@ fn chip(filter: FileFilter, count: usize, active: bool) -> Span<'static> {
 /// las tiene como pestañas; aquí eran una línea de ayuda que no decía cuál
 /// estabas mirando.
 pub(super) const TABS: [(&str, char, SidebarTab); 3] = [
+    ("Proyectos", 'o', SidebarTab::Projects),
     ("Ramas", 'b', SidebarTab::Branches),
     ("PRs", 'p', SidebarTab::Prs),
-    ("Reviews", 'h', SidebarTab::Branches),
 ];
 
 pub(super) fn tabs_line(review: &ReviewState) -> Line<'static> {
     let spans = TABS
         .iter()
         .map(|(label, _, tab)| {
-            // Las reviews no son una pestaña del raíl sino el cajón, así que
-            // se marca cuando está abierto y no por la pestaña que haya.
-            let open = match *label {
-                "Reviews" => review.showing_history,
-                _ => !review.showing_history && review.sidebar_tab == *tab,
-            };
-            let style = match open {
+            let style = match review.sidebar_tab == *tab {
                 true => Style::new().add_modifier(ratatui::style::Modifier::REVERSED),
                 false => DIM,
             };

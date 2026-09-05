@@ -81,6 +81,18 @@ pub fn list_open(cwd: &str) -> Result<String, String> {
         "pr", "list", "--state", "open", "--limit", "30",
         "--json", "number,title,url,author,headRefName,baseRefName",
     ])
+    .map_err(|error| explain_gh_error(&error))
+}
+
+/// Lo que dice `gh` cuando el remoto no es un repositorio de GitHub al que se
+/// tenga acceso, en algo que se pueda leer. El resto pasa tal cual: traducir
+/// de más esconde el problema real.
+fn explain_gh_error(error: &str) -> String {
+    let Some(rest) = error.split("Could not resolve to a Repository with the name ").nth(1) else {
+        return error.to_string();
+    };
+    let name = rest.trim_start_matches('\'').split('\'').next().unwrap_or("").trim();
+    format!("GitHub no encuentra {name}: si el remoto no es de GitHub, o gh no tiene acceso, aquí no hay PRs")
 }
 
 /// La rama de un PR dentro del listado que devuelve `list_open`. Un comentario
@@ -406,6 +418,26 @@ pub fn reply_review_comment(cwd: &str, pr: u64, id: u64, body: &str) -> Result<S
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_repo_that_is_not_on_github_says_so_instead_of_quoting_graphql() {
+        // El stderr de gh dice "GraphQL: Could not resolve to a Repository",
+        // que en un raíl de veinticuatro columnas se corta antes de llegar a
+        // lo único que importa: que ese repo no está en GitHub.
+        let raw = "GraphQL: Could not resolve to a Repository with the name 'irontec-comms/deitu'. (repository)";
+
+        let said = super::explain_gh_error(raw);
+
+        assert!(said.contains("irontec-comms/deitu"), "el nombre del repo se conserva");
+        assert!(said.contains("GitHub"));
+        assert!(!said.contains("GraphQL"), "no se le enseña la jerga de la API");
+    }
+
+    #[test]
+    fn an_error_we_do_not_know_is_passed_through_untouched() {
+        // Traducir de más esconde el problema real.
+        assert_eq!(super::explain_gh_error("gh: not logged in"), "gh: not logged in");
+    }
     use super::*;
 
     #[test]

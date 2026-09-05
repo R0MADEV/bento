@@ -123,7 +123,7 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
 /// from here — a click that assumes a different height selects the wrong row.
 /// En qué línea de la cabecera van las pestañas. El clic las mide por columna
 /// —cada una es su propia zona—, así que necesita saber su fila.
-pub(crate) const TABS_ROW: usize = 8;
+pub(crate) const TABS_ROW: usize = 10;
 
 pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'static>> {
     // Dimmed while compare is off, because that is exactly when they do
@@ -137,9 +137,11 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
             "Proyecto: {} (o)",
             short_path(&review.cwd, width.saturating_sub("Proyecto:  (o)".len() as u16 + 2) as usize),
         )),
+        // En dos líneas: juntas no caben en las veinticuatro columnas por
+        // defecto del raíl y se comían la tecla del final.
+        Line::from(format!("Base: {} (b)", review.base)),
         Line::from(format!(
-            "Base: {} ← {} (b)",
-            review.base,
+            "Rama: {} (v)",
             review.branch.as_deref().unwrap_or("sin commitear"),
         )),
         Line::from(format!("Agente: {} (g)", review.agent)),
@@ -155,16 +157,55 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
             "Filtro: {} (F3)",
             if review.search.is_empty() { "—".to_string() } else { review.search.clone() },
         )),
+        // El historial no es una pestaña del raíl sino el cajón de la
+        // derecha: marcarlo entre las pestañas decía "Reviews" mientras
+        // estabas mirando los PRs.
+        Line::from(format!(
+            "Reviews: {} (h)",
+            if review.showing_history { "abiertas" } else { "ver" },
+        )),
         super::rows::tabs_line(review),
     ];
     if review.loading {
         header.push(Line::from("Cargando…").style(FOCUSED));
     }
     if !review.status.is_empty() {
-        header.push(Line::from(review.status.clone()).style(ERROR));
+        // Un error de gh no cabe en las veinticuatro columnas del raíl, y
+        // cortado sólo se lee el principio, que es la parte que menos dice.
+        header.extend(wrapped(&review.status, width).into_iter().map(|l| Line::from(l).style(ERROR)));
     }
     header.push(Line::raw(""));
     header
+}
+
+/// El texto partido por palabras en líneas de `width` columnas. Una palabra
+/// más larga que el raíl se parte donde toque: peor es no verla.
+fn wrapped(text: &str, width: u16) -> Vec<String> {
+    let width = usize::from(width).max(1);
+    let mut lines = vec![String::new()];
+    for word in text.split_whitespace() {
+        let line = lines.last_mut().expect("siempre hay una");
+        let fits = line.chars().count() + 1 + word.chars().count() <= width;
+        if line.is_empty() || fits {
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+            continue;
+        }
+        lines.push(word.to_string());
+    }
+    // Una palabra sola más ancha que el raíl se trocea al final, ya colocada.
+    lines
+        .into_iter()
+        .flat_map(|line| {
+            line.chars()
+                .collect::<Vec<_>>()
+                .chunks(width)
+                .map(|chunk| chunk.iter().collect::<String>())
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// The rail's rows for the active tab. Each entry gets a label and the detail
