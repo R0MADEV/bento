@@ -42,6 +42,7 @@ enum ReviewView {
     PrDetail,
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub(super) enum SidebarTab {
     Projects,
     Branches,
@@ -856,6 +857,48 @@ mod tests {
             None,
             "esa columna es el divisor: arrastrarlo no cambia de agente",
         );
+    }
+
+    #[test]
+    fn the_tabs_are_a_row_of_tabs_with_the_open_one_marked() {
+        // El escritorio las tiene como pestañas y aquí eran una línea de
+        // ayuda: "Ver: b ramas · p PRs" no dice cuál estás mirando.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.sidebar_tab = SidebarTab::Prs;
+
+        let line = super::rows::tabs_line(&state);
+        let marked: Vec<&str> = line
+            .spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(ratatui::style::Modifier::REVERSED))
+            .map(|s| s.content.as_ref())
+            .collect();
+
+        assert_eq!(marked, vec![" PRs "]);
+    }
+
+    #[test]
+    fn clicking_a_tab_opens_that_tab() {
+        // Cada pestaña es su propia zona: la línea entera no puede mandar una
+        // sola tecla como el resto de las opciones.
+        let state = ReviewState::new("/repo".to_string());
+        let row = super::draw::TABS_ROW as u16 + 1;
+        // La columna 0 es el borde del marco: la cabecera empieza en la 1.
+        let prs = super::rows::tab_ranges()[1].0 + 1;
+
+        assert_eq!(state.header_key_at(click(prs, row), 24), Some(KeyCode::Char('p')));
+        assert_eq!(state.header_key_at(click(1, row), 24), Some(KeyCode::Char('b')), "la primera es Ramas");
+        assert_eq!(state.header_key_at(click(0, row), 24), None, "el borde no es una pestaña");
+    }
+
+    #[test]
+    fn the_tabs_row_is_where_the_click_expects_it() {
+        // La constante y el dibujo tienen que decir lo mismo: si se añade una
+        // opción encima, el clic señalaría a otra línea.
+        let state = ReviewState::new("/repo".to_string());
+        let header = super::draw::sidebar_header(&state, 24);
+
+        assert!(header[super::draw::TABS_ROW].to_string().contains("Ramas"));
     }
 
     #[test]

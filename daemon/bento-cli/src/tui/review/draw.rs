@@ -121,6 +121,10 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
 ///
 /// Hit-testing counts these same lines through `header_lines`, so both come
 /// from here — a click that assumes a different height selects the wrong row.
+/// En qué línea de la cabecera van las pestañas. El clic las mide por columna
+/// —cada una es su propia zona—, así que necesita saber su fila.
+pub(crate) const TABS_ROW: usize = 8;
+
 pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'static>> {
     // Dimmed while compare is off, because that is exactly when they do
     // nothing.
@@ -139,7 +143,9 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
             review.branch.as_deref().unwrap_or("sin commitear"),
         )),
         Line::from(format!("Agente: {} (g)", review.agent)),
-        Line::from(format!("Comparar: {} (x)", on_off(review.compare))),
+        // Casilla en vez de "sí/no", como el checkbox del escritorio: se ve
+        // marcada de un vistazo sin leer la palabra.
+        Line::from(format!("[{}] Comparar agentes (x)", if review.compare { "x" } else { " " })),
         Line::from(format!("  2º: {} (G)", review.secondary.as_deref().unwrap_or(none))).style(extra_style),
         Line::from(format!("  3º: {} (t)", review.tertiary.as_deref().unwrap_or(none))).style(extra_style),
         // One control per line: at the rail's default 24 columns two of them
@@ -149,9 +155,7 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
             "Filtro: {} (F3)",
             if review.search.is_empty() { "—".to_string() } else { review.search.clone() },
         )),
-        // Las pestañas, que en el escritorio son botones y aquí eran teclas sin
-        // anunciar: `p` no aparecía por ningún lado.
-        Line::from("Ver: b ramas · p PRs · h reviews").style(DIM),
+        super::rows::tabs_line(review),
     ];
     if review.loading {
         header.push(Line::from("Cargando…").style(FOCUSED));
@@ -210,10 +214,6 @@ fn pane_block(title: &str) -> Block<'static> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(DIM)
-}
-
-fn on_off(v: bool) -> &'static str {
-    if v { "sí" } else { "no" }
 }
 
 fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect, resizing: bool) {

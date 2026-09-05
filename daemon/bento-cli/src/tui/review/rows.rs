@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::format::{split_rows, DiffKind, DiffRow, FileFilter, SplitRow};
 use super::visible::PaneRow;
-use super::ReviewState;
+use super::{ReviewState, SidebarTab};
 
 const DIM: Style = Style::new().fg(Color::Indexed(8));
 
@@ -171,4 +171,47 @@ fn chip(filter: FileFilter, count: usize, active: bool) -> Span<'static> {
         false => DIM,
     };
     Span::styled(text, style)
+}
+
+/// Las tres pestañas del raíl, con la tecla que abre cada una. El escritorio
+/// las tiene como pestañas; aquí eran una línea de ayuda que no decía cuál
+/// estabas mirando.
+pub(super) const TABS: [(&str, char, SidebarTab); 3] = [
+    ("Ramas", 'b', SidebarTab::Branches),
+    ("PRs", 'p', SidebarTab::Prs),
+    ("Reviews", 'h', SidebarTab::Branches),
+];
+
+pub(super) fn tabs_line(review: &ReviewState) -> Line<'static> {
+    let spans = TABS
+        .iter()
+        .map(|(label, _, tab)| {
+            // Las reviews no son una pestaña del raíl sino el cajón, así que
+            // se marca cuando está abierto y no por la pestaña que haya.
+            let open = match *label {
+                "Reviews" => review.showing_history,
+                _ => !review.showing_history && review.sidebar_tab == *tab,
+            };
+            let style = match open {
+                true => Style::new().add_modifier(ratatui::style::Modifier::REVERSED),
+                false => DIM,
+            };
+            Span::styled(format!(" {label} "), style)
+        })
+        .collect::<Vec<_>>();
+    Line::from(spans)
+}
+
+/// Dónde empieza y acaba cada pestaña, y qué tecla pide. Medido de las mismas
+/// etiquetas que se pintan.
+pub(super) fn tab_ranges() -> Vec<(u16, u16, char)> {
+    let mut left = 0u16;
+    TABS.iter()
+        .map(|(label, key, _)| {
+            let width = label.chars().count() as u16 + 2;
+            let range = (left, left + width, *key);
+            left += width;
+            range
+        })
+        .collect()
 }

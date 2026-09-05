@@ -41,6 +41,14 @@ fn chip_at(review: &ReviewState, column: u16) -> Option<usize> {
         .position(|(start, end)| column >= start && column < end)
 }
 
+/// Qué pestaña pide un clic en esa columna de su fila.
+fn tab_key_at(column: u16) -> Option<char> {
+    super::rows::tab_ranges()
+        .into_iter()
+        .find(|(start, end, _)| column >= *start && column < *end)
+        .map(|(_, _, key)| key)
+}
+
 /// La primera fila que se ve de una lista de alto `height` con `selected`
 /// marcada. La lista se desplaza sola para no perderla de vista, así que la
 /// fila de arriba deja de ser la primera del listado.
@@ -71,6 +79,10 @@ impl ReviewState {
         }
         // La fila 0 es el borde del marco; la cabecera va justo debajo.
         let line = usize::from(mouse.row.checked_sub(1)?);
+        if line == super::draw::TABS_ROW {
+            // La columna 0 es el borde del marco, igual que la fila 0.
+            return tab_key_at(mouse.column.checked_sub(1)?).map(crossterm::event::KeyCode::Char);
+        }
         let header = super::draw::sidebar_header(self, sidebar_width);
         key_in(&header.get(line)?.to_string())
     }
