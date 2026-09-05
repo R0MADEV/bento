@@ -1002,6 +1002,52 @@ mod tests {
     }
 
     #[test]
+    fn the_comment_box_of_an_open_pr_is_there_before_you_press_anything() {
+        // En el escritorio la caja y sus botones están puestos desde que
+        // abres el PR. Aquí sólo aparecían al pulsar `a`, así que no había
+        // forma de saber que se podía comentar.
+        let mut state = state_with_files(&["a.rs"]);
+        state.current_pr = Some(291);
+        state.pr_summary = "PR #291: rebranding · ✗ CI (2 fallan)".into();
+
+        let text = super::draw::tests::screen(&state, 100, 20);
+
+        assert!(text.contains("Deja un comentario"), "{text}");
+        assert!(text.contains("Aprobar (y)"), "y los botones que lo mandan: {text}");
+    }
+
+    #[test]
+    fn the_pr_has_the_same_three_buttons_as_the_desktop() {
+        // Enviar comentario, Aprobar y Pedir cambios: en el escritorio son
+        // botones bajo la caja, no una lista de teclas en un título.
+        let state = ReviewState::new("/repo".to_string());
+
+        let labels: Vec<String> = super::rows::pr_buttons()
+            .into_iter()
+            .map(|(label, key, _)| format!("{label} ({key})"))
+            .collect();
+
+        assert_eq!(labels, vec!["Enviar comentario (a)", "Aprobar (y)", "Pedir cambios (n)"]);
+        assert_eq!(super::rows::pr_buttons().len(), super::rows::button_ranges().len());
+        let _ = state;
+    }
+
+    #[test]
+    fn clicking_a_button_does_what_its_key_does() {
+        // Los botones se miden como se pintan, igual que los chips: si no, un
+        // clic manda la acción del de al lado, y una es aprobar un PR.
+        let mut state = state_with_files(&["a.rs"]);
+        state.current_pr = Some(291);
+        let ranges = super::rows::button_ranges();
+        let approve = ranges[1].0;
+
+        let key = state.button_key_at(click(approve, 19), 100, 20);
+
+        assert_eq!(key, Some('y'), "el segundo botón es Aprobar");
+        assert_eq!(state.button_key_at(click(approve, 5), 100, 20), None, "arriba no hay botones");
+    }
+
+    #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there
         // would duplicate the work, the billing and the output.

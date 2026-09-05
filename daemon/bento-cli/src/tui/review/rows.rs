@@ -208,3 +208,40 @@ pub(super) fn tab_ranges() -> Vec<(u16, u16, char)> {
         })
         .collect()
 }
+
+/// Los tres botones del PR, con su tecla y su color: los mismos que el
+/// escritorio pone bajo la caja de comentario.
+pub(super) fn pr_buttons() -> Vec<(&'static str, char, Color)> {
+    vec![
+        ("Enviar comentario", 'a', Color::Indexed(4)),
+        ("Aprobar", 'y', Color::Green),
+        ("Pedir cambios", 'n', Color::Red),
+    ]
+}
+
+/// Dónde empieza y acaba cada uno, y qué tecla pide.
+pub(super) fn button_ranges() -> Vec<(u16, u16, char)> {
+    let mut left = 0u16;
+    pr_buttons()
+        .into_iter()
+        .map(|(label, key, _)| {
+            let width = label.chars().count() as u16 + 6;
+            let range = (left, left + width, key);
+            left += width + 1;
+            range
+        })
+        .collect()
+}
+
+pub(super) fn buttons_line() -> Line<'static> {
+    let spans = pr_buttons()
+        .into_iter()
+        .flat_map(|(label, key, color)| {
+            [
+                Span::styled(format!(" {label} ({key}) "), Style::new().fg(color).bg(Color::Indexed(236))),
+                Span::raw(" "),
+            ]
+        })
+        .collect::<Vec<_>>();
+    Line::from(spans)
+}

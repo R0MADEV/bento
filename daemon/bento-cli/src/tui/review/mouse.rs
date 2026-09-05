@@ -67,6 +67,22 @@ impl ReviewState {
         Rect::new(sidebar_width, 0, width, height)
     }
 
+    /// La tecla que pide un clic en los botones del PR, si cayó en uno. Se
+    /// miden como se pintan: si no, un clic manda la acción del de al lado, y
+    /// una de ellas es aprobar un PR.
+    pub(in crate::tui) fn button_key_at(&self, mouse: MouseEvent, _total: u16, height: u16) -> Option<char> {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) || self.current_pr.is_none() {
+            return None;
+        }
+        if mouse.row + 1 != height {
+            return None;
+        }
+        super::rows::button_ranges()
+            .into_iter()
+            .find(|(start, end, _)| mouse.column >= *start && mouse.column < *end)
+            .map(|(_, _, key)| key)
+    }
+
     /// La tecla que pide un clic sobre las opciones del raíl, si cayó en una.
     pub(in crate::tui) fn header_key_at(&self, mouse: MouseEvent, sidebar_width: u16) -> Option<crossterm::event::KeyCode> {
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) || mouse.column >= sidebar_width {
@@ -153,6 +169,10 @@ impl ReviewMouse<'_> {
             return;
         }
         if self.drawer(review, mouse) {
+            return;
+        }
+        if let Some(key) = review.button_key_at(mouse, self.total, self.height) {
+            review.handle_event(Event::Key(crossterm::event::KeyCode::Char(key).into())).await;
             return;
         }
         // Las opciones del raíl llevan su tecla escrita ("Agente: claude (g)"):

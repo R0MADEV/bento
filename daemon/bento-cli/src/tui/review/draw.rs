@@ -81,7 +81,27 @@ fn draw_browse(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: 
     // contexto, así que al abrir el buscador las teclas se iban a un campo
     // invisible: ni cursor, ni caja, ni las flechas moviendo nada. Se ve
     // exactamente igual que un panel colgado.
-    if let Some(label) = browse_input_label(review) {
+    // El PR abierto tiene su caja aunque no estés escribiendo todavía: la de
+    // abajo del escritorio, con sus botones convertidos en teclas.
+    // Con un PR abierto, los botones se llevan la última línea: son los del
+    // escritorio, con su tecla escrita y pulsables como todo lo demás.
+    let [bottom, buttons] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(u16::from(review.current_pr.is_some())),
+    ])
+    .areas(bottom);
+    if review.current_pr.is_some() {
+        frame.render_widget(Paragraph::new(super::rows::buttons_line()), buttons);
+    }
+    let Some(label) = browse_input_label(review) else {
+        if review.current_pr.is_some() {
+            let waiting = Paragraph::new(Line::from("Deja un comentario de revisión en el PR…").style(DIM))
+                .block(pane_block("Comentario de revisión (m para la review entera)"));
+            frame.render_widget(waiting, bottom);
+        }
+        return;
+    };
+    {
         let input = Paragraph::new(review.input.as_str())
             .block(pane_block(label).border_style(FOCUSED));
         frame.render_widget(input, bottom);
@@ -307,13 +327,14 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
 
 
 /// Qué cuadro está abierto en la vista principal, si hay alguno.
-/// Las líneas que se lleva el cuadro de texto, ninguna si no hay ninguno
-/// abierto. El panel se dibuja en lo que queda.
+/// Las líneas que se lleva el cuadro de texto. Con un PR abierto está puesto
+/// desde el principio, como la caja de comentario del escritorio: si sólo
+/// apareciera al pulsar, no habría forma de saber que se puede comentar.
 pub(super) fn input_height(review: &ReviewState) -> u16 {
-    match browse_input_label(review).is_some() {
-        true => 3,
-        false => 0,
-    }
+    let box_lines = u16::from(browse_input_label(review).is_some() || review.current_pr.is_some());
+    // Y una línea más para los botones, que sólo tiene el PR.
+    let buttons = u16::from(review.current_pr.is_some());
+    box_lines * 3 + buttons
 }
 
 /// Qué dice el cuadro de texto abierto. Sin él, las teclas se van a un campo
