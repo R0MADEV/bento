@@ -36,7 +36,6 @@ use bento_review::agents::AGENTS;
 
 enum ReviewView {
     Browse,
-    FileDetail,
     PrDetail,
 }
 
@@ -123,7 +122,12 @@ pub(super) struct ReviewState {
     sidebar_tab: SidebarTab,
 
     files: Vec<Value>,
+    /// La fila marcada del panel, contando los ficheros y las líneas de los
+    /// diffs desplegados: se navega por una sola lista, como en el escritorio.
     files_selected: usize,
+    /// El diff de cada fichero abierto, por ruta. Varios a la vez, que es lo
+    /// que permite comparar dos sitios de un cambio sin ir y volver.
+    expanded: std::collections::HashMap<String, String>,
     file_filter: FileFilter,
     reviewed: std::collections::HashSet<String>,
 
@@ -208,11 +212,9 @@ pub(super) struct ReviewState {
     /// veces ni dejar de archivarla con un daemon que todavía no lo manda.
     has_document: bool,
 
-    file_diff: String,
     /// El fichero cuyo diff se está mirando: un comentario en línea va contra
     /// él, no contra el que esté seleccionado en la lista.
     current_file: Option<String>,
-    file_scroll: u16,
 }
 
 /// Contra qué se compara al abrir: `origin/<la principal>` si existe, y si no
@@ -248,6 +250,7 @@ impl ReviewState {
             sidebar_tab: SidebarTab::Branches,
             files: Vec::new(),
             files_selected: 0,
+            expanded: std::collections::HashMap::new(),
             file_filter: FileFilter::All,
             reviewed: std::collections::HashSet::new(),
             output: String::new(),
@@ -287,9 +290,7 @@ impl ReviewState {
             checkpoints: Vec::new(),
             checkpoints_selected: 0,
             has_document: false,
-            file_diff: String::new(),
             current_file: None,
-            file_scroll: 0,
         }
     }
 
@@ -460,6 +461,9 @@ impl ReviewState {
         }
         self.files = self.fetch_list(body).await;
         self.files_selected = 0;
+        // Los diffs abiertos son de la comparación anterior: dejarlos ahí
+        // mostraría cambios de otra rama bajo los ficheros de esta.
+        self.expanded.clear();
         // Persistido por proyecto+base en el mismo almacén que los
         // checkpoints: la marca sobrevive al refresco y al reinicio.
         self.reviewed = self
@@ -513,6 +517,7 @@ fn batch_heading(msg: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::visible::PaneRow;
     use crossterm::event::KeyCode;
 
     fn state_with(branches: &[&str], search: &str) -> ReviewState {
@@ -520,6 +525,95 @@ mod tests {
         state.branches = branches.iter().map(|b| b.to_string()).collect();
         state.search = search.to_string();
         state
+    }
+
+    fn state_with_files(paths: &[&str]) -> ReviewState {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.files = paths.iter().map(|p| serde_json::json!({"path": p, "status": "M"})).collect();
+        state
+    }
+
+    #[test]
+    fn a_closed_file_is_one_row_and_an_open_one_carries_its_diff_below() {
+        // El escritorio despliega el diff bajo la fila del fichero; abrirlo no
+        // tapa la lista, que es lo que permite tener dos abiertos y comparar.
+        let mut state = state_with_files(&["a.rs", "b.rs"]);
+        assert_eq!(state.pane_rows().len(), 2, "cerrados, un fichero es una fila");
+
+        state.expanded.insert("a.rs".to_string(), "@@ -1 +1 @@\n+uno\n dos".to_string());
+
+        let rows = state.pane_rows();
+        assert_eq!(rows.len(), 5, "las tres líneas del diff van bajo a.rs");
+        assert!(matches!(rows[0], PaneRow::File(_)));
+        assert!(matches!(&rows[1], PaneRow::Diff { path, .. } if path == "a.rs"));
+        assert!(matches!(rows[4], PaneRow::File(_)), "b.rs sigue debajo, no desaparece");
+    }
+
+    #[test]
+    fn the_cursor_over_a_diff_line_knows_its_file_and_its_line() {
+        // Comentar una línea necesita las dos cosas, y con el diff desplegado
+        // bajo su fichero la fila marcada ya no dice por sí sola de cuál es.
+        let mut state = state_with_files(&["a.rs"]);
+        state.expanded.insert("a.rs".to_string(), "@@ -1,0 +7,1 @@\n+uno".to_string());
+
+        state.files_selected = 2; // la fila del "+uno"
+
+        assert_eq!(state.selected_path().as_deref(), Some("a.rs"));
+        assert_eq!(state.selected_diff_line(), Some(7));
+    }
+
+    #[test]
+    fn the_cursor_over_a_file_row_has_no_line_to_comment() {
+        let state = state_with_files(&["a.rs"]);
+
+        assert_eq!(state.selected_path().as_deref(), Some("a.rs"));
+        assert_eq!(state.selected_diff_line(), None, "la fila del fichero no es una línea del diff");
+    }
+
+    #[tokio::test]
+    async fn enter_closes_a_file_that_was_open_instead_of_reloading_it() {
+        // Un desplegable se cierra con la misma tecla que lo abre; si Enter
+        // volviera a pedir el diff, un fichero abierto no habría forma de
+        // cerrarlo.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+        state.expanded.insert("a.rs".to_string(), "@@ -1 +1 @@\n+uno".to_string());
+
+        state.handle_event(press(KeyCode::Enter)).await;
+
+        assert!(state.expanded.is_empty(), "Enter sobre un fichero abierto lo cierra");
+        assert!(matches!(state.view, ReviewView::Browse), "y no se va a otra pantalla");
+    }
+
+    #[tokio::test]
+    async fn z_collapses_every_open_diff_and_puts_the_cursor_back_on_a_file() {
+        // Con varios diffs abiertos la lista de ficheros se sale de pantalla;
+        // el cursor se quedaba sobre una línea de diff que ya no existe.
+        let mut state = state_with_files(&["a.rs", "b.rs"]);
+        state.focus = Focus::Files;
+        state.expanded.insert("a.rs".to_string(), "@@ -1 +1 @@\n+uno".to_string());
+        state.files_selected = 2;
+
+        state.handle_event(press(KeyCode::Char('z'))).await;
+
+        assert!(state.expanded.is_empty());
+        assert_eq!(state.files_selected, 0, "el cursor vuelve a una fila que existe");
+    }
+
+    #[tokio::test]
+    async fn c_over_a_diff_line_comments_it_instead_of_opening_the_review_context() {
+        // `c` es el contexto de la review en todo el panel; sobre una línea
+        // del diff tiene que ser el comentario de esa línea, que es lo que
+        // hace el escritorio con su botón en la línea.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+        state.current_pr = Some(7);
+        state.expanded.insert("a.rs".to_string(), "@@ -1,0 +7,1 @@\n+uno".to_string());
+        state.files_selected = 2;
+
+        state.handle_event(press(KeyCode::Char('c'))).await;
+
+        assert!(matches!(state.input_purpose, Some(InputPurpose::InlineComment(7))));
     }
 
     #[test]

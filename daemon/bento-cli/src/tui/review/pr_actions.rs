@@ -57,23 +57,25 @@ impl ReviewState {
     /// se puede: las filas de la vista ya no son las del diff, y el comentario
     /// acabaría en otra línea.
     pub(super) fn start_inline_comment(&mut self) {
-        if !self.search.is_empty() {
-            self.pr_status = "quita el filtro (/) para comentar una línea".into();
+        if !self.file_search.is_empty() {
+            self.pr_status = "quita la búsqueda (F3) para comentar una línea".into();
             return;
         }
-        let Some(pr) = self.current_pr else {
+        if self.current_pr.is_none() {
             self.pr_status = "abre antes el PR (p) para comentar en él".into();
             return;
-        };
-        let _ = pr;
-        let rows = super::format::diff_rows(&self.file_diff);
-        match rows.get(self.file_scroll as usize).and_then(|row| row.line) {
+        }
+        let Some(path) = self.selected_path() else { return };
+        // La fila marcada puede ser la del fichero, y entonces no hay línea a
+        // la que anclar el comentario.
+        match self.selected_diff_line() {
             Some(line) => {
+                self.current_file = Some(path);
                 self.input_purpose = Some(super::InputPurpose::InlineComment(line));
                 self.input.clear();
                 self.pr_status = format!("comentando la línea {line}");
             }
-            None => self.pr_status = "esa línea no existe en la versión nueva".into(),
+            None => self.pr_status = "marca una línea del diff (Enter abre el fichero)".into(),
         }
     }
 

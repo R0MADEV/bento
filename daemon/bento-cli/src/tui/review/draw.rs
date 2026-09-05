@@ -7,16 +7,16 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use serde_json::Value;
 
-use super::format::{checkpoint_row, diff_rows, short_path, DiffKind};
+use super::format::{checkpoint_row, short_path, DiffKind};
 use super::super::drawer::{Drawer, History};
 use super::super::pane::Pane;
 use super::super::sidebar::{ItemStatus, Sidebar, SidebarItem};
+use super::visible::PaneRow;
 use super::{Focus, InputPurpose, ReviewState, ReviewView, SidebarTab};
 
 pub(crate) fn draw(frame: &mut ratatui::Frame, review: &ReviewState, sidebar_width: u16, resizing: bool) {
     match review.view {
         ReviewView::Browse => draw_browse(frame, review, sidebar_width, resizing),
-        ReviewView::FileDetail => draw_file_detail(frame, review),
         ReviewView::PrDetail => draw_pr_detail(frame, review),
     }
 }
@@ -218,23 +218,13 @@ fn on_off(v: bool) -> &'static str {
 
 fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui::layout::Rect, resizing: bool) {
     let visible = review.visible_files();
-    let items: Vec<ListItem> = if visible.is_empty() {
-        vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))]
-    } else {
-        visible
-            .iter()
-            .map(|f| {
-                let status = f.get("status").and_then(Value::as_str).unwrap_or("?");
-                let path = f.get("path").and_then(Value::as_str).unwrap_or("");
-                let added = f.get("added").and_then(Value::as_i64).unwrap_or(0);
-                let deleted = f.get("deleted").and_then(Value::as_i64).unwrap_or(0);
-                let checkbox = if review.reviewed.contains(path) { "[x]" } else { "[ ]" };
-                ListItem::new(format!("{checkbox} {status}  {path}  +{added}/-{deleted}"))
-            })
-            .collect()
+    let rows = review.pane_rows();
+    let items: Vec<ListItem> = match rows.is_empty() {
+        true => vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))],
+        false => rows.iter().map(|row| pane_row_item(review, row)).collect(),
     };
     let mut state = ListState::default();
-    if !visible.is_empty() {
+    if !rows.is_empty() {
         state.select(Some(review.files_selected));
     }
     let inner = Pane {
@@ -246,7 +236,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         // mover la selección.
         hint: match resizing {
             true => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
-            false => "F3 buscar · f estado · espacio marcar · Enter diff · r correr · h reviews · s tamaño",
+            false => "Enter despliega el diff · z todos · espacio marcar · c comentar línea · f estado · F3 buscar",
         },
         focused: matches!(review.focus, Focus::Files),
     }
@@ -256,25 +246,14 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
-fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
-    let hint = match review.pr_status.is_empty() {
-        true => "↑/↓ mover · c comentar la línea marcada · Esc volver",
-        false => review.pr_status.as_str(),
-    };
-    let inner = Pane { title: "", hint, focused: true }.render(frame, frame.area());
-    // Con color y número de línea, como el panel del escritorio: en un diff a
-    // un solo color hay que leer el primer carácter de cada línea para saber
-    // qué pasó ahí.
-    //
-    // La primera fila visible lleva marca: es la que recibe el comentario, y
-    // sin verla no se sabe sobre cuál se está escribiendo.
-    let marked: Vec<Line> = diff_rows(&review.filtered(&review.file_diff))
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| {
-            // Fondo tenue además del color de letra, como el panel: es lo que
-            // deja ver de un vistazo dónde empieza y acaba un bloque añadido
-            // sin leer el primer carácter de cada línea.
+/// Pinta una fila: un fichero, o una línea del diff del que tenga abierto.
+/// El diff va sangrado y con su número de línea, como el desplegable del
+/// escritorio; con color y fondo porque a un solo color hay que leer el primer
+/// carácter de cada línea para saber qué pasó ahí.
+fn pane_row_item<'a>(review: &ReviewState, row: &'a PaneRow<'a>) -> ListItem<'a> {
+    let file = match row {
+        PaneRow::File(file) => file,
+        PaneRow::Diff { row, .. } => {
             let style = match row.kind {
                 DiffKind::Added => Style::new().fg(Color::Green).bg(Color::Indexed(22)),
                 DiffKind::Removed => Style::new().fg(Color::Red).bg(Color::Indexed(52)),
@@ -282,28 +261,25 @@ fn draw_file_detail(frame: &mut ratatui::Frame, review: &ReviewState) {
                 DiffKind::Context => Style::default(),
             };
             let gutter = match row.line {
-                Some(line) => format!("{line:>5} "),
-                None => "      ".to_string(),
+                Some(line) => format!("    {line:>5} "),
+                None => "          ".to_string(),
             };
-            let marker = match index == review.file_scroll as usize {
-                true => Span::styled("▸ ", FOCUSED),
-                false => Span::raw("  "),
-            };
-            Line::from(vec![marker, Span::styled(gutter, DIM), Span::styled(row.text, style)])
-        })
-        .collect();
-    let paragraph = Paragraph::new(marked)
-        .wrap(Wrap { trim: false })
-        .scroll((review.file_scroll, 0));
-    // Escribiendo el comentario, el cuadro va debajo del diff: sin él se
-    // escribe a ciegas.
-    let Some(label) = pr_input_label(review) else {
-        frame.render_widget(paragraph, inner);
-        return;
+            return ListItem::new(Line::from(vec![
+                Span::styled(gutter, DIM),
+                Span::styled(row.text.clone(), style),
+            ]));
+        }
     };
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
-    frame.render_widget(paragraph, chunks[0]);
-    frame.render_widget(Paragraph::new(format!("{}▏", review.input)).block(pane_block(label)), chunks[1]);
+    let status = file.get("status").and_then(Value::as_str).unwrap_or("?");
+    let path = file.get("path").and_then(Value::as_str).unwrap_or("");
+    let added = file.get("added").and_then(Value::as_i64).unwrap_or(0);
+    let deleted = file.get("deleted").and_then(Value::as_i64).unwrap_or(0);
+    let checkbox = if review.reviewed.contains(path) { "[x]" } else { "[ ]" };
+    // El triángulo dice si el diff está desplegado, que es lo único que
+    // distingue una fila abierta de una cerrada cuando el diff queda fuera de
+    // pantalla.
+    let caret = if review.is_expanded(path) { "▾" } else { "▸" };
+    ListItem::new(format!("{caret} {checkbox} {status}  {path}  +{added}/-{deleted}"))
 }
 
 fn draw_pr_detail(frame: &mut ratatui::Frame, review: &ReviewState) {

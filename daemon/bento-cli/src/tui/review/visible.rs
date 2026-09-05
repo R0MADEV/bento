@@ -27,7 +27,50 @@ impl ReviewState {
     }
 }
 
+/// Una fila de lo que se ve en el panel: un fichero, o una línea del diff de
+/// uno desplegado. El escritorio despliega el diff bajo su fichero y lo navegas
+/// todo junto; esta es esa misma lista.
+pub(super) enum PaneRow<'a> {
+    File(&'a Value),
+    Diff { path: String, row: super::format::DiffRow },
+}
+
 impl ReviewState {
+    /// Los ficheros que se ven, con el diff de los abiertos bajo cada uno.
+    pub(super) fn pane_rows(&self) -> Vec<PaneRow<'_>> {
+        let mut rows = Vec::new();
+        for file in self.visible_files() {
+            rows.push(PaneRow::File(file));
+            let Some(path) = file.get("path").and_then(Value::as_str) else { continue };
+            let Some(diff) = self.expanded.get(path) else { continue };
+            for row in super::format::diff_rows(&self.filtered(diff)) {
+                rows.push(PaneRow::Diff { path: path.to_string(), row });
+            }
+        }
+        rows
+    }
+
+    /// Si el diff de un fichero está desplegado bajo su fila.
+    pub(super) fn is_expanded(&self, path: &str) -> bool {
+        self.expanded.contains_key(path)
+    }
+
+    /// El fichero de la fila marcada, esté marcada su fila o una de su diff.
+    pub(super) fn selected_path(&self) -> Option<String> {
+        match self.pane_rows().get(self.files_selected)? {
+            PaneRow::File(file) => file.get("path").and_then(Value::as_str).map(String::from),
+            PaneRow::Diff { path, .. } => Some(path.clone()),
+        }
+    }
+
+    /// La línea del fichero nuevo bajo el cursor, si está sobre una del diff.
+    pub(super) fn selected_diff_line(&self) -> Option<u64> {
+        match self.pane_rows().get(self.files_selected)? {
+            PaneRow::Diff { row, .. } => row.line,
+            PaneRow::File(_) => None,
+        }
+    }
+
     /// Fire-and-forget: guarda la lista de revisados para este proyecto+base.
     pub(in crate::tui) fn header_lines(&self) -> u16 {
         // The width only affects how the project path is shortened, never how

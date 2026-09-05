@@ -34,7 +34,6 @@ impl ReviewState {
         }
         match self.view {
             ReviewView::Browse => self.handle_browse_key(key.code).await,
-            ReviewView::FileDetail => self.handle_file_detail_key(key.code),
             ReviewView::PrDetail => self.handle_pr_detail_key(key.code),
         }
     }
@@ -79,6 +78,12 @@ impl ReviewState {
             KeyCode::PageUp => { self.scroll = self.scroll.saturating_sub(10); false }
             KeyCode::PageDown => { self.scroll = self.scroll.saturating_add(10); false }
             KeyCode::Char('c') if self.running => { self.cancel_run(); false }
+            // Sobre una línea del diff, `c` la comenta; el contexto de la
+            // review se sigue escribiendo con `c` desde cualquier otro sitio.
+            KeyCode::Char('c') if self.selected_diff_line().is_some() => {
+                self.start_inline_comment();
+                false
+            }
             KeyCode::Char('c') => {
                 self.input_purpose = Some(InputPurpose::Context);
                 self.input = self.context.clone();
@@ -87,7 +92,7 @@ impl ReviewState {
             KeyCode::Char('o') => { self.request_sidebar_tab(SidebarTab::Projects); false }
             KeyCode::Char('b') => { self.request_sidebar_tab(SidebarTab::Branches); false }
             KeyCode::Char('p') => { self.request_sidebar_tab(SidebarTab::Prs); false }
-            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') => {
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') | KeyCode::Char('z') => {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
                     Focus::Files => self.handle_files_key(code).await,
@@ -241,15 +246,17 @@ impl ReviewState {
     }
 
     async fn handle_files_key(&mut self, code: KeyCode) -> bool {
-        let visible_len = self.visible_files().len();
+        // Se navega por una sola lista: los ficheros y, bajo cada uno abierto,
+        // las líneas de su diff.
+        let rows = self.pane_rows().len();
         match code {
             KeyCode::Up => { self.files_selected = self.files_selected.saturating_sub(1); false }
             KeyCode::Down => {
-                if self.files_selected + 1 < visible_len { self.files_selected += 1; }
+                if self.files_selected + 1 < rows { self.files_selected += 1; }
                 false
             }
             KeyCode::Char(' ') => {
-                if let Some(path) = self.visible_files().get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str).map(String::from) {
+                if let Some(path) = self.selected_path() {
                     if !self.reviewed.remove(&path) { self.reviewed.insert(path); }
                     self.save_reviewed();
                 }
@@ -260,21 +267,16 @@ impl ReviewState {
                 self.files_selected = 0;
                 false
             }
+            // Colapsar todo de una: con varios diffs abiertos, la lista de
+            // ficheros se pierde de vista. El escritorio tiene sus dos botones
+            // de expandir y colapsar todo.
+            KeyCode::Char('z') => {
+                self.toggle_all_files().await;
+                false
+            }
             KeyCode::Enter => {
-                if let Some(path) = self.visible_files().get(self.files_selected).and_then(|f| f.get("path")).and_then(Value::as_str).map(String::from) {
-                    let mut body = json!({
-                        "id": "1", "cmd": "review.file", "cwd": self.cwd, "base": self.base, "path": path,
-                    });
-                    // Con rama elegida, el diff es el suyo; sin ella, el del
-                    // árbol de trabajo. Sin mandarla se abría el segundo.
-                    if let Some(branch) = &self.branch {
-                        body["branch"] = json!(branch);
-                    }
-                    let data = crate::request_data(body).await;
-                    self.file_diff = data.ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
-                    self.current_file = Some(path);
-                    self.file_scroll = 0;
-                    self.view = ReviewView::FileDetail;
+                if let Some(path) = self.selected_path() {
+                    self.toggle_file(path).await;
                 }
                 false
             }
@@ -282,26 +284,43 @@ impl ReviewState {
         }
     }
 
-    fn handle_file_detail_key(&mut self, code: KeyCode) -> bool {
-        if matches!(code, KeyCode::F(3) | KeyCode::Char('/')) {
-            self.start_search();
-            return false;
+    /// Cierra todos los diffs abiertos, o abre los de los ficheros que se
+    /// ven si no había ninguno.
+    async fn toggle_all_files(&mut self) {
+        if !self.expanded.is_empty() {
+            self.expanded.clear();
+            self.files_selected = 0;
+            return;
         }
-        match code {
-            KeyCode::Up => { self.file_scroll = self.file_scroll.saturating_sub(1); false }
-            KeyCode::Down => { self.file_scroll = self.file_scroll.saturating_add(1); false }
-            KeyCode::PageUp => { self.file_scroll = self.file_scroll.saturating_sub(10); false }
-            KeyCode::PageDown => { self.file_scroll = self.file_scroll.saturating_add(10); false }
-            // Comentar la línea marcada, que es lo que el escritorio sabía
-            // hacer y esta no.
-            KeyCode::Char('c') => { self.start_inline_comment(); false }
-            KeyCode::Tab => true,
-            KeyCode::Char('q') | KeyCode::Esc => {
-                self.view = ReviewView::Browse;
-                false
-            }
-            _ => false,
+        let paths: Vec<String> = self
+            .visible_files()
+            .iter()
+            .filter_map(|f| f.get("path").and_then(Value::as_str).map(String::from))
+            .collect();
+        for path in paths {
+            self.toggle_file(path).await;
         }
+    }
+
+    /// Abre el diff de un fichero bajo su fila, o lo cierra si ya lo estaba.
+    /// El escritorio deja tener varios abiertos a la vez; por eso es un mapa y
+    /// no un fichero "actual".
+    async fn toggle_file(&mut self, path: String) {
+        if self.expanded.remove(&path).is_some() {
+            return;
+        }
+        let mut body = json!({
+            "id": "1", "cmd": "review.file", "cwd": self.cwd, "base": self.base, "path": path,
+        });
+        // Con rama elegida, el diff es el suyo; sin ella, el del árbol de
+        // trabajo. Sin mandarla se abría el segundo.
+        if let Some(branch) = &self.branch {
+            body["branch"] = json!(branch);
+        }
+        let data = crate::request_data(body).await;
+        let diff = data.ok().and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "(no se pudo cargar el diff)".to_string());
+        self.expanded.insert(path, diff);
     }
 
     fn handle_pr_detail_key(&mut self, code: KeyCode) -> bool {
