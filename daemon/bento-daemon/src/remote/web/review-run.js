@@ -393,7 +393,7 @@ async function openFileDiff(path, base){
     const r=await fetch('/api/review/file'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)
       +'&path='+encodeURIComponent(path)+(branch?'&branch='+encodeURIComponent(branch):''));
     const text=await r.text();
-    document.getElementById('rv-diff-content').innerHTML=r.ok ? renderDiff(text) : `<span class="dl dl-del">${esc(text)}</span>`;
+    document.getElementById('rv-diff-content').innerHTML=r.ok ? renderDiff(text, path) : `<span class="dl dl-del">${esc(text)}</span>`;
   }catch(e){
     document.getElementById('rv-diff-content').innerHTML='<span class="dl dl-del">Error de conexión.</span>';
   }

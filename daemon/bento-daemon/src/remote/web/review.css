@@ -180,3 +180,11 @@
 .pr-line-comment-body { margin: 4px 0 6px; font-size: 13px; white-space: pre-wrap; }
 .pr-line-comment-actions { display: flex; gap: 8px; }
 .pr-line-comment-actions button { background: var(--s); border: 1px solid var(--b); border-radius: 6px; color: var(--dim); font-size: 12px; padding: 4px 10px; }
+
+/* Los mismos colores que el escritorio, para que el código se lea igual. */
+.sh-keyword { color: #bb9af7; }
+.sh-string { color: #9ece6a; }
+.sh-comment { color: #565f89; font-style: italic; }
+.sh-number { color: #ff9e64; }
+/* El número de línea: tenue y sin poder seleccionarse, que estorba al copiar. */
+.dl-no { display: inline-block; width: 42px; margin-right: 8px; text-align: right; color: var(--dim); opacity: .5; user-select: none; }

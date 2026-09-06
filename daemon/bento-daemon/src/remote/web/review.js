@@ -155,13 +155,71 @@ function fmtDate(iso){
   return d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
 }
 
-function renderDiff(text){
-  return text.split('\n').map(line=>{
-    if(line.startsWith('+++') || line.startsWith('---')) return `<span class="dl dl-hdr">${esc(line)}</span>`;
-    if(line.startsWith('+')) return `<span class="dl dl-add">${esc(line)}</span>`;
-    if(line.startsWith('-')) return `<span class="dl dl-del">${esc(line)}</span>`;
-    if(line.startsWith('@@')) return `<span class="dl dl-hunk">${esc(line)}</span>`;
-    return `<span class="dl dl-ctx">${esc(line)}</span>`;
+// ── Resaltado ────────────────────────────────────────────────────────────────
+// Las mismas palabras que el escritorio y la CLI, para que un fichero se lea
+// igual en los tres. Aquí no hay dónde meter una librería: los ficheros del
+// teléfono van embebidos en el daemon y sin empaquetador.
+const KW={
+  ts:'const let var function return if else for while class import export from default async await new this typeof null undefined true false void type interface enum extends implements public private protected readonly static abstract switch case break continue try catch finally throw delete in of instanceof',
+  rs:'fn let mut const struct enum impl trait use pub mod return if else for while match Some None Ok Err true false self Self super crate async await move where type ref loop break continue',
+  py:'def class return if else elif for while import from as with in not and or is None True False pass break continue try except finally raise yield async await lambda global nonlocal',
+  go:'func var const return if else for range go select case default break continue type struct interface import package nil true false defer make new len cap chan map switch',
+};
+const EXT_LANG={ts:'ts',tsx:'ts',js:'ts',jsx:'ts',mjs:'ts',cjs:'ts',rs:'rs',py:'py',go:'go'};
+
+function highlight(code, path){
+  const ext=(path||'').split('.').pop().toLowerCase();
+  const lang=EXT_LANG[ext];
+  if(!lang)return esc(code);
+  const words=new Set(KW[lang].split(' '));
+  const comment=lang==='py'?'#':'//';
+  let out='',i=0;
+  while(i<code.length){
+    if(code.startsWith(comment,i)){out+=`<span class="sh-comment">${esc(code.slice(i))}</span>`;break}
+    const c=code[i];
+    if(c==='"'||c==="'"||c==='`'){
+      let j=i+1;
+      while(j<code.length){ if(code[j]==='\\'){j+=2;continue} if(code[j]===c){j++;break} j++ }
+      out+=`<span class="sh-string">${esc(code.slice(i,j))}</span>`;i=j;continue;
+    }
+    if(c>='0'&&c<='9'){
+      let j=i;while(j<code.length&&/[\w.]/.test(code[j]))j++;
+      out+=`<span class="sh-number">${esc(code.slice(i,j))}</span>`;i=j;continue;
+    }
+    if(/[A-Za-z_$]/.test(c)){
+      let j=i;while(j<code.length&&/[\w$]/.test(code[j]))j++;
+      const word=code.slice(i,j);
+      out+=words.has(word)?`<span class="sh-keyword">${esc(word)}</span>`:esc(word);
+      i=j;continue;
+    }
+    out+=esc(c);i++;
+  }
+  return out;
+}
+
+// El fichero al que pertenece cada línea del diff, para saber de qué lenguaje
+// es. Un diff de varios ficheros los va anunciando con `diff --git`.
+function renderDiff(text, path){
+  let file=path||'',line=0,inHunk=false;
+  return text.split('\n').map(raw=>{
+    const match=raw.match(/^diff --git .* b\/(.+)$/);
+    if(match){file=match[1];inHunk=false;return `<span class="dl dl-hdr">${esc(raw)}</span>`}
+    if(raw.startsWith('+++')||raw.startsWith('---'))return `<span class="dl dl-hdr">${esc(raw)}</span>`;
+    if(raw.startsWith('@@')){
+      const at=raw.match(/\+(\d+)/);
+      line=at?parseInt(at[1],10):0;inHunk=true;
+      return `<span class="dl dl-hunk">${esc(raw)}</span>`;
+    }
+    // El número de la línea nueva, como en el escritorio: sin él no se sabe de
+    // qué línea hablar al comentar.
+    const no=(inHunk&&!raw.startsWith('-'))?String(line++):'';
+    const gutter=`<span class="dl-no">${no}</span>`;
+    if(!inHunk)return `<span class="dl dl-ctx">${gutter}${esc(raw)}</span>`;
+    const sign=raw.slice(0,1),code=raw.slice(1);
+    const body=`${esc(sign)}${highlight(code,file)}`;
+    if(raw.startsWith('+'))return `<span class="dl dl-add">${gutter}${body}</span>`;
+    if(raw.startsWith('-'))return `<span class="dl dl-del">${gutter}${body}</span>`;
+    return `<span class="dl dl-ctx">${gutter}${body}</span>`;
   }).join('');
 }
 
