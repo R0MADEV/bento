@@ -208,9 +208,6 @@ impl ReviewState {
 /// prestado en vez de copiado: el raíl es el mismo componente en las dos
 /// pestañas y tiene que plegarse y arrastrarse igual.
 pub(in crate::tui) struct ReviewMouse<'a> {
-    /// La rueda con su cuenta pendiente, prestada del bucle: si se hiciera una
-    /// por evento, nunca acumularía nada.
-    pub(in crate::tui) wheel: &'a mut crate::tui::rail::Wheel,
     pub(in crate::tui) width: &'a mut u16,
     pub(in crate::tui) restored: &'a mut u16,
     pub(in crate::tui) dragging_rail: &'a mut bool,
@@ -221,15 +218,8 @@ pub(in crate::tui) struct ReviewMouse<'a> {
 
 impl ReviewMouse<'_> {
     pub(in crate::tui) async fn handle(mut self, review: &mut ReviewState, mouse: MouseEvent) {
-        // La rueda la recibe la aplicación mientras el ratón está capturado,
-        // así que sin atenderla aquí girarla no mueve nada.
-        if let Some(step) = self.wheel.step(mouse) {
-            review.scroll_wheel(mouse.column, *self.width, self.total, step);
-            return;
-        }
-        if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
-            return;
-        }
+        // La rueda no llega aquí: el bucle junta la ráfaga entera antes de
+        // repintar, que si no un gesto de trackpad son treinta repintados.
         if self.drawer(review, mouse) {
             return;
         }

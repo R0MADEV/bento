@@ -50,6 +50,36 @@ fn is_wheel(mouse: crossterm::event::MouseEvent) -> bool {
     matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
 }
 
+/// El sentido de la rueda, +1 hacia abajo.
+fn wheel_direction(mouse: crossterm::event::MouseEvent) -> i16 {
+    match mouse.kind {
+        MouseEventKind::ScrollUp => -1,
+        _ => 1,
+    }
+}
+
+/// Suma los eventos de rueda que ya están esperando en la cola, para que un
+/// gesto de trackpad sea un movimiento y un repintado en vez de treinta. Los
+/// que no son de rueda se devuelven para atenderlos después: tragárselos sería
+/// perder una tecla.
+async fn drain_wheel(
+    events: &mut EventStream,
+    first: crossterm::event::MouseEvent,
+) -> (i16, Option<Event>) {
+    let mut total = wheel_direction(first);
+    loop {
+        // Sin esperar: sólo lo que ya ha llegado.
+        let Ok(Some(Ok(event))) = tokio::time::timeout(std::time::Duration::ZERO, events.next()).await
+        else {
+            return (total, None);
+        };
+        match event {
+            Event::Mouse(mouse) if is_wheel(mouse) => total += wheel_direction(mouse),
+            other => return (total, Some(other)),
+        }
+    }
+}
+
 async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()> {
     let mut events = EventStream::new();
     let mut wheel = rail::Wheel::default();
@@ -143,7 +173,8 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             // La rueda recorre la lista: el raíl sólo atiende
                             // clics, así que girarla no hacía nada.
                             Event::Mouse(mouse) if is_wheel(mouse) => {
-                                if let Some(step) = wheel.step(mouse) {
+                                let (burst, _) = drain_wheel(&mut events, mouse).await;
+                                if let Some(step) = wheel.add(burst) {
                                     selected = terminals::scrolled(selected, items.len(), step);
                                 }
                             }
@@ -352,7 +383,8 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             // lo mismo que ⇧RePág: mirar lo que ya salió. El
                             // scrollback cuenta al revés, hacia atrás.
                             Event::Mouse(mouse) if is_wheel(mouse) => {
-                                if let Some(step) = wheel.step(mouse) {
+                                let (burst, _) = drain_wheel(&mut events, mouse).await;
+                                if let Some(step) = wheel.add(burst) {
                                     screen.scroll_back(-i32::from(step));
                                 }
                             }
@@ -403,9 +435,17 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         // Todo el ratón de la review en un sitio: el raíl es
                         // el mismo componente aquí, así que plegar y arrastrar
                         // no pueden depender de qué panel estés mirando.
+                        // La ráfaga de la rueda, sumada antes de repintar.
                         if let Event::Mouse(mouse) = event {
+                            if is_wheel(mouse) {
+                                let (burst, _) = drain_wheel(&mut events, mouse).await;
+                                let total = terminal.size()?.width;
+                                if let Some(step) = wheel.add(burst) {
+                                    review.scroll_wheel(mouse.column, sidebar_width, total, step);
+                                }
+                                continue;
+                            }
                             review::ReviewMouse {
-                                wheel: &mut wheel,
                                 width: &mut sidebar_width,
                                 restored: &mut restored_width,
                                 dragging_rail: &mut dragging_divider,

@@ -85,26 +85,22 @@ pub(super) struct Wheel {
 }
 
 impl Wheel {
-    /// Cuántas filas pide mover este evento, si es que ya llega a una.
-    pub(super) fn step(&mut self, mouse: crossterm::event::MouseEvent) -> Option<i16> {
+    /// Cuántas filas pide mover lo que ha llegado de la rueda: un evento
+    /// suelto o la ráfaga entera de un gesto, ya sumada.
+    pub(super) fn add(&mut self, direction: i16) -> Option<i16> {
         /// Eventos por fila. A uno, un gesto de trackpad se lleva media
-        /// pantalla; a tres se queda corto y hay que insistir. Es el número
+        /// pantalla; a cuatro se queda corto y hay que insistir. Es el número
         /// que hay que tocar si el desplazamiento no se siente bien.
-        const PER_ROW: i16 = 2;
+        const PER_ROW: i16 = 3;
 
-        let direction = match mouse.kind {
-            MouseEventKind::ScrollUp => -1,
-            MouseEventKind::ScrollDown => 1,
-            _ => return None,
-        };
         // Al cambiar de sentido se empieza de cero: lo guardado de bajar
         // restado al subir dejaría el primer roce sin efecto.
-        if self.pending.signum() != direction {
+        if self.pending.signum() != direction.signum() {
             self.pending = 0;
         }
         self.pending += direction;
         if self.pending.abs() < PER_ROW {
-            return Some(0).filter(|_| false);
+            return None;
         }
         let rows = self.pending / PER_ROW;
         self.pending -= rows * PER_ROW;
@@ -155,6 +151,18 @@ pub(super) fn resize_key(key: crossterm::event::KeyEvent, active: bool) -> Optio
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_burst_of_events_is_one_movement() {
+        // El trackpad manda una ráfaga por gesto y cada evento repintaba: se
+        // veía a tirones y bajaba de golpe. Sumada, la ráfaga es un solo
+        // movimiento y un solo repintado.
+        let mut wheel = super::Wheel::default();
+
+        let rows = wheel.add(12);
+
+        assert_eq!(rows, Some(4), "doce eventos seguidos, cuatro filas de una vez");
+    }
     use super::*;
 
     #[test]
@@ -162,27 +170,23 @@ mod tests {
         // Un gesto de trackpad manda decenas de eventos: a una fila cada uno,
         // un roce se lleva media pantalla. Hacen falta unos cuantos para
         // mover una fila, y el resto se guarda para el siguiente.
-        use crossterm::event::{MouseEvent, MouseEventKind};
-        let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
         let mut wheel = super::Wheel::default();
 
-        let moved: i16 = (0..8).filter_map(|_| wheel.step(at(MouseEventKind::ScrollDown))).sum();
+        let moved: i16 = (0..9).filter_map(|_| wheel.add(1)).sum();
 
-        assert_eq!(moved, 4, "ocho eventos, cuatro filas");
+        assert_eq!(moved, 3, "nueve eventos sueltos, tres filas");
     }
 
     #[test]
     fn changing_direction_does_not_carry_the_leftovers() {
         // Lo guardado de bajar no puede restarse al empezar a subir: el
         // primer roce hacia arriba se quedaría quieto.
-        use crossterm::event::{MouseEvent, MouseEventKind};
-        let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
         let mut wheel = super::Wheel::default();
 
-        let _ = wheel.step(at(MouseEventKind::ScrollDown));
-        let up: Vec<i16> = (0..2).filter_map(|_| wheel.step(at(MouseEventKind::ScrollUp))).collect();
+        let _ = wheel.add(1);
+        let up: Vec<i16> = (0..3).filter_map(|_| wheel.add(-1)).collect();
 
-        assert_eq!(up, vec![-1], "los dos primeros hacia arriba mueven una fila");
+        assert_eq!(up, vec![-1], "los tres primeros hacia arriba mueven una fila");
     }
 
     #[test]

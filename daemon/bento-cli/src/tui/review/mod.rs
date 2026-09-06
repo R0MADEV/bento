@@ -1250,12 +1250,10 @@ mod tests {
         let mut restored = 24u16;
         let mut rail_drag = false;
         let mut drawer_drag = false;
-        let mut wheel = crate::tui::rail::Wheel::default();
 
         macro_rules! send {
             ($event:expr) => {
                 super::ReviewMouse {
-                    wheel: &mut wheel,
                     width: &mut width,
                     restored: &mut restored,
                     dragging_rail: &mut rail_drag,
@@ -1299,11 +1297,9 @@ mod tests {
         let mut restored = 24u16;
         let mut rail_drag = false;
         let mut drawer_drag = false;
-        let mut wheel = crate::tui::rail::Wheel::default();
         macro_rules! send {
             ($event:expr) => {
                 super::ReviewMouse {
-                    wheel: &mut wheel,
                     width: &mut width,
                     restored: &mut restored,
                     dragging_rail: &mut rail_drag,
