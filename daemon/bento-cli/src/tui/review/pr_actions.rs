@@ -24,10 +24,11 @@ impl ReviewState {
             .ok()
             .map(|v| format_checks(&v))
             .unwrap_or_default();
-        let inline = crate::request_data(ask("review.pr_review_comments"))
-            .await
-            .ok()
-            .map(|v| format_review_comments(&v))
+        let inline_data = crate::request_data(ask("review.pr_review_comments")).await.ok();
+        let inline = inline_data.as_ref().map(format_review_comments).unwrap_or_default();
+        // Y los mismos sin formatear, para leerlos bajo su línea en el diff.
+        self.inline_comments = inline_data
+            .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
         let header = self.pr_header(pr);
         self.pr_detail = format!("{header}{checks}{inline}\n## Comentarios\n\n{comments}");
@@ -57,6 +58,48 @@ impl ReviewState {
             Some(branch) => format!("PR #{pr}: {title} · {branch} no está en tu copia: haz `git fetch`"),
             None => format!("PR #{pr}: {title} · {ci}"),
         }
+    }
+
+    /// Contesta al comentario marcado. El hilo se seguía en GitHub porque
+    /// aquí sólo se podían poner y leer.
+    pub(super) async fn submit_comment_reply(&mut self, id: u64) {
+        let body = std::mem::take(&mut self.input);
+        let Some(pr) = self.current_pr else { return };
+        let req = json!({
+            "id": "1", "cmd": "review.pr_review_comment_reply", "cwd": self.cwd,
+            "pr": pr, "comment_id": id, "data": body,
+        });
+        self.pr_status = match crate::request_data(req).await {
+            Ok(_) => "respuesta enviada".to_string(),
+            Err(error) => format!("no se pudo responder: {error}"),
+        };
+        self.reload_inline_comments().await;
+    }
+
+    /// Retira el comentario marcado.
+    pub(super) async fn delete_selected_comment(&mut self) {
+        let (Some(pr), Some(id)) = (self.current_pr, self.selected_comment()) else { return };
+        let req = json!({
+            "id": "1", "cmd": "review.pr_review_comment_delete", "cwd": self.cwd,
+            "pr": pr, "comment_id": id,
+        });
+        self.pr_status = match crate::request_data(req).await {
+            Ok(_) => "comentario borrado".to_string(),
+            Err(error) => format!("no se pudo borrar: {error}"),
+        };
+        self.reload_inline_comments().await;
+    }
+
+    /// Los vuelve a pedir: lo que se acaba de escribir o retirar tiene que
+    /// verse en el diff sin volver a abrir el PR.
+    async fn reload_inline_comments(&mut self) {
+        let Some(pr) = self.current_pr else { return };
+        let req = json!({ "id": "1", "cmd": "review.pr_review_comments", "cwd": self.cwd, "pr": pr });
+        self.inline_comments = crate::request_data(req)
+            .await
+            .ok()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
     }
 
     /// La rama de git con la que comparar un PR.

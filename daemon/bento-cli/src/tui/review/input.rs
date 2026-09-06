@@ -317,9 +317,20 @@ impl ReviewState {
                 false
             }
             KeyCode::Enter => {
+                // Sobre un comentario, Enter lo contesta; sobre un fichero,
+                // abre su diff.
+                if let Some(id) = self.selected_comment() {
+                    self.input_purpose = Some(InputPurpose::CommentReply(id));
+                    self.input.clear();
+                    return false;
+                }
                 if let Some(path) = self.selected_path() {
                     self.toggle_file(path).await;
                 }
+                false
+            }
+            KeyCode::Char('d') if self.selected_comment().is_some() => {
+                self.delete_selected_comment().await;
                 false
             }
             _ => false,
@@ -380,6 +391,7 @@ impl ReviewState {
                     }
                     Some(InputPurpose::PrComment) => self.submit_pr_comment().await,
                     Some(InputPurpose::InlineComment(line)) => self.submit_inline_comment(line).await,
+                    Some(InputPurpose::CommentReply(id)) => self.submit_comment_reply(id).await,
                     Some(InputPurpose::PrReview(event)) => self.submit_pr_review(event).await,
                     Some(InputPurpose::Context) => self.context = std::mem::take(&mut self.input),
                     Some(InputPurpose::Search) => {

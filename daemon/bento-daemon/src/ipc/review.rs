@@ -116,6 +116,28 @@ pub(crate) fn dispatch(
             _ => send(fail(&req.id, "cwd, pr and comment_id required".into())),
         },
 
+        // Los comentarios de línea se podían poner y leer, pero no contestar
+        // ni retirar: el hilo se seguía en GitHub.
+        "review.pr_review_comment_reply" => match (&req.cwd, req.pr, req.comment_id, &req.data) {
+            (Some(cwd), Some(pr), Some(id), Some(body)) => {
+                match crate::remote::review::reply_review_comment(cwd, pr, id, body) {
+                    Ok(url) => send(ok(&req.id, json!(url))),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, pr, comment_id and data required".into())),
+        },
+
+        "review.pr_review_comment_delete" => match (&req.cwd, req.pr, req.comment_id) {
+            (Some(cwd), Some(pr), Some(id)) => {
+                match crate::remote::review::delete_review_comment(cwd, pr, id) {
+                    Ok(()) => send(ok(&req.id, Value::Null)),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, pr and comment_id required".into())),
+        },
+
         "review.ask" => match (&req.cwd, &req.question) {
             (Some(cwd), Some(question)) => {
                 let cwd = cwd.clone();

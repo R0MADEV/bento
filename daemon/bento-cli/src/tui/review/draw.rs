@@ -366,6 +366,7 @@ fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
         // El comentario de una línea tiene su caja bajo la línea, dentro del
         // diff: aquí abajo saldría por duplicado.
         Some(InputPurpose::InlineComment(_)) => None,
+        Some(InputPurpose::CommentReply(_)) => Some("Responder al comentario (Enter enviar, Esc cancelar)"),
         None => None,
     }
 }

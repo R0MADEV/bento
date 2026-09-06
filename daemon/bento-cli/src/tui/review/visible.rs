@@ -61,6 +61,8 @@ pub(super) enum PaneRow<'a> {
     File(&'a Value),
     Diff { path: String, row: super::format::DiffRow },
     Split { path: String, row: super::format::SplitRow },
+    /// Un comentario ya puesto, bajo la línea de la que habla.
+    Comment(&'a Value),
 }
 
 impl ReviewState {
@@ -71,7 +73,12 @@ impl ReviewState {
             rows.push(PaneRow::File(file));
             let Some(path) = file.get("path").and_then(Value::as_str) else { continue };
             let Some(diff) = self.expanded.get(path) else { continue };
-            rows.extend(super::rows::diff_pane_rows(self, path, &self.filtered(diff)));
+            for row in super::rows::diff_pane_rows(self, path, &self.filtered(diff)) {
+                let line = row_line(&row);
+                rows.push(row);
+                // Los de esa línea van justo debajo, que es donde se leen.
+                rows.extend(self.comments_on(path, line).map(PaneRow::Comment));
+            }
         }
         rows
     }
@@ -119,11 +126,31 @@ impl ReviewState {
         self.expanded.contains_key(path)
     }
 
+    /// Los comentarios puestos en una línea de un fichero.
+    fn comments_on<'a>(&'a self, path: &'a str, line: Option<u64>) -> impl Iterator<Item = &'a Value> {
+        self.inline_comments.iter().filter(move |c| {
+            let same_file = c.get("path").and_then(Value::as_str) == Some(path);
+            // `line` viene a null cuando la línea ya no está en la versión
+            // nueva; GitHub guarda entonces la que tenía al comentarse.
+            let at = c.get("line").or_else(|| c.get("original_line")).and_then(Value::as_u64);
+            same_file && line.is_some() && at == line
+        })
+    }
+
+    /// El comentario de la fila marcada, para contestarlo o retirarlo.
+    pub(in crate::tui) fn selected_comment(&self) -> Option<u64> {
+        match self.pane_rows().get(self.files_selected)? {
+            PaneRow::Comment(c) => c.get("id").and_then(Value::as_u64),
+            _ => None,
+        }
+    }
+
     /// El fichero de la fila marcada, esté marcada su fila o una de su diff.
     pub(super) fn selected_path(&self) -> Option<String> {
         match self.pane_rows().get(self.files_selected)? {
             PaneRow::File(file) => file.get("path").and_then(Value::as_str).map(String::from),
             PaneRow::Diff { path, .. } | PaneRow::Split { path, .. } => Some(path.clone()),
+            PaneRow::Comment(c) => c.get("path").and_then(Value::as_str).map(String::from),
         }
     }
 
@@ -221,6 +248,6 @@ pub(super) fn row_line(row: &PaneRow<'_>) -> Option<u64> {
     match row {
         PaneRow::Diff { row, .. } => row.line,
         PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
-        PaneRow::File(_) => None,
+        PaneRow::File(_) | PaneRow::Comment(_) => None,
     }
 }

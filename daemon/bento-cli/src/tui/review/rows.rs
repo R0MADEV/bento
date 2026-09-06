@@ -24,7 +24,25 @@ pub(super) fn pane_row_item<'a>(
         PaneRow::File(file) => file_item(review, file),
         PaneRow::Diff { row, .. } => ListItem::new(prefixed(marker, unified_line(row))),
         PaneRow::Split { row, .. } => ListItem::new(prefixed(marker, split_line(row, width))),
+        PaneRow::Comment(comment) => ListItem::new(comment_line(comment)),
     }
+}
+
+/// Un comentario ya puesto: quién y qué, bajo su línea. El cuerpo va en una
+/// sola línea —los saltos se comen la lista— y recortado, que un comentario
+/// largo taparía el diff que explica.
+fn comment_line(comment: &Value) -> Line<'static> {
+    let who = comment
+        .get("user")
+        .and_then(|u| u.get("login"))
+        .and_then(Value::as_str)
+        .unwrap_or("?");
+    let body: String = comment.get("body").and_then(Value::as_str).unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    Line::from(vec![
+        Span::styled("    💬 ", DIM),
+        Span::styled(format!("{who}: "), Style::new().fg(Color::Indexed(4))),
+        Span::styled(fit(&body, 90), DIM),
+    ])
 }
 
 /// La fila con su marca de comentar delante, sin descolocar el resto: el hueco

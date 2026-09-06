@@ -59,6 +59,8 @@ enum InputPurpose {
     PrComment,
     /// Comentando una línea del diff: la del fichero nuevo a la que se ancla.
     InlineComment(u64),
+    /// Contestando a un comentario ya puesto, por su id.
+    CommentReply(u64),
     /// Submitting a PR review: "APPROVE" | "REQUEST_CHANGES" | "COMMENT".
     PrReview(&'static str),
     /// Editing the author context injected into the review prompt — purely
@@ -207,6 +209,9 @@ pub(super) struct ReviewState {
     /// Lo que va en la franja de debajo de los archivos: de qué PR es y cómo
     /// va su CI. En el escritorio es la barra con el título y el `× CI`.
     pr_summary: String,
+    /// Los comentarios de línea del PR abierto, como los devuelve GitHub. Se
+    /// leen bajo la línea de la que hablan, no en una lista aparte.
+    inline_comments: Vec<Value>,
     /// La fila donde empezó un arrastre por el diff: con ella y la marcada
     /// sale el rango que se comenta, como al arrastrar en GitHub.
     drag_anchor: Option<usize>,
@@ -291,6 +296,7 @@ impl ReviewState {
             current_pr: None,
             pr_detail: String::new(),
             pr_summary: String::new(),
+            inline_comments: Vec::new(),
             drag_anchor: None,
             pr_status: String::new(),
             checkpoints: Vec::new(),
@@ -1299,6 +1305,70 @@ mod tests {
 
         assert!(state.loading, "la petición queda en marcha, no esperada");
         assert!(state.expanded.is_empty(), "y los diffs de la comparación anterior se cierran");
+    }
+
+    fn comment(id: u64, path: &str, line: u64, who: &str, body: &str) -> Value {
+        serde_json::json!({
+            "id": id, "path": path, "line": line, "body": body,
+            "user": {"login": who},
+        })
+    }
+
+    #[test]
+    fn a_comment_is_read_under_the_line_it_is_about() {
+        // Se listaban como texto suelto en el cajón, sin ver a qué línea van:
+        // revisar un PR ajeno es leer lo que ya han dicho sobre cada sitio.
+        let mut state = state_with_diff();
+        state.inline_comments = vec![comment(1, "a.rs", 44, "R0MANDEV", "esto sobra")];
+
+        let text = super::draw::tests::screen(&state, 100, 20);
+        let lines: Vec<&str> = text.lines().collect();
+        let at = lines.iter().position(|l| l.contains("+  dos")).expect("la línea 44");
+
+        assert!(lines[at + 1].contains("R0MANDEV"), "{text}");
+        assert!(lines[at + 1].contains("esto sobra"), "{text}");
+    }
+
+    #[test]
+    fn a_comment_of_another_file_does_not_leak_into_this_one() {
+        let mut state = state_with_diff();
+        state.inline_comments = vec![comment(1, "otro.rs", 44, "R0MANDEV", "de otro fichero")];
+
+        let text = super::draw::tests::screen(&state, 100, 20);
+
+        assert!(!text.contains("de otro fichero"), "{text}");
+    }
+
+    #[test]
+    fn the_marked_comment_is_the_one_that_gets_answered() {
+        // Con varios en la misma línea, hay que saber a cuál contestas.
+        let mut state = state_with_diff();
+        state.inline_comments = vec![
+            comment(7, "a.rs", 43, "uno", "primero"),
+            comment(9, "a.rs", 43, "dos", "segundo"),
+        ];
+        // Fila 2 la línea 43, y sus comentarios debajo en orden.
+        state.files_selected = 3;
+        assert_eq!(state.selected_comment(), Some(7));
+
+        state.files_selected = 4;
+        assert_eq!(state.selected_comment(), Some(9));
+    }
+
+    #[tokio::test]
+    async fn enter_on_a_comment_answers_it_instead_of_folding_the_file() {
+        // Enter despliega ficheros; sobre un comentario tiene que contestarlo,
+        // que es lo que se hace con un comentario ajeno.
+        let mut state = state_with_diff();
+        state.focus = Focus::Files;
+        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MANDEV", "esto sobra")];
+        state.files_selected = 3;
+
+        state.handle_event(press(KeyCode::Enter)).await;
+
+        assert!(matches!(state.input_purpose, Some(InputPurpose::CommentReply(7))));
+        let text = super::draw::tests::screen(&state, 100, 20);
+        assert!(text.contains("Responder al comentario"), "y su cuadro lo dice: {text}");
     }
 
     #[test]
