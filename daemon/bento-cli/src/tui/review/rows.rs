@@ -6,6 +6,7 @@ use ratatui::widgets::ListItem;
 use serde_json::Value;
 
 use super::format::{split_rows, DiffKind, DiffRow, FileFilter, SplitRow};
+use super::syntax::{tokens, Token};
 use super::visible::PaneRow;
 use super::{InputPurpose, ReviewState, SidebarTab};
 
@@ -22,8 +23,8 @@ pub(super) fn pane_row_item<'a>(
     let marker = comment_marker(marks, super::visible::row_line(row), marks.selected == index);
     match row {
         PaneRow::File(file) => file_item(review, file),
-        PaneRow::Diff { row, .. } => ListItem::new(prefixed(marker, unified_line(row))),
-        PaneRow::Split { row, .. } => ListItem::new(prefixed(marker, split_line(row, width))),
+        PaneRow::Diff { row, path } => ListItem::new(prefixed(marker, unified_line(row, path))),
+        PaneRow::Split { row, path } => ListItem::new(prefixed(marker, split_line(row, width, path))),
         PaneRow::Comment(comment) => ListItem::new(comment_line(review, comment)),
     }
 }
@@ -98,36 +99,73 @@ fn kind_style(kind: DiffKind) -> Style {
 
 /// El diff a lo ancho, sangrado bajo su fichero y con el número de la línea
 /// nueva.
-fn unified_line(row: &DiffRow) -> Line<'static> {
+fn unified_line(row: &DiffRow, path: &str) -> Line<'static> {
     let gutter = match row.line {
         Some(line) => format!("  {line:>5} "),
         None => "        ".to_string(),
     };
-    Line::from(vec![
-        Span::styled(gutter, DIM),
-        Span::styled(row.text.clone(), kind_style(row.kind)),
-    ])
+    let mut spans = vec![Span::styled(gutter, DIM)];
+    spans.extend(code_spans(&row.text, path, kind_style(row.kind)));
+    Line::from(spans)
+}
+
+/// El código con sus colores encima del fondo de la línea: el verde y el rojo
+/// dicen qué pasó con la línea, y el resaltado, qué dice. Un fichero se lee
+/// igual que en el escritorio, que usa estas mismas palabras.
+fn code_spans(text: &str, path: &str, base: Style) -> Vec<Span<'static>> {
+    let Some((sign, code)) = split_sign(text) else {
+        return vec![Span::styled(text.to_string(), base)];
+    };
+    let mut spans = vec![Span::styled(sign.to_string(), base)];
+    for (token, piece) in tokens(code, path) {
+        spans.push(Span::styled(piece, token_style(token, base)));
+    }
+    spans
+}
+
+/// El `+`, el `-` o el espacio con el que empieza toda línea de un diff. La
+/// cabecera de un bloque (`@@`) no lleva ninguno y se deja como está.
+fn split_sign(text: &str) -> Option<(&str, &str)> {
+    let first = text.chars().next()?;
+    match first {
+        '+' | '-' | ' ' => Some(text.split_at(1)),
+        _ => None,
+    }
+}
+
+fn token_style(token: Token, base: Style) -> Style {
+    let color = match token {
+        Token::Keyword => Color::Indexed(141),
+        Token::Str => Color::Indexed(150),
+        Token::Number => Color::Indexed(215),
+        Token::Comment => Color::Indexed(245),
+        // Lo corriente se queda con el color de la línea: si no, un añadido
+        // dejaría de verse añadido.
+        Token::Plain => return base,
+    };
+    base.fg(color)
 }
 
 /// El diff en dos columnas. La cabecera de un bloque no pertenece a ninguna de
 /// las dos, así que va a lo ancho.
-fn split_line(row: &SplitRow, width: u16) -> Line<'static> {
+fn split_line(row: &SplitRow, width: u16, path: &str) -> Line<'static> {
     let is_hunk = matches!(row.left.as_ref().map(|r| r.kind), Some(DiffKind::Hunk));
     if is_hunk {
-        return unified_line(row.left.as_ref().expect("la cabecera está en los dos lados"));
+        let header = row.left.as_ref().expect("la cabecera está en los dos lados");
+        return unified_line(header, path);
     }
     // Menos el separador, y menos el sangrado que alinea con el unificado.
     let half = usize::from(width.saturating_sub(5)) / 2;
     let mut spans = vec![Span::raw("    ")];
-    spans.extend(half_spans(row.left.as_ref(), half, true));
+    spans.extend(half_spans(row.left.as_ref(), half, true, path));
     spans.push(Span::styled("│", DIM));
-    spans.extend(half_spans(row.right.as_ref(), half, false));
+    spans.extend(half_spans(row.right.as_ref(), half, false, path));
     Line::from(spans)
 }
 
 /// Una mitad: su número de línea y su texto, recortados al ancho de la columna
 /// para que un lado largo no empuje al otro fuera de la pantalla.
-fn half_spans(row: Option<&DiffRow>, width: usize, old_side: bool) -> Vec<Span<'static>> {
+fn half_spans(row: Option<&DiffRow>, width: usize, old_side: bool, path: &str) -> Vec<Span<'static>> {
     let Some(row) = row else {
         return vec![Span::raw(" ".repeat(width))];
     };
@@ -137,7 +175,9 @@ fn half_spans(row: Option<&DiffRow>, width: usize, old_side: bool) -> Vec<Span<'
         None => "      ".to_string(),
     };
     let text = fit(&row.text, width.saturating_sub(gutter.chars().count()));
-    vec![Span::styled(gutter, DIM), Span::styled(text, kind_style(row.kind))]
+    let mut spans = vec![Span::styled(gutter, DIM)];
+    spans.extend(code_spans(&text, path, kind_style(row.kind)));
+    spans
 }
 
 /// El texto en exactamente `width` columnas: cortado si sobra, rellenado si

@@ -13,6 +13,7 @@ mod mouse;
 pub(in crate::tui) use mouse::ReviewMouse;
 mod pr_actions;
 mod rows;
+mod syntax;
 mod run_state;
 mod visible;
 
@@ -1496,6 +1497,28 @@ mod tests {
         let text = super::draw::tests::screen(&state, 110, 20);
 
         assert!(text.contains("no se pudo responder"), "{text}");
+    }
+
+    #[test]
+    fn the_code_in_a_diff_is_coloured_by_what_it_says() {
+        // El verde y el rojo dicen qué pasó con la línea; el resaltado, qué
+        // dice. En el escritorio se lee así y aquí era todo del mismo color.
+        let mut state = state_with_files(&["src/git.rs"]);
+        state.expanded.insert(
+            "src/git.rs".into(),
+            "@@ -1,0 +307,1 @@\n+pub async fn git_current_branch(path: String) {".into(),
+        );
+
+        let backend = ratatui::backend::TestBackend::new(100, 12);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::draw::draw(f, &state, 24, false)).unwrap();
+        let buf = terminal.backend().buffer();
+        let row = (0..12)
+            .find(|r| (0..100).any(|c| buf[(c, *r)].symbol() == "p" && buf[(c + 1, *r)].symbol() == "u"))
+            .expect("la línea del diff");
+        let colours: std::collections::HashSet<_> = (0..100).map(|c| buf[(c, row)].fg).collect();
+
+        assert!(colours.len() > 2, "más de un color en la línea: {colours:?}");
     }
 
     #[test]
