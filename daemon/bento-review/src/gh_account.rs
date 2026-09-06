@@ -16,7 +16,11 @@ use std::sync::{Mutex, OnceLock};
 /// la que se ha preguntado. Es lo mismo a propósito: enseñar cuáles hay
 /// privados sería filtrarlos.
 pub(crate) fn is_not_visible(error: &str) -> bool {
-    error.contains("Could not resolve to a Repository")
+    // Dos formas de decir lo mismo según por dónde se pregunte: GraphQL —lo
+    // que usa `gh pr list`— lo cuenta con palabras, y la API REST responde un
+    // 404 seco. Mirar sólo la primera dejaba fuera los comentarios, los
+    // checks y todo lo que se escribe.
+    error.contains("Could not resolve to a Repository") || error.contains("HTTP 404")
 }
 
 /// Las cuentas que `gh auth status` enumera, la activa primero: si la activa
@@ -96,6 +100,7 @@ mod tests {
         // Reintentar con otra cuenta un error que no es de acceso sólo suma
         // llamadas y confunde el mensaje final.
         assert!(super::is_not_visible("GraphQL: Could not resolve to a Repository with the name 'x/y'."));
+        assert!(super::is_not_visible("gh: Not Found (HTTP 404)"), "la API REST lo dice así");
         assert!(!super::is_not_visible("gh: command not found"));
         assert!(!super::is_not_visible("fatal: not a git repository"));
     }
