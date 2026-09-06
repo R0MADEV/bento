@@ -665,28 +665,38 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_moves_the_view_and_leaves_the_cursor_alone() {
-        // Girar la rueda no es elegir: movía la fila marcada, y una fila
-        // marcada sobre el diff enseña el `+` de comentar, así que desplazarse
-        // parecía que estabas señalando líneas para comentarlas.
+    fn the_wheel_carries_the_marked_row_with_it() {
+        // Desplazarse mueve la línea marcada: es la que se comenta y la que
+        // dice por dónde vas, así que quedarse quieta arriba mientras el
+        // texto pasa por debajo no sirve de nada.
         let mut state = state_with_files(&["a.rs", "b.rs", "c.rs", "d.rs"]);
-        state.files_selected = 2;
 
-        state.scroll_wheel(40, 20, 100, 1);
+        state.scroll_wheel(40, 20, 100, 2);
 
-        assert_eq!(state.files_offset.get(), 1, "la vista baja");
-        assert_eq!(state.files_selected, 2, "y la marcada se queda donde estaba");
+        assert_eq!(state.files_selected, 2);
     }
 
     #[test]
-    fn the_view_does_not_scroll_past_the_last_row() {
+    fn the_marked_row_does_not_run_past_the_last_one() {
         let mut state = state_with_files(&["a.rs", "b.rs"]);
 
         for _ in 0..50 {
             state.scroll_wheel(40, 20, 100, 1);
         }
 
-        assert!(state.files_offset.get() < 2, "no se va más allá de lo que hay");
+        assert_eq!(state.files_selected, 1, "no se va más allá de lo que hay");
+    }
+
+    #[test]
+    fn scrolling_keeps_the_marked_row_in_the_middle() {
+        // Y la vista la sigue: lo que importa al leer un diff es lo que hay
+        // alrededor de la línea en la que estás.
+        let names: Vec<String> = (0..60).map(|n| format!("f{n}.rs")).collect();
+        let paths: Vec<&str> = names.iter().map(String::as_str).collect();
+        let state = state_with_files(&paths);
+
+        // Alto veinte, marcada la treinta: arriba queda la veinte.
+        assert_eq!(state.scroll_offset(30, 20, 60), 20);
     }
 
     #[test]
@@ -1258,9 +1268,9 @@ mod tests {
 
         send!(click(40, 4));
         send!(drag(40, 6));
-        send!(release(40, 6));
-
         assert_eq!(state.comment_range(), Some((43, 45)), "el arrastre selecciona");
+
+        send!(release(40, 6));
         assert!(matches!(state.input_purpose, Some(InputPurpose::InlineComment(45))), "y soltar comenta");
     }
 
@@ -1275,7 +1285,7 @@ mod tests {
         state.scroll_wheel(90, 20, 100, 3);
 
         assert_eq!(state.scroll, 0, "el informe no se mueve");
-        assert_eq!(state.files_offset.get(), 3, "la lista sí");
+        assert_eq!(state.files_selected, 3, "la lista sí");
     }
 
     #[tokio::test]
@@ -1634,6 +1644,44 @@ mod tests {
 
         assert_eq!(state.expanded.len(), 100, "los cien primeros");
         assert!(state.status.contains("100 de 300"), "y lo dice: {}", state.status);
+    }
+
+    #[tokio::test]
+    async fn scrolling_after_a_click_does_not_start_selecting_lines() {
+        // El ancla del arrastre se quedaba puesta desde el clic anterior, así
+        // que al desplazarse se iba marcando todo lo que quedaba en medio como
+        // si estuvieras eligiendo líneas para comentarlas. Revisar código no
+        // es ir seleccionando.
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+        state.handle_files_mouse(click(40, 4), area).await;
+
+        state.scroll_wheel(40, 20, 100, 2);
+
+        assert_eq!(state.comment_range(), None, "desplazarse no selecciona");
+    }
+
+    #[tokio::test]
+    async fn moving_with_the_keyboard_does_not_select_either() {
+        let mut state = state_with_diff();
+        state.focus = Focus::Files;
+        let area = state.files_area(100, 20, 24);
+        state.handle_files_mouse(click(40, 4), area).await;
+
+        state.handle_event(press(KeyCode::Down)).await;
+
+        assert_eq!(state.comment_range(), None);
+    }
+
+    #[tokio::test]
+    async fn but_dragging_still_selects() {
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+
+        state.handle_files_mouse(click(40, 4), area).await;
+        state.handle_files_mouse(drag(40, 6), area).await;
+
+        assert_eq!(state.comment_range(), Some((43, 45)), "arrastrar sí");
     }
 
     #[test]

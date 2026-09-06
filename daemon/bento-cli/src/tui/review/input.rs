@@ -288,13 +288,11 @@ impl ReviewState {
     async fn handle_files_key(&mut self, code: KeyCode) -> bool {
         // Se navega por una sola lista: los ficheros y, bajo cada uno abierto,
         // las líneas de su diff.
-        let rows = self.pane_rows().len();
         match code {
-            KeyCode::Up => { self.files_selected = self.files_selected.saturating_sub(1); false }
-            KeyCode::Down => {
-                if self.files_selected + 1 < rows { self.files_selected += 1; }
-                false
-            }
+            // Por el mismo sitio que la rueda: moverse retira el ancla del
+            // arrastre, que si no se va marcando lo que queda en medio.
+            KeyCode::Up => { self.select_file_by(-1); false }
+            KeyCode::Down => { self.select_file_by(1); false }
             KeyCode::PageUp => { self.select_file_by(-10); false }
             KeyCode::PageDown => { self.select_file_by(10); false }
             KeyCode::Char(' ') => {

@@ -138,24 +138,20 @@ impl ReviewState {
         }
         match column < sidebar_width {
             true => self.select_sidebar_by(step),
-            // Girar la rueda no es elegir: mueve lo que ves. La fila marcada
-            // se queda donde estaba —enseña el `+` de comentar, y moverla al
-            // desplazarse parecía que estabas señalando líneas.
-            false => self.scroll_files_by(step),
+            // Desplazarse se lleva la fila marcada: es la que se comenta y
+            // la que dice por dónde vas. La vista la sigue centrándola.
+            false => self.select_file_by(step),
         }
-    }
-
-    /// Desplaza la lista de archivos sin pasarse de la última fila.
-    pub(in crate::tui) fn scroll_files_by(&self, step: i16) {
-        let last = self.pane_rows().len().saturating_sub(1);
-        let moved = self.files_offset.get().saturating_add_signed(step as isize);
-        self.files_offset.set(moved.min(last));
     }
 
     /// Mueve el cursor del panel de archivos sin salirse de la lista.
     pub(in crate::tui) fn select_file_by(&mut self, delta: i16) {
         let last = self.pane_rows().len().saturating_sub(1);
         self.files_selected = self.files_selected.saturating_add_signed(delta as isize).min(last);
+        // Moverse no es seleccionar: el ancla del arrastre se quedaba puesta
+        // desde el clic anterior y desplazarse iba marcando todo lo que
+        // quedaba en medio, como si estuvieras eligiendo líneas que comentar.
+        self.drag_anchor = None;
     }
 
     /// Lo mismo para la lista del raíl, sea cual sea la pestaña abierta.

@@ -57,20 +57,14 @@ pub(in crate::tui) fn list_height(review: &ReviewState, area: Rect) -> usize {
 }
 
 impl ReviewState {
-    /// La primera fila que se ve. Manda lo que hayas desplazado con la rueda;
-    /// sólo si la fila marcada se ha ido de la pantalla se recoloca, con la
-    /// marcada a media altura: leyendo un diff lo que importa es lo que hay
-    /// alrededor de la línea. Al principio y al final se va hasta donde haya,
-    /// que dejar media pantalla en blanco es peor.
+    /// La primera fila que se ve, con la marcada a media altura: leyendo un
+    /// diff lo que importa es lo que hay alrededor de la línea en la que
+    /// estás. Al principio y al final se va hasta donde haya, que dejar media
+    /// pantalla en blanco para centrarla sería peor.
     pub(in crate::tui) fn scroll_offset(&self, selected: usize, height: usize, rows: usize) -> usize {
         let height = height.max(1);
         let last = rows.saturating_sub(height);
-        let current = self.files_offset.get().min(last);
-        let visible = selected >= current && selected < current + height;
-        match visible {
-            true => current,
-            false => selected.saturating_sub(height / 2).min(last),
-        }
+        selected.saturating_sub(height / 2).min(last)
     }
 }
 
@@ -133,11 +127,14 @@ impl ReviewState {
         // seleccionar y luego buscar qué tecla lo abre no es seleccionar para
         // comentar. Sin bloque, soltar es sólo soltar.
         if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
-            if self.comment_range().is_none() {
-                return false;
+            let selected = self.comment_range().is_some();
+            if selected {
+                self.start_inline_comment();
             }
-            self.start_inline_comment();
-            return true;
+            // Soltar cierra el arrastre en cualquier caso: el ancla sólo vive
+            // mientras tienes el botón pulsado.
+            self.drag_anchor = None;
+            return selected;
         }
         let dragging = matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left));
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && !dragging {
@@ -162,7 +159,8 @@ impl ReviewState {
                 return true;
             }
         }
-        // Un clic empieza una selección nueva desde esa fila.
+        // Un clic marca la fila y deja el ancla por si viene un arrastre;
+        // soltar sin arrastrar la retira.
         self.apply_file_click(click).await;
         self.drag_anchor = Some(self.files_selected);
         true
