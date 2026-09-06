@@ -32,7 +32,9 @@ fn check_commit_sha(sha: &str) -> Result<(), String> {
 /// Maps a client-supplied review event onto GitHub's three, defaulting to the
 /// harmless one — client input never reaches the API verbatim.
 fn review_event(event: &str) -> &'static str {
-    match event.to_uppercase().as_str() {
+    // Con guion o con raya baja: la ayuda de la CLI lo escribe
+    // `request-changes` y así se quedaba en un comentario sin decir nada.
+    match event.to_uppercase().replace('-', "_").as_str() {
         "APPROVE" => "APPROVE",
         "REQUEST_CHANGES" => "REQUEST_CHANGES",
         _ => "COMMENT",
@@ -344,6 +346,11 @@ pub fn checks(cwd: &str, pr: u64) -> Result<Value, String> {
 /// Submits a review. Returns its URL.
 pub fn submit_review(cwd: &str, pr: u64, event: &str, body: &str) -> Result<String, String> {
     check_body(body)?;
+    // Lo que GitHub va a rechazar, dicho antes de ir: pedir cambios sin decir
+    // cuáles vuelve como un 422 pelado, sin explicación ninguna.
+    if review_event(event) == "REQUEST_CHANGES" && body.trim().is_empty() {
+        return Err("pedir cambios necesita un texto que diga cuáles".into());
+    }
     let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{pr}/reviews");
     gh_cmd(cwd, &[
         "api", "--method", "POST", &endpoint,
@@ -354,10 +361,25 @@ pub fn submit_review(cwd: &str, pr: u64, event: &str, body: &str) -> Result<Stri
     .map(|url| url.trim().to_string())
     // En cristiano: el porqué de que aprobar falle viene en inglés dentro de
     // un 422, y sin traducirlo la tecla parecía no hacer nada.
-    .map_err(|error| explain_gh_error(&error, active_account(cwd).as_deref()))
+    .map_err(|error| explain_review_error(&error, cwd))
 }
 
 // ── Issue comments (the PR conversation) ──────────────────────────────────────
+
+/// Por qué GitHub rechaza una review. Un 422 aquí sólo puede ser una cosa
+/// —juzgar lo tuyo—, porque lo otro que lo provoca, pedir cambios sin texto,
+/// ya se ha descartado antes de llamar. Y `gh` no cuenta el motivo: manda el
+/// código y se queda el cuerpo de la respuesta.
+fn explain_review_error(error: &str, cwd: &str) -> String {
+    let account = active_account(cwd);
+    if !error.contains("HTTP 422") {
+        return explain_gh_error(error, account.as_deref());
+    }
+    match account {
+        Some(user) => format!("GitHub no deja aprobar ni pedir cambios en un PR tuyo, y estás como {user}"),
+        None => "GitHub no deja aprobar ni pedir cambios en un PR tuyo".to_string(),
+    }
+}
 
 /// Posts a comment on the PR conversation. Returns its URL.
 pub fn add_comment(cwd: &str, pr: u64, body: &str) -> Result<String, String> {
@@ -463,15 +485,30 @@ pub fn reply_review_comment(cwd: &str, pr: u64, id: u64, body: &str) -> Result<S
 mod tests {
 
     #[test]
-    fn judging_your_own_pr_says_what_github_will_not_let_you_do() {
+    fn a_rejected_review_says_what_github_will_not_let_you_do() {
         // Aprobar y pedir cambios fallaban y comentar no, que es justo lo que
-        // GitHub permite; el porqué venía en inglés dentro de un 422.
-        let raw = "gh: Unprocessable Entity (HTTP 422)\nCan not approve your own pull request";
-
-        let said = super::explain_gh_error(raw, Some("R0MADEV"));
+        // GitHub permite en un PR tuyo. `gh` sólo manda el código y se queda
+        // el cuerpo, donde viene el motivo, así que no hay frase que buscar.
+        let said = super::explain_review_error("gh: Unprocessable Entity (HTTP 422)", "/repo");
 
         assert!(said.contains("un PR tuyo"), "{said}");
-        assert!(said.contains("R0MADEV"), "y con cuál lo abriste: {said}");
+    }
+
+    #[test]
+    fn asking_for_changes_without_saying_which_is_stopped_before_going() {
+        // Eso también vuelve como un 422 pelado, y tiene arreglo aquí mismo.
+        let said = super::submit_review("/repo", 1, "request-changes", "  ").unwrap_err();
+
+        assert!(said.contains("necesita un texto"), "{said}");
+    }
+
+    #[test]
+    fn other_failures_keep_their_own_explanation() {
+        let raw = "GraphQL: Could not resolve to a Repository with the name 'x/y'.";
+
+        let said = super::explain_review_error(raw, "/repo");
+
+        assert!(said.contains("GitHub no encuentra x/y"), "{said}");
     }
 
     #[test]
@@ -552,6 +589,8 @@ mod tests {
     fn review_event_maps_the_three_github_events() {
         assert_eq!(review_event("approve"), "APPROVE");
         assert_eq!(review_event("REQUEST_CHANGES"), "REQUEST_CHANGES");
+        // Como lo escribe la ayuda de la CLI: se quedaba en un comentario.
+        assert_eq!(review_event("request-changes"), "REQUEST_CHANGES");
         assert_eq!(review_event("COMMENT"), "COMMENT");
     }
 
