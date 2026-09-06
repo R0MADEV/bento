@@ -1793,6 +1793,37 @@ mod tests {
     }
 
     #[test]
+    fn an_added_line_is_tinted_not_painted_over() {
+        // El escritorio pone ese verde al ocho por ciento y encima se lee el
+        // código con sus colores; en sólido se come el resaltado y la línea
+        // entera queda verde.
+        let mut state = state_with_files(&["src/panel.ts"]);
+        state.expanded.insert(
+            "src/panel.ts".into(),
+            "@@ -1,0 +23,1 @@\n+const toolbar = document.createElement('div')".into(),
+        );
+
+        let backend = ratatui::backend::TestBackend::new(92, 8);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::draw::draw(f, &state, 20, false)).unwrap();
+        let buf = terminal.backend().buffer();
+        let row = (0..8)
+            .find(|r| (20..92).map(|c| buf[(c, *r)].symbol()).collect::<String>().contains("toolbar"))
+            .expect("la línea añadida");
+
+        let tint = (20..92)
+            .map(|c| buf[(c, row)].bg)
+            .find(|bg| *bg != ratatui::style::Color::Reset)
+            .expect("el tinte de añadido");
+        let ratatui::style::Color::Rgb(r, g, b) = tint else { panic!("un tinte, no un color de paleta") };
+        assert!(u32::from(r) + u32::from(g) + u32::from(b) < 120, "el fondo tiene que ser tenue: {tint:?}");
+
+        let letters: std::collections::BTreeSet<String> =
+            (20..92).map(|c| format!("{:?}", buf[(c, row)].fg)).collect();
+        assert!(letters.len() >= 3, "y el código encima con sus colores: {letters:?}");
+    }
+
+    #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there
         // would duplicate the work, the billing and the output.

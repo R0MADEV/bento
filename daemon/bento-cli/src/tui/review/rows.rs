@@ -89,9 +89,15 @@ fn file_item<'a>(review: &ReviewState, file: &'a Value) -> ListItem<'a> {
 /// que deja ver de un vistazo dónde empieza y acaba un bloque sin leer el
 /// primer carácter de cada línea.
 fn kind_style(kind: DiffKind) -> Style {
+    // Un tinte, no un bloque de color: el escritorio pone ese verde y ese rojo
+    // al ocho por ciento y encima se lee el código con sus colores. En sólido
+    // se comen el resaltado y la línea entera queda verde.
+    const ADDED: Color = Color::Rgb(21, 32, 21);
+    const REMOVED: Color = Color::Rgb(37, 21, 22);
+
     match kind {
-        DiffKind::Added => Style::new().fg(Color::Green).bg(Color::Indexed(22)),
-        DiffKind::Removed => Style::new().fg(Color::Red).bg(Color::Indexed(52)),
+        DiffKind::Added => Style::new().fg(Color::Rgb(158, 206, 106)).bg(ADDED),
+        DiffKind::Removed => Style::new().fg(Color::Rgb(247, 118, 110)).bg(REMOVED),
         DiffKind::Hunk => Style::new().fg(Color::Indexed(4)),
         DiffKind::Context => Style::default(),
     }
