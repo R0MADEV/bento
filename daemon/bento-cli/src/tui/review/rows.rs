@@ -183,9 +183,9 @@ fn fit(text: &str, width: usize) -> String {
     out
 }
 
-/// Las filas del diff de un fichero, en el modo que esté puesto.
-pub(super) fn diff_pane_rows(state: &ReviewState, path: &str, diff: &str) -> Vec<PaneRow<'static>> {
-    let rows = super::format::diff_rows(diff);
+/// Las filas del diff de un fichero ya partido, en el modo que esté puesto.
+pub(super) fn pane_rows_of(state: &ReviewState, path: &str, rows: &[DiffRow]) -> Vec<PaneRow<'static>> {
+    let rows = rows.to_vec();
     match state.split {
         true => split_rows(rows)
             .into_iter()

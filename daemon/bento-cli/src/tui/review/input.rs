@@ -354,14 +354,23 @@ impl ReviewState {
             self.files_selected = 0;
             return;
         }
-        let paths: Vec<String> = self
+        // Cada fichero es una petición al daemon, así que hay un tope: con mil
+        // seiscientos, esto se quedaba veinte segundos pidiendo diffs que no
+        // caben en la pantalla ni se van a leer de una sentada.
+        const AT_MOST: usize = 100;
+        let all: Vec<String> = self
             .visible_files()
             .iter()
             .filter_map(|f| f.get("path").and_then(Value::as_str).map(String::from))
             .collect();
-        for path in paths {
+        let total = all.len();
+        for path in all.into_iter().take(AT_MOST) {
             self.toggle_file(path).await;
         }
+        self.status = match total > AT_MOST {
+            true => format!("abiertos {AT_MOST} de {total}: los demás, uno a uno con Enter"),
+            false => String::new(),
+        };
     }
 
     /// Abre el diff de un fichero bajo su fila, o lo cierra si ya lo estaba.

@@ -68,12 +68,14 @@ pub(super) enum PaneRow<'a> {
 impl ReviewState {
     /// Los ficheros que se ven, con el diff de los abiertos bajo cada uno.
     pub(super) fn pane_rows(&self) -> Vec<PaneRow<'_>> {
+        self.reparse_if_needed();
+        let parsed = self.parsed.borrow();
         let mut rows = Vec::new();
         for file in self.visible_files() {
             rows.push(PaneRow::File(file));
             let Some(path) = file.get("path").and_then(Value::as_str) else { continue };
-            let Some(diff) = self.expanded.get(path) else { continue };
-            for row in super::rows::diff_pane_rows(self, path, &self.filtered(diff)) {
+            let Some(diff) = parsed.rows.get(path) else { continue };
+            for row in super::rows::pane_rows_of(self, path, diff) {
                 let line = row_line(&row);
                 rows.push(row);
                 // Los de esa línea van justo debajo, que es donde se leen.
@@ -81,6 +83,42 @@ impl ReviewState {
             }
         }
         rows
+    }
+
+    /// Vuelve a partir los diffs sólo si cambió lo que se ve. Partirlos es lo
+    /// caro —tres cuartas partes de lo que cuesta pintar— y entre un frame y
+    /// el siguiente casi nunca cambia nada.
+    fn reparse_if_needed(&self) {
+        let mark = self.parse_mark();
+        if self.parsed.borrow().mark == mark {
+            return;
+        }
+        let mut parsed = self.parsed.borrow_mut();
+        parsed.rows = self
+            .expanded
+            .iter()
+            .map(|(path, diff)| (path.clone(), super::format::diff_rows(&self.filtered(diff))))
+            .collect();
+        parsed.parses += 1;
+        parsed.mark = mark;
+    }
+
+    /// La seña de lo guardado: qué ficheros están desplegados, con qué diff, y
+    /// con qué búsqueda se partieron.
+    fn parse_mark(&self) -> String {
+        let mut open: Vec<String> = self
+            .expanded
+            .iter()
+            .map(|(path, diff)| format!("{path}:{}", diff.len()))
+            .collect();
+        open.sort();
+        format!("{}|{}", open.join(","), self.file_search)
+    }
+
+    /// Cuántas veces se han partido los diffs, para las pruebas.
+    #[cfg(test)]
+    pub(in crate::tui::review) fn diffs_parsed(&self) -> usize {
+        self.parsed.borrow().parses
     }
 
     /// La rueda mueve lo que haya bajo el puntero: el informe si está sobre

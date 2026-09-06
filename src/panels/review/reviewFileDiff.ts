@@ -52,26 +52,21 @@ export function buildFileDiffRenderers(deps: FileDiffDeps): {
       }
     }
 
-    const mkWrap = (lineNo: number | null, prefix: string, codeHtml: string, extraCls: string): HTMLElement => {
-      const wrap = document.createElement('div')
-      wrap.className = 'review-diff-line-wrap'
-      const lineEl = document.createElement('div')
-      lineEl.className = `tasks-diff-code-line${extraCls ? ' ' + extraCls : ''}`
-      if (lineNo !== null) {
-        wrap.dataset.line = String(lineNo)
-        const capturedLine = lineNo
-        const addBtn = Object.assign(document.createElement('button'), {
-          className: 'review-line-comment-btn', textContent: '+', title: reviewT('commentLine', { line: lineNo }),
-        })
-        addBtn.addEventListener('mousedown', e => {
-          e.preventDefault(); rangeSelector.start(capturedLine)
-        })
-        lineEl.append(addBtn)
-      }
-      const content = document.createElement('span')
-      content.innerHTML = `<span class="tasks-diff-line-no">${lineNo ?? ''}</span>${esc(prefix)}${codeHtml}`
-      lineEl.append(content); wrap.append(lineEl)
-      return wrap
+    // El HTML de todas las líneas se junta y se asigna de una vez al final:
+    // cada línea hacía su propio `innerHTML`, o sea dos mil parseos de HTML
+    // para abrir un fichero, y el tirón se nota al desplegarlo.
+    const html: string[] = []
+    const mkWrap = (lineNo: number | null, prefix: string, codeHtml: string, extraCls: string): void => {
+      const line = lineNo === null ? '' : ` data-line="${lineNo}"`
+      const button = lineNo === null
+        ? ''
+        : `<button class="review-line-comment-btn" title="${esc(reviewT('commentLine', { line: lineNo }))}">+</button>`
+      html.push(
+        `<div class="review-diff-line-wrap"${line}>`
+        + `<div class="tasks-diff-code-line${extraCls ? ' ' + extraCls : ''}">${button}`
+        + `<span><span class="tasks-diff-line-no">${lineNo ?? ''}</span>${esc(prefix)}${codeHtml}</span>`
+        + '</div></div>',
+      )
     }
 
     let i = 0
@@ -79,15 +74,14 @@ export function buildFileDiffRenderers(deps: FileDiffDeps): {
       const e = entries[i]
       if (e.kind === 'meta') { i++; continue }
       if (e.kind === 'hunk') {
-        const hw = document.createElement('div'); hw.className = 'review-diff-line-wrap'
-        const hl = document.createElement('div'); hl.className = 'tasks-diff-code-line tasks-diff-hunk'
-        const hc = document.createElement('span')
-        hc.innerHTML = `<span class="tasks-diff-line-no"></span>${esc(e.raw)}`
-        hl.append(hc); hw.append(hl); container.append(hw)
+        html.push(
+          '<div class="review-diff-line-wrap"><div class="tasks-diff-code-line tasks-diff-hunk">'
+          + `<span><span class="tasks-diff-line-no"></span>${esc(e.raw)}</span></div></div>`,
+        )
         i++; continue
       }
       if (e.kind === 'ctx') {
-        container.append(mkWrap(e.lineNo, ' ', highlightCode(e.code, ext), ''))
+        mkWrap(e.lineNo, ' ', highlightCode(e.code, ext), '')
         i++; continue
       }
       // Collect consecutive del then add block, apply word diff for paired lines
@@ -96,14 +90,25 @@ export function buildFileDiffRenderers(deps: FileDiffDeps): {
       const adds: { lineNo: number; code: string }[] = []
       while (i < entries.length && entries[i].kind === 'add') { adds.push(entries[i] as { kind: 'add'; lineNo: number; code: string }); i++ }
       for (let j = 0; j < dels.length; j++) {
-        const html = (adds[j] !== undefined) ? wordDiff(dels[j], adds[j].code).oldHtml : highlightCode(dels[j], ext)
-        container.append(mkWrap(null, '-', html, 'tasks-diff-line-del'))
+        const lineHtml = (adds[j] !== undefined) ? wordDiff(dels[j], adds[j].code).oldHtml : highlightCode(dels[j], ext)
+        mkWrap(null, '-', lineHtml, 'tasks-diff-line-del')
       }
       for (let j = 0; j < adds.length; j++) {
-        const html = (dels[j] !== undefined) ? wordDiff(dels[j], adds[j].code).newHtml : highlightCode(adds[j].code, ext)
-        container.append(mkWrap(adds[j].lineNo, '+', html, 'tasks-diff-line-add'))
+        const lineHtml = (dels[j] !== undefined) ? wordDiff(dels[j], adds[j].code).newHtml : highlightCode(adds[j].code, ext)
+        mkWrap(adds[j].lineNo, '+', lineHtml, 'tasks-diff-line-add')
       }
     }
+    container.innerHTML = html.join('')
+    // El botón de comentar, por delegación: dos mil escuchas era una por
+    // línea, y con el bloque armado de golpe ya no hay dónde colgarlas.
+    container.addEventListener('mousedown', event => {
+      const target = event.target as HTMLElement
+      if (!target.classList.contains('review-line-comment-btn')) return
+      const line = Number(target.closest<HTMLElement>('[data-line]')?.dataset.line)
+      if (!Number.isFinite(line)) return
+      event.preventDefault()
+      rangeSelector.start(line)
+    })
     return container
   }
 

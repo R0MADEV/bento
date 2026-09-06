@@ -214,6 +214,23 @@ describe('renderFiles', () => {
     expect(rule).toMatch(/white-space:\s*pre/)
   })
 
+  it('leaves the off-screen files and lines for the browser to skip', () => {
+    // Con mil seiscientos ficheros son veinte mil nodos, y cada fichero
+    // abierto de mil líneas otros siete mil. `content-visibility` le dice al
+    // navegador que no calcule ni pinte lo que está fuera de la ventana, y
+    // `contain-intrinsic-size` le da la altura que tendría para que la barra
+    // de desplazamiento no dé saltos.
+    const css = readFileSync(resolve(__dirname, '../../../src/styles.css'), 'utf8')
+    const rules = css.split('\n')
+    const detail = rules.find(l => l.startsWith('.review-file-detail {'))
+    const line = rules.find(l => l.startsWith('.review-diff-line-wrap {'))
+
+    expect(detail).toMatch(/content-visibility:\s*auto/)
+    expect(detail).toMatch(/contain-intrinsic-size/)
+    expect(line).toMatch(/content-visibility:\s*auto/)
+    expect(line).toMatch(/contain-intrinsic-size/)
+  })
+
   it('renders unified diff lines with correct add/del markup and line numbers', () => {
     setup()
     const h = makeHarness()

@@ -107,6 +107,16 @@ pub(super) enum Fetched {
     Failed(String),
 }
 
+/// Lo que se guardó y con qué se hizo: si cambia la seña, hay que rehacerlo.
+#[derive(Default)]
+struct ParsedDiffs {
+    mark: String,
+    rows: std::collections::HashMap<String, Vec<format::DiffRow>>,
+    /// Cuántas veces se ha partido un diff, para que las pruebas puedan ver si
+    /// se está reaprovechando lo guardado.
+    parses: usize,
+}
+
 pub(super) struct ReviewState {
     /// The project being reviewed. Starts as wherever `bento` was launched
     /// from; the sidebar's Proyectos tab lets you switch it to any other
@@ -138,6 +148,10 @@ pub(super) struct ReviewState {
     /// La fila marcada del panel, contando los ficheros y las líneas de los
     /// diffs desplegados: se navega por una sola lista, como en el escritorio.
     files_selected: usize,
+    /// Los diffs ya partidos en filas, por fichero. Partirlos es lo caro y el
+    /// dibujo los pide en cada frame, así que se guardan hasta que cambie lo
+    /// que se ve: qué está desplegado, la búsqueda o las dos columnas.
+    parsed: std::cell::RefCell<ParsedDiffs>,
     /// Por dónde empieza lo que se ve, tal y como quedó en el último dibujo.
     /// Lo apunta el dibujo —que es quien sabe cuántas filas hay y cuántas
     /// caben— y lo lee el ratón para traducir una fila de la pantalla.
@@ -280,6 +294,7 @@ impl ReviewState {
             sidebar_tab: SidebarTab::Branches,
             files: Vec::new(),
             files_selected: 0,
+            parsed: std::cell::RefCell::new(ParsedDiffs::default()),
             files_offset: std::cell::Cell::new(0),
             expanded: std::collections::HashMap::new(),
             split: false,
@@ -1571,6 +1586,58 @@ mod tests {
         let state = state_with_files(&["a.rs"]);
 
         assert_eq!(state.scroll_offset(4, 40, 6), 0);
+    }
+
+    #[test]
+    fn the_diff_of_a_file_is_parsed_once_and_reused() {
+        // Armar las filas parte todos los diffs abiertos, y el dibujo las pide
+        // en cada frame: eran las mismas líneas repartidas sesenta veces por
+        // segundo para no cambiar nada.
+        let mut state = state_with_files(&["a.rs"]);
+        state.expanded.insert("a.rs".into(), "@@ -1,0 +1,2 @@\n+uno\n+dos".into());
+
+        let first = state.pane_rows().len();
+        let parsed = state.diffs_parsed();
+        let second = state.pane_rows().len();
+
+        assert_eq!(first, second);
+        assert_eq!(state.diffs_parsed(), parsed, "la segunda vez sale de lo ya partido");
+    }
+
+    #[test]
+    fn changing_what_is_shown_parses_again() {
+        // Lo guardado caduca con lo que lo hizo: al buscar en el diff y al
+        // desplegar otro fichero.
+        let mut state = state_with_files(&["a.rs", "b.rs"]);
+        state.expanded.insert("a.rs".into(), "@@ -1,0 +1,2 @@\n+uno\n+dos".into());
+        let _ = state.pane_rows();
+        let parsed = state.diffs_parsed();
+
+        state.file_search = "a".into();
+        let _ = state.pane_rows();
+        assert!(state.diffs_parsed() > parsed, "la búsqueda cambia lo que se ve");
+
+        let parsed = state.diffs_parsed();
+        state.expanded.insert("b.rs".into(), "@@ -1,0 +1,1 @@\n+tres".into());
+        let _ = state.pane_rows();
+
+        assert!(state.diffs_parsed() > parsed, "lo desplegado también");
+    }
+
+    #[tokio::test]
+    async fn opening_them_all_stops_at_a_sensible_number() {
+        // Cada fichero es una petición al daemon: con mil seiscientos, `z` se
+        // quedaba veinte segundos pidiendo diffs que no caben en la pantalla
+        // ni se van a leer de una sentada.
+        let names: Vec<String> = (0..300).map(|n| format!("f{n}.rs")).collect();
+        let paths: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut state = state_with_files(&paths);
+        state.focus = Focus::Files;
+
+        state.handle_event(press(KeyCode::Char('z'))).await;
+
+        assert_eq!(state.expanded.len(), 100, "los cien primeros");
+        assert!(state.status.contains("100 de 300"), "y lo dice: {}", state.status);
     }
 
     #[test]

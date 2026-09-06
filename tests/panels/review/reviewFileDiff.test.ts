@@ -56,3 +56,19 @@ describe('file diff renderers', () => {
     expect(renderers.buildFileDiff('', 'src/a.ts').querySelectorAll('.tasks-diff-line-add')).toHaveLength(0)
   })
 })
+describe('cómo se arma el bloque', () => {
+  it('lo monta de una vez y engancha el botón por delegación', () => {
+    // Una escucha por línea eran dos mil escuchas por fichero. Con el bloque
+    // armado de golpe hay una sola, en el contenedor.
+    const { renderers, createLineRangeSelector } = setup()
+    const el = renderers.buildFileDiff(DIFF, 'src/a.ts')
+    document.body.append(el)
+
+    const button = el.querySelector<HTMLElement>('.review-line-comment-btn')!
+    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+
+    const selector = createLineRangeSelector.mock.results[0]?.value as { start: ReturnType<typeof vi.fn> }
+    expect(selector.start).toHaveBeenCalledWith(1)
+    el.remove()
+  })
+})
