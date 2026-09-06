@@ -195,7 +195,23 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
     const sum = document.createElement('summary')
     sum.className = 'review-file-summary'
     sum.append(viewedCb, stateTag, nameEl, commentBadge, editorBtn, fileCommentBtn, statsEl)
-    details.append(sum, state.getSplitView() ? buildFileDiffSideBySide(f.chunk, f.file) : buildFileDiff(f.chunk, f.file))
+    // El cuerpo se arma la primera vez que se abre el fichero, no al pintar la
+    // lista. Con sesenta y seis ficheros —que se pintan todos cerrados— eran
+    // decenas de miles de nodos que nadie llega a ver, y la rama tardaba un
+    // segundo en abrirse.
+    const buildBody = (): void => {
+      details.append(state.getSplitView() ? buildFileDiffSideBySide(f.chunk, f.file) : buildFileDiff(f.chunk, f.file))
+    }
+    details.append(sum)
+    // Los que llevan comentarios se arman aunque estén cerrados: ir al
+    // comentario siguiente los busca en el DOM, y si no están, los comentarios
+    // de un PR desaparecen del panel.
+    if (details.open || fileCommentCount > 0) buildBody()
+    details.addEventListener('toggle', () => {
+      // Una vez: al cerrar se queda armado, que reabrirlo es lo normal y
+      // rehacerlo perdería los comentarios a medio escribir.
+      if (details.open && details.childElementCount === 1) buildBody()
+    })
     return details
   }
 

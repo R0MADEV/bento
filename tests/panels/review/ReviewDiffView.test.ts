@@ -132,6 +132,61 @@ describe('renderFiles', () => {
     expect(h.dom.diffView.querySelectorAll('.review-file-detail')).toHaveLength(2)
   })
 
+  it('does not build the diff of a file nobody has opened', () => {
+    // Con sesenta y seis ficheros se pintan todos cerrados y aun así se
+    // construía el cuerpo de cada uno: decenas de miles de nodos que nadie ve,
+    // y la rama tardaba un segundo en abrirse.
+    setup()
+    const many = Array.from({ length: 40 }, (_, n) => makeFile({ file: `src/f${n}.ts` }))
+    const h = makeHarness({ lastFiles: many })
+    const view = buildReviewDiffView(h.dom, h.state)
+
+    view.renderFiles()
+
+    expect(h.dom.diffView.querySelectorAll('.review-file-detail')).toHaveLength(40)
+    expect(h.dom.diffView.querySelectorAll('.tasks-diff-line-add')).toHaveLength(0)
+  })
+
+  it('builds it the first time the file is opened, and only once', () => {
+    setup()
+    const h = makeHarness({ lastFiles: Array.from({ length: 40 }, (_, n) => makeFile({ file: `src/f${n}.ts` })) })
+    const view = buildReviewDiffView(h.dom, h.state)
+    view.renderFiles()
+    const details = h.dom.diffView.querySelector<HTMLDetailsElement>('.review-file-detail')!
+
+    details.open = true
+    details.dispatchEvent(new Event('toggle'))
+    const first = details.querySelectorAll('.tasks-diff-line-add').length
+
+    details.open = false
+    details.dispatchEvent(new Event('toggle'))
+    details.open = true
+    details.dispatchEvent(new Event('toggle'))
+
+    expect(first).toBeGreaterThan(0)
+    expect(details.querySelectorAll('.tasks-diff-line-add')).toHaveLength(first)
+  })
+
+  it('does build the ones that carry comments, closed or not', () => {
+    // Ir al comentario siguiente los busca en el DOM: sin armar su fichero,
+    // los comentarios de un PR desaparecerían del panel.
+    setup()
+    // Más de cinco, que es cuando el panel los pinta cerrados.
+    const files = Array.from({ length: 8 }, (_, n) => makeFile({ file: `src/f${n}.ts` }))
+    const h = makeHarness({
+      lastFiles: files,
+      existingComments: [{ id: 1, path: 'src/f7.ts', line: 1, body: 'esto', user: { login: 'x' } } as unknown as GhComment],
+    })
+    const view = buildReviewDiffView(h.dom, h.state)
+
+    view.renderFiles()
+
+    const details = [...h.dom.diffView.querySelectorAll<HTMLElement>('.review-file-detail')]
+    const [a, b] = [details[0], details[7]]
+    expect(a.querySelectorAll('.tasks-diff-line-add')).toHaveLength(0)
+    expect(b.querySelectorAll('.tasks-diff-line-add').length).toBeGreaterThan(0)
+  })
+
   it('renders unified diff lines with correct add/del markup and line numbers', () => {
     setup()
     const h = makeHarness()
