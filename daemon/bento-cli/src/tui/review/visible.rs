@@ -132,8 +132,11 @@ impl ReviewState {
     /// arriba las da al revés.
     pub(in crate::tui) fn comment_range(&self) -> Option<(u64, u64)> {
         let anchor = self.drag_anchor?;
-        let from = self.line_at(anchor)?;
-        let to = self.selected_diff_line()?;
+        // Una sola pasada: construir las filas reparsea todos los diffs
+        // abiertos, y esto lo pregunta el dibujo una vez por fila.
+        let rows = self.pane_rows();
+        let from = row_line(rows.get(anchor)?)?;
+        let to = row_line(rows.get(self.files_selected)?)?;
         let (first, last) = match from <= to {
             true => (from, to),
             false => (to, from),
@@ -141,30 +144,9 @@ impl ReviewState {
         (first != last).then_some((first, last))
     }
 
-    /// Si una fila cae dentro del bloque seleccionado.
-    pub(in crate::tui) fn row_in_comment_range(&self, row: usize) -> bool {
-        let Some((first, last)) = self.comment_range() else { return false };
-        matches!(self.line_at(row), Some(line) if line >= first && line <= last)
-    }
-
-    /// La línea del fichero nuevo de una fila cualquiera.
-    fn line_at(&self, row: usize) -> Option<u64> {
-        match self.pane_rows().get(row)? {
-            PaneRow::Diff { row, .. } => row.line,
-            PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
-            PaneRow::File(_) => None,
-        }
-    }
-
     /// La línea del fichero nuevo bajo el cursor, si está sobre una del diff.
     pub(super) fn selected_diff_line(&self) -> Option<u64> {
-        match self.pane_rows().get(self.files_selected)? {
-            PaneRow::Diff { row, .. } => row.line,
-            // El comentario se ancla a la línea del fichero nuevo, que es la
-            // columna derecha.
-            PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
-            PaneRow::File(_) => None,
-        }
+        row_line(self.pane_rows().get(self.files_selected)?)
     }
 
     /// Fire-and-forget: guarda la lista de revisados para este proyecto+base.
@@ -230,5 +212,15 @@ impl ReviewState {
         }
         let needle = self.file_search.to_lowercase();
         text.lines().filter(|l| l.to_lowercase().contains(&needle)).collect::<Vec<_>>().join("\n")
+    }
+}
+
+/// La línea del fichero nuevo de una fila, que en la vista partida es la de la
+/// columna derecha: es a la que GitHub ancla los comentarios.
+pub(super) fn row_line(row: &PaneRow<'_>) -> Option<u64> {
+    match row {
+        PaneRow::Diff { row, .. } => row.line,
+        PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
+        PaneRow::File(_) => None,
     }
 }

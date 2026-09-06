@@ -226,7 +226,7 @@ impl ReviewState {
                 KeyCode::Enter => {
                     if let Some(b) = self.selected_branch() {
                         self.branch = Some(b);
-                        self.refresh_files().await;
+                        self.request_files();
                         self.focus = Focus::Sidebar;
                     }
                     false
@@ -237,7 +237,7 @@ impl ReviewState {
                     if let Some(b) = self.selected_branch() {
                         self.base = b;
                         self.branch = None;
-                        self.refresh_files().await;
+                        self.request_files();
                     }
                     false
                 }
@@ -246,7 +246,7 @@ impl ReviewState {
                     // cambios sin commitear contra la base.
                     if let Some(b) = self.selected_branch() {
                         self.branch = if self.branch.as_deref() == Some(b.as_str()) { None } else { Some(b) };
-                        self.refresh_files().await;
+                        self.request_files();
                     }
                     false
                 }
@@ -273,7 +273,7 @@ impl ReviewState {
                     }
                     if let Some(head) = field("headRefName") {
                         self.branch = Some(self.pr_branch(&head));
-                        self.refresh_files().await;
+                        self.request_files();
                     }
                     if let Some(pr) = entry.get("number").and_then(Value::as_u64) {
                         self.load_pr_detail(pr).await;

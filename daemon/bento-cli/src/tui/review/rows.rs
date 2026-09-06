@@ -12,11 +12,18 @@ use super::{InputPurpose, ReviewState, SidebarTab};
 const DIM: Style = Style::new().fg(Color::Indexed(8));
 
 /// Pinta una fila: un fichero, o una línea del diff del que tenga abierto.
-pub(super) fn pane_row_item<'a>(review: &ReviewState, row: &'a PaneRow<'a>, width: u16, index: usize) -> ListItem<'a> {
+pub(super) fn pane_row_item<'a>(
+    review: &ReviewState,
+    row: &'a PaneRow<'a>,
+    width: u16,
+    index: usize,
+    marks: Marks,
+) -> ListItem<'a> {
+    let marker = comment_marker(marks, super::visible::row_line(row), marks.selected == index);
     match row {
         PaneRow::File(file) => file_item(review, file),
-        PaneRow::Diff { row, .. } => ListItem::new(prefixed(comment_marker(review, index), unified_line(row))),
-        PaneRow::Split { row, .. } => ListItem::new(prefixed(comment_marker(review, index), split_line(row, width))),
+        PaneRow::Diff { row, .. } => ListItem::new(prefixed(marker, unified_line(row))),
+        PaneRow::Split { row, .. } => ListItem::new(prefixed(marker, split_line(row, width))),
     }
 }
 
@@ -277,18 +284,41 @@ pub(super) fn comment_box(review: &ReviewState) -> Vec<ListItem<'static>> {
 
 /// El `+` del escritorio: dice que esa línea admite comentario. Sólo con un PR
 /// abierto, que es cuando hay dónde mandarlo.
-pub(super) fn comment_marker(review: &ReviewState, row: usize) -> &'static str {
-    if review.current_pr.is_none() {
+/// Se calcula con lo que el dibujo ya tiene delante —la línea de esta fila y
+/// el rango del frame— y no preguntándoselo otra vez al panel: cada pregunta
+/// reconstruye las filas, y eso es reparsear todos los diffs abiertos por cada
+/// línea que se pinta.
+pub(super) fn comment_marker(marks: Marks, line: Option<u64>, selected: bool) -> &'static str {
+    if !marks.has_pr {
         return "  ";
     }
     // Una franja para el bloque arrastrado, como el resaltado de GitHub: sin
     // ella no se ve hasta dónde llega lo que vas a comentar.
-    if review.row_in_comment_range(row) {
-        return "┃ ";
+    if let (Some((first, last)), Some(line)) = (marks.range, line) {
+        if line >= first && line <= last {
+            return "┃ ";
+        }
     }
-    let on_it = review.files_selected == row;
-    match on_it && review.selected_diff_line().is_some() {
+    match selected && line.is_some() {
         true => "+ ",
         false => "  ",
+    }
+}
+
+/// Lo que hace falta para marcar las filas, calculado una vez por frame.
+#[derive(Clone, Copy)]
+pub(super) struct Marks {
+    pub(super) has_pr: bool,
+    pub(super) range: Option<(u64, u64)>,
+    pub(super) selected: usize,
+}
+
+impl Marks {
+    pub(super) fn of(review: &ReviewState) -> Self {
+        Self {
+            has_pr: review.current_pr.is_some(),
+            range: review.comment_range(),
+            selected: review.files_selected,
+        }
     }
 }

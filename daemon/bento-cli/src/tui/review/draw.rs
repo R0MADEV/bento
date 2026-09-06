@@ -282,13 +282,17 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     let inner_width = area.width.saturating_sub(2);
     let visible = review.visible_files();
     let rows = review.pane_rows();
+    // Una vez por frame, no una por fila: preguntarlo por fila reconstruye las
+    // filas cada vez, y con varios diffs abiertos eso son cientos de miles de
+    // líneas reparseadas para pintar una pantalla.
+    let marks = super::rows::Marks::of(review);
     let items: Vec<ListItem> = match rows.is_empty() {
         true => vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))],
         false => rows
             .iter()
             .enumerate()
             .flat_map(|(index, row)| {
-                let mut items = vec![pane_row_item(review, row, inner_width, index)];
+                let mut items = vec![pane_row_item(review, row, inner_width, index, marks)];
                 if index == review.files_selected {
                     items.extend(super::rows::comment_box(review));
                 }

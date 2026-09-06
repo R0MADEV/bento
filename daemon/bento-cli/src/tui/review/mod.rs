@@ -393,29 +393,22 @@ impl ReviewState {
         });
     }
 
-    /// Every list the sidebar/browser shows comes through here so a daemon
-    /// error surfaces in the header instead of rendering as an empty list.
-    async fn fetch_list(&mut self, body: Value) -> Vec<Value> {
-        match crate::request_data(body).await {
-            Ok(v) => {
-                self.status.clear();
-                v.as_array().cloned().unwrap_or_default()
-            }
-            Err(e) => {
-                self.status = format!("error: {e}");
-                Vec::new()
-            }
-        }
-    }
-
     /// Asks for the changed files off the loop. Two requests, one result:
     /// the list and the per-file "reviewed" marks are always shown together,
     /// so applying them separately would flash a list with no marks.
     pub(super) fn request_files(&mut self) {
         self.begin_request();
         let (tx, cwd, base) = (self.work_tx.clone(), self.cwd.clone(), self.base.clone());
+        // Los diffs abiertos son de la comparación anterior: dejarlos ahí
+        // mostraría cambios de otra rama bajo los ficheros de esta.
+        self.expanded.clear();
+        let mut body = json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base });
+        // Con rama elegida, sus ficheros; sin ella, lo que tengas sin commitear.
+        if let Some(branch) = &self.branch {
+            body["branch"] = json!(branch);
+        }
         tokio::spawn(async move {
-            let files = crate::request_data(json!({ "id": "1", "cmd": "review.files", "cwd": cwd, "base": base }));
+            let files = crate::request_data(body);
             let viewed = crate::request_data(json!({ "id": "1", "cmd": "review.viewed", "cwd": cwd, "base": base }));
             let (files, viewed) = tokio::join!(files, viewed);
             let result = match files {
@@ -459,29 +452,6 @@ impl ReviewState {
 }
 
 impl ReviewState {
-
-    pub(super) async fn refresh_files(&mut self) {
-        let mut body = json!({
-            "id": "1", "cmd": "review.files", "cwd": self.cwd, "base": self.base,
-        });
-        // Con rama elegida, sus ficheros; sin ella, lo que tengas sin commitear.
-        if let Some(branch) = &self.branch {
-            body["branch"] = json!(branch);
-        }
-        self.files = self.fetch_list(body).await;
-        self.files_selected = 0;
-        // Los diffs abiertos son de la comparación anterior: dejarlos ahí
-        // mostraría cambios de otra rama bajo los ficheros de esta.
-        self.expanded.clear();
-        // Persistido por proyecto+base en el mismo almacén que los
-        // checkpoints: la marca sobrevive al refresco y al reinicio.
-        self.reviewed = self
-            .fetch_list(json!({ "id": "1", "cmd": "review.viewed", "cwd": self.cwd, "base": self.base }))
-            .await
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-    }
 
     /// Populates both panes for a fresh entry into the Review tab (List →
     /// Tab): files, and the sidebar's default tab (branches) — without this,
@@ -1284,6 +1254,51 @@ mod tests {
         send!(click(approve, 19)); // el botón Aprobar, en la última fila
 
         assert!(matches!(state.input_purpose, Some(InputPurpose::PrReview("APPROVE"))), "el botón");
+    }
+
+    #[test]
+    fn painting_a_frame_does_not_reparse_the_diffs_once_per_line() {
+        // Cada fila preguntaba por el rango seleccionado, y cada pregunta
+        // reconstruía todas las filas: con cinco diffs abiertos, un frame
+        // tardaba seiscientos milisegundos y arrastrar era imposible.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.files = (0..66)
+            .map(|n| serde_json::json!({"status": "M", "path": format!("src/file{n}.tsx"), "added": 3, "deleted": 1}))
+            .collect();
+        state.current_pr = Some(291);
+        let diff: String = std::iter::once("@@ -1,400 +1,400 @@".to_string())
+            .chain((0..400).map(|n| format!("+  const linea{n} = {n};")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for n in 0..5 {
+            state.expanded.insert(format!("src/file{n}.tsx"), diff.clone());
+        }
+        state.files_selected = 40;
+        state.drag_anchor = Some(10);
+
+        let start = std::time::Instant::now();
+        for _ in 0..10 {
+            let _ = super::draw::tests::screen(&state, 120, 40);
+        }
+
+        // Holgado a propósito: lo que se vigila es el orden de magnitud, no
+        // los milisegundos de una máquina concreta.
+        assert!(start.elapsed().as_millis() < 1000, "diez frames tardaron {:?}", start.elapsed());
+    }
+
+    #[tokio::test]
+    async fn choosing_a_branch_asks_for_its_files_without_blocking_the_panel() {
+        // Se pedían la lista y las marcas una detrás de otra y esperando en el
+        // bucle de eventos: hasta que contestaba el daemon, el panel no
+        // repintaba ni respondía a una tecla.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.branch = Some("origin/una-rama".into());
+        state.expanded.insert("a.rs".into(), "@@ -1 +1 @@\n+uno".into());
+
+        state.request_files();
+
+        assert!(state.loading, "la petición queda en marcha, no esperada");
+        assert!(state.expanded.is_empty(), "y los diffs de la comparación anterior se cierran");
     }
 
     #[test]
