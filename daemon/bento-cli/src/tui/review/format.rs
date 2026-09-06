@@ -346,7 +346,7 @@ pub(super) fn checkpoint_row(cp: &Value) -> String {
 
 /// `2026-08-27T09:00:00Z` → `27/08 09:00`. Only the shape the store writes is
 /// shortened; anything else is left alone rather than sliced into nonsense.
-fn short_timestamp(saved_at: &str) -> String {
+pub(super) fn short_timestamp(saved_at: &str) -> String {
     let Some((date, time)) = saved_at.split_once('T') else { return saved_at.to_string() };
     let parts: Vec<&str> = date.split('-').collect();
     let [_, month, day] = parts[..] else { return saved_at.to_string() };

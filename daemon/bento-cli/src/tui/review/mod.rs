@@ -61,6 +61,8 @@ enum InputPurpose {
     InlineComment(u64),
     /// Contestando a un comentario ya puesto, por su id.
     CommentReply(u64),
+    /// Corrigiendo uno tuyo, por su id.
+    CommentEdit(u64),
     /// Submitting a PR review: "APPROVE" | "REQUEST_CHANGES" | "COMMENT".
     PrReview(&'static str),
     /// Editing the author context injected into the review prompt — purely
@@ -1435,6 +1437,50 @@ mod tests {
         let text = super::draw::tests::screen(&state, 100, 20);
 
         assert!(text.contains("✓ R0MANDEV"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn e_edits_the_marked_comment_starting_from_what_it_says() {
+        // El escritorio tiene Editar junto a Responder. Empezar de cero para
+        // corregir una palabra no es editar.
+        let mut state = state_with_diff();
+        state.focus = Focus::Files;
+        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MADEV", "jelllo")];
+        state.files_selected = 3;
+
+        state.handle_event(press(KeyCode::Char('e'))).await;
+
+        assert!(matches!(state.input_purpose, Some(InputPurpose::CommentEdit(7))));
+        assert_eq!(state.input, "jelllo", "con lo que decía, para corregirlo");
+    }
+
+    #[test]
+    fn a_comment_says_when_it_was_written() {
+        // Un comentario de hace un mes no pesa lo mismo que el de esta
+        // mañana, y en el escritorio la fecha va junto al nombre.
+        let mut state = state_with_diff();
+        let mut c = comment(7, "a.rs", 43, "R0MADEV", "jelllo");
+        c["created_at"] = serde_json::json!("2026-08-02T10:15:00Z");
+        state.inline_comments = vec![c];
+
+        let text = super::draw::tests::screen(&state, 100, 20);
+
+        assert!(text.contains("02/08 10:15"), "{text}");
+    }
+
+    #[test]
+    fn over_a_comment_the_footer_offers_its_actions() {
+        // En el escritorio son botones al lado del comentario; aquí, las
+        // teclas que valen sobre él.
+        let mut state = state_with_diff();
+        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MADEV", "jelllo")];
+        state.files_selected = 3;
+
+        let text = super::draw::tests::screen(&state, 120, 20);
+
+        assert!(text.contains("Enter responder"), "{text}");
+        assert!(text.contains("e editar"), "{text}");
+        assert!(text.contains("d borrar"), "{text}");
     }
 
     #[test]

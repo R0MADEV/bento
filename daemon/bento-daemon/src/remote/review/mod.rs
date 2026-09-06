@@ -28,7 +28,7 @@ use bento_review::vcs::is_safe_branch;
 pub(crate) use bento_review::pr::{
     add_comment, add_review_comment, delete_comment, delete_review_comment, diff as pr_diff,
     discussion as pr_comments, list_open as list_prs, reply_review_comment, submit_review,
-    update_comment,
+    update_comment, update_review_comment,
 };
 // Las mismas que enseña el escritorio: locales y remotas, sin cortar a 20. La
 // otra (`vcs::list_branches`) es "las 20 más recientes", que para elegir base

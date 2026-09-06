@@ -116,7 +116,7 @@ impl ReviewState {
             KeyCode::Char('o') => { self.request_sidebar_tab(SidebarTab::Projects); false }
             KeyCode::Char('b') => { self.request_sidebar_tab(SidebarTab::Branches); false }
             KeyCode::Char('p') => { self.request_sidebar_tab(SidebarTab::Prs); false }
-            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') | KeyCode::Char('z') | KeyCode::PageUp | KeyCode::PageDown => {
+            KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('f') | KeyCode::Char('d') | KeyCode::Char('v') | KeyCode::Char('z') | KeyCode::Char('e') | KeyCode::PageUp | KeyCode::PageDown => {
                 match self.focus {
                     Focus::Sidebar => self.handle_sidebar_key(code).await,
                     Focus::Files => self.handle_files_key(code).await,
@@ -334,6 +334,10 @@ impl ReviewState {
                 }
                 false
             }
+            KeyCode::Char('e') if self.selected_comment().is_some() => {
+                self.start_comment_edit();
+                false
+            }
             KeyCode::Char('d') if self.selected_comment().is_some() => {
                 self.delete_selected_comment().await;
                 false
@@ -397,6 +401,7 @@ impl ReviewState {
                     Some(InputPurpose::PrComment) => self.submit_pr_comment().await,
                     Some(InputPurpose::InlineComment(line)) => self.submit_inline_comment(line).await,
                     Some(InputPurpose::CommentReply(id)) => self.submit_comment_reply(id).await,
+                    Some(InputPurpose::CommentEdit(id)) => self.submit_comment_edit(id).await,
                     Some(InputPurpose::PrReview(event)) => self.submit_pr_review(event).await,
                     Some(InputPurpose::Context) => self.context = std::mem::take(&mut self.input),
                     Some(InputPurpose::Search) => {

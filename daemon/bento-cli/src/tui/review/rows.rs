@@ -48,10 +48,18 @@ fn comment_line(review: &ReviewState, comment: &Value) -> Line<'static> {
         true => ("    ✓ ", DIM),
         false => ("    💬 ", Style::new().fg(Color::Indexed(4))),
     };
+    // Cuándo se dijo: uno de hace un mes no pesa lo mismo que el de esta
+    // mañana. Con el mismo formato corto que el historial de reviews.
+    let when = comment
+        .get("created_at")
+        .and_then(Value::as_str)
+        .map(super::format::short_timestamp)
+        .unwrap_or_default();
     Line::from(vec![
         Span::styled(mark, DIM),
-        Span::styled(format!("{who}: "), name_style),
-        Span::styled(fit(&body, 90), DIM),
+        Span::styled(format!("{who} "), name_style),
+        Span::styled(format!("{when}  "), DIM),
+        Span::styled(fit(&body, 80), DIM),
     ])
 }
 

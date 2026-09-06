@@ -311,9 +311,12 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         ),
         // En modo tamaño el pie dice qué hacen las flechas, porque dejan de
         // mover la selección.
-        hint: match resizing {
-            true => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
-            false => "Enter despliega · 2 columnas · arrastra o + para comentar · espacio marcar · f estado · F3 buscar",
+        hint: match (resizing, review.selected_comment().is_some()) {
+            (true, _) => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
+            // Sobre un comentario, lo que se puede hacer con él: son los
+            // botones que el escritorio pone al lado de la burbuja.
+            (false, true) => "Enter responder · e editar · d borrar · espacio resolver",
+            (false, false) => "Enter despliega · 2 columnas · arrastra o + para comentar · espacio marcar · f estado · F3 buscar",
         },
         focused: matches!(review.focus, Focus::Files),
     }
@@ -367,6 +370,7 @@ fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
         // diff: aquí abajo saldría por duplicado.
         Some(InputPurpose::InlineComment(_)) => None,
         Some(InputPurpose::CommentReply(_)) => Some("Responder al comentario (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::CommentEdit(_)) => Some("Corregir el comentario (Enter guardar, Esc cancelar)"),
         None => None,
     }
 }

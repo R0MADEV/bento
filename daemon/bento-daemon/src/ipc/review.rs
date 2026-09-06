@@ -128,6 +128,16 @@ pub(crate) fn dispatch(
             _ => send(fail(&req.id, "cwd, pr, comment_id and data required".into())),
         },
 
+        "review.pr_review_comment_update" => match (&req.cwd, req.pr, req.comment_id, &req.data) {
+            (Some(cwd), Some(pr), Some(id), Some(body)) => {
+                match crate::remote::review::update_review_comment(cwd, pr, id, body) {
+                    Ok(()) => send(ok(&req.id, Value::Null)),
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, pr, comment_id and data required".into())),
+        },
+
         "review.pr_review_comment_delete" => match (&req.cwd, req.pr, req.comment_id) {
             (Some(cwd), Some(pr), Some(id)) => {
                 match crate::remote::review::delete_review_comment(cwd, pr, id) {

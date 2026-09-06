@@ -82,6 +82,35 @@ impl ReviewState {
         self.reload_inline_comments().await;
     }
 
+    /// Abre la corrección del comentario marcado, con lo que decía dentro:
+    /// empezar de cero para arreglar una palabra no es editar.
+    pub(super) fn start_comment_edit(&mut self) {
+        let Some(id) = self.selected_comment() else { return };
+        let body = self
+            .inline_comments
+            .iter()
+            .find(|c| c.get("id").and_then(Value::as_u64) == Some(id))
+            .and_then(|c| c.get("body").and_then(Value::as_str))
+            .unwrap_or_default();
+        self.input = body.to_string();
+        self.input_purpose = Some(super::InputPurpose::CommentEdit(id));
+    }
+
+    /// Guarda la corrección.
+    pub(super) async fn submit_comment_edit(&mut self, id: u64) {
+        let body = std::mem::take(&mut self.input);
+        let Some(pr) = self.current_pr else { return };
+        let req = json!({
+            "id": "1", "cmd": "review.pr_review_comment_update", "cwd": self.cwd,
+            "pr": pr, "comment_id": id, "data": body,
+        });
+        self.pr_status = match crate::request_data(req).await {
+            Ok(_) => "comentario corregido".to_string(),
+            Err(error) => format!("no se pudo corregir: {error}"),
+        };
+        self.reload_inline_comments().await;
+    }
+
     /// Retira el comentario marcado.
     pub(super) async fn delete_selected_comment(&mut self) {
         let (Some(pr), Some(id)) = (self.current_pr, self.selected_comment()) else { return };
