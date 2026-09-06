@@ -389,13 +389,19 @@ impl ReviewState {
             }
             Fetched::PrDetail { pr, checks, inline, comments, raw, resolved } => {
                 self.resolved_comments = resolved.into_iter().collect();
+                // Lo que acaba de pasar sólo se borra al abrir otro PR:
+                // aprobar refresca al terminar, y al llegar la respuesta el
+                // error se borraba solo, así que parecía que no hacía nada.
+                let same = self.current_pr == Some(pr);
                 let header = self.pr_header(pr);
                 self.pr_detail = format!("{header}{checks}{inline}\n## Comentarios\n\n{comments}");
                 self.pr_summary = self.pr_strip(pr, &checks);
                 self.inline_comments = raw;
                 self.current_pr = Some(pr);
                 self.scroll = 0;
-                self.pr_status.clear();
+                if !same {
+                    self.pr_status.clear();
+                }
             }
             Fetched::Failed(message) => self.status = format!("error: {message}"),
         }
@@ -1925,6 +1931,45 @@ mod tests {
         assert!(matches!(state.sidebar_tab, SidebarTab::Prs), "y la pestaña donde estabas");
         assert_eq!(state.prs.len(), 1, "con su lista");
         assert_eq!(state.files_selected, 2, "y por donde ibas");
+    }
+
+    #[test]
+    fn what_went_wrong_survives_the_refresh_that_comes_after() {
+        // Aprobar o pedir cambios refresca el PR al terminar, y al llegar la
+        // respuesta se limpiaba el estado: el error aparecía y se borraba solo
+        // un segundo después, así que parecía que la tecla no hacía nada.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.current_pr = Some(10);
+        state.pr_status = "error: no se pudo aprobar".into();
+
+        state.apply_fetched(Fetched::PrDetail {
+            pr: 10,
+            checks: String::new(),
+            inline: String::new(),
+            comments: String::new(),
+            raw: Vec::new(),
+            resolved: Vec::new(),
+        });
+
+        assert_eq!(state.pr_status, "error: no se pudo aprobar", "sigue dicho");
+    }
+
+    #[test]
+    fn opening_a_different_pr_starts_with_a_clean_slate() {
+        let mut state = ReviewState::new("/repo".to_string());
+        state.current_pr = Some(10);
+        state.pr_status = "comentario puesto en la línea 3".into();
+
+        state.apply_fetched(Fetched::PrDetail {
+            pr: 11,
+            checks: String::new(),
+            inline: String::new(),
+            comments: String::new(),
+            raw: Vec::new(),
+            resolved: Vec::new(),
+        });
+
+        assert!(state.pr_status.is_empty(), "lo del PR anterior no se queda");
     }
 
     #[test]

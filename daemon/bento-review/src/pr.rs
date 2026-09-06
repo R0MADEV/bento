@@ -87,7 +87,7 @@ pub fn list_open(cwd: &str) -> Result<String, String> {
 /// La cuenta de GitHub con la que `gh` está trabajando ahora mismo. Es global:
 /// no cambia con la carpeta, aunque git sí lo haga, y ese desajuste es
 /// exactamente lo que rompe el listado en un repo de otra organización.
-fn active_account(cwd: &str) -> Option<String> {
+pub(crate) fn active_account(cwd: &str) -> Option<String> {
     // `--active` en vez de leer la lista entera: con dos cuentas, cuál está
     // activa no es la primera que sale, es la que lo diga.
     let status = gh_cmd(cwd, &["auth", "status", "--active"]).ok()?;
@@ -103,7 +103,16 @@ fn account_in(status: &str) -> Option<String> {
 /// Lo que dice `gh` cuando el remoto no es un repositorio de GitHub al que se
 /// tenga acceso, en algo que se pueda leer. El resto pasa tal cual: traducir
 /// de más esconde el problema real.
-fn explain_gh_error(error: &str, account: Option<&str>) -> String {
+pub(crate) fn explain_gh_error(error: &str, account: Option<&str>) -> String {
+    // GitHub no deja juzgar lo tuyo, y lo dice con un 422 y una frase en
+    // inglés en medio del volcado. Comentar sí que deja, de ahí que sólo
+    // fallaran aprobar y pedir cambios.
+    if error.contains("your own pull request") {
+        return match account {
+            Some(user) => format!("GitHub no deja aprobar ni pedir cambios en un PR tuyo, y lo abriste con {user}"),
+            None => "GitHub no deja aprobar ni pedir cambios en un PR tuyo".to_string(),
+        };
+    }
     let Some(rest) = error.split("Could not resolve to a Repository with the name ").nth(1) else {
         return error.to_string();
     };
@@ -343,6 +352,9 @@ pub fn submit_review(cwd: &str, pr: u64, event: &str, body: &str) -> Result<Stri
         "--jq", ".html_url",
     ])
     .map(|url| url.trim().to_string())
+    // En cristiano: el porqué de que aprobar falle viene en inglés dentro de
+    // un 422, y sin traducirlo la tecla parecía no hacer nada.
+    .map_err(|error| explain_gh_error(&error, active_account(cwd).as_deref()))
 }
 
 // ── Issue comments (the PR conversation) ──────────────────────────────────────
@@ -449,6 +461,18 @@ pub fn reply_review_comment(cwd: &str, pr: u64, id: u64, body: &str) -> Result<S
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn judging_your_own_pr_says_what_github_will_not_let_you_do() {
+        // Aprobar y pedir cambios fallaban y comentar no, que es justo lo que
+        // GitHub permite; el porqué venía en inglés dentro de un 422.
+        let raw = "gh: Unprocessable Entity (HTTP 422)\nCan not approve your own pull request";
+
+        let said = super::explain_gh_error(raw, Some("R0MADEV"));
+
+        assert!(said.contains("un PR tuyo"), "{said}");
+        assert!(said.contains("R0MADEV"), "y con cuál lo abriste: {said}");
+    }
 
     #[test]
     fn a_reply_hangs_off_the_pr_and_the_comment() {
