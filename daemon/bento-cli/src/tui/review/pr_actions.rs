@@ -12,30 +12,28 @@ impl ReviewState {
     /// al cajón, que es donde se lee texto largo. El diff no se duplica: se
     /// lee en la lista, con sus desplegables y sus dos columnas, como en el
     /// escritorio.
-    pub(super) async fn load_pr_detail(&mut self, pr: u64) {
-        let ask = |cmd: &str| json!({ "id": "1", "cmd": cmd, "cwd": self.cwd, "pr": pr });
-        let comments = crate::request_data(ask("review.pr_comments"))
-            .await
-            .ok()
-            .map(|v| format_pr_comments(&v))
-            .unwrap_or_default();
-        let checks = crate::request_data(ask("review.pr_checks"))
-            .await
-            .ok()
-            .map(|v| format_checks(&v))
-            .unwrap_or_default();
-        let inline_data = crate::request_data(ask("review.pr_review_comments")).await.ok();
-        let inline = inline_data.as_ref().map(format_review_comments).unwrap_or_default();
-        // Y los mismos sin formatear, para leerlos bajo su línea en el diff.
-        self.inline_comments = inline_data
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default();
-        let header = self.pr_header(pr);
-        self.pr_detail = format!("{header}{checks}{inline}\n## Comentarios\n\n{comments}");
-        self.pr_summary = self.pr_strip(pr, &checks);
-        self.scroll = 0;
-        self.current_pr = Some(pr);
-        self.pr_status.clear();
+    /// Pide lo que un PR trae además del diff. Las tres llamadas van juntas y
+    /// fuera del bucle: son a la red, y en serie eran seis segundos con el
+    /// panel sin repintar ni responder a una tecla.
+    pub(super) fn request_pr_detail(&mut self, pr: u64) {
+        self.begin_request();
+        let (tx, cwd) = (self.work_tx.clone(), self.cwd.clone());
+        tokio::spawn(async move {
+            let ask = |cmd: &str| json!({ "id": "1", "cmd": cmd, "cwd": cwd, "pr": pr });
+            let (comments, checks, inline) = tokio::join!(
+                crate::request_data(ask("review.pr_comments")),
+                crate::request_data(ask("review.pr_checks")),
+                crate::request_data(ask("review.pr_review_comments")),
+            );
+            let inline = inline.ok();
+            let _ = tx.send(super::Fetched::PrDetail {
+                pr,
+                checks: checks.ok().map(|v| format_checks(&v)).unwrap_or_default(),
+                inline: inline.as_ref().map(format_review_comments).unwrap_or_default(),
+                comments: comments.ok().map(|v| format_pr_comments(&v)).unwrap_or_default(),
+                raw: inline.and_then(|v| v.as_array().cloned()).unwrap_or_default(),
+            });
+        });
     }
 
     /// La franja de debajo de los archivos: de qué PR es y cómo va su CI. Lo
@@ -46,7 +44,7 @@ impl ReviewState {
         self.pr_strip(pr, checks)
     }
 
-    fn pr_strip(&self, pr: u64, checks: &str) -> String {
+    pub(super) fn pr_strip(&self, pr: u64, checks: &str) -> String {
         let title = self
             .prs
             .iter()
@@ -118,7 +116,7 @@ impl ReviewState {
     }
 
     /// De qué PR es lo que estás leyendo, con lo que ya trae la lista.
-    fn pr_header(&self, pr: u64) -> String {
+    pub(super) fn pr_header(&self, pr: u64) -> String {
         let Some(entry) = self.prs.iter().find(|p| p.get("number").and_then(Value::as_u64) == Some(pr)) else {
             return format!("# PR #{pr}\n");
         };
@@ -204,7 +202,7 @@ impl ReviewState {
             Ok(_) => "comentario agregado".to_string(),
             Err(e) => format!("error: {e}"),
         };
-        self.load_pr_detail(pr).await;
+        self.request_pr_detail(pr);
     }
 
     pub(super) async fn submit_pr_review(&mut self, event: &str) {
@@ -219,6 +217,6 @@ impl ReviewState {
             Ok(_) => format!("review enviada ({event})"),
             Err(e) => format!("error: {e}"),
         };
-        self.load_pr_detail(pr).await;
+        self.request_pr_detail(pr);
     }
 }

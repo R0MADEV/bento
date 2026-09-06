@@ -88,6 +88,10 @@ pub(super) enum Fetched {
     Branches(Vec<String>),
     Prs(Vec<Value>),
     Checkpoints(Vec<Value>),
+    /// Lo que un PR trae además del diff. Son tres llamadas a `gh` —a la red—
+    /// y se pedían en serie esperando en el bucle: seis segundos con el panel
+    /// congelado antes de ver un solo fichero.
+    PrDetail { pr: u64, checks: String, inline: String, comments: String, raw: Vec<Value> },
     /// The daemon said no. Shown in the header rather than rendered as an
     /// empty list, which is indistinguishable from "there is nothing".
     Failed(String),
@@ -343,6 +347,15 @@ impl ReviewState {
                 self.checkpoints = checkpoints;
                 self.checkpoints_selected = 0;
                 self.status.clear()
+            }
+            Fetched::PrDetail { pr, checks, inline, comments, raw } => {
+                let header = self.pr_header(pr);
+                self.pr_detail = format!("{header}{checks}{inline}\n## Comentarios\n\n{comments}");
+                self.pr_summary = self.pr_strip(pr, &checks);
+                self.inline_comments = raw;
+                self.current_pr = Some(pr);
+                self.scroll = 0;
+                self.pr_status.clear();
             }
             Fetched::Failed(message) => self.status = format!("error: {message}"),
         }
@@ -1369,6 +1382,20 @@ mod tests {
         assert!(matches!(state.input_purpose, Some(InputPurpose::CommentReply(7))));
         let text = super::draw::tests::screen(&state, 100, 20);
         assert!(text.contains("Responder al comentario"), "y su cuadro lo dice: {text}");
+    }
+
+    #[tokio::test]
+    async fn opening_a_pr_does_not_wait_for_github_before_painting() {
+        // Lo del PR son tres llamadas a la red; en serie y esperadas en el
+        // bucle eran seis segundos sin repintar ni responder, y sin ver los
+        // ficheros que ya habían llegado.
+        let mut state = ReviewState::new("/repo".to_string());
+        state.prs = vec![serde_json::json!({"number": 291, "title": "rebranding"})];
+
+        state.request_pr_detail(291);
+
+        assert!(state.loading, "queda pedido, no esperado");
+        assert!(state.pr_detail.is_empty(), "y el panel no se bloquea a la espera");
     }
 
     #[test]

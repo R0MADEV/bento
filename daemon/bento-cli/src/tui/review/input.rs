@@ -276,7 +276,7 @@ impl ReviewState {
                         self.request_files();
                     }
                     if let Some(pr) = entry.get("number").and_then(Value::as_u64) {
-                        self.load_pr_detail(pr).await;
+                        self.request_pr_detail(pr);
                     }
                     false
                 }
