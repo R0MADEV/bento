@@ -20,10 +20,11 @@ impl ReviewState {
         let (tx, cwd) = (self.work_tx.clone(), self.cwd.clone());
         tokio::spawn(async move {
             let ask = |cmd: &str| json!({ "id": "1", "cmd": cmd, "cwd": cwd, "pr": pr });
-            let (comments, checks, inline) = tokio::join!(
+            let (comments, checks, inline, resolved) = tokio::join!(
                 crate::request_data(ask("review.pr_comments")),
                 crate::request_data(ask("review.pr_checks")),
                 crate::request_data(ask("review.pr_review_comments")),
+                crate::request_data(ask("review.resolved")),
             );
             let inline = inline.ok();
             let _ = tx.send(super::Fetched::PrDetail {
@@ -32,6 +33,13 @@ impl ReviewState {
                 inline: inline.as_ref().map(format_review_comments).unwrap_or_default(),
                 comments: comments.ok().map(|v| format_pr_comments(&v)).unwrap_or_default(),
                 raw: inline.and_then(|v| v.as_array().cloned()).unwrap_or_default(),
+                resolved: resolved
+                    .ok()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(Value::as_u64)
+                    .collect(),
             });
         });
     }
@@ -98,6 +106,24 @@ impl ReviewState {
             .ok()
             .and_then(|v| v.as_array().cloned())
             .unwrap_or_default();
+    }
+
+    /// Da por resuelto el comentario marcado, o lo reabre. Es el mismo gesto
+    /// que marca un fichero como revisado, y se guarda en el mismo almacén.
+    pub(super) fn toggle_resolved(&mut self, id: u64) {
+        if !self.resolved_comments.remove(&id) {
+            self.resolved_comments.insert(id);
+        }
+        let Some(pr) = self.current_pr else { return };
+        let ids: Vec<u64> = self.resolved_comments.iter().copied().collect();
+        let (cwd, tx) = (self.cwd.clone(), self.work_tx.clone());
+        let _ = &tx;
+        tokio::spawn(async move {
+            let _ = crate::request_data(json!({
+                "id": "1", "cmd": "review.resolved_set", "cwd": cwd, "pr": pr, "ids": ids,
+            }))
+            .await;
+        });
     }
 
     /// La rama de git con la que comparar un PR.

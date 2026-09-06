@@ -52,6 +52,7 @@ export interface ReviewDataLoaderState {
   setLastStatusRollup: (v: StatusRollupEntry[]) => void
   setResolvedComments: (v: Set<number>) => void
   getResolvedComments: () => Set<number>
+  loadResolvedComments: () => Promise<void>
   nextDiscSeq: () => number
   getDiscSeq: () => number
   nextPrInfoSeq: () => number
@@ -96,6 +97,9 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
     try {
       const raw = await invoke<GhComment[]>('gh_pr_list_comments', { path: state.getRepoPath(), prNumber: state.getCurrentPrNumber() })
       state.setExistingComments(raw.filter(c => c.line != null))
+      // Del almacén, antes de pintarlos: los resueltos ya no viven en el
+      // navegador, así que hay que traerlos como los archivos revisados.
+      await state.loadResolvedComments()
       state.setResolvedComments(state.getResolvedComments())
     } catch { state.setExistingComments([]) }
   }

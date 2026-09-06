@@ -24,3 +24,27 @@ pub fn store_dir(name: &str) -> Option<PathBuf> {
 pub fn entry_path(dir: &std::path::Path, cwd: &str, reference: &str) -> PathBuf {
     dir.join(format!("{}.json", fnv1a(&format!("{cwd}:{reference}"))))
 }
+
+/// Una lista guardada por proyecto y referencia. Lo que sea ilegible o esté
+/// corrupto se lee como lista vacía: el coste de equivocarse es volver a
+/// marcar, y un fichero roto no puede tumbar el panel.
+pub fn read_list(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// La reemplaza. Una lista vacía borra el fichero en vez de dejar un huérfano.
+pub fn write_list(dir: &std::path::Path, path: &std::path::Path, values: &[String]) -> Result<(), String> {
+    if values.is_empty() {
+        return match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        };
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string(values).map_err(|e| e.to_string())?;
+    std::fs::write(path, raw).map_err(|e| e.to_string())
+}

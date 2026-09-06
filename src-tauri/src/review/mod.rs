@@ -80,6 +80,19 @@ pub fn review_viewed_set(cwd: String, base: String, paths: Vec<String>) -> Resul
     bento_review::viewed::set(&cwd, &base, &paths)
 }
 
+/// Los comentarios dados por resueltos de un PR, del mismo almacén compartido:
+/// estaban en el `localStorage` del escritorio, así que la CLI y el móvil no
+/// los veían y se perdían al limpiar el navegador.
+#[tauri::command]
+pub fn review_resolved_get(cwd: String, pr: u64) -> Vec<u64> {
+    bento_review::resolved::get(&cwd, pr)
+}
+
+#[tauri::command]
+pub fn review_resolved_set(cwd: String, pr: u64, ids: Vec<u64>) -> Result<(), String> {
+    bento_review::resolved::set(&cwd, pr, &ids)
+}
+
 #[tauri::command]
 pub fn review_checkpoints_list(cwd: String) -> Vec<bento_review::checkpoints::CheckpointMeta> {
     bento_review::checkpoints::list_checkpoint_metas(&cwd)

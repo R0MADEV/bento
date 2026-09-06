@@ -137,6 +137,11 @@ impl ReviewState {
         })
     }
 
+    /// Si un comentario está dado por resuelto.
+    pub(super) fn is_resolved(&self, id: u64) -> bool {
+        self.resolved_comments.contains(&id)
+    }
+
     /// El comentario de la fila marcada, para contestarlo o retirarlo.
     pub(in crate::tui) fn selected_comment(&self) -> Option<u64> {
         match self.pane_rows().get(self.files_selected)? {

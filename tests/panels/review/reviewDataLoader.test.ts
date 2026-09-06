@@ -137,6 +137,7 @@ function makeHarness(overrides: Partial<Data> = {}): Harness {
     setLastFiles: v => { data.lastFiles = v },
     setLastStatusRollup: v => { data.lastStatusRollup = v },
     setResolvedComments: v => { data.resolvedComments = v },
+    loadResolvedComments: async () => {},
     getResolvedComments: () => data.resolvedComments,
     nextDiscSeq: () => ++data.discSeq,
     getDiscSeq: () => data.discSeq,

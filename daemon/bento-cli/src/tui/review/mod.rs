@@ -91,7 +91,14 @@ pub(super) enum Fetched {
     /// Lo que un PR trae además del diff. Son tres llamadas a `gh` —a la red—
     /// y se pedían en serie esperando en el bucle: seis segundos con el panel
     /// congelado antes de ver un solo fichero.
-    PrDetail { pr: u64, checks: String, inline: String, comments: String, raw: Vec<Value> },
+    PrDetail {
+        pr: u64,
+        checks: String,
+        inline: String,
+        comments: String,
+        raw: Vec<Value>,
+        resolved: Vec<u64>,
+    },
     /// The daemon said no. Shown in the header rather than rendered as an
     /// empty list, which is indistinguishable from "there is nothing".
     Failed(String),
@@ -216,6 +223,9 @@ pub(super) struct ReviewState {
     /// Los comentarios de línea del PR abierto, como los devuelve GitHub. Se
     /// leen bajo la línea de la que hablan, no en una lista aparte.
     inline_comments: Vec<Value>,
+    /// Los que das por resueltos. Marca tuya, no de GitHub, guardada donde las
+    /// de "revisado" para que la vean también el escritorio y el móvil.
+    resolved_comments: std::collections::HashSet<u64>,
     /// La fila donde empezó un arrastre por el diff: con ella y la marcada
     /// sale el rango que se comenta, como al arrastrar en GitHub.
     drag_anchor: Option<usize>,
@@ -301,6 +311,7 @@ impl ReviewState {
             pr_detail: String::new(),
             pr_summary: String::new(),
             inline_comments: Vec::new(),
+            resolved_comments: std::collections::HashSet::new(),
             drag_anchor: None,
             pr_status: String::new(),
             checkpoints: Vec::new(),
@@ -348,7 +359,8 @@ impl ReviewState {
                 self.checkpoints_selected = 0;
                 self.status.clear()
             }
-            Fetched::PrDetail { pr, checks, inline, comments, raw } => {
+            Fetched::PrDetail { pr, checks, inline, comments, raw, resolved } => {
+                self.resolved_comments = resolved.into_iter().collect();
                 let header = self.pr_header(pr);
                 self.pr_detail = format!("{header}{checks}{inline}\n## Comentarios\n\n{comments}");
                 self.pr_summary = self.pr_strip(pr, &checks);
@@ -1396,6 +1408,33 @@ mod tests {
 
         assert!(state.loading, "queda pedido, no esperado");
         assert!(state.pr_detail.is_empty(), "y el panel no se bloquea a la espera");
+    }
+
+    #[tokio::test]
+    async fn space_gives_a_comment_as_resolved_and_takes_it_back() {
+        // El mismo gesto que marca un fichero como revisado: sobre un
+        // comentario es darlo por resuelto.
+        let mut state = state_with_diff();
+        state.focus = Focus::Files;
+        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MANDEV", "esto sobra")];
+        state.files_selected = 3;
+
+        state.handle_event(press(KeyCode::Char(' '))).await;
+        assert!(state.resolved_comments.contains(&7));
+
+        state.handle_event(press(KeyCode::Char(' '))).await;
+        assert!(!state.resolved_comments.contains(&7), "y se puede reabrir");
+    }
+
+    #[test]
+    fn a_resolved_comment_is_painted_as_settled() {
+        let mut state = state_with_diff();
+        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MANDEV", "esto sobra")];
+        state.resolved_comments.insert(7);
+
+        let text = super::draw::tests::screen(&state, 100, 20);
+
+        assert!(text.contains("✓ R0MANDEV"), "{text}");
     }
 
     #[test]

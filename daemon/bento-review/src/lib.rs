@@ -31,6 +31,7 @@ pub mod test_support;
 pub mod sync;
 pub mod tasks;
 pub mod vcs;
+pub mod resolved;
 pub mod viewed;
 pub mod worktree;
 pub mod worktrees;

@@ -298,6 +298,11 @@ impl ReviewState {
             KeyCode::PageUp => { self.select_file_by(-10); false }
             KeyCode::PageDown => { self.select_file_by(10); false }
             KeyCode::Char(' ') => {
+                // Sobre un comentario, el mismo gesto lo da por resuelto.
+                if let Some(id) = self.selected_comment() {
+                    self.toggle_resolved(id);
+                    return false;
+                }
                 if let Some(path) = self.selected_path() {
                     if !self.reviewed.remove(&path) { self.reviewed.insert(path); }
                     self.save_reviewed();

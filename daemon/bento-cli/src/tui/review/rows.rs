@@ -24,23 +24,33 @@ pub(super) fn pane_row_item<'a>(
         PaneRow::File(file) => file_item(review, file),
         PaneRow::Diff { row, .. } => ListItem::new(prefixed(marker, unified_line(row))),
         PaneRow::Split { row, .. } => ListItem::new(prefixed(marker, split_line(row, width))),
-        PaneRow::Comment(comment) => ListItem::new(comment_line(comment)),
+        PaneRow::Comment(comment) => ListItem::new(comment_line(review, comment)),
     }
 }
 
 /// Un comentario ya puesto: quién y qué, bajo su línea. El cuerpo va en una
 /// sola línea —los saltos se comen la lista— y recortado, que un comentario
 /// largo taparía el diff que explica.
-fn comment_line(comment: &Value) -> Line<'static> {
+fn comment_line(review: &ReviewState, comment: &Value) -> Line<'static> {
+    // Resuelto: la marca de siempre y todo en gris, como un fichero ya
+    // revisado. Sigue estando, que un hilo cerrado también se relee.
+    let settled = comment
+        .get("id")
+        .and_then(Value::as_u64)
+        .is_some_and(|id| review.is_resolved(id));
     let who = comment
         .get("user")
         .and_then(|u| u.get("login"))
         .and_then(Value::as_str)
         .unwrap_or("?");
     let body: String = comment.get("body").and_then(Value::as_str).unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    let (mark, name_style) = match settled {
+        true => ("    ✓ ", DIM),
+        false => ("    💬 ", Style::new().fg(Color::Indexed(4))),
+    };
     Line::from(vec![
-        Span::styled("    💬 ", DIM),
-        Span::styled(format!("{who}: "), Style::new().fg(Color::Indexed(4))),
+        Span::styled(mark, DIM),
+        Span::styled(format!("{who}: "), name_style),
         Span::styled(fit(&body, 90), DIM),
     ])
 }

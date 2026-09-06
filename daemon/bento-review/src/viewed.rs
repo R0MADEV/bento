@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::store::{entry_path, store_dir};
+use crate::store::{entry_path, read_list, store_dir, write_list};
 
 const STORE: &str = "review-viewed";
 
@@ -15,26 +15,13 @@ pub fn viewed_path(dir: &Path, cwd: &str, reference: &str) -> PathBuf {
 /// The files marked as reviewed. Anything unreadable or corrupt reads as
 /// "nothing reviewed" — the cost of being wrong is re-reading a diff.
 pub fn get_in(dir: &Path, cwd: &str, reference: &str) -> Vec<String> {
-    std::fs::read_to_string(viewed_path(dir, cwd, reference))
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-        .unwrap_or_default()
+    read_list(&viewed_path(dir, cwd, reference))
 }
 
 /// Replaces the list for this ref. An empty list removes the file instead of
 /// leaving an orphan behind.
 pub fn set_in(dir: &Path, cwd: &str, reference: &str, paths: &[String]) -> Result<(), String> {
-    let path = viewed_path(dir, cwd, reference);
-    if paths.is_empty() {
-        return match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
-        };
-    }
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let raw = serde_json::to_string(paths).map_err(|e| e.to_string())?;
-    std::fs::write(path, raw).map_err(|e| e.to_string())
+    write_list(dir, &viewed_path(dir, cwd, reference), paths)
 }
 
 pub fn get(cwd: &str, reference: &str) -> Vec<String> {

@@ -24,6 +24,8 @@ export interface ReviewLocalState {
   setFileViewed: (file: string, viewed: boolean) => void
   updateViewedCounter: () => void
   getResolvedComments: () => Set<number>
+  /** Trae del almacén los resueltos del PR abierto. */
+  loadResolvedComments: () => Promise<void>
   setCommentResolved: (id: number, resolved: boolean) => void
 }
 
@@ -79,17 +81,48 @@ export function buildReviewLocalState(deps: ReviewLocalStateDeps): ReviewLocalSt
   }
 
   // ── Resolved comments ─────────────────────────────────────────────────────
+  // Del mismo almacén que los archivos revisados: la marca es tuya —GitHub no
+  // tiene dónde guardarla para un comentario suelto— pero tiene que seguirte
+  // de un cliente a otro. En el navegador, la CLI y el móvil no la veían.
+  let resolved = new Set<number>()
   const resolvedKey = (): string => `bento.review.resolved.${deps.repoPath()}.${deps.currentPrNumber() ?? ''}`
-  const getResolvedComments = (): Set<number> => {
+  const getResolvedComments = (): Set<number> => resolved
+
+  const loadResolvedComments = async (): Promise<void> => {
+    const cwd = deps.repoPath()
+    const pr = deps.currentPrNumber()
+    if (!cwd || pr === null) { resolved = new Set(); return }
+    resolved = new Set(await invoke<number[]>('review_resolved_get', { cwd, pr }).catch(() => []))
+    // Lo que guardaba el navegador antes de que hubiera almacén: se mueve una
+    // vez y se borra de ahí, para que desmarcar uno no lo resucite.
+    if (!resolved.size) {
+      const legacy = readLegacyResolved()
+      if (legacy.size) {
+        resolved = legacy
+        await persistResolved()
+        localStorage.removeItem(resolvedKey())
+      }
+    }
+  }
+
+  const readLegacyResolved = (): Set<number> => {
     try { return new Set(JSON.parse(localStorage.getItem(resolvedKey()) ?? '[]') as number[]) }
     catch { return new Set() }
   }
-  const setCommentResolved = (id: number, resolved: boolean): void => {
-    const set = getResolvedComments()
-    if (resolved) set.add(id); else set.delete(id)
-    localStorage.setItem(resolvedKey(), JSON.stringify([...set]))
-    /* el panel relee con getResolvedComments */
+
+  const persistResolved = async (): Promise<void> => {
+    await invoke('review_resolved_set', {
+      cwd: deps.repoPath(), pr: deps.currentPrNumber(), ids: [...resolved],
+    }).catch(() => {})
   }
 
-  return { getViewedFiles, loadViewedFiles, setFileViewed, updateViewedCounter, getResolvedComments, setCommentResolved }
+  const setCommentResolved = (id: number, resolved_: boolean): void => {
+    if (resolved_) resolved.add(id); else resolved.delete(id)
+    void persistResolved()
+  }
+
+  return {
+    getViewedFiles, loadViewedFiles, setFileViewed, updateViewedCounter,
+    getResolvedComments, loadResolvedComments, setCommentResolved,
+  }
 }

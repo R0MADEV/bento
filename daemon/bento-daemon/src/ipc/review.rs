@@ -208,6 +208,22 @@ pub(crate) fn dispatch(
             _ => send(fail(&req.id, "cwd, base and paths required".into())),
         },
 
+        // Los comentarios que das por resueltos. Es una marca tuya —GitHub no
+        // tiene dónde guardarla para un comentario suelto—, así que vive en el
+        // mismo almacén que los ficheros revisados y la ven los tres clientes.
+        "review.resolved" => match (&req.cwd, req.pr) {
+            (Some(cwd), Some(pr)) => send(ok(&req.id, json!(bento_review::resolved::get(cwd, pr)))),
+            _ => send(fail(&req.id, "cwd and pr required".into())),
+        },
+
+        "review.resolved_set" => match (&req.cwd, req.pr, &req.ids) {
+            (Some(cwd), Some(pr), Some(ids)) => match bento_review::resolved::set(cwd, pr, ids) {
+                Ok(()) => send(ok(&req.id, Value::Null)),
+                Err(e) => send(fail(&req.id, e)),
+            },
+            _ => send(fail(&req.id, "cwd, pr and ids required".into())),
+        },
+
         "review.checkpoints" => match &req.cwd {
             Some(cwd) => send(ok(&req.id, json!(crate::remote::review::list_checkpoint_metas(cwd)))),
             None => send(fail(&req.id, "cwd required".into())),

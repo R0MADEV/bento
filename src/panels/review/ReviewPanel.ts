@@ -202,7 +202,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     setTimeout(() => { commentStatus.textContent = ''; commentStatus.className = 'review-comment-status' }, isError ? 5000 : 3000)
   }
   // ── Estado local, navegación y checks ─────────────────────────────────────
-  const { getViewedFiles, loadViewedFiles, setFileViewed, updateViewedCounter, getResolvedComments, setCommentResolved } =
+  const { getViewedFiles, loadViewedFiles, setFileViewed, updateViewedCounter, getResolvedComments, loadResolvedComments, setCommentResolved } =
     buildReviewLocalState({
       repoPath: () => repoPath,
       selectedBranch: () => selectedBranch,
@@ -307,6 +307,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       setLastStatusRollup: v => { lastStatusRollup = v },
       setResolvedComments: v => { resolvedComments = v },
       getResolvedComments,
+      loadResolvedComments,
       nextDiscSeq: () => ++discSeq,
       getDiscSeq: () => discSeq,
       nextPrInfoSeq: () => ++prInfoSeq,
