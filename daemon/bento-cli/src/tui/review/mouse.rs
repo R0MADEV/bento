@@ -51,17 +51,27 @@ fn tab_key_at(column: u16) -> Option<char> {
 /// El alto de la lista dentro del panel: menos los dos bordes del marco, la
 /// barra de filtros y, con un PR abierto, su franja. El dibujo y el ratón
 /// tienen que contar igual o el clic marca la fila de al lado.
-pub(super) fn list_height(review: &ReviewState, area: Rect) -> usize {
+pub(in crate::tui) fn list_height(review: &ReviewState, area: Rect) -> usize {
     let strip = u16::from(!review.pr_summary.is_empty());
     usize::from(area.height.saturating_sub(3).saturating_sub(strip))
 }
 
-/// La primera fila que se ve de una lista de alto `height` con `selected`
-/// marcada. La lista se desplaza sola para no perderla de vista, así que la
-/// fila de arriba deja de ser la primera del listado.
-pub(super) fn visible_offset(selected: usize, height: usize) -> usize {
-    selected.saturating_sub(height.saturating_sub(1))
+impl ReviewState {
+    /// Mueve la ventana lo justo para que la fila marcada se vea, y sólo si se
+    /// ha salido: si se recalcula desde la marcada, la marcada acaba siempre
+    /// pegada al borde de abajo y la lista entera se desplaza con cada tecla.
+    pub(in crate::tui) fn settle_scroll(&mut self, height: usize) {
+        let height = height.max(1);
+        if self.files_selected < self.files_offset {
+            self.files_offset = self.files_selected;
+            return;
+        }
+        if self.files_selected >= self.files_offset + height {
+            self.files_offset = self.files_selected + 1 - height;
+        }
+    }
 }
+
 
 impl ReviewState {
     /// El hueco que ocupa el panel de archivos: entre el raíl y el informe.
@@ -136,14 +146,14 @@ impl ReviewState {
         // fichero por el que pasas no es lo que estás pidiendo.
         if dragging {
             let FileClick::Row(row) = click else { return false };
-            self.select_row(row, area);
+            self.select_row(row);
             return true;
         }
         // El `+` del margen es el botón de GitHub: un clic ahí comenta esa
         // línea, sin arrastrar nada y sin marcarla antes.
         let on_marker = mouse.column <= area.x + 2;
         if let (true, FileClick::Row(row)) = (on_marker, &click) {
-            self.select_row(*row, area);
+            self.select_row(*row);
             self.drag_anchor = None;
             if self.selected_diff_line().is_some() {
                 self.start_inline_comment();
@@ -151,20 +161,20 @@ impl ReviewState {
             }
         }
         // Un clic empieza una selección nueva desde esa fila.
-        self.apply_file_click(click, area).await;
+        self.apply_file_click(click).await;
         self.drag_anchor = Some(self.files_selected);
         true
     }
 
     /// Mueve el cursor a una fila de las que se ven, sin tocar el ancla.
-    fn select_row(&mut self, row: usize, area: Rect) {
-        let index = visible_offset(self.files_selected, list_height(self, area)) + row;
+    fn select_row(&mut self, row: usize) {
+        let index = self.files_offset + row;
         if index < self.pane_rows().len() {
             self.files_selected = index;
         }
     }
 
-    async fn apply_file_click(&mut self, click: FileClick, area: Rect) {
+    async fn apply_file_click(&mut self, click: FileClick) {
         self.focus = super::Focus::Files;
         match click {
             FileClick::Chip(index) => {
@@ -175,7 +185,7 @@ impl ReviewState {
                 // La lista puede estar desplazada: la fila de arriba no es la
                 // primera del listado.
                 let rows = self.pane_rows().len();
-                let index = visible_offset(self.files_selected, list_height(self, area)) + row;
+                let index = self.files_offset + row;
                 if index >= rows {
                     return;
                 }

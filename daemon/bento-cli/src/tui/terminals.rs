@@ -509,6 +509,7 @@ mod tests {
         assert_eq!(super::scrolled(0, 2, 3), 1, "no se pasa del final");
         assert_eq!(super::scrolled(1, 2, -3), 0, "ni del principio");
         assert_eq!(super::scrolled(0, 0, 3), 0, "ni con la lista vacía");
+        assert_eq!(super::scrolled(4, 9, 1), 5, "una muesca, una fila");
     }
 
     use super::*;

@@ -10,6 +10,7 @@ mod drawer_state;
 mod format;
 mod input;
 mod mouse;
+pub(in crate::tui) use mouse::list_height as list_height_of;
 pub(in crate::tui) use mouse::ReviewMouse;
 mod pr_actions;
 mod rows;
@@ -138,6 +139,10 @@ pub(super) struct ReviewState {
     /// La fila marcada del panel, contando los ficheros y las líneas de los
     /// diffs desplegados: se navega por una sola lista, como en el escritorio.
     files_selected: usize,
+    /// La primera fila que se ve. Se guarda entre repintados: calcularla cada
+    /// vez desde la marcada dejaba la marcada pegada al borde y movía la lista
+    /// entera con cada tecla.
+    files_offset: usize,
     /// El diff de cada fichero abierto, por ruta. Varios a la vez, que es lo
     /// que permite comparar dos sitios de un cambio sin ir y volver.
     expanded: std::collections::HashMap<String, String>,
@@ -276,6 +281,7 @@ impl ReviewState {
             sidebar_tab: SidebarTab::Branches,
             files: Vec::new(),
             files_selected: 0,
+            files_offset: 0,
             expanded: std::collections::HashMap::new(),
             split: false,
             file_filter: FileFilter::All,
@@ -652,13 +658,13 @@ mod tests {
         state.drawer_width = 30;
         state.drawer_open = true;
 
-        state.scroll_wheel(80, 20, 100, 3); // sobre el cajón
-        assert_eq!(state.scroll, 3, "sobre el informe, la rueda lo desplaza");
+        state.scroll_wheel(80, 20, 100, 1); // sobre el cajón
+        assert_eq!(state.scroll, 1, "sobre el informe, la rueda lo desplaza");
 
-        state.scroll_wheel(40, 20, 100, 3); // sobre los archivos
+        state.scroll_wheel(40, 20, 100, 2); // sobre los archivos
         assert_eq!(state.files_selected, 2);
 
-        state.scroll_wheel(40, 20, 100, -3);
+        state.scroll_wheel(40, 20, 100, -2);
         assert_eq!(state.files_selected, 0, "y hacia arriba vuelve");
     }
 
@@ -667,7 +673,7 @@ mod tests {
         let mut state = state_with(&["main", "otra", "tercera"], "");
         state.sidebar_tab = SidebarTab::Branches;
 
-        state.scroll_wheel(5, 20, 100, 3);
+        state.scroll_wheel(5, 20, 100, 2);
 
         assert_eq!(state.branches_selected, 2);
     }
@@ -779,14 +785,23 @@ mod tests {
         assert_eq!(file_click(&state, 30, 19, area), None, "el borde de abajo no es una fila");
     }
 
-    #[test]
-    fn clicking_far_down_a_long_list_picks_the_row_you_see_not_the_one_underneath() {
-        // La lista se desplaza sola para no perder de vista la fila marcada,
-        // así que la de arriba deja de ser la primera del listado.
-        use super::mouse::visible_offset;
+    #[tokio::test]
+    async fn clicking_far_down_a_long_list_picks_the_row_you_see_not_the_one_underneath() {
+        // Con la lista desplazada, la fila de arriba no es la primera del
+        // listado: el clic tiene que contar desde la que se ve.
+        let names: Vec<String> = (0..40).map(|n| format!("f{n}.rs")).collect();
+        let paths: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut state = state_with_files(&paths);
+        state.files_selected = 25;
+        state.settle_scroll(super::mouse::list_height(&state, state.files_area(100, 20, 24)));
+        let area = state.files_area(100, 20, 24);
+        let painted = super::draw::tests::screen(&state, 100, 20);
+        let shown = painted.lines().nth(4).expect("la fila").to_string();
 
-        assert_eq!(visible_offset(3, 10), 0, "cabe entera: no se ha desplazado");
-        assert_eq!(visible_offset(12, 10), 3, "con la 12 marcada y diez de alto, arriba está la 3");
+        state.handle_files_mouse(click(40, 4), area).await;
+
+        let picked = state.selected_path().unwrap_or_default();
+        assert!(shown.contains(&picked), "se marcó {picked} y ahí pone:\n{shown}");
     }
 
     fn click(column: u16, row: u16) -> crossterm::event::MouseEvent {
@@ -1530,6 +1545,39 @@ mod tests {
         let colours: std::collections::HashSet<_> = (0..100).map(|c| buf[(c, row)].fg).collect();
 
         assert!(colours.len() > 2, "más de un color en la línea: {colours:?}");
+    }
+
+    #[test]
+    fn the_list_only_scrolls_when_the_cursor_would_leave_it() {
+        // La ventana se calculaba desde la fila marcada, así que la marcada
+        // quedaba siempre pegada al borde de abajo y la lista entera se movía
+        // con cada tecla: se lee como un salto, no como bajar una fila.
+        let mut state = state_with_files(&["a.rs"]);
+
+        // Bajando dentro de lo que se ve, arriba sigue la primera.
+        state.files_selected = 3;
+        state.settle_scroll(10);
+        assert_eq!(state.files_offset, 0);
+
+        // Al salirse por abajo, se mueve lo justo para volver a verla.
+        state.files_selected = 12;
+        state.settle_scroll(10);
+        assert_eq!(state.files_offset, 3);
+
+        // Y volviendo arriba, lo justo para lo mismo.
+        state.files_selected = 2;
+        state.settle_scroll(10);
+        assert_eq!(state.files_offset, 2);
+    }
+
+    #[test]
+    fn a_list_that_fits_never_scrolls() {
+        let mut state = state_with_files(&["a.rs"]);
+        state.files_selected = 4;
+
+        state.settle_scroll(40);
+
+        assert_eq!(state.files_offset, 0);
     }
 
     #[test]

@@ -79,7 +79,9 @@ pub(super) fn quits(key: crossterm::event::KeyEvent, typing: bool) -> bool {
 /// que sentirse igual en la review, en la lista de terminales y en el
 /// scrollback, y cada panel decide qué mueve con él.
 pub(super) fn wheel(mouse: crossterm::event::MouseEvent) -> Option<i16> {
-    const STEP: i16 = 3;
+    // Una fila por muesca. Con tres, un gesto de trackpad —que manda decenas
+    // de eventos— se comía media pantalla de golpe.
+    const STEP: i16 = 1;
     match mouse.kind {
         MouseEventKind::ScrollUp => Some(-STEP),
         MouseEventKind::ScrollDown => Some(STEP),
@@ -167,8 +169,8 @@ mod tests {
         use crossterm::event::{MouseEvent, MouseEventKind};
         let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
 
-        assert_eq!(super::wheel(at(MouseEventKind::ScrollDown)), Some(3));
-        assert_eq!(super::wheel(at(MouseEventKind::ScrollUp)), Some(-3), "arriba es hacia atrás");
+        assert_eq!(super::wheel(at(MouseEventKind::ScrollDown)), Some(1));
+        assert_eq!(super::wheel(at(MouseEventKind::ScrollUp)), Some(-1), "arriba es hacia atrás");
         assert_eq!(super::wheel(at(MouseEventKind::Moved)), None, "sólo la rueda");
     }
     use super::*;
