@@ -138,8 +138,18 @@ impl ReviewState {
         }
         match column < sidebar_width {
             true => self.select_sidebar_by(step),
-            false => self.select_file_by(step),
+            // Girar la rueda no es elegir: mueve lo que ves. La fila marcada
+            // se queda donde estaba —enseña el `+` de comentar, y moverla al
+            // desplazarse parecía que estabas señalando líneas.
+            false => self.scroll_files_by(step),
         }
+    }
+
+    /// Desplaza la lista de archivos sin pasarse de la última fila.
+    pub(in crate::tui) fn scroll_files_by(&self, step: i16) {
+        let last = self.pane_rows().len().saturating_sub(1);
+        let moved = self.files_offset.get().saturating_add_signed(step as isize);
+        self.files_offset.set(moved.min(last));
     }
 
     /// Mueve el cursor del panel de archivos sin salirse de la lista.

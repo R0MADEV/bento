@@ -74,18 +74,40 @@ pub(super) fn quits(key: crossterm::event::KeyEvent, typing: bool) -> bool {
     is_ctrl_c || (!typing && key.code == KeyCode::Char('q'))
 }
 
-/// Cuánto pide mover la rueda, si el evento es de rueda: negativo hacia
-/// arriba. El paso es el mismo en todas partes a propósito — la rueda tiene
-/// que sentirse igual en la review, en la lista de terminales y en el
-/// scrollback, y cada panel decide qué mueve con él.
-pub(super) fn wheel(mouse: crossterm::event::MouseEvent) -> Option<i16> {
-    // Una fila por muesca. Con tres, un gesto de trackpad —que manda decenas
-    // de eventos— se comía media pantalla de golpe.
-    const STEP: i16 = 1;
-    match mouse.kind {
-        MouseEventKind::ScrollUp => Some(-STEP),
-        MouseEventKind::ScrollDown => Some(STEP),
-        _ => None,
+/// La rueda, con la cuenta de lo que aún no ha llegado a una fila. Un gesto de
+/// trackpad manda decenas de eventos y a fila por evento un roce se lleva media
+/// pantalla; así hacen falta varios para mover una, y el sobrante espera al
+/// siguiente. Es la misma en los tres paneles a propósito: la rueda tiene que
+/// sentirse igual mires lo que mires.
+#[derive(Default)]
+pub(super) struct Wheel {
+    pending: i16,
+}
+
+impl Wheel {
+    /// Cuántas filas pide mover este evento, si es que ya llega a una.
+    pub(super) fn step(&mut self, mouse: crossterm::event::MouseEvent) -> Option<i16> {
+        /// Eventos por fila. Con menos, el trackpad se dispara; con más, la
+        /// rueda de un ratón se queda corta.
+        const PER_ROW: i16 = 3;
+
+        let direction = match mouse.kind {
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::ScrollDown => 1,
+            _ => return None,
+        };
+        // Al cambiar de sentido se empieza de cero: lo guardado de bajar
+        // restado al subir dejaría el primer roce sin efecto.
+        if self.pending.signum() != direction {
+            self.pending = 0;
+        }
+        self.pending += direction;
+        if self.pending.abs() < PER_ROW {
+            return Some(0).filter(|_| false);
+        }
+        let rows = self.pending / PER_ROW;
+        self.pending -= rows * PER_ROW;
+        Some(rows)
     }
 }
 
@@ -132,6 +154,35 @@ pub(super) fn resize_key(key: crossterm::event::KeyEvent, active: bool) -> Optio
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn a_trackpad_gesture_does_not_run_away_with_the_list() {
+        // Un gesto de trackpad manda decenas de eventos: a una fila cada uno,
+        // un roce se lleva media pantalla. Hacen falta unos cuantos para
+        // mover una fila, y el resto se guarda para el siguiente.
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
+        let mut wheel = super::Wheel::default();
+
+        let moved: i16 = (0..9).filter_map(|_| wheel.step(at(MouseEventKind::ScrollDown))).sum();
+
+        assert_eq!(moved, 3, "nueve eventos, tres filas");
+    }
+
+    #[test]
+    fn changing_direction_does_not_carry_the_leftovers() {
+        // Lo guardado de bajar no puede restarse al empezar a subir: el
+        // primer roce hacia arriba se quedaría quieto.
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
+        let mut wheel = super::Wheel::default();
+
+        let _ = wheel.step(at(MouseEventKind::ScrollDown));
+        let up: Vec<i16> = (0..3).filter_map(|_| wheel.step(at(MouseEventKind::ScrollUp))).collect();
+
+        assert_eq!(up, vec![-1]);
+    }
 
     #[test]
     fn ctrl_c_gets_you_out_from_anywhere() {
@@ -161,19 +212,6 @@ mod tests {
 
         assert!(!super::quits(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE), false));
     }
-
-    #[test]
-    fn the_wheel_reads_the_same_in_every_panel() {
-        // El paso vivía copiado en tres sitios con tres signos distintos; la
-        // rueda tiene que sentirse igual en los tres.
-        use crossterm::event::{MouseEvent, MouseEventKind};
-        let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
-
-        assert_eq!(super::wheel(at(MouseEventKind::ScrollDown)), Some(1));
-        assert_eq!(super::wheel(at(MouseEventKind::ScrollUp)), Some(-1), "arriba es hacia atrás");
-        assert_eq!(super::wheel(at(MouseEventKind::Moved)), None, "sólo la rueda");
-    }
-    use super::*;
 
     #[test]
     fn folding_and_unfolding_returns_the_width_the_user_had_chosen() {

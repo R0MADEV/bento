@@ -13,6 +13,7 @@ mod terminals;
 use rail::{toggle_sidebar, RailMouse};
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEventKind,
+    MouseEventKind,
 };
 use crossterm::execute;
 use tokio_stream::StreamExt;
@@ -43,8 +44,15 @@ pub async fn run() -> std::io::Result<()> {
     result
 }
 
+/// Si un evento del ratón es de la rueda. La cuenta de cuánto mover la lleva
+/// `rail::Wheel`, que vive lo que la sesión.
+fn is_wheel(mouse: crossterm::event::MouseEvent) -> bool {
+    matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+}
+
 async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()> {
     let mut events = EventStream::new();
+    let mut wheel = rail::Wheel::default();
     let mut mode = Mode::List;
     let mut items = terminals::fetch_terminals().await.unwrap_or_default();
     let mut selected: usize = 0;
@@ -134,9 +142,10 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         match event {
                             // La rueda recorre la lista: el raíl sólo atiende
                             // clics, así que girarla no hacía nada.
-                            Event::Mouse(mouse) if rail::wheel(mouse).is_some() => {
-                                let step = rail::wheel(mouse).unwrap_or(0);
-                                selected = terminals::scrolled(selected, items.len(), step);
+                            Event::Mouse(mouse) if is_wheel(mouse) => {
+                                if let Some(step) = wheel.step(mouse) {
+                                    selected = terminals::scrolled(selected, items.len(), step);
+                                }
                             }
                             // Un clic en el raíl hace lo mismo aquí que
                             // conectado: elegir fila abre esa terminal, el
@@ -342,9 +351,10 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             // Sin un programa que pida el ratón, la rueda es
                             // lo mismo que ⇧RePág: mirar lo que ya salió. El
                             // scrollback cuenta al revés, hacia atrás.
-                            Event::Mouse(mouse) if rail::wheel(mouse).is_some() => {
-                                let step = rail::wheel(mouse).unwrap_or(0);
-                                screen.scroll_back(-i32::from(step));
+                            Event::Mouse(mouse) if is_wheel(mouse) => {
+                                if let Some(step) = wheel.step(mouse) {
+                                    screen.scroll_back(-i32::from(step));
+                                }
                             }
                             // The rail is still on screen while attached, so
                             // it still folds, resizes and — clicking another
@@ -395,6 +405,7 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         // no pueden depender de qué panel estés mirando.
                         if let Event::Mouse(mouse) = event {
                             review::ReviewMouse {
+                                wheel: &mut wheel,
                                 width: &mut sidebar_width,
                                 restored: &mut restored_width,
                                 dragging_rail: &mut dragging_divider,

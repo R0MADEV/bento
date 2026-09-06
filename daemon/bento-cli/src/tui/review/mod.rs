@@ -665,47 +665,39 @@ mod tests {
     }
 
     #[test]
-    fn the_wheel_moves_whatever_is_under_the_pointer() {
-        // Con el ratón capturado la rueda la recibe la aplicación: si no la
-        // atiende nadie, girarla no hace absolutamente nada.
-        let mut state = state_with_files(&["a.rs", "b.rs", "c.rs"]);
-        state.drawer_width = 30;
-        state.drawer_open = true;
+    fn the_wheel_moves_the_view_and_leaves_the_cursor_alone() {
+        // Girar la rueda no es elegir: movía la fila marcada, y una fila
+        // marcada sobre el diff enseña el `+` de comentar, así que desplazarse
+        // parecía que estabas señalando líneas para comentarlas.
+        let mut state = state_with_files(&["a.rs", "b.rs", "c.rs", "d.rs"]);
+        state.files_selected = 2;
 
-        state.scroll_wheel(80, 20, 100, 1); // sobre el cajón
-        assert_eq!(state.scroll, 1, "sobre el informe, la rueda lo desplaza");
+        state.scroll_wheel(40, 20, 100, 1);
 
-        state.scroll_wheel(40, 20, 100, 2); // sobre los archivos
-        assert_eq!(state.files_selected, 2);
-
-        state.scroll_wheel(40, 20, 100, -2);
-        assert_eq!(state.files_selected, 0, "y hacia arriba vuelve");
+        assert_eq!(state.files_offset.get(), 1, "la vista baja");
+        assert_eq!(state.files_selected, 2, "y la marcada se queda donde estaba");
     }
 
     #[test]
-    fn the_wheel_over_the_rail_moves_the_branch_list() {
-        let mut state = state_with(&["main", "otra", "tercera"], "");
-        state.sidebar_tab = SidebarTab::Branches;
+    fn the_view_does_not_scroll_past_the_last_row() {
+        let mut state = state_with_files(&["a.rs", "b.rs"]);
 
-        state.scroll_wheel(5, 20, 100, 2);
+        for _ in 0..50 {
+            state.scroll_wheel(40, 20, 100, 1);
+        }
 
-        assert_eq!(state.branches_selected, 2);
+        assert!(state.files_offset.get() < 2, "no se va más allá de lo que hay");
     }
 
-    #[tokio::test]
-    async fn two_columns_pair_a_replacement_into_one_row_and_keep_the_cursor_inside() {
-        // Partida, una sustitución es una fila en vez de dos: el cursor puede
-        // quedarse apuntando a una fila que ya no existe.
+    #[test]
+    fn the_wheel_over_the_drawer_still_moves_the_report() {
         let mut state = state_with_files(&["a.rs"]);
-        state.focus = Focus::Files;
-        state.expanded.insert("a.rs".to_string(), "@@ -1,1 +1,1 @@\n-antes\n+después".to_string());
-        state.files_selected = 3; // la última fila del modo a lo ancho
+        state.drawer_width = 30;
+        state.drawer_open = true;
 
-        state.handle_event(press(KeyCode::Char('2'))).await;
+        state.scroll_wheel(80, 20, 100, 1);
 
-        assert!(state.split);
-        assert_eq!(state.pane_rows().len(), 3, "fichero, cabecera y el par");
-        assert!(state.files_selected < 3, "el cursor no se queda fuera de la lista");
+        assert_eq!(state.scroll, 1);
     }
 
     #[test]
@@ -1246,10 +1238,12 @@ mod tests {
         let mut restored = 24u16;
         let mut rail_drag = false;
         let mut drawer_drag = false;
+        let mut wheel = crate::tui::rail::Wheel::default();
 
         macro_rules! send {
             ($event:expr) => {
                 super::ReviewMouse {
+                    wheel: &mut wheel,
                     width: &mut width,
                     restored: &mut restored,
                     dragging_rail: &mut rail_drag,
@@ -1281,7 +1275,7 @@ mod tests {
         state.scroll_wheel(90, 20, 100, 3);
 
         assert_eq!(state.scroll, 0, "el informe no se mueve");
-        assert_eq!(state.files_selected, 3, "la lista sí");
+        assert_eq!(state.files_offset.get(), 3, "la lista sí");
     }
 
     #[tokio::test]
@@ -1293,9 +1287,11 @@ mod tests {
         let mut restored = 24u16;
         let mut rail_drag = false;
         let mut drawer_drag = false;
+        let mut wheel = crate::tui::rail::Wheel::default();
         macro_rules! send {
             ($event:expr) => {
                 super::ReviewMouse {
+                    wheel: &mut wheel,
                     width: &mut width,
                     restored: &mut restored,
                     dragging_rail: &mut rail_drag,

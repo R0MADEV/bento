@@ -57,14 +57,20 @@ pub(in crate::tui) fn list_height(review: &ReviewState, area: Rect) -> usize {
 }
 
 impl ReviewState {
-    /// La primera fila que se ve, con la marcada a media altura: leyendo un
-    /// diff lo que importa es lo que hay alrededor de la línea, y pegada al
-    /// borde de abajo sólo se ve lo de antes. Al principio y al final se va
-    /// hasta donde haya, que dejar media pantalla en blanco es peor.
+    /// La primera fila que se ve. Manda lo que hayas desplazado con la rueda;
+    /// sólo si la fila marcada se ha ido de la pantalla se recoloca, con la
+    /// marcada a media altura: leyendo un diff lo que importa es lo que hay
+    /// alrededor de la línea. Al principio y al final se va hasta donde haya,
+    /// que dejar media pantalla en blanco es peor.
     pub(in crate::tui) fn scroll_offset(&self, selected: usize, height: usize, rows: usize) -> usize {
         let height = height.max(1);
         let last = rows.saturating_sub(height);
-        selected.saturating_sub(height / 2).min(last)
+        let current = self.files_offset.get().min(last);
+        let visible = selected >= current && selected < current + height;
+        match visible {
+            true => current,
+            false => selected.saturating_sub(height / 2).min(last),
+        }
     }
 }
 
@@ -204,6 +210,9 @@ impl ReviewState {
 /// prestado en vez de copiado: el raíl es el mismo componente en las dos
 /// pestañas y tiene que plegarse y arrastrarse igual.
 pub(in crate::tui) struct ReviewMouse<'a> {
+    /// La rueda con su cuenta pendiente, prestada del bucle: si se hiciera una
+    /// por evento, nunca acumularía nada.
+    pub(in crate::tui) wheel: &'a mut crate::tui::rail::Wheel,
     pub(in crate::tui) width: &'a mut u16,
     pub(in crate::tui) restored: &'a mut u16,
     pub(in crate::tui) dragging_rail: &'a mut bool,
@@ -216,8 +225,11 @@ impl ReviewMouse<'_> {
     pub(in crate::tui) async fn handle(mut self, review: &mut ReviewState, mouse: MouseEvent) {
         // La rueda la recibe la aplicación mientras el ratón está capturado,
         // así que sin atenderla aquí girarla no mueve nada.
-        if let Some(step) = crate::tui::rail::wheel(mouse) {
+        if let Some(step) = self.wheel.step(mouse) {
             review.scroll_wheel(mouse.column, *self.width, self.total, step);
+            return;
+        }
+        if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
             return;
         }
         if self.drawer(review, mouse) {
