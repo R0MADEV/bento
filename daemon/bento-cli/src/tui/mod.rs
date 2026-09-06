@@ -95,6 +95,11 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                     }
                     maybe_event = events.next() => {
                         let Some(Ok(event)) = maybe_event else { continue };
+                        if let Event::Key(key) = event {
+                            if rail::quits(key, renaming.is_some()) {
+                                return Ok(());
+                            }
+                        }
                         // Escribiendo un nombre, las teclas son suyas.
                         if let (Event::Key(key), Some(name)) = (&event, renaming.take()) {
                             renaming = match terminals::rename_key(name, key.code) {
@@ -406,6 +411,12 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                         // cuadro de texto abierto no, que ahí una "s" es una "s".
                         let typing = review.is_typing();
                         if let Event::Key(key) = event {
+                          // Salir, antes que nada: en modo crudo Ctrl+C no
+                          // manda ninguna señal, y aquí no había ninguna otra
+                          // tecla que cerrara la aplicación.
+                          if rail::quits(key, typing) {
+                              return Ok(());
+                          }
                           if !typing {
                             let total = terminal.size()?.width;
                             match rail::resize_key(key, resizing) {

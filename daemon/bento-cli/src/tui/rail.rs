@@ -64,6 +64,16 @@ impl RailMouse<'_> {
     }
 }
 
+/// Si una tecla pide salir de la aplicación. Ctrl+C siempre, porque en modo
+/// crudo no manda ninguna señal y sin esto no hay forma de salir del panel de
+/// review; `q` sólo cuando no estás escribiendo, que si no una q es una q.
+pub(super) fn quits(key: crossterm::event::KeyEvent, typing: bool) -> bool {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let is_ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
+    is_ctrl_c || (!typing && key.code == KeyCode::Char('q'))
+}
+
 /// Cuánto pide mover la rueda, si el evento es de rueda: negativo hacia
 /// arriba. El paso es el mismo en todas partes a propósito — la rueda tiene
 /// que sentirse igual en la review, en la lista de terminales y en el
@@ -120,6 +130,35 @@ pub(super) fn resize_key(key: crossterm::event::KeyEvent, active: bool) -> Optio
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn ctrl_c_gets_you_out_from_anywhere() {
+        // En modo crudo Ctrl+C no manda ninguna señal: llega como una tecla
+        // más. Sin atenderla, la única salida era volver a la lista y pulsar
+        // `q` — y en el panel de review, `c` a secas abre el contexto, así que
+        // intentar salir abría un cuadro de texto.
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+        assert!(super::quits(ctrl_c, false));
+        assert!(super::quits(ctrl_c, true), "también con un cuadro abierto");
+    }
+
+    #[test]
+    fn q_quits_unless_you_are_writing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+
+        assert!(super::quits(q, false));
+        assert!(!super::quits(q, true), "escribiendo, una q es una q");
+    }
+
+    #[test]
+    fn an_ordinary_c_is_not_a_way_out() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        assert!(!super::quits(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE), false));
+    }
 
     #[test]
     fn the_wheel_reads_the_same_in_every_panel() {
