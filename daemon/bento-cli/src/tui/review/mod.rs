@@ -1484,6 +1484,21 @@ mod tests {
     }
 
     #[test]
+    fn what_happened_to_a_comment_is_said_where_the_pr_is() {
+        // El resultado de responder, editar o borrar se guardaba y no se
+        // pintaba en ninguna parte: enviar y no ver nada es no saber si ha
+        // salido, y así un 404 pasó semanas sin que nadie lo notara.
+        let mut state = state_with_files(&["a.rs"]);
+        state.current_pr = Some(291);
+        state.pr_summary = "PR #291: rebranding · ✗ CI".into();
+        state.pr_status = "no se pudo responder: gh: Not Found (HTTP 404)".into();
+
+        let text = super::draw::tests::screen(&state, 110, 20);
+
+        assert!(text.contains("no se pudo responder"), "{text}");
+    }
+
+    #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there
         // would duplicate the work, the billing and the output.

@@ -338,7 +338,13 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
     frame.render_stateful_widget(list, rest, &mut state);
     if strip > 0 {
-        frame.render_widget(Paragraph::new(Line::from(review.pr_summary.clone()).style(FOCUSED)), pr);
+        // Lo último que ha pasado con el PR gana a su ficha: enviar algo y no
+        // ver nada es no saber si ha salido, y así un fallo pasa inadvertido.
+        let (text, style) = match review.pr_status.is_empty() {
+            true => (review.pr_summary.clone(), FOCUSED),
+            false => (review.pr_status.clone(), ERROR),
+        };
+        frame.render_widget(Paragraph::new(Line::from(text).style(style)), pr);
     }
 }
 

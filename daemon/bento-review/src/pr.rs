@@ -431,16 +431,34 @@ pub fn delete_review_comment(cwd: &str, pr: u64, id: u64) -> Result<(), String> 
 }
 
 /// Replies to an inline comment thread. Returns the reply's URL.
+/// Dónde cuelga GitHub las respuestas de un comentario de línea: del PR y del
+/// comentario, no del comentario suelto. Sin el número de PR en medio la ruta
+/// no existe, así que responder devolvía un 404 —y el escritorio, que llama
+/// aquí, tampoco podía.
+fn reply_endpoint(pr: u64, id: u64) -> String {
+    format!("repos/{{owner}}/{{repo}}/pulls/{pr}/comments/{id}/replies")
+}
+
 pub fn reply_review_comment(cwd: &str, pr: u64, id: u64, body: &str) -> Result<String, String> {
     check_body(body)?;
     ensure_belongs_to_pr(cwd, &review_comment_endpoint(id), "pull_request_url", pr, pull_url_matches_pr)?;
-    let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/comments/{id}/replies");
+    let endpoint = reply_endpoint(pr, id);
     gh_cmd(cwd, &["api", "--method", "POST", &endpoint, "-f", &format!("body={body}"), "--jq", ".html_url"])
         .map(|url| url.trim().to_string())
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_reply_hangs_off_the_pr_and_the_comment() {
+        // La ruta sin el número de PR en medio no existe en GitHub: devolvía
+        // 404 y responder no llegaba a ninguna parte.
+        assert_eq!(
+            super::reply_endpoint(10, 3696467449),
+            "repos/{owner}/{repo}/pulls/10/comments/3696467449/replies",
+        );
+    }
 
     #[test]
     fn a_repo_that_is_not_on_github_says_so_instead_of_quoting_graphql() {
