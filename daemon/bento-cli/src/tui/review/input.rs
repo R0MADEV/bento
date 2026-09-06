@@ -310,6 +310,9 @@ impl ReviewState {
             KeyCode::Char('f') => {
                 self.file_filter = self.file_filter.next();
                 self.files_selected = 0;
+                // Otro filtro son otras filas: el bloque señalado deja de ser
+                // el que era.
+                self.drag_anchor = None;
                 false
             }
             // Colapsar todo de una: con varios diffs abiertos, la lista de
@@ -375,6 +378,10 @@ impl ReviewState {
     /// El escritorio deja tener varios abiertos a la vez; por eso es un mapa y
     /// no un fichero "actual".
     pub(super) async fn toggle_file(&mut self, path: String) {
+        // Desplegar o cerrar mueve todas las filas de sitio, así que un bloque
+        // señalado deja de ser el que era: quedaba una selección de otro
+        // fichero, con sus números, sobre el que acabas de abrir.
+        self.drag_anchor = None;
         if self.expanded.remove(&path).is_some() {
             return;
         }

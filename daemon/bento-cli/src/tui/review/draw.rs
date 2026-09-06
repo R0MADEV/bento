@@ -269,6 +269,12 @@ pub(crate) fn sidebar_rows(review: &ReviewState) -> (String, Vec<SidebarItem>, u
 /// A framed box in the panel's own style, for the places that need a `Block`
 /// rather than `Pane`'s inner area — an input, or a paragraph that scrolls.
 /// Square, undimmed borders here read as a different application.
+/// Si lo que dice el estado del PR es que algo ha fallado. El rojo es para
+/// eso: "comentando las líneas 12-20" salía como si hubiera ido mal.
+pub(super) fn status_is_failure(status: &str) -> bool {
+    status.starts_with("no se pudo") || status.starts_with("error")
+}
+
 fn pane_block(title: &str) -> Block<'static> {
     Block::default()
         .title(Line::from(Span::styled(format!(" {title} "), DIM)))
@@ -354,7 +360,13 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         // ver nada es no saber si ha salido, y así un fallo pasa inadvertido.
         let (text, style) = match review.pr_status.is_empty() {
             true => (review.pr_summary.clone(), FOCUSED),
-            false => (review.pr_status.clone(), ERROR),
+            false => (
+                review.pr_status.clone(),
+                match status_is_failure(&review.pr_status) {
+                    true => ERROR,
+                    false => FOCUSED,
+                },
+            ),
         };
         frame.render_widget(Paragraph::new(Line::from(text).style(style)), pr);
     }

@@ -1821,6 +1821,18 @@ mod tests {
         let letters: std::collections::BTreeSet<String> =
             (20..92).map(|c| format!("{:?}", buf[(c, row)].fg)).collect();
         assert!(letters.len() >= 3, "y el código encima con sus colores: {letters:?}");
+
+        // El verde de añadido, sólo en el signo: con la letra verde también,
+        // un fichero nuevo —donde todo son líneas añadidas— se lee de un solo
+        // color de arriba abajo.
+        let green = ratatui::style::Color::Rgb(158, 206, 106);
+        let painted: Vec<u16> = (20..92).filter(|c| buf[(*c, row)].fg == green).collect();
+        let signs: Vec<u16> = painted
+            .iter()
+            .copied()
+            .filter(|c| buf[(*c, row)].symbol() == "+")
+            .collect();
+        assert_eq!(painted, signs, "sólo el + va en verde");
     }
 
     #[tokio::test]
@@ -1853,6 +1865,35 @@ mod tests {
         let text = super::draw::tests::screen(&state, 100, 30);
         let marked = text.lines().filter(|l| l.contains('┃')).count();
         assert_eq!(marked, 11, "las mismas once, marcadas:\n{text}");
+    }
+
+    #[tokio::test]
+    async fn opening_another_file_drops_a_selection_from_the_one_before() {
+        // Desplegar mueve todas las filas de sitio, así que el bloque
+        // señalado deja de ser el que era: quedaba una selección de otro
+        // fichero, con sus números de línea, sobre el que acabas de abrir.
+        let mut state = state_with_diff();
+        state.focus = Focus::Files;
+        let area = state.files_area(100, 20, 24);
+        state.handle_files_mouse(click(40, 4), area).await;
+        state.handle_files_mouse(drag(40, 6), area).await;
+        assert!(state.comment_range().is_some());
+
+        state.toggle_file("b.rs".to_string()).await;
+
+        assert_eq!(state.comment_range(), None, "abrir otro fichero retira la selección");
+    }
+
+    #[test]
+    fn only_a_failure_is_painted_as_a_failure() {
+        // "comentando las líneas 12-20" salía en rojo, como si algo hubiera
+        // ido mal: el rojo es para lo que falla.
+        use super::draw::status_is_failure;
+
+        assert!(status_is_failure("no se pudo comentar: gh: Not Found"));
+        assert!(status_is_failure("error: algo"));
+        assert!(!status_is_failure("comentando las líneas 12-20"));
+        assert!(!status_is_failure("comentario puesto en la línea 12"));
     }
 
     #[test]

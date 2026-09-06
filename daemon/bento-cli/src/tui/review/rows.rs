@@ -95,11 +95,24 @@ fn kind_style(kind: DiffKind) -> Style {
     const ADDED: Color = Color::Rgb(21, 32, 21);
     const REMOVED: Color = Color::Rgb(37, 21, 22);
 
+    // Y sin color de letra: lo pone el resaltado, como en el escritorio, donde
+    // el verde de una línea añadida sólo se ve en el fondo y en el signo. Con
+    // la letra verde también, el fichero entero se lee de un color.
     match kind {
-        DiffKind::Added => Style::new().fg(Color::Rgb(158, 206, 106)).bg(ADDED),
-        DiffKind::Removed => Style::new().fg(Color::Rgb(247, 118, 110)).bg(REMOVED),
+        DiffKind::Added => Style::new().bg(ADDED),
+        DiffKind::Removed => Style::new().bg(REMOVED),
         DiffKind::Hunk => Style::new().fg(Color::Indexed(4)),
         DiffKind::Context => Style::default(),
+    }
+}
+
+/// El color del `+` o del `-` que abre la línea: eso sí dice de un vistazo qué
+/// pasó con ella, y es lo único que hace falta pintar.
+fn sign_style(kind: DiffKind, base: Style) -> Style {
+    match kind {
+        DiffKind::Added => base.fg(Color::Rgb(158, 206, 106)),
+        DiffKind::Removed => base.fg(Color::Rgb(247, 118, 110)),
+        _ => base,
     }
 }
 
@@ -111,18 +124,18 @@ fn unified_line(row: &DiffRow, path: &str) -> Line<'static> {
         None => "        ".to_string(),
     };
     let mut spans = vec![Span::styled(gutter, DIM)];
-    spans.extend(code_spans(&row.text, path, kind_style(row.kind)));
+    spans.extend(code_spans(&row.text, path, kind_style(row.kind), row.kind));
     Line::from(spans)
 }
 
 /// El código con sus colores encima del fondo de la línea: el verde y el rojo
 /// dicen qué pasó con la línea, y el resaltado, qué dice. Un fichero se lee
 /// igual que en el escritorio, que usa estas mismas palabras.
-fn code_spans(text: &str, path: &str, base: Style) -> Vec<Span<'static>> {
+fn code_spans(text: &str, path: &str, base: Style, kind: DiffKind) -> Vec<Span<'static>> {
     let Some((sign, code)) = split_sign(text) else {
         return vec![Span::styled(text.to_string(), base)];
     };
-    let mut spans = vec![Span::styled(sign.to_string(), base)];
+    let mut spans = vec![Span::styled(sign.to_string(), sign_style(kind, base))];
     for (colour, piece) in tokens(code, path) {
         // El fondo lo pone la línea —verde lo añadido, rojo lo quitado—; el
         // resaltado sólo cambia la letra. Sin color reconocido, la de la línea.
@@ -176,7 +189,7 @@ fn half_spans(row: Option<&DiffRow>, width: usize, old_side: bool, path: &str) -
     };
     let text = fit(&row.text, width.saturating_sub(gutter.chars().count()));
     let mut spans = vec![Span::styled(gutter, DIM)];
-    spans.extend(code_spans(&text, path, kind_style(row.kind)));
+    spans.extend(code_spans(&text, path, kind_style(row.kind), row.kind));
     spans
 }
 

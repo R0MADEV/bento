@@ -190,6 +190,7 @@ impl ReviewState {
             FileClick::Chip(index) => {
                 self.file_filter = [FileFilter::All, FileFilter::Added, FileFilter::Modified, FileFilter::Deleted][index];
                 self.files_selected = 0;
+                self.drag_anchor = None;
             }
             FileClick::Row(row) => {
                 // La lista puede estar desplazada: la fila de arriba no es la
