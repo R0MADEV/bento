@@ -246,6 +246,8 @@ pub(super) struct ReviewState {
     /// Los comentarios de línea del PR abierto, como los devuelve GitHub. Se
     /// leen bajo la línea de la que hablan, no en una lista aparte.
     inline_comments: Vec<Value>,
+    /// Si ya se ha abierto la pestaña alguna vez.
+    entered: bool,
     /// Los que das por resueltos. Marca tuya, no de GitHub, guardada donde las
     /// de "revisado" para que la vean también el escritorio y el móvil.
     resolved_comments: std::collections::HashSet<u64>,
@@ -336,6 +338,7 @@ impl ReviewState {
             pr_detail: String::new(),
             pr_summary: String::new(),
             inline_comments: Vec::new(),
+            entered: false,
             resolved_comments: std::collections::HashSet::new(),
             drag_anchor: None,
             pr_status: String::new(),
@@ -509,12 +512,20 @@ impl ReviewState {
 
 impl ReviewState {
 
-    /// Populates both panes for a fresh entry into the Review tab (List →
-    /// Tab): files, and the sidebar's default tab (branches) — without this,
-    /// the sidebar shows "Ramas" as active but empty until `b` is pressed.
-    /// Entering the tab asks for both halves without waiting: the panel opens
-    /// straight away and fills in as the answers arrive.
+    /// Rellena las dos mitades la primera vez que se abre la pestaña: los
+    /// ficheros y la lista del raíl. Sin esto, el raíl enseña "Ramas" activa y
+    /// vacía hasta que pulsas `b`. No espera: el panel se abre y se va
+    /// llenando según contestan.
+    ///
+    /// Sólo la primera vez. Se entra en cada Tab, así que ir a mirar una
+    /// terminal y volver cerraba los diffs abiertos, devolvía el raíl a Ramas
+    /// y perdía por dónde ibas: había que buscar el PR otra vez. Para releer
+    /// está F5.
     pub(super) fn enter(&mut self) {
+        if self.entered {
+            return;
+        }
+        self.entered = true;
         self.request_files();
         self.request_sidebar_tab(SidebarTab::Branches);
     }
@@ -1894,6 +1905,26 @@ mod tests {
         assert!(status_is_failure("error: algo"));
         assert!(!status_is_failure("comentando las líneas 12-20"));
         assert!(!status_is_failure("comentario puesto en la línea 12"));
+    }
+
+    #[tokio::test]
+    async fn coming_back_from_the_terminals_finds_the_panel_as_you_left_it() {
+        // Entrar rellenaba el panel, y se entraba en cada Tab: ir a mirar una
+        // terminal y volver cerraba los diffs abiertos, devolvía el raíl a
+        // Ramas y perdía por dónde ibas. Había que buscar el PR otra vez.
+        let mut state = state_with_files(&["a.rs"]);
+        state.enter();
+        state.sidebar_tab = SidebarTab::Prs;
+        state.prs = vec![serde_json::json!({"number": 10, "title": "algo"})];
+        state.expanded.insert("a.rs".into(), "@@ -1,0 +1,1 @@\n+uno".into());
+        state.files_selected = 2;
+
+        state.enter();
+
+        assert!(state.expanded.contains_key("a.rs"), "los diffs abiertos siguen abiertos");
+        assert!(matches!(state.sidebar_tab, SidebarTab::Prs), "y la pestaña donde estabas");
+        assert_eq!(state.prs.len(), 1, "con su lista");
+        assert_eq!(state.files_selected, 2, "y por donde ibas");
     }
 
     #[test]
