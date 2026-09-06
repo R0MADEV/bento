@@ -57,18 +57,14 @@ pub(in crate::tui) fn list_height(review: &ReviewState, area: Rect) -> usize {
 }
 
 impl ReviewState {
-    /// Mueve la ventana lo justo para que la fila marcada se vea, y sólo si se
-    /// ha salido: si se recalcula desde la marcada, la marcada acaba siempre
-    /// pegada al borde de abajo y la lista entera se desplaza con cada tecla.
-    pub(in crate::tui) fn settle_scroll(&mut self, height: usize) {
+    /// La primera fila que se ve, con la marcada a media altura: leyendo un
+    /// diff lo que importa es lo que hay alrededor de la línea, y pegada al
+    /// borde de abajo sólo se ve lo de antes. Al principio y al final se va
+    /// hasta donde haya, que dejar media pantalla en blanco es peor.
+    pub(in crate::tui) fn scroll_offset(&self, selected: usize, height: usize, rows: usize) -> usize {
         let height = height.max(1);
-        if self.files_selected < self.files_offset {
-            self.files_offset = self.files_selected;
-            return;
-        }
-        if self.files_selected >= self.files_offset + height {
-            self.files_offset = self.files_selected + 1 - height;
-        }
+        let last = rows.saturating_sub(height);
+        selected.saturating_sub(height / 2).min(last)
     }
 }
 
@@ -168,7 +164,7 @@ impl ReviewState {
 
     /// Mueve el cursor a una fila de las que se ven, sin tocar el ancla.
     fn select_row(&mut self, row: usize) {
-        let index = self.files_offset + row;
+        let index = self.files_offset.get() + row;
         if index < self.pane_rows().len() {
             self.files_selected = index;
         }
@@ -185,7 +181,7 @@ impl ReviewState {
                 // La lista puede estar desplazada: la fila de arriba no es la
                 // primera del listado.
                 let rows = self.pane_rows().len();
-                let index = self.files_offset + row;
+                let index = self.files_offset.get() + row;
                 if index >= rows {
                     return;
                 }

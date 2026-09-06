@@ -4215,7 +4215,9 @@ details[open] > .tasks-diff-summary::before { transform: rotate(90deg); }
 .tasks-diff-hunk-block { border-top: 1px solid var(--border); }
 .tasks-hunk-select { position: sticky; left: 0; display: block; padding: 3px 5px; color: var(--fg-dim); background: var(--surface-2); font-size: 10px; cursor: pointer; user-select: none; }
 .tasks-hunk-check { accent-color: var(--accent); }
-.tasks-diff-code-line { display: block; min-height: 1.5em; }
+/* `pre`: sin esto el navegador junta los espacios seguidos y el código sale
+   pegado al margen, sin la sangría que dice qué está dentro de qué. */
+.tasks-diff-code-line { display: block; min-height: 1.5em; white-space: pre; }
 .tasks-diff-line-no { display: inline-block; width: 34px; margin-right: 8px; padding-right: 6px; color: var(--fg-dim); opacity: .45; text-align: right; user-select: none; border-right: 1px solid var(--border); }
 .tasks-diff-line-add { color: #9ece6a; background: rgba(158,206,106,.08); }
 .tasks-diff-line-del { color: #f7768e; background: rgba(247,118,110,.08); }

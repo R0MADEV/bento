@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { makeLocalStorage } from '../../helpers/localStorage'
 
@@ -185,6 +187,31 @@ describe('renderFiles', () => {
     const [a, b] = [details[0], details[7]]
     expect(a.querySelectorAll('.tasks-diff-line-add')).toHaveLength(0)
     expect(b.querySelectorAll('.tasks-diff-line-add').length).toBeGreaterThan(0)
+  })
+
+  it('keeps the indentation of the code it shows', () => {
+    // Sin declararlo, el navegador junta los espacios seguidos y el código
+    // sale todo pegado al margen: un diff así no se puede leer.
+    setup()
+    const chunk = ['diff --git a/x.rs b/x.rs', '--- a/x.rs', '+++ b/x.rs', '@@ -1,1 +1,2 @@',
+      '+    if !ok { return; }'].join('\n')
+    const h = makeHarness({ lastFiles: [makeFile({ file: 'x.rs', chunk })] })
+    const view = buildReviewDiffView(h.dom, h.state)
+    view.renderFiles()
+
+    const line = [...h.dom.diffView.querySelectorAll('.tasks-diff-code-line')]
+      .find(el => el.textContent?.includes('if !ok'))!
+    expect(line.textContent).toContain('    if !ok')
+  })
+
+  it('declares the whitespace rule that keeps that indentation on screen', () => {
+    // El texto llega bien al DOM, pero sin decírselo al navegador junta los
+    // espacios seguidos y el código se ve pegado al margen. Es CSS, así que
+    // sólo se puede comprobar en la hoja.
+    const css = readFileSync(resolve(__dirname, '../../../src/styles.css'), 'utf8')
+    const rule = css.split('\n').find(l => l.startsWith('.tasks-diff-code-line '))
+
+    expect(rule).toMatch(/white-space:\s*pre/)
   })
 
   it('renders unified diff lines with correct add/del markup and line numbers', () => {

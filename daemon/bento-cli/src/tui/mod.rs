@@ -386,11 +386,6 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 }
             }
             Mode::Review => {
-                // La ventana se acomoda antes de pintar: mueve lo justo para
-                // que la fila marcada se vea, y sólo si se ha salido.
-                let size = terminal.size()?;
-                let files = review.files_area(size.width, size.height, sidebar_width);
-                review.settle_scroll(review::list_height_of(&review, files));
                 terminal.draw(|f| review::draw(f, &review, sidebar_width, resizing))?;
                 tokio::select! {
                     maybe_event = events.next() => {

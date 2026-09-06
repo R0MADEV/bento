@@ -316,8 +316,11 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     // cuarenta, y cada una lleva su resaltado — el desplazamiento iba a
     // tirones porque cada tecla repintaba el diff entero.
     let height = super::mouse::list_height(review, area);
-    let first = review.files_offset.min(rows.len().saturating_sub(1));
+    let first = review.scroll_offset(review.files_selected, height, rows.len());
     let last = (first + height).min(rows.len());
+    // Guardada para el ratón: traducir una fila de la pantalla a una de la
+    // lista necesita saber por dónde empieza lo que se ve.
+    review.files_offset.set(first);
     let items: Vec<ListItem> = match rows.is_empty() {
         true => vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))],
         false => {

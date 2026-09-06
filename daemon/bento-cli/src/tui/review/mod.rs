@@ -10,7 +10,6 @@ mod drawer_state;
 mod format;
 mod input;
 mod mouse;
-pub(in crate::tui) use mouse::list_height as list_height_of;
 pub(in crate::tui) use mouse::ReviewMouse;
 mod pr_actions;
 mod rows;
@@ -139,10 +138,10 @@ pub(super) struct ReviewState {
     /// La fila marcada del panel, contando los ficheros y las líneas de los
     /// diffs desplegados: se navega por una sola lista, como en el escritorio.
     files_selected: usize,
-    /// La primera fila que se ve. Se guarda entre repintados: calcularla cada
-    /// vez desde la marcada dejaba la marcada pegada al borde y movía la lista
-    /// entera con cada tecla.
-    files_offset: usize,
+    /// Por dónde empieza lo que se ve, tal y como quedó en el último dibujo.
+    /// Lo apunta el dibujo —que es quien sabe cuántas filas hay y cuántas
+    /// caben— y lo lee el ratón para traducir una fila de la pantalla.
+    files_offset: std::cell::Cell<usize>,
     /// El diff de cada fichero abierto, por ruta. Varios a la vez, que es lo
     /// que permite comparar dos sitios de un cambio sin ir y volver.
     expanded: std::collections::HashMap<String, String>,
@@ -281,7 +280,7 @@ impl ReviewState {
             sidebar_tab: SidebarTab::Branches,
             files: Vec::new(),
             files_selected: 0,
-            files_offset: 0,
+            files_offset: std::cell::Cell::new(0),
             expanded: std::collections::HashMap::new(),
             split: false,
             file_filter: FileFilter::All,
@@ -793,7 +792,6 @@ mod tests {
         let paths: Vec<&str> = names.iter().map(String::as_str).collect();
         let mut state = state_with_files(&paths);
         state.files_selected = 25;
-        state.settle_scroll(super::mouse::list_height(&state, state.files_area(100, 20, 24)));
         let area = state.files_area(100, 20, 24);
         let painted = super::draw::tests::screen(&state, 100, 20);
         let shown = painted.lines().nth(4).expect("la fila").to_string();
@@ -1548,36 +1546,31 @@ mod tests {
     }
 
     #[test]
-    fn the_list_only_scrolls_when_the_cursor_would_leave_it() {
-        // La ventana se calculaba desde la fila marcada, así que la marcada
-        // quedaba siempre pegada al borde de abajo y la lista entera se movía
-        // con cada tecla: se lee como un salto, no como bajar una fila.
-        let mut state = state_with_files(&["a.rs"]);
+    fn the_marked_row_rides_in_the_middle_of_the_list() {
+        // Leyendo un diff, lo que importa es lo que hay alrededor de la línea
+        // marcada: pegada al borde de abajo sólo se ve lo de antes.
+        let state = state_with_files(&["a.rs"]);
 
-        // Bajando dentro de lo que se ve, arriba sigue la primera.
-        state.files_selected = 3;
-        state.settle_scroll(10);
-        assert_eq!(state.files_offset, 0);
+        // Alto diez: la marcada se queda a media altura.
+        assert_eq!(state.scroll_offset(20, 10, 40), 15);
+        assert_eq!(state.scroll_offset(25, 10, 40), 20);
+    }
 
-        // Al salirse por abajo, se mueve lo justo para volver a verla.
-        state.files_selected = 12;
-        state.settle_scroll(10);
-        assert_eq!(state.files_offset, 3);
+    #[test]
+    fn at_the_ends_it_goes_as_far_as_there_is_something_to_read() {
+        // Al principio y al final no hay con qué centrarla, y dejar media
+        // pantalla en blanco para centrarla sería peor.
+        let state = state_with_files(&["a.rs"]);
 
-        // Y volviendo arriba, lo justo para lo mismo.
-        state.files_selected = 2;
-        state.settle_scroll(10);
-        assert_eq!(state.files_offset, 2);
+        assert_eq!(state.scroll_offset(2, 10, 40), 0, "arriba del todo");
+        assert_eq!(state.scroll_offset(39, 10, 40), 30, "y abajo, hasta la última");
     }
 
     #[test]
     fn a_list_that_fits_never_scrolls() {
-        let mut state = state_with_files(&["a.rs"]);
-        state.files_selected = 4;
+        let state = state_with_files(&["a.rs"]);
 
-        state.settle_scroll(40);
-
-        assert_eq!(state.files_offset, 0);
+        assert_eq!(state.scroll_offset(4, 40, 6), 0);
     }
 
     #[test]
