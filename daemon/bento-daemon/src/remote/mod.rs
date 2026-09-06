@@ -25,6 +25,8 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use review::{
+    review_pr_line_comments_handler, review_pr_reply_handler, review_pr_resolve_handler,
+    review_pr_threads_handler,
     ask_handler,
     delete_checkpoint_handler, get_checkpoint_handler, get_viewed_handler, set_viewed_handler,
     list_checkpoints_handler, put_checkpoint_handler,
@@ -136,6 +138,12 @@ impl RemoteControl {
             .route("/api/review/prs", get(review_prs_handler))
             .route("/api/review/pr/diff", get(review_pr_diff_handler))
             .route("/api/review/pr/comments", get(review_pr_comments_handler))
+            // Las conversaciones: leerlas bajo su línea, contestar y darlas
+            // por zanjadas, como en el escritorio y en la CLI.
+            .route("/api/review/pr/line_comments", get(review_pr_line_comments_handler))
+            .route("/api/review/pr/threads", get(review_pr_threads_handler))
+            .route("/api/review/pr/resolve", post(review_pr_resolve_handler))
+            .route("/api/review/pr/reply", post(review_pr_reply_handler))
             .route("/api/review/pr/comment", post(review_pr_add_comment_handler))
             .route("/api/review/pr/comment/:id", axum::routing::put(review_pr_update_comment_handler))
             .route("/api/review/pr/comment/:id", delete(review_pr_delete_comment_handler))

@@ -1,7 +1,12 @@
 mod ask;
 mod checkpoints;
+mod threads;
 
 pub use ask::ask_handler;
+pub use threads::{
+    review_pr_line_comments_handler, review_pr_reply_handler, review_pr_resolve_handler,
+    review_pr_threads_handler,
+};
 pub(crate) use ask::ask;
 pub use checkpoints::{
     delete_checkpoint_handler, get_checkpoint_handler, get_viewed_handler,

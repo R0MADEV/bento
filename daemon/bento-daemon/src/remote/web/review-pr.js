@@ -27,6 +27,9 @@ async function openPR(number, title){
 
   // reset to Diff tab
   switchPRTab('diff');
+  // Las conversaciones antes del diff: se pintan bajo su línea, así que tienen
+  // que estar cuando se pinta.
+  await loadPRThreads();
   loadPRDiff();
 }
 
@@ -84,6 +87,67 @@ async function commentOnLine(anchor){
   }catch(_){}
 }
 
+// Las conversaciones del PR: los comentarios de línea y cuáles están dadas por
+// resueltas. Se leen bajo la línea de la que hablan, no en una lista aparte,
+// que es como se revisa en el escritorio y en la CLI.
+let prLineComments=[];
+let prThreads=[];
+
+async function loadPRThreads(){
+  const dir=cwd();
+  const at=q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR;
+  try{
+    const [comments,threads]=await Promise.all([
+      fetch('/api/review/pr/line_comments'+at).then(r=>r.ok?r.json():[]),
+      fetch('/api/review/pr/threads'+at).then(r=>r.ok?r.json():[]),
+    ]);
+    prLineComments=comments;prThreads=threads;
+  }catch(_){prLineComments=[];prThreads=[]}
+}
+
+// Si la conversación de un comentario está resuelta, según GitHub.
+function isResolved(id){
+  return prThreads.some(t=>t.isResolved && (t.comments?.nodes||[]).some(c=>c.databaseId===id));
+}
+
+function commentRow(c){
+  const mark=isResolved(c.id)?'✓':'💬';
+  const who=esc(c.user?.login||'?');
+  const when=c.created_at?esc(fmtRelDate(c.created_at)):'';
+  return `<div class="pr-line-comment${isResolved(c.id)?' pr-line-comment--resolved':''}">
+    <div class="pr-line-comment-head">${mark} <b>${who}</b> <span>${when}</span></div>
+    <div class="pr-line-comment-body">${esc(c.body||'')}</div>
+    <div class="pr-line-comment-actions">
+      <button onclick="replyToComment(${c.id})">Responder</button>
+      <button onclick="toggleResolved(${c.id})">${isResolved(c.id)?'Reabrir':'Resolver'}</button>
+    </div>
+  </div>`;
+}
+
+async function replyToComment(id){
+  const body=prompt('Responder al comentario');
+  if(!body||!body.trim())return;
+  const dir=cwd();
+  try{
+    await fetch('/api/review/pr/reply'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR,{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({comment_id:id,body:body.trim()}),
+    });
+  }catch(_){}
+  await loadPRThreads();loadPRDiff();
+}
+
+async function toggleResolved(id){
+  const dir=cwd();
+  try{
+    await fetch('/api/review/pr/resolve'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR,{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({comment_id:id,resolved:!isResolved(id)}),
+    });
+  }catch(_){}
+  await loadPRThreads();loadPRDiff();
+}
+
 async function loadPRDiff(){
   const dir=cwd();
   const el=document.getElementById('rv-pr-diff-content');
@@ -102,6 +166,9 @@ async function loadPRDiff(){
       if(!anchor)return;
       row.classList.add('dl-commentable');
       row.onclick=()=>commentOnLine(anchor);
+      // Y lo que ya se ha dicho de esa línea, justo debajo.
+      const mine=prLineComments.filter(c=>c.path===anchor.file && (c.line??c.original_line)===anchor.line);
+      if(mine.length)row.insertAdjacentHTML('afterend',mine.map(commentRow).join(''));
     });
   }catch(e){
     el.innerHTML='<span class="dl dl-del">Error de conexión.</span>';

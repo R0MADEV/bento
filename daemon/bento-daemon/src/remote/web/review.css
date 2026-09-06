@@ -170,3 +170,13 @@
 
 /* La review abierta es de un commit que la rama ya dejó atrás. */
 .rv-stale{margin:0 0 10px;padding:6px 8px;border:1px solid var(--gold,#e0af68);border-radius:6px;color:var(--dim);font-size:12px}
+
+/* ── Conversaciones de un PR ─────────────────────────────────────────────── */
+/* Bajo la línea de la que hablan, como en el escritorio y en la CLI. */
+.pr-line-comment { margin: 4px 0 8px 20px; padding: 8px 10px; border-left: 2px solid var(--ac, #a78bfa); background: var(--s); border-radius: 0 6px 6px 0; }
+.pr-line-comment--resolved { opacity: .55; border-left-color: var(--dim); }
+.pr-line-comment-head { font-size: 12px; color: var(--dim); }
+.pr-line-comment-head b { color: var(--fg, #e2e8f8); }
+.pr-line-comment-body { margin: 4px 0 6px; font-size: 13px; white-space: pre-wrap; }
+.pr-line-comment-actions { display: flex; gap: 8px; }
+.pr-line-comment-actions button { background: var(--s); border: 1px solid var(--b); border-radius: 6px; color: var(--dim); font-size: 12px; padding: 4px 10px; }
