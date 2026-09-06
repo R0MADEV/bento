@@ -80,17 +80,21 @@ pub fn review_viewed_set(cwd: String, base: String, paths: Vec<String>) -> Resul
     bento_review::viewed::set(&cwd, &base, &paths)
 }
 
-/// Los comentarios dados por resueltos de un PR, del mismo almacén compartido:
-/// estaban en el `localStorage` del escritorio, así que la CLI y el móvil no
-/// los veían y se perdían al limpiar el navegador.
+/// Las conversaciones de un PR con su marca de resuelto, la de GitHub: la ve
+/// todo el equipo, a diferencia de una nota que cada cliente se guarde.
 #[tauri::command]
-pub fn review_resolved_get(cwd: String, pr: u64) -> Vec<u64> {
-    bento_review::resolved::get(&cwd, pr)
+pub fn review_pr_threads(cwd: String, pr: u64) -> Result<serde_json::Value, String> {
+    bento_review::threads::review_threads(&cwd, pr)
 }
 
+/// Resuelve la conversación de un comentario, o la reabre. Por el comentario,
+/// que es lo que conoce el panel: GitHub resuelve hilos, no comentarios.
 #[tauri::command]
-pub fn review_resolved_set(cwd: String, pr: u64, ids: Vec<u64>) -> Result<(), String> {
-    bento_review::resolved::set(&cwd, pr, &ids)
+pub fn review_pr_thread_resolve(cwd: String, pr: u64, comment_id: u64, resolved: bool) -> Result<(), String> {
+    let threads = bento_review::threads::review_threads(&cwd, pr)?;
+    let thread = bento_review::threads::thread_of(&threads, comment_id)
+        .ok_or_else(|| "ese comentario no está en ningún hilo".to_string())?;
+    bento_review::threads::set_thread_resolved(&cwd, &thread, resolved)
 }
 
 #[tauri::command]

@@ -20,11 +20,11 @@ impl ReviewState {
         let (tx, cwd) = (self.work_tx.clone(), self.cwd.clone());
         tokio::spawn(async move {
             let ask = |cmd: &str| json!({ "id": "1", "cmd": cmd, "cwd": cwd, "pr": pr });
-            let (comments, checks, inline, resolved) = tokio::join!(
+            let (comments, checks, inline, threads) = tokio::join!(
                 crate::request_data(ask("review.pr_comments")),
                 crate::request_data(ask("review.pr_checks")),
                 crate::request_data(ask("review.pr_review_comments")),
-                crate::request_data(ask("review.resolved")),
+                crate::request_data(ask("review.pr_threads")),
             );
             let inline = inline.ok();
             let _ = tx.send(super::Fetched::PrDetail {
@@ -33,13 +33,7 @@ impl ReviewState {
                 inline: inline.as_ref().map(format_review_comments).unwrap_or_default(),
                 comments: comments.ok().map(|v| format_pr_comments(&v)).unwrap_or_default(),
                 raw: inline.and_then(|v| v.as_array().cloned()).unwrap_or_default(),
-                resolved: resolved
-                    .ok()
-                    .and_then(|v| v.as_array().cloned())
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(Value::as_u64)
-                    .collect(),
+                threads: threads.ok().unwrap_or(Value::Null),
             });
         });
     }
@@ -137,22 +131,38 @@ impl ReviewState {
             .unwrap_or_default();
     }
 
-    /// Da por resuelto el comentario marcado, o lo reabre. Es el mismo gesto
-    /// que marca un fichero como revisado, y se guarda en el mismo almacén.
-    pub(super) fn toggle_resolved(&mut self, id: u64) {
-        if !self.resolved_comments.remove(&id) {
-            self.resolved_comments.insert(id);
-        }
+    /// Resuelve en GitHub el hilo del comentario marcado, o lo reabre. Es la
+    /// conversación entera la que se resuelve, no el comentario suelto, y la
+    /// marca la ve todo el equipo.
+    pub(super) async fn toggle_resolved(&mut self, id: u64) {
         let Some(pr) = self.current_pr else { return };
-        let ids: Vec<u64> = self.resolved_comments.iter().copied().collect();
-        let (cwd, tx) = (self.cwd.clone(), self.work_tx.clone());
-        let _ = &tx;
-        tokio::spawn(async move {
-            let _ = crate::request_data(json!({
-                "id": "1", "cmd": "review.resolved_set", "cwd": cwd, "pr": pr, "ids": ids,
-            }))
-            .await;
+        let resolved = !self.is_resolved(id);
+        self.pr_status = match resolved {
+            true => "resolviendo la conversación…".to_string(),
+            false => "reabriendo la conversación…".to_string(),
+        };
+        let req = json!({
+            "id": "1", "cmd": "review.pr_thread_resolve", "cwd": self.cwd,
+            "pr": pr, "comment_id": id, "resolved": resolved,
         });
+        self.pr_status = match crate::request_data(req).await {
+            Ok(_) => match resolved {
+                true => "conversación resuelta".to_string(),
+                false => "conversación reabierta".to_string(),
+            },
+            Err(error) => format!("no se pudo: {error}"),
+        };
+        self.reload_threads().await;
+    }
+
+    /// Relee los hilos: lo que se acaba de resolver tiene que verse sin volver
+    /// a abrir el PR.
+    async fn reload_threads(&mut self) {
+        let Some(pr) = self.current_pr else { return };
+        let req = json!({ "id": "1", "cmd": "review.pr_threads", "cwd": self.cwd, "pr": pr });
+        if let Ok(threads) = crate::request_data(req).await {
+            self.threads = threads;
+        }
     }
 
     /// La rama de git con la que comparar un PR.

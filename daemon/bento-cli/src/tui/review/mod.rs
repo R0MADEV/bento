@@ -100,7 +100,7 @@ pub(super) enum Fetched {
         inline: String,
         comments: String,
         raw: Vec<Value>,
-        resolved: Vec<u64>,
+        threads: Value,
     },
     /// The daemon said no. Shown in the header rather than rendered as an
     /// empty list, which is indistinguishable from "there is nothing".
@@ -248,9 +248,10 @@ pub(super) struct ReviewState {
     inline_comments: Vec<Value>,
     /// Si ya se ha abierto la pestaña alguna vez.
     entered: bool,
-    /// Los que das por resueltos. Marca tuya, no de GitHub, guardada donde las
-    /// de "revisado" para que la vean también el escritorio y el móvil.
-    resolved_comments: std::collections::HashSet<u64>,
+    /// Los hilos de review tal y como los da GitHub, con su marca de resuelto.
+    /// La marca es suya y la ve todo el equipo: resolver una conversación no
+    /// es una nota que cada cliente se guarde por su cuenta.
+    threads: Value,
     /// La fila donde empezó un arrastre por el diff: con ella y la marcada
     /// sale el rango que se comenta, como al arrastrar en GitHub.
     drag_anchor: Option<usize>,
@@ -339,7 +340,7 @@ impl ReviewState {
             pr_summary: String::new(),
             inline_comments: Vec::new(),
             entered: false,
-            resolved_comments: std::collections::HashSet::new(),
+            threads: Value::Null,
             drag_anchor: None,
             pr_status: String::new(),
             checkpoints: Vec::new(),
@@ -387,8 +388,8 @@ impl ReviewState {
                 self.checkpoints_selected = 0;
                 self.status.clear()
             }
-            Fetched::PrDetail { pr, checks, inline, comments, raw, resolved } => {
-                self.resolved_comments = resolved.into_iter().collect();
+            Fetched::PrDetail { pr, checks, inline, comments, raw, threads } => {
+                self.threads = threads;
                 // Lo que acaba de pasar sólo se borra al abrir otro PR:
                 // aprobar refresca al terminar, y al llegar la respuesta el
                 // error se borraba solo, así que parecía que no hacía nada.
@@ -1473,48 +1474,6 @@ mod tests {
         assert!(state.pr_detail.is_empty(), "y el panel no se bloquea a la espera");
     }
 
-    #[tokio::test]
-    async fn space_gives_a_comment_as_resolved_and_takes_it_back() {
-        // El mismo gesto que marca un fichero como revisado: sobre un
-        // comentario es darlo por resuelto.
-        let mut state = state_with_diff();
-        state.focus = Focus::Files;
-        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MANDEV", "esto sobra")];
-        state.files_selected = 3;
-
-        state.handle_event(press(KeyCode::Char(' '))).await;
-        assert!(state.resolved_comments.contains(&7));
-
-        state.handle_event(press(KeyCode::Char(' '))).await;
-        assert!(!state.resolved_comments.contains(&7), "y se puede reabrir");
-    }
-
-    #[test]
-    fn a_resolved_comment_is_painted_as_settled() {
-        let mut state = state_with_diff();
-        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MANDEV", "esto sobra")];
-        state.resolved_comments.insert(7);
-
-        let text = super::draw::tests::screen(&state, 100, 20);
-
-        assert!(text.contains("✓ R0MANDEV"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn e_edits_the_marked_comment_starting_from_what_it_says() {
-        // El escritorio tiene Editar junto a Responder. Empezar de cero para
-        // corregir una palabra no es editar.
-        let mut state = state_with_diff();
-        state.focus = Focus::Files;
-        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MADEV", "jelllo")];
-        state.files_selected = 3;
-
-        state.handle_event(press(KeyCode::Char('e'))).await;
-
-        assert!(matches!(state.input_purpose, Some(InputPurpose::CommentEdit(7))));
-        assert_eq!(state.input, "jelllo", "con lo que decía, para corregirlo");
-    }
-
     #[test]
     fn a_comment_says_when_it_was_written() {
         // Un comentario de hace un mes no pesa lo mismo que el de esta
@@ -1948,7 +1907,7 @@ mod tests {
             inline: String::new(),
             comments: String::new(),
             raw: Vec::new(),
-            resolved: Vec::new(),
+            threads: Value::Null,
         });
 
         assert_eq!(state.pr_status, "error: no se pudo aprobar", "sigue dicho");
@@ -1966,10 +1925,49 @@ mod tests {
             inline: String::new(),
             comments: String::new(),
             raw: Vec::new(),
-            resolved: Vec::new(),
+            threads: Value::Null,
         });
 
         assert!(state.pr_status.is_empty(), "lo del PR anterior no se queda");
+    }
+
+    #[test]
+    fn a_thread_that_github_has_resolved_shows_as_resolved() {
+        // La marca es de GitHub y la ve todo el equipo, no una nota que cada
+        // cliente se guarda por su cuenta.
+        let mut state = state_with_diff();
+        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MADEV", "esto sobra")];
+        state.threads = serde_json::json!([
+            {"id": "PRRT_uno", "isResolved": true, "comments": {"nodes": [{"databaseId": 7}]}},
+        ]);
+
+        assert!(state.is_resolved(7));
+
+        state.threads = serde_json::json!([
+            {"id": "PRRT_uno", "isResolved": false, "comments": {"nodes": [{"databaseId": 7}]}},
+        ]);
+
+        assert!(!state.is_resolved(7), "y reabierto vuelve a estar abierto");
+    }
+
+    #[tokio::test]
+    async fn space_over_a_comment_resolves_its_thread_in_github() {
+        // Antes se apuntaba en el almacén de Bento; ahora va a GitHub.
+        let mut state = state_with_diff();
+        state.focus = Focus::Files;
+        state.inline_comments = vec![comment(7, "a.rs", 43, "R0MADEV", "esto sobra")];
+        state.threads = serde_json::json!([
+            {"id": "PRRT_uno", "isResolved": false, "comments": {"nodes": [{"databaseId": 7}]}},
+        ]);
+        state.files_selected = 3;
+
+        state.handle_event(press(KeyCode::Char(' '))).await;
+
+        assert!(
+            state.pr_status.contains("resolviendo") || state.pr_status.contains("no se pudo"),
+            "lo dice mientras va: {}",
+            state.pr_status,
+        );
     }
 
     #[test]

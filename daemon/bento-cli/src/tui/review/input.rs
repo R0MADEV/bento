@@ -298,7 +298,7 @@ impl ReviewState {
             KeyCode::Char(' ') => {
                 // Sobre un comentario, el mismo gesto lo da por resuelto.
                 if let Some(id) = self.selected_comment() {
-                    self.toggle_resolved(id);
+                    self.toggle_resolved(id).await;
                     return false;
                 }
                 if let Some(path) = self.selected_path() {

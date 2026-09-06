@@ -87,9 +87,9 @@ pub(crate) struct Request {
     /// lo dejaba pasar, así que sólo se podía comentar una línea suelta.
     #[serde(default)]
     pub(crate) start_line: Option<u64>,
-    /// Los comentarios dados por resueltos, para `review.resolved_set`.
+    /// Si un hilo queda resuelto o se reabre, para `review.pr_thread_resolve`.
     #[serde(default)]
-    pub(crate) ids: Option<Vec<u64>>,
+    pub(crate) resolved: Option<bool>,
 }
 
 pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {

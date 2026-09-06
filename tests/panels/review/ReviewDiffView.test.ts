@@ -231,6 +231,25 @@ describe('renderFiles', () => {
     expect(line).toMatch(/contain-intrinsic-size/)
   })
 
+  it('shows comments that arrive after the list was drawn', () => {
+    // El cuerpo de un fichero se arma al abrirlo, y los comentarios del PR
+    // llegan por su cuenta, después: si el fichero no está armado no hay
+    // dónde ponerlos y el comentario no se ve en ninguna parte.
+    setup()
+    const files = Array.from({ length: 8 }, (_, n) => makeFile({ file: `src/f${n}.ts` }))
+    const h = makeHarness({ lastFiles: files })
+    const view = buildReviewDiffView(h.dom, h.state)
+    view.renderFiles()
+
+    // Ahora llegan, como cuando contesta GitHub.
+    h.data.existingComments = [
+      { id: 1, path: 'src/f7.ts', line: 1, body: 'esto sobra', user: { login: 'x' } } as unknown as GhComment,
+    ]
+    view.injectExistingComments()
+
+    expect(h.dom.diffView.querySelectorAll('.review-existing-comment')).toHaveLength(1)
+  })
+
   it('renders unified diff lines with correct add/del markup and line numbers', () => {
     setup()
     const h = makeHarness()

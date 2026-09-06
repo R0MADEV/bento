@@ -202,7 +202,7 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     setTimeout(() => { commentStatus.textContent = ''; commentStatus.className = 'review-comment-status' }, isError ? 5000 : 3000)
   }
   // ── Estado local, navegación y checks ─────────────────────────────────────
-  const { getViewedFiles, loadViewedFiles, setFileViewed, updateViewedCounter, getResolvedComments, loadResolvedComments, setCommentResolved } =
+  const { getViewedFiles, loadViewedFiles, setFileViewed, updateViewedCounter } =
     buildReviewLocalState({
       repoPath: () => repoPath,
       selectedBranch: () => selectedBranch,
@@ -224,7 +224,15 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
     repoPath: () => repoPath,
     currentPrNumber: () => currentPrNumber,
     isResolved: (id: number) => resolvedComments.has(id),
-    setResolved: setCommentResolved,
+    // A GitHub: resolver una conversación es una marca suya, que ve todo el
+    // equipo, y no una nota que cada cliente se guarde por su cuenta.
+    setResolved: (id: number, resolved: boolean) => {
+      void invoke('review_pr_thread_resolve', {
+        cwd: repoPath, pr: currentPrNumber, commentId: id, resolved,
+      })
+        .then(async () => { await loadExistingComments(); injectExistingComments() })
+        .catch((e: unknown) => { console.error(e) })
+    },
     refresh: async () => { await loadExistingComments(); injectExistingComments() },
   }
   const buildCommentBubble = (c: GhComment): HTMLElement => buildReviewCommentBubble(c, commentActions)
@@ -306,8 +314,6 @@ export function createReviewPanel(sessionPath?: string): { element: HTMLElement;
       setLastFiles: v => { lastFiles = v },
       setLastStatusRollup: v => { lastStatusRollup = v },
       setResolvedComments: v => { resolvedComments = v },
-      getResolvedComments,
-      loadResolvedComments,
       nextDiscSeq: () => ++discSeq,
       getDiscSeq: () => discSeq,
       nextPrInfoSeq: () => ++prInfoSeq,

@@ -207,11 +207,15 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
     // comentario siguiente los busca en el DOM, y si no están, los comentarios
     // de un PR desaparecen del panel.
     if (details.open || fileCommentCount > 0) buildBody()
-    details.addEventListener('toggle', () => {
+    const ensureBody = (): void => {
       // Una vez: al cerrar se queda armado, que reabrirlo es lo normal y
       // rehacerlo perdería los comentarios a medio escribir.
-      if (details.open && details.childElementCount === 1) buildBody()
-    })
+      if (details.childElementCount === 1) buildBody()
+    }
+    details.addEventListener('toggle', () => { if (details.open) ensureBody() })
+    // Los comentarios del PR llegan por su cuenta, después de pintar la lista:
+    // sin cuerpo no hay dónde ponerlos y no se ven en ninguna parte.
+    details.addEventListener('bento:ensure-body', ensureBody)
     return details
   }
 
@@ -315,6 +319,15 @@ export function buildReviewDiffView(dom: ReviewDiffDom, state: ReviewDiffState):
   const injectExistingComments = (): void => {
     diffView.querySelectorAll('.review-existing-comment').forEach(el => el.remove())
     diffView.querySelectorAll('.review-comment-orphans').forEach(el => el.remove())
+    // Armar los ficheros que tengan comentarios: llegan después de pintar la
+    // lista, cuando la mayoría está sin armar, y sin cuerpo no hay dónde
+    // ponerlos.
+    const commented = new Set(state.getExistingComments().map(c => c.path))
+    for (const detail of diffView.querySelectorAll<HTMLElement>('.review-file-detail')) {
+      if (commented.has(detail.dataset.filename ?? '')) {
+        detail.dispatchEvent(new Event('bento:ensure-body'))
+      }
+    }
     const fileContainers = [...diffView.querySelectorAll<HTMLElement>('[data-filepath]')]
     const orphans = new Map<HTMLElement, GhComment[]>()
 

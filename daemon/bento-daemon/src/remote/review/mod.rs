@@ -30,6 +30,7 @@ pub(crate) use bento_review::pr::{
     discussion as pr_comments, list_open as list_prs, reply_review_comment, submit_review,
     update_comment, update_review_comment,
 };
+pub(crate) use bento_review::threads::{review_threads, set_thread_resolved, thread_of};
 // Las mismas que enseña el escritorio: locales y remotas, sin cortar a 20. La
 // otra (`vcs::list_branches`) es "las 20 más recientes", que para elegir base
 // se queda corta — `origin/main` ni aparecía.

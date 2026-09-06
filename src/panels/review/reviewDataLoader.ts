@@ -51,8 +51,6 @@ export interface ReviewDataLoaderState {
   setLastFiles: (v: ReviewChangeFile[]) => void
   setLastStatusRollup: (v: StatusRollupEntry[]) => void
   setResolvedComments: (v: Set<number>) => void
-  getResolvedComments: () => Set<number>
-  loadResolvedComments: () => Promise<void>
   nextDiscSeq: () => number
   getDiscSeq: () => number
   nextPrInfoSeq: () => number
@@ -92,15 +90,27 @@ export function buildReviewDataLoader(dom: ReviewDataLoaderDom, state: ReviewDat
 
   const ghBranch = (b: string): string => b.replace(/^[^/]+\//, '')
 
+  /// Los comentarios cuyo hilo GitHub da por resuelto.
+  const resolvedCommentIds = async (): Promise<Set<number>> => {
+    type Thread = { isResolved: boolean, comments: { nodes: { databaseId: number }[] } }
+    const threads = await invoke<Thread[]>('review_pr_threads', {
+      cwd: state.getRepoPath(), pr: state.getCurrentPrNumber(),
+    }).catch(() => [])
+    return new Set(
+      threads
+        .filter(t => t.isResolved)
+        .flatMap(t => t.comments.nodes.map(c => c.databaseId)),
+    )
+  }
+
   const loadExistingComments = async (): Promise<void> => {
     if (state.getCurrentPrNumber() === null) { state.setExistingComments([]); return }
     try {
       const raw = await invoke<GhComment[]>('gh_pr_list_comments', { path: state.getRepoPath(), prNumber: state.getCurrentPrNumber() })
       state.setExistingComments(raw.filter(c => c.line != null))
-      // Del almacén, antes de pintarlos: los resueltos ya no viven en el
-      // navegador, así que hay que traerlos como los archivos revisados.
-      await state.loadResolvedComments()
-      state.setResolvedComments(state.getResolvedComments())
+      // Cuáles están resueltos lo dice GitHub, por conversación: es su marca y
+      // la ve todo el equipo.
+      state.setResolvedComments(await resolvedCommentIds())
     } catch { state.setExistingComments([]) }
   }
 

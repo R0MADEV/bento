@@ -218,20 +218,34 @@ pub(crate) fn dispatch(
             _ => send(fail(&req.id, "cwd, base and paths required".into())),
         },
 
-        // Los comentarios que das por resueltos. Es una marca tuya —GitHub no
-        // tiene dónde guardarla para un comentario suelto—, así que vive en el
-        // mismo almacén que los ficheros revisados y la ven los tres clientes.
-        "review.resolved" => match (&req.cwd, req.pr) {
-            (Some(cwd), Some(pr)) => send(ok(&req.id, json!(bento_review::resolved::get(cwd, pr)))),
+        // Las conversaciones de un PR con su marca de resuelto, la de GitHub:
+        // la ve todo el equipo, a diferencia de una nota local de cada cliente.
+        "review.pr_threads" => match (&req.cwd, req.pr) {
+            (Some(cwd), Some(pr)) => match crate::remote::review::review_threads(cwd, pr) {
+                Ok(threads) => send(ok(&req.id, threads)),
+                Err(e) => send(fail(&req.id, e)),
+            },
             _ => send(fail(&req.id, "cwd and pr required".into())),
         },
 
-        "review.resolved_set" => match (&req.cwd, req.pr, &req.ids) {
-            (Some(cwd), Some(pr), Some(ids)) => match bento_review::resolved::set(cwd, pr, ids) {
-                Ok(()) => send(ok(&req.id, Value::Null)),
-                Err(e) => send(fail(&req.id, e)),
-            },
-            _ => send(fail(&req.id, "cwd, pr and ids required".into())),
+        "review.pr_thread_resolve" => match (&req.cwd, req.pr, req.comment_id, req.resolved) {
+            (Some(cwd), Some(pr), Some(comment), Some(resolved)) => {
+                // Por el comentario, que es lo que conocen los clientes:
+                // GitHub resuelve hilos, no comentarios sueltos.
+                match crate::remote::review::review_threads(cwd, pr) {
+                    Ok(threads) => match crate::remote::review::thread_of(&threads, comment) {
+                        Some(thread) => {
+                            match crate::remote::review::set_thread_resolved(cwd, &thread, resolved) {
+                                Ok(()) => send(ok(&req.id, Value::Null)),
+                                Err(e) => send(fail(&req.id, e)),
+                            }
+                        }
+                        None => send(fail(&req.id, "ese comentario no está en ningún hilo".into())),
+                    },
+                    Err(e) => send(fail(&req.id, e)),
+                }
+            }
+            _ => send(fail(&req.id, "cwd, pr, comment_id and resolved required".into())),
         },
 
         "review.checkpoints" => match &req.cwd {

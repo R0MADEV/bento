@@ -280,9 +280,13 @@ impl ReviewState {
         })
     }
 
-    /// Si un comentario está dado por resuelto.
+    /// Si el hilo de un comentario está resuelto en GitHub.
     pub(super) fn is_resolved(&self, id: u64) -> bool {
-        self.resolved_comments.contains(&id)
+        let Some(threads) = self.threads.as_array() else { return false };
+        threads.iter().any(|thread| {
+            let resolved = thread.get("isResolved").and_then(Value::as_bool) == Some(true);
+            resolved && thread_has(thread, id)
+        })
     }
 
     /// El comentario de la fila marcada, para contestarlo o retirarlo.
@@ -408,4 +412,15 @@ pub(super) fn comment_id_at(rows: &[PaneRow<'_>], index: usize) -> Option<u64> {
         PaneRow::Comment(c) => c.get("id").and_then(Value::as_u64),
         _ => None,
     }
+}
+
+/// Si un hilo contiene ese comentario.
+fn thread_has(thread: &Value, comment: u64) -> bool {
+    thread
+        .get("comments")
+        .and_then(|c| c.get("nodes"))
+        .and_then(Value::as_array)
+        .is_some_and(|nodes| {
+            nodes.iter().any(|c| c.get("databaseId").and_then(Value::as_u64) == Some(comment))
+        })
 }

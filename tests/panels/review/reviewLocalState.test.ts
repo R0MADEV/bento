@@ -14,9 +14,6 @@ function fakeStore(initial: Record<string, string[]> = {}) {
     const { cwd, base, paths } = (args ?? {}) as { cwd: string, base: string, paths?: string[] }
     if (cmd === 'review_viewed_get') return files[`${cwd}:${base}`] ?? []
     if (cmd === 'review_viewed_set') { files[`${cwd}:${base}`] = paths ?? []; return null }
-    const { pr, ids } = (args ?? {}) as { pr: number, ids?: number[] }
-    if (cmd === 'review_resolved_get') return (files[`${cwd}:pr${pr}`] ?? []).map(Number)
-    if (cmd === 'review_resolved_set') { files[`${cwd}:pr${pr}`] = (ids ?? []).map(String); return null }
     return null
   })
   return files
@@ -125,40 +122,6 @@ describe('review local state', () => {
     expect(viewedCounterEl.classList.contains('hidden')).toBe(true)
   })
 
-  it('remembers a comment given as resolved, per PR', async () => {
-    const store = fakeStore()
-    const first = setup({ pr: 10 })
-    await first.state.loadResolvedComments()
-    first.state.setCommentResolved(1, true)
 
-    // Del almacén compartido, no del navegador: la marca la tienen que ver
-    // también la CLI y el móvil.
-    expect(store['/repo:pr10']).toEqual(['1'])
 
-    const other = setup({ pr: 11 })
-    await other.state.loadResolvedComments()
-    expect(other.state.getResolvedComments().size).toBe(0)
-  })
-
-  it('brings a comment marked elsewhere back from the store', async () => {
-    fakeStore({ '/repo:pr10': ['7'] })
-    const { state } = setup({ pr: 10 })
-
-    await state.loadResolvedComments()
-
-    expect([...state.getResolvedComments()]).toEqual([7])
-  })
-
-  it('moves what the browser had saved before there was a store', async () => {
-    // Quien ya tuviera comentarios resueltos no los pierde al actualizar.
-    const store = fakeStore()
-    localStorage.setItem('bento.review.resolved./repo.10', JSON.stringify([3, 5]))
-    const { state } = setup({ pr: 10 })
-
-    await state.loadResolvedComments()
-
-    expect([...state.getResolvedComments()].sort()).toEqual([3, 5])
-    expect(store['/repo:pr10']).toEqual(['3', '5'])
-    expect(localStorage.getItem('bento.review.resolved./repo.10')).toBeNull()
-  })
 })
