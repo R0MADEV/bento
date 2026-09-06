@@ -87,9 +87,10 @@ pub(super) struct Wheel {
 impl Wheel {
     /// Cuántas filas pide mover este evento, si es que ya llega a una.
     pub(super) fn step(&mut self, mouse: crossterm::event::MouseEvent) -> Option<i16> {
-        /// Eventos por fila. Con menos, el trackpad se dispara; con más, la
-        /// rueda de un ratón se queda corta.
-        const PER_ROW: i16 = 3;
+        /// Eventos por fila. A uno, un gesto de trackpad se lleva media
+        /// pantalla; a tres se queda corto y hay que insistir. Es el número
+        /// que hay que tocar si el desplazamiento no se siente bien.
+        const PER_ROW: i16 = 2;
 
         let direction = match mouse.kind {
             MouseEventKind::ScrollUp => -1,
@@ -165,9 +166,9 @@ mod tests {
         let at = |kind| MouseEvent { kind, column: 0, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
         let mut wheel = super::Wheel::default();
 
-        let moved: i16 = (0..9).filter_map(|_| wheel.step(at(MouseEventKind::ScrollDown))).sum();
+        let moved: i16 = (0..8).filter_map(|_| wheel.step(at(MouseEventKind::ScrollDown))).sum();
 
-        assert_eq!(moved, 3, "nueve eventos, tres filas");
+        assert_eq!(moved, 4, "ocho eventos, cuatro filas");
     }
 
     #[test]
@@ -179,9 +180,9 @@ mod tests {
         let mut wheel = super::Wheel::default();
 
         let _ = wheel.step(at(MouseEventKind::ScrollDown));
-        let up: Vec<i16> = (0..3).filter_map(|_| wheel.step(at(MouseEventKind::ScrollUp))).collect();
+        let up: Vec<i16> = (0..2).filter_map(|_| wheel.step(at(MouseEventKind::ScrollUp))).collect();
 
-        assert_eq!(up, vec![-1]);
+        assert_eq!(up, vec![-1], "los dos primeros hacia arriba mueven una fila");
     }
 
     #[test]

@@ -85,6 +85,32 @@ impl ReviewState {
         rows
     }
 
+    /// Cuántas filas hay, sin armarlas. Armarlas copia cada línea de cada
+    /// diff abierto, y moverse por la lista sólo necesita el número: con un
+    /// gesto de trackpad eran treinta copias de todo para bajar quince filas.
+    pub(in crate::tui) fn pane_rows_len(&self) -> usize {
+        self.reparse_if_needed();
+        let parsed = self.parsed.borrow();
+        self.visible_files()
+            .iter()
+            .map(|file| {
+                let Some(path) = file.get("path").and_then(Value::as_str) else { return 1 };
+                let Some(diff) = parsed.rows.get(path) else { return 1 };
+                let lines = match self.split {
+                    // Partido, un borrado y el añadido que lo sustituye son
+                    // una sola fila.
+                    true => super::format::split_rows(diff.clone()).len(),
+                    false => diff.len(),
+                };
+                let comments: usize = diff
+                    .iter()
+                    .map(|row| self.comments_on(path, row.line).count())
+                    .sum();
+                1 + lines + comments
+            })
+            .sum()
+    }
+
     /// Vuelve a partir los diffs sólo si cambió lo que se ve. Partirlos es lo
     /// caro —tres cuartas partes de lo que cuesta pintar— y entre un frame y
     /// el siguiente casi nunca cambia nada.
@@ -146,7 +172,7 @@ impl ReviewState {
 
     /// Mueve el cursor del panel de archivos sin salirse de la lista.
     pub(in crate::tui) fn select_file_by(&mut self, delta: i16) {
-        let last = self.pane_rows().len().saturating_sub(1);
+        let last = self.pane_rows_len().saturating_sub(1);
         self.files_selected = self.files_selected.saturating_add_signed(delta as isize).min(last);
         // Moverse no es seleccionar: el ancla del arrastre se quedaba puesta
         // desde el clic anterior y desplazarse iba marcando todo lo que

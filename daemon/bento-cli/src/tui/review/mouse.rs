@@ -169,7 +169,7 @@ impl ReviewState {
     /// Mueve el cursor a una fila de las que se ven, sin tocar el ancla.
     fn select_row(&mut self, row: usize) {
         let index = self.files_offset.get() + row;
-        if index < self.pane_rows().len() {
+        if index < self.pane_rows_len() {
             self.files_selected = index;
         }
     }
@@ -184,7 +184,7 @@ impl ReviewState {
             FileClick::Row(row) => {
                 // La lista puede estar desplazada: la fila de arriba no es la
                 // primera del listado.
-                let rows = self.pane_rows().len();
+                let rows = self.pane_rows_len();
                 let index = self.files_offset.get() + row;
                 if index >= rows {
                     return;

@@ -1685,6 +1685,18 @@ mod tests {
     }
 
     #[test]
+    fn counting_the_rows_does_not_build_them() {
+        // Mover el cursor sólo necesita saber cuántas filas hay, y armarlas
+        // copia cada línea de cada diff abierto: con un gesto de trackpad son
+        // treinta copias de todo para bajar quince filas.
+        let mut state = state_with_files(&["a.rs", "b.rs"]);
+        state.expanded.insert("a.rs".into(), "@@ -1,0 +1,3 @@\n+uno\n+dos\n+tres".into());
+        state.inline_comments = vec![comment(7, "a.rs", 2, "R0MADEV", "algo")];
+
+        assert_eq!(state.pane_rows_len(), state.pane_rows().len());
+    }
+
+    #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there
         // would duplicate the work, the billing and the output.
