@@ -106,9 +106,27 @@ describe('esc', () => {
 describe('highlightCode', () => {
   it('highlights keywords, strings and comments for known extensions', () => {
     const html = highlightCode('const x = "hi" // note', 'ts')
-    expect(html).toContain('sh-keyword">const</span>')
-    expect(html).toContain('sh-string">"hi"</span>')
-    expect(html).toContain('sh-comment">// note</span>')
+    expect(html).toContain('hljs-keyword">const</span>')
+    expect(html).toContain('hljs-string">&quot;hi&quot;</span>')
+    expect(html).toContain('hljs-comment">// note</span>')
+  })
+
+  it('highlights the languages the hand-written table never had', () => {
+    // Un JSON, un CSS o un YAML salían en plano: la tabla eran cuatro
+    // lenguajes escritos a mano y todo lo demás quedaba fuera.
+    expect(highlightCode('{"clave": 1}', 'json')).toContain('hljs-')
+    expect(highlightCode('.a { color: red }', 'css')).toContain('hljs-')
+    expect(highlightCode('SELECT * FROM t', 'sql')).toContain('hljs-')
+  })
+
+  it('keeps the code intact once the tags are taken out', () => {
+    // Perder un carácter al colorear es peor que no colorear.
+    const code = 'const x = obj?.[k] ?? `a${b}`'
+    const text = highlightCode(code, 'ts').replace(/<[^>]+>/g, '')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+      .replace(/&#x27;/g, "'").replace(/&amp;/g, '&')
+
+    expect(text).toBe(code)
   })
 
   it('escapes but does not tokenize unknown extensions', () => {

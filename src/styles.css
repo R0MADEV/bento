@@ -4746,12 +4746,19 @@ button.tasks-rebase-drag { border: 0; background: transparent; font: inherit; }
 .review-split-cell--right:hover .review-line-comment-btn { opacity: 1; }
 .review-split-cell.review-line-wrap--selected { background: color-mix(in srgb, var(--accent) 20%, transparent) !important; }
 /* ── Review: syntax highlighting ─────────────────────────────────────────── */
-.sh-keyword { color: #bb9af7; }
-.sh-string { color: #9ece6a; }
-.sh-comment { color: #565f89; font-style: italic; }
-.sh-number { color: #ff9e64; }
-.tasks-diff-line-add .sh-keyword { color: #c3a8f8; }
-.tasks-diff-line-del .sh-keyword { color: #c3a8f8; }
+/* Los colores son los de Bento; quien reparte el código en trozos es
+   highlight.js. Sus clases se agrupan aquí en las cuatro familias que ya
+   había, para que un fichero se lea igual que en la CLI, que hace lo mismo
+   con syntect. */
+.hljs-keyword, .hljs-built_in, .hljs-literal, .hljs-type, .hljs-selector-tag { color: #bb9af7; }
+.hljs-string, .hljs-regexp, .hljs-attr, .hljs-attribute, .hljs-symbol { color: #9ece6a; }
+.hljs-comment, .hljs-quote { color: #565f89; font-style: italic; }
+.hljs-number, .hljs-meta, .hljs-variable, .hljs-template-variable { color: #ff9e64; }
+.hljs-title, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: #7aa2f7; }
+.hljs-deletion { color: #f7768e; }
+.hljs-addition { color: #73daca; }
+.tasks-diff-line-add .hljs-keyword { color: #c3a8f8; }
+.tasks-diff-line-del .hljs-keyword { color: #c3a8f8; }
 .sh-word-del { background: color-mix(in srgb, #f7768e 45%, transparent); border-radius: 2px; }
 .sh-word-add { background: color-mix(in srgb, #73daca 45%, transparent); border-radius: 2px; }
 

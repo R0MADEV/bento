@@ -144,10 +144,7 @@ impl ReviewState {
 
     /// El comentario de la fila marcada, para contestarlo o retirarlo.
     pub(in crate::tui) fn selected_comment(&self) -> Option<u64> {
-        match self.pane_rows().get(self.files_selected)? {
-            PaneRow::Comment(c) => c.get("id").and_then(Value::as_u64),
-            _ => None,
-        }
+        comment_id_at(&self.pane_rows(), self.files_selected)
     }
 
     /// El fichero de la fila marcada, esté marcada su fila o una de su diff.
@@ -163,10 +160,13 @@ impl ReviewState {
     /// quiere en orden —la primera antes que la última—, y arrastrar hacia
     /// arriba las da al revés.
     pub(in crate::tui) fn comment_range(&self) -> Option<(u64, u64)> {
+        self.comment_range_in(&self.pane_rows())
+    }
+
+    /// Lo mismo sobre unas filas ya construidas: construirlas reparsea todos
+    /// los diffs abiertos, y el dibujo ya las tiene en la mano.
+    pub(super) fn comment_range_in(&self, rows: &[PaneRow<'_>]) -> Option<(u64, u64)> {
         let anchor = self.drag_anchor?;
-        // Una sola pasada: construir las filas reparsea todos los diffs
-        // abiertos, y esto lo pregunta el dibujo una vez por fila.
-        let rows = self.pane_rows();
         let from = row_line(rows.get(anchor)?)?;
         let to = row_line(rows.get(self.files_selected)?)?;
         let (first, last) = match from <= to {
@@ -254,5 +254,13 @@ pub(super) fn row_line(row: &PaneRow<'_>) -> Option<u64> {
         PaneRow::Diff { row, .. } => row.line,
         PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
         PaneRow::File(_) | PaneRow::Comment(_) => None,
+    }
+}
+
+/// El id del comentario de una fila, si esa fila es un comentario.
+pub(super) fn comment_id_at(rows: &[PaneRow<'_>], index: usize) -> Option<u64> {
+    match rows.get(index)? {
+        PaneRow::Comment(c) => c.get("id").and_then(Value::as_u64),
+        _ => None,
     }
 }

@@ -6,7 +6,7 @@ use ratatui::widgets::ListItem;
 use serde_json::Value;
 
 use super::format::{split_rows, DiffKind, DiffRow, FileFilter, SplitRow};
-use super::syntax::{tokens, Token};
+use super::syntax::tokens;
 use super::visible::PaneRow;
 use super::{InputPurpose, ReviewState, SidebarTab};
 
@@ -117,8 +117,14 @@ fn code_spans(text: &str, path: &str, base: Style) -> Vec<Span<'static>> {
         return vec![Span::styled(text.to_string(), base)];
     };
     let mut spans = vec![Span::styled(sign.to_string(), base)];
-    for (token, piece) in tokens(code, path) {
-        spans.push(Span::styled(piece, token_style(token, base)));
+    for (colour, piece) in tokens(code, path) {
+        // El fondo lo pone la línea —verde lo añadido, rojo lo quitado—; el
+        // resaltado sólo cambia la letra. Sin color reconocido, la de la línea.
+        let style = match colour {
+            Some(colour) => base.fg(colour),
+            None => base,
+        };
+        spans.push(Span::styled(piece, style));
     }
     spans
 }
@@ -133,18 +139,6 @@ fn split_sign(text: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn token_style(token: Token, base: Style) -> Style {
-    let color = match token {
-        Token::Keyword => Color::Indexed(141),
-        Token::Str => Color::Indexed(150),
-        Token::Number => Color::Indexed(215),
-        Token::Comment => Color::Indexed(245),
-        // Lo corriente se queda con el color de la línea: si no, un añadido
-        // dejaría de verse añadido.
-        Token::Plain => return base,
-    };
-    base.fg(color)
-}
 
 /// El diff en dos columnas. La cabecera de un bloque no pertenece a ninguna de
 /// las dos, así que va a lo ancho.
@@ -390,10 +384,10 @@ pub(super) struct Marks {
 }
 
 impl Marks {
-    pub(super) fn of(review: &ReviewState) -> Self {
+    pub(super) fn of(review: &ReviewState, rows: &[PaneRow<'_>]) -> Self {
         Self {
             has_pr: review.current_pr.is_some(),
-            range: review.comment_range(),
+            range: review.comment_range_in(rows),
             selected: review.files_selected,
         }
     }

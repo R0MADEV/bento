@@ -1,3 +1,4 @@
+import hljs from 'highlight.js/lib/common'
 import { parseDiffFiles } from '../../core/git/diffStats'
 import { reviewT } from './i18n'
 
@@ -89,59 +90,31 @@ export function filterReviewPrs(prs: readonly GhPr[], query: string): GhPr[] {
 }
 
 // ── Syntax highlighting ───────────────────────────────────────────────────────
-const KW: Record<string, string[]> = {
-  ts: ['const','let','var','function','return','if','else','for','while','class','import','export','from','default','async','await','new','this','typeof','null','undefined','true','false','void','type','interface','enum','extends','implements','public','private','protected','readonly','static','abstract','switch','case','break','continue','try','catch','finally','throw','delete','in','of','instanceof'],
-  rs: ['fn','let','mut','const','struct','enum','impl','trait','use','pub','mod','return','if','else','for','while','match','Some','None','Ok','Err','true','false','self','Self','super','crate','async','await','move','where','type','ref','loop','break','continue'],
-  py: ['def','class','return','if','else','elif','for','while','import','from','as','with','in','not','and','or','is','None','True','False','pass','break','continue','try','except','finally','raise','yield','async','await','lambda','global','nonlocal'],
-  go: ['func','var','const','return','if','else','for','range','go','select','case','default','break','continue','type','struct','interface','import','package','nil','true','false','defer','make','new','len','cap','chan','map','switch'],
-  css: ['@import','@media','@keyframes','@font-face','!important'],
-}
+// Con highlight.js: reconoce el lenguaje de verdad en vez de buscar palabras
+// en una lista, así que distingue un tipo de una función y cubre los cuarenta
+// lenguajes que trae `common` —JSON, CSS, SQL, YAML, Markdown…—, no los cuatro
+// que había escritos a mano. La CLI hace lo mismo con syntect y la paleta es
+// la de Bento en los dos.
 const EXT_LANG: Record<string, string> = {
-  ts:'ts', tsx:'ts', js:'ts', jsx:'ts', mjs:'ts', cjs:'ts',
-  rs:'rs', py:'py', go:'go', css:'css', scss:'css',
+  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+  mjs: 'javascript', cjs: 'javascript',
+  rs: 'rust', py: 'python', go: 'go', css: 'css', scss: 'scss',
+  json: 'json', yml: 'yaml', yaml: 'yaml', md: 'markdown', sql: 'sql',
+  sh: 'bash', bash: 'bash', zsh: 'bash', toml: 'ini', html: 'xml', xml: 'xml',
+  java: 'java', kt: 'kotlin', swift: 'swift', rb: 'ruby', php: 'php',
+  c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp', cs: 'csharp',
 }
 
 export const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-export const sp = (cls: string, text: string): string => `<span class="sh-${cls}">${esc(text)}</span>`
 
 export function highlightCode(code: string, ext: string): string {
   const lang = EXT_LANG[ext.toLowerCase()]
-  if (!lang) return esc(code)
-  const kws = new Set(KW[lang] ?? [])
-  const commentPfx = lang === 'py' ? '#' : '//'
-  const result: string[] = []
-  let i = 0
-  while (i < code.length) {
-    if (code.startsWith(commentPfx, i)) { result.push(sp('comment', code.slice(i))); break }
-    if (lang !== 'py' && code.startsWith('/*', i)) {
-      const end = code.indexOf('*/', i + 2)
-      const s = end === -1 ? code.slice(i) : code.slice(i, end + 2)
-      result.push(sp('comment', s)); i += s.length; continue
-    }
-    const q = code[i]
-    if (q === '"' || q === "'" || q === '`') {
-      let j = i + 1
-      while (j < code.length) {
-        if (code[j] === '\\') { j += 2; continue }
-        if (code[j] === q) { j++; break }
-        j++
-      }
-      result.push(sp('string', code.slice(i, j))); i = j; continue
-    }
-    if (code[i] >= '0' && code[i] <= '9') {
-      let j = i
-      while (j < code.length && /[\d._a-zA-Z]/.test(code[j])) j++
-      result.push(sp('number', code.slice(i, j))); i = j; continue
-    }
-    if (/[a-zA-Z_$]/.test(code[i])) {
-      let j = i
-      while (j < code.length && /[\w$]/.test(code[j])) j++
-      const word = code.slice(i, j)
-      result.push(kws.has(word) ? sp('keyword', word) : esc(word)); i = j; continue
-    }
-    result.push(esc(code[i])); i++
-  }
-  return result.join('')
+  // Sin lenguaje reconocido se deja en plano: pintarlo con las reglas de otro
+  // es peor que no pintarlo. `ignoreIllegals` porque una línea suelta de un
+  // diff casi nunca es un fichero válido.
+  if (!lang || !hljs.getLanguage(lang)) return esc(code)
+  try { return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value }
+  catch { return esc(code) }
 }
 
 // ── File state from diff chunk ────────────────────────────────────────────────

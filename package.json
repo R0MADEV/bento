@@ -8,6 +8,7 @@
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@types/qrcode": "^1.5.6",
     "dockview-core": "^4.3.0",
+    "highlight.js": "^11.12.0",
     "hls.js": "^1.4.0",
     "qrcode": "^1.5.4",
     "xterm": "^5.3.0",

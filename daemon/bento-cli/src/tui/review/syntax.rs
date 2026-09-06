@@ -1,147 +1,87 @@
-//! Resaltado del código dentro del diff: las mismas palabras y el mismo
-//! recorrido que el del escritorio (`reviewFormat.ts`), para que un fichero se
-//! lea igual en los dos. Sin librería: son cuatro cosas —comentario, cadena,
-//! número y palabra reservada— y una tabla por lenguaje.
+//! Resaltado del código dentro del diff.
+//!
+//! Con `syntect`, las mismas definiciones que usa Sublime: reconoce el
+//! lenguaje de verdad en vez de buscar palabras en una lista, así que
+//! distingue un tipo de una función y cubre las decenas de lenguajes que trae
+//! —JSON, CSS, Markdown, SQL, YAML…—, no los cuatro que teníamos a mano.
+//!
+//! Las sintaxis y el tema se cargan una vez: hacerlo por línea cuesta cientos
+//! de milisegundos, y esto se pinta en cada frame.
 
-/// Qué es cada trozo de una línea. Lo demás es texto corriente.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(super) enum Token {
-    Keyword,
-    Str,
-    Number,
-    Comment,
-    Plain,
+use std::sync::OnceLock;
+
+use ratatui::style::Color;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Theme, ThemeSet};
+use syntect::parsing::SyntaxSet;
+
+struct Syntaxes {
+    set: SyntaxSet,
+    theme: Theme,
 }
 
-const TS: &str = "const let var function return if else for while class import export from default async await new this typeof null undefined true false void type interface enum extends implements public private protected readonly static abstract switch case break continue try catch finally throw delete in of instanceof";
-const RS: &str = "fn let mut const struct enum impl trait use pub mod return if else for while match Some None Ok Err true false self Self super crate async await move where type ref loop break continue";
-const PY: &str = "def class return if else elif for while import from as with in not and or is None True False pass break continue try except finally raise yield async await lambda global nonlocal";
-const GO: &str = "func var const return if else for range go select case default break continue type struct interface import package nil true false defer make new len cap chan map switch";
-
-/// Las palabras del lenguaje de ese fichero, y con qué empieza un comentario.
-/// Una extensión que no está en la tabla se pinta sin colores, que es mejor
-/// que pintarla con las palabras de otro lenguaje.
-fn language_of(path: &str) -> Option<(&'static str, &'static str)> {
-    let ext = path.rsplit_once('.').map(|(_, e)| e.to_lowercase())?;
-    match ext.as_str() {
-        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" => Some((TS, "//")),
-        "rs" => Some((RS, "//")),
-        "py" => Some((PY, "#")),
-        "go" => Some((GO, "//")),
-        _ => None,
-    }
+fn syntaxes() -> &'static Syntaxes {
+    static SYNTAXES: OnceLock<Syntaxes> = OnceLock::new();
+    SYNTAXES.get_or_init(|| Syntaxes {
+        set: SyntaxSet::load_defaults_newlines(),
+        // Oscuro y de contraste suave, para que el resaltado no compita con
+        // el verde y el rojo del diff, que son los que dicen qué cambió.
+        theme: ThemeSet::load_defaults().themes["base16-ocean.dark"].clone(),
+    })
 }
 
-/// Parte una línea de código en trozos con su color. Mismo recorrido que el
-/// del escritorio: comentario hasta el final, cadena hasta su comilla —con
-/// escapes—, número, palabra, y lo que quede tal cual.
-pub(super) fn tokens(code: &str, path: &str) -> Vec<(Token, String)> {
-    let Some((words, comment)) = language_of(path) else {
-        return vec![(Token::Plain, code.to_string())];
+/// El código partido en trozos con su color. Un lenguaje que `syntect` no
+/// conozca sale de una pieza y sin color, que es mejor que pintarlo mal.
+pub(super) fn tokens(code: &str, path: &str) -> Vec<(Option<Color>, String)> {
+    let Syntaxes { set, theme } = syntaxes();
+    let extension = path.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    let Some(syntax) = set.find_syntax_by_extension(extension) else {
+        return vec![(None, code.to_string())];
     };
-    let keywords: Vec<&str> = words.split(' ').collect();
-    let chars: Vec<char> = code.chars().collect();
-    let mut out: Vec<(Token, String)> = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let rest: String = chars[i..].iter().collect();
-        if rest.starts_with(comment) {
-            out.push((Token::Comment, rest));
-            break;
-        }
-        let c = chars[i];
-        if c == '"' || c == '\'' || c == '`' {
-            let mut j = i + 1;
-            while j < chars.len() {
-                if chars[j] == '\\' {
-                    j += 2;
-                    continue;
-                }
-                if chars[j] == c {
-                    j += 1;
-                    break;
-                }
-                j += 1;
-            }
-            out.push((Token::Str, chars[i..j.min(chars.len())].iter().collect()));
-            i = j;
-            continue;
-        }
-        if c.is_ascii_digit() {
-            let mut j = i;
-            while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '.' || chars[j] == '_') {
-                j += 1;
-            }
-            out.push((Token::Number, chars[i..j].iter().collect()));
-            i = j;
-            continue;
-        }
-        if c.is_alphabetic() || c == '_' || c == '$' {
-            let mut j = i;
-            while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == '$') {
-                j += 1;
-            }
-            let word: String = chars[i..j].iter().collect();
-            let kind = match keywords.contains(&word.as_str()) {
-                true => Token::Keyword,
-                false => Token::Plain,
-            };
-            out.push((kind, word));
-            i = j;
-            continue;
-        }
-        out.push((Token::Plain, c.to_string()));
-        i += 1;
+    let mut lines = HighlightLines::new(syntax, theme);
+    match lines.highlight_line(code, set) {
+        Ok(pieces) => pieces
+            .into_iter()
+            .map(|(style, text)| {
+                let color = style.foreground;
+                (Some(Color::Rgb(color.r, color.g, color.b)), text.to_string())
+            })
+            .collect(),
+        Err(_) => vec![(None, code.to_string())],
     }
-    out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Token::*;
+    #[test]
+    fn a_keyword_and_a_string_get_different_colours() {
+        let out = super::tokens(r#"let s = "hola";"#, "a.rs");
+        let colours: std::collections::HashSet<_> = out.iter().map(|(c, _)| *c).collect();
 
-    fn kinds(code: &str, path: &str) -> Vec<(super::Token, String)> {
-        super::tokens(code, path)
+        assert!(colours.len() > 2, "keyword, texto y cadena no pueden ser el mismo color: {out:?}");
+        assert_eq!(out.iter().map(|(_, t)| t.as_str()).collect::<String>(), r#"let s = "hola";"#);
     }
 
     #[test]
-    fn a_keyword_is_told_apart_from_a_name_that_contains_it() {
-        // "iffy" no es un `if`, y pintarlo como tal es peor que no pintar.
-        let out = kinds("if iffy", "a.rs");
+    fn a_language_the_old_table_did_not_have_is_highlighted_too() {
+        // Un JSON, un CSS o un YAML salían en plano con la tabla de cuatro
+        // lenguajes escrita a mano.
+        let out = super::tokens(r#"{"clave": 1}"#, "paquete.json");
 
-        assert_eq!(out[0], (Keyword, "if".to_string()));
-        assert_eq!(out[2], (Plain, "iffy".to_string()));
+        assert!(out.len() > 1, "{out:?}");
     }
 
     #[test]
-    fn a_string_runs_to_its_closing_quote_escapes_included() {
-        let out = kinds(r#"let s = "a\"b" ;"#, "a.rs");
-
-        assert!(out.contains(&(Str, r#""a\"b""#.to_string())), "{out:?}");
+    fn an_unknown_extension_comes_back_whole_and_plain() {
+        assert_eq!(super::tokens("cualquier cosa", "notas.xyz"), vec![(None, "cualquier cosa".to_string())]);
     }
 
     #[test]
-    fn a_comment_takes_the_rest_of_the_line() {
-        let out = kinds("let x = 1; // por qué", "a.rs");
+    fn the_text_survives_the_highlighting() {
+        // Perder un carácter al colorear es peor que no colorear.
+        let code = "  const x = obj?.[k] ?? `a${b}`; // fin";
+        let out: String = super::tokens(code, "a.ts").iter().map(|(_, t)| t.as_str()).collect();
 
-        assert_eq!(out.last().unwrap(), &(Comment, "// por qué".to_string()));
-    }
-
-    #[test]
-    fn python_comments_start_with_a_hash() {
-        assert_eq!(kinds("x = 1  # nota", "a.py").last().unwrap().0, Comment);
-        // En Rust una almohadilla es otra cosa, no un comentario.
-        assert_ne!(kinds("#[derive(Debug)]", "a.rs")[0].0, Comment);
-    }
-
-    #[test]
-    fn an_unknown_extension_is_left_alone() {
-        // Pintarla con las palabras de otro lenguaje es peor que no pintarla.
-        assert_eq!(kinds("fn x", "notas.txt"), vec![(Plain, "fn x".to_string())]);
-    }
-
-    #[test]
-    fn a_number_is_one_piece() {
-        assert_eq!(kinds("= 1_000;", "a.rs")[2], (Number, "1_000".to_string()));
+        assert_eq!(out, code);
     }
 }

@@ -1300,8 +1300,17 @@ mod tests {
             .map(|n| serde_json::json!({"status": "M", "path": format!("src/file{n}.tsx"), "added": 3, "deleted": 1}))
             .collect();
         state.current_pr = Some(291);
+        // Líneas como las de un diff de verdad, no `const x = 1;`: el coste de
+        // resaltar depende de lo que haya en la línea.
+        let sample = [
+            "+pub async fn git_current_branch(path: String) -> Result<String, String> {",
+            "+    tauri::async_runtime::spawn_blocking(move || current_branch(&path))",
+            "+        .map_err(|e| format!(\"no se pudo: {e}\"))? // y aquí un comentario",
+            "-    let previous: HashMap<String, Vec<u64>> = HashMap::new();",
+            " impl<'a> Iterator for Rows<'a> where T: Clone + Send + 'static {",
+        ];
         let diff: String = std::iter::once("@@ -1,400 +1,400 @@".to_string())
-            .chain((0..400).map(|n| format!("+  const linea{n} = {n};")))
+            .chain((0..400).map(|n| sample[n % sample.len()].to_string()))
             .collect::<Vec<_>>()
             .join("\n");
         for n in 0..5 {
@@ -1317,7 +1326,9 @@ mod tests {
 
         // Holgado a propósito: lo que se vigila es el orden de magnitud, no
         // los milisegundos de una máquina concreta.
-        assert!(start.elapsed().as_millis() < 1000, "diez frames tardaron {:?}", start.elapsed());
+        let spent = start.elapsed();
+        println!("diez frames: {spent:?}");
+        assert!(spent.as_millis() < 1000, "diez frames tardaron {spent:?}");
     }
 
     #[tokio::test]

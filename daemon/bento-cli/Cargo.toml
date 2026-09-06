@@ -18,6 +18,7 @@ bento-core = { path = "../bento-core" }
 bento-review = { path = "../bento-review" }
 bento-sessions = { path = "../bento-sessions" }
 vt100 = "0.16.2"
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -282,28 +282,6 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     let inner_width = area.width.saturating_sub(2);
     let visible = review.visible_files();
     let rows = review.pane_rows();
-    // Una vez por frame, no una por fila: preguntarlo por fila reconstruye las
-    // filas cada vez, y con varios diffs abiertos eso son cientos de miles de
-    // líneas reparseadas para pintar una pantalla.
-    let marks = super::rows::Marks::of(review);
-    let items: Vec<ListItem> = match rows.is_empty() {
-        true => vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))],
-        false => rows
-            .iter()
-            .enumerate()
-            .flat_map(|(index, row)| {
-                let mut items = vec![pane_row_item(review, row, inner_width, index, marks)];
-                if index == review.files_selected {
-                    items.extend(super::rows::comment_box(review));
-                }
-                items
-            })
-            .collect(),
-    };
-    let mut state = ListState::default();
-    if !rows.is_empty() {
-        state.select(Some(review.files_selected));
-    }
     let inner = Pane {
         title: &format!(
             "ARCHIVOS {}/{} · {} revisados",
@@ -311,7 +289,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         ),
         // En modo tamaño el pie dice qué hacen las flechas, porque dejan de
         // mover la selección.
-        hint: match (resizing, review.selected_comment().is_some()) {
+        hint: match (resizing, super::visible::comment_id_at(&rows, review.files_selected).is_some()) {
             (true, _) => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
             // Sobre un comentario, lo que se puede hacer con él: son los
             // botones que el escritorio pone al lado de la burbuja.
@@ -321,11 +299,9 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         focused: matches!(review.focus, Focus::Files),
     }
     .render(frame, area);
-    // La barra se queda con la primera línea de dentro del marco; la lista
-    // ocupa el resto.
-    // Con un PR abierto, su franja se queda con la última línea: el título y
-    // la CI van debajo de los archivos, como la barra del escritorio, y no en
-    // una columna aparte que los tape.
+    // La barra se queda con la primera línea de dentro del marco y, con un PR
+    // abierto, su franja con la última: el título y la CI van debajo de los
+    // archivos, como en el escritorio, y no en una columna que los tape.
     let strip = u16::from(!review.pr_summary.is_empty());
     let [bar, rest, pr] = Layout::vertical([
         Constraint::Length(1),
@@ -334,6 +310,38 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     ])
     .areas(inner);
     frame.render_widget(Paragraph::new(filter_bar(review)), bar);
+
+    // Sólo se arman las filas que caben en pantalla. Se armaban todas: con los
+    // sesenta y seis ficheros abiertos son trece mil, de las que se ven
+    // cuarenta, y cada una lleva su resaltado — el desplazamiento iba a
+    // tirones porque cada tecla repintaba el diff entero.
+    let height = super::mouse::list_height(review, area);
+    let first = super::mouse::visible_offset(review.files_selected, height);
+    let last = (first + height).min(rows.len());
+    let items: Vec<ListItem> = match rows.is_empty() {
+        true => vec![ListItem::new(format!("Sin archivos ({}) respecto a {}.", review.file_filter.label(), review.base))],
+        false => {
+            // Una vez por frame, no una por fila: preguntarlo por fila
+            // reconstruye las filas cada vez.
+            let marks = super::rows::Marks::of(review, &rows);
+            rows[first..last]
+                .iter()
+                .enumerate()
+                .flat_map(|(offset, row)| {
+                    let index = first + offset;
+                    let mut items = vec![pane_row_item(review, row, inner_width, index, marks)];
+                    if index == review.files_selected {
+                        items.extend(super::rows::comment_box(review));
+                    }
+                    items
+                })
+                .collect()
+        }
+    };
+    let mut state = ListState::default();
+    if !rows.is_empty() {
+        state.select(Some(review.files_selected - first));
+    }
     let list = List::new(items)
         .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));
     frame.render_stateful_widget(list, rest, &mut state);
