@@ -80,8 +80,13 @@ impl ReviewState {
     /// el cajón, y si no la lista de esa zona. La TUI captura el ratón, así
     /// que la rueda no la atiende el terminal — sin esto no hace nada.
     pub(in crate::tui) fn scroll_wheel(&mut self, column: u16, sidebar_width: u16, total: u16, step: i16) {
-        let drawer_left = total.saturating_sub(self.drawer_width);
-        let on_drawer = self.drawer_width > 0 && column >= drawer_left;
+        // Cerrado no ocupa nada: mirando el ancho configurado, la rueda sobre
+        // la derecha del panel movía un informe que no está en pantalla.
+        let drawer = match self.drawer_open {
+            true => self.drawer_width,
+            false => 0,
+        };
+        let on_drawer = drawer > 0 && column >= total.saturating_sub(drawer);
         if on_drawer {
             self.scroll_drawer(step);
             return;

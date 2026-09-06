@@ -249,10 +249,18 @@ impl ReviewMouse<'_> {
     fn drawer(&mut self, review: &mut ReviewState, mouse: MouseEvent) -> bool {
         use crate::tui::drawer;
 
-        let left = self.total.saturating_sub(review.drawer_width);
-        if review.drawer_width == 0 {
+        // El ancho que de verdad ocupa: cerrado no ocupa ninguno. Se miraba el
+        // configurado, así que con el cajón cerrado quedaba una columna
+        // invisible que se tragaba los clics y arrastraba un cajón que no se
+        // ve — y con ella, la selección de líneas del diff.
+        let width = match review.drawer_open {
+            true => review.drawer_width,
+            false => 0,
+        };
+        if width == 0 {
             return false;
         }
+        let left = self.total.saturating_sub(width);
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if drawer::grabs_chevron(mouse.column, mouse.row, left) => {
                 review.toggle_drawer();

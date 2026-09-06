@@ -646,6 +646,7 @@ mod tests {
         // atiende nadie, girarla no hace absolutamente nada.
         let mut state = state_with_files(&["a.rs", "b.rs", "c.rs"]);
         state.drawer_width = 30;
+        state.drawer_open = true;
 
         state.scroll_wheel(80, 20, 100, 3); // sobre el cajón
         assert_eq!(state.scroll, 3, "sobre el informe, la rueda lo desplaza");
@@ -1201,6 +1202,88 @@ mod tests {
         state.handle_files_mouse(release(40, 4), area).await;
 
         assert!(state.input_purpose.is_none());
+    }
+
+    #[tokio::test]
+    async fn selecting_with_the_mouse_works_through_the_real_event_path() {
+        // Los tests llamaban al panel a mano; la aplicación entra por
+        // ReviewMouse, que antes mira la rueda, el cajón y el raíl. Si alguno
+        // se come el evento, arrastrar no selecciona nada.
+        let mut state = state_with_diff();
+        let mut width = 24u16;
+        let mut restored = 24u16;
+        let mut rail_drag = false;
+        let mut drawer_drag = false;
+
+        macro_rules! send {
+            ($event:expr) => {
+                super::ReviewMouse {
+                    width: &mut width,
+                    restored: &mut restored,
+                    dragging_rail: &mut rail_drag,
+                    dragging_drawer: &mut drawer_drag,
+                    total: 100,
+                    height: 20,
+                }
+                .handle(&mut state, $event)
+                .await
+            };
+        }
+
+        send!(click(40, 4));
+        send!(drag(40, 6));
+        send!(release(40, 6));
+
+        assert_eq!(state.comment_range(), Some((43, 45)), "el arrastre selecciona");
+        assert!(matches!(state.input_purpose, Some(InputPurpose::InlineComment(45))), "y soltar comenta");
+    }
+
+    #[test]
+    fn a_closed_drawer_does_not_take_the_wheel_that_belongs_to_the_files() {
+        // El cajón cerrado no está en pantalla: la rueda sobre la derecha del
+        // panel es de la lista de archivos.
+        let mut state = state_with_files(&["a.rs", "b.rs", "c.rs", "d.rs"]);
+        state.drawer_width = 30;
+        state.drawer_open = false;
+
+        state.scroll_wheel(90, 20, 100, 3);
+
+        assert_eq!(state.scroll, 0, "el informe no se mueve");
+        assert_eq!(state.files_selected, 3, "la lista sí");
+    }
+
+    #[tokio::test]
+    async fn the_plus_and_the_buttons_also_work_through_the_real_event_path() {
+        // Lo mismo que la selección: probados a mano funcionaban, y por la
+        // ruta de la aplicación se los comía el cajón cerrado.
+        let mut state = state_with_diff();
+        let mut width = 24u16;
+        let mut restored = 24u16;
+        let mut rail_drag = false;
+        let mut drawer_drag = false;
+        macro_rules! send {
+            ($event:expr) => {
+                super::ReviewMouse {
+                    width: &mut width,
+                    restored: &mut restored,
+                    dragging_rail: &mut rail_drag,
+                    dragging_drawer: &mut drawer_drag,
+                    total: 100,
+                    height: 20,
+                }
+                .handle(&mut state, $event)
+                .await
+            };
+        }
+
+        send!(click(25, 4)); // el `+` de la línea 43
+        assert!(matches!(state.input_purpose, Some(InputPurpose::InlineComment(43))), "el +");
+
+        state.input_purpose = None;
+        let approve = super::rows::button_ranges()[1].0;
+        send!(click(approve, 19)); // el botón Aprobar, en la última fila
+
+        assert!(matches!(state.input_purpose, Some(InputPurpose::PrReview("APPROVE"))), "el botón");
     }
 
     #[test]
