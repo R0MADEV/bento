@@ -109,6 +109,16 @@ impl ReviewState {
     /// que se pulsó, o la fila que se marcó — y si es la de un fichero,
     /// además despliega o cierra su diff.
     pub(in crate::tui) async fn handle_files_mouse(&mut self, mouse: MouseEvent, area: Rect) -> bool {
+        // Soltar tras arrastrar abre el comentario del bloque, como GitHub:
+        // seleccionar y luego buscar qué tecla lo abre no es seleccionar para
+        // comentar. Sin bloque, soltar es sólo soltar.
+        if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
+            if self.comment_range().is_none() {
+                return false;
+            }
+            self.start_inline_comment();
+            return true;
+        }
         let dragging = matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left));
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && !dragging {
             return false;
@@ -120,6 +130,17 @@ impl ReviewState {
             let FileClick::Row(row) = click else { return false };
             self.select_row(row, area.height);
             return true;
+        }
+        // El `+` del margen es el botón de GitHub: un clic ahí comenta esa
+        // línea, sin arrastrar nada y sin marcarla antes.
+        let on_marker = mouse.column <= area.x + 2;
+        if let (true, FileClick::Row(row)) = (on_marker, &click) {
+            self.select_row(*row, area.height);
+            self.drag_anchor = None;
+            if self.selected_diff_line().is_some() {
+                self.start_inline_comment();
+                return true;
+            }
         }
         // Un clic empieza una selección nueva desde esa fila.
         self.apply_file_click(click, area.height).await;

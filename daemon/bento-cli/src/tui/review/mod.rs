@@ -1156,6 +1156,53 @@ mod tests {
         assert_eq!(marked, 3, "las tres líneas del bloque: {text}");
     }
 
+    fn release(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    #[tokio::test]
+    async fn letting_go_of_a_selection_opens_the_comment() {
+        // En GitHub sueltas y la caja se abre: seleccionar y luego buscar qué
+        // tecla la abre no es seleccionar para comentar.
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+        state.handle_files_mouse(click(40, 4), area).await;
+        state.handle_files_mouse(drag(40, 6), area).await;
+
+        state.handle_files_mouse(release(40, 6), area).await;
+
+        assert!(matches!(state.input_purpose, Some(InputPurpose::InlineComment(45))));
+    }
+
+    #[tokio::test]
+    async fn clicking_the_plus_comments_that_single_line() {
+        // El `+` del margen es el botón de GitHub: pulsarlo abre la caja de
+        // esa línea sin tener que arrastrar nada.
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+
+        state.handle_files_mouse(click(area.x + 1, 4), area).await;
+
+        assert!(matches!(state.input_purpose, Some(InputPurpose::InlineComment(43))), "un solo clic");
+    }
+
+    #[tokio::test]
+    async fn letting_go_without_having_selected_anything_opens_nothing() {
+        // Un clic suelto en el diff es moverse, no comentar.
+        let mut state = state_with_diff();
+        let area = state.files_area(100, 20, 24);
+        state.handle_files_mouse(click(40, 4), area).await;
+
+        state.handle_files_mouse(release(40, 4), area).await;
+
+        assert!(state.input_purpose.is_none());
+    }
+
     #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there

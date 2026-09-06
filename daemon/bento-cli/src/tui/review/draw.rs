@@ -309,7 +309,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         // mover la selección.
         hint: match resizing {
             true => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
-            false => "Enter despliega · 2 dos columnas · espacio marcar · c comentar · f estado · F3 buscar",
+            false => "Enter despliega · 2 columnas · arrastra o + para comentar · espacio marcar · f estado · F3 buscar",
         },
         focused: matches!(review.focus, Focus::Files),
     }
