@@ -68,21 +68,83 @@ pub(super) enum PaneRow<'a> {
 impl ReviewState {
     /// Los ficheros que se ven, con el diff de los abiertos bajo cada uno.
     pub(super) fn pane_rows(&self) -> Vec<PaneRow<'_>> {
+        self.pane_rows_window(0, usize::MAX)
+    }
+
+    /// Sólo las filas que caben en pantalla. Armarlas copia cada línea de cada
+    /// diff abierto, y con veintiocho ficheros de mil líneas eran veintiocho
+    /// mil copias por frame para enseñar cuarenta: el desplazamiento se
+    /// arrastraba, y tanto más cuanto menos filtrada estaba la lista.
+    ///
+    /// Los ficheros que quedan fuera de la ventana sólo se cuentan; el que la
+    /// cruza se arma entero, que es lo que cuesta menos de razonar y ya deja
+    /// el trabajo en un fichero en vez de en todos.
+    pub(super) fn pane_rows_window(&self, first: usize, count: usize) -> Vec<PaneRow<'_>> {
         self.reparse_if_needed();
         let parsed = self.parsed.borrow();
-        let mut rows = Vec::new();
+        let mut out: Vec<PaneRow<'_>> = Vec::new();
+        let mut at = 0;
         for file in self.visible_files() {
-            rows.push(PaneRow::File(file));
-            let Some(path) = file.get("path").and_then(Value::as_str) else { continue };
-            let Some(diff) = parsed.rows.get(path) else { continue };
-            for row in super::rows::pane_rows_of(self, path, diff) {
-                let line = row_line(&row);
-                rows.push(row);
-                // Los de esa línea van justo debajo, que es donde se leen.
-                rows.extend(self.comments_on(path, line).map(PaneRow::Comment));
+            if out.len() >= count {
+                break;
             }
+            let path = file.get("path").and_then(Value::as_str).unwrap_or("");
+            let diff = parsed.rows.get(path);
+            let block = 1 + diff.map(|rows| self.rows_of(path, rows)).unwrap_or(0);
+            // Fuera de la ventana: basta con saber cuánto ocupa.
+            if at + block <= first {
+                at += block;
+                continue;
+            }
+            let mut rows = vec![PaneRow::File(file)];
+            if let Some(diff) = diff {
+                for row in super::rows::pane_rows_of(self, path, diff) {
+                    let line = row_line(&row);
+                    rows.push(row);
+                    // Los de esa línea van justo debajo, que es donde se leen.
+                    rows.extend(self.comments_on(path, line).map(PaneRow::Comment));
+                }
+            }
+            for (offset, row) in rows.into_iter().enumerate() {
+                if at + offset >= first && out.len() < count {
+                    out.push(row);
+                }
+            }
+            at += block;
         }
-        rows
+        out
+    }
+
+    /// Cuántas filas aporta el diff de un fichero, con sus comentarios.
+    fn rows_of(&self, path: &str, diff: &[super::format::DiffRow]) -> usize {
+        let lines = match self.split {
+            // Partido, un borrado y el añadido que lo sustituye son una fila.
+            true => super::format::split_rows(diff.to_vec()).len(),
+            false => diff.len(),
+        };
+        lines + self.comments_in(path, diff)
+    }
+
+    /// Cuántos comentarios caen dentro de este diff. Se preguntaba por cada
+    /// línea, o sea todas las líneas por todos los comentarios: veintiocho mil
+    /// por siete para contar unas filas. Casi ningún fichero tiene
+    /// comentarios, así que primero se mira eso.
+    fn comments_in(&self, path: &str, diff: &[super::format::DiffRow]) -> usize {
+        let mine: Vec<&Value> = self
+            .inline_comments
+            .iter()
+            .filter(|c| c.get("path").and_then(Value::as_str) == Some(path))
+            .collect();
+        if mine.is_empty() {
+            return 0;
+        }
+        let lines: std::collections::HashSet<u64> = diff.iter().filter_map(|row| row.line).collect();
+        mine.iter()
+            .filter(|c| {
+                let at = c.get("line").or_else(|| c.get("original_line")).and_then(Value::as_u64);
+                matches!(at, Some(line) if lines.contains(&line))
+            })
+            .count()
     }
 
     /// Cuántas filas hay, sin armarlas. Armarlas copia cada línea de cada
@@ -90,23 +152,22 @@ impl ReviewState {
     /// gesto de trackpad eran treinta copias de todo para bajar quince filas.
     pub(in crate::tui) fn pane_rows_len(&self) -> usize {
         self.reparse_if_needed();
+        if let Some(len) = self.parsed.borrow().len {
+            return len;
+        }
+        let total = self.count_rows();
+        self.parsed.borrow_mut().len = Some(total);
+        total
+    }
+
+    fn count_rows(&self) -> usize {
         let parsed = self.parsed.borrow();
         self.visible_files()
             .iter()
             .map(|file| {
                 let Some(path) = file.get("path").and_then(Value::as_str) else { return 1 };
                 let Some(diff) = parsed.rows.get(path) else { return 1 };
-                let lines = match self.split {
-                    // Partido, un borrado y el añadido que lo sustituye son
-                    // una sola fila.
-                    true => super::format::split_rows(diff.clone()).len(),
-                    false => diff.len(),
-                };
-                let comments: usize = diff
-                    .iter()
-                    .map(|row| self.comments_on(path, row.line).count())
-                    .sum();
-                1 + lines + comments
+                1 + self.rows_of(path, diff)
             })
             .sum()
     }
@@ -120,6 +181,8 @@ impl ReviewState {
             return;
         }
         let mut parsed = self.parsed.borrow_mut();
+        // El total se cuenta con esto, así que caduca con esto.
+        parsed.len = None;
         parsed.rows = self
             .expanded
             .iter()
@@ -138,7 +201,17 @@ impl ReviewState {
             .map(|(path, diff)| format!("{path}:{}", diff.len()))
             .collect();
         open.sort();
-        format!("{}|{}", open.join(","), self.file_search)
+        // El filtro, las dos columnas y los comentarios no cambian cómo se
+        // parte un diff, pero sí cuántas filas salen, y el total se guarda con
+        // esto mismo.
+        format!(
+            "{}|{}|{:?}|{}|{}",
+            open.join(","),
+            self.file_search,
+            self.file_filter,
+            self.split,
+            self.inline_comments.len(),
+        )
     }
 
     /// Cuántas veces se han partido los diffs, para las pruebas.
@@ -214,12 +287,18 @@ impl ReviewState {
 
     /// El comentario de la fila marcada, para contestarlo o retirarlo.
     pub(in crate::tui) fn selected_comment(&self) -> Option<u64> {
-        comment_id_at(&self.pane_rows(), self.files_selected)
+        comment_id_at(&self.row_at(self.files_selected), 0)
+    }
+
+    /// Una fila suelta, sin armar las de arriba: lo que necesitan las
+    /// preguntas de "¿sobre qué estoy?".
+    pub(super) fn row_at(&self, index: usize) -> Vec<PaneRow<'_>> {
+        self.pane_rows_window(index, 1)
     }
 
     /// El fichero de la fila marcada, esté marcada su fila o una de su diff.
     pub(super) fn selected_path(&self) -> Option<String> {
-        match self.pane_rows().get(self.files_selected)? {
+        match self.row_at(self.files_selected).first()? {
             PaneRow::File(file) => file.get("path").and_then(Value::as_str).map(String::from),
             PaneRow::Diff { path, .. } | PaneRow::Split { path, .. } => Some(path.clone()),
             PaneRow::Comment(c) => c.get("path").and_then(Value::as_str).map(String::from),
@@ -230,15 +309,9 @@ impl ReviewState {
     /// quiere en orden —la primera antes que la última—, y arrastrar hacia
     /// arriba las da al revés.
     pub(in crate::tui) fn comment_range(&self) -> Option<(u64, u64)> {
-        self.comment_range_in(&self.pane_rows())
-    }
-
-    /// Lo mismo sobre unas filas ya construidas: construirlas reparsea todos
-    /// los diffs abiertos, y el dibujo ya las tiene en la mano.
-    pub(super) fn comment_range_in(&self, rows: &[PaneRow<'_>]) -> Option<(u64, u64)> {
         let anchor = self.drag_anchor?;
-        let from = row_line(rows.get(anchor)?)?;
-        let to = row_line(rows.get(self.files_selected)?)?;
+        let from = row_line(self.row_at(anchor).first()?)?;
+        let to = row_line(self.row_at(self.files_selected).first()?)?;
         let (first, last) = match from <= to {
             true => (from, to),
             false => (to, from),
@@ -246,9 +319,11 @@ impl ReviewState {
         (first != last).then_some((first, last))
     }
 
+
+
     /// La línea del fichero nuevo bajo el cursor, si está sobre una del diff.
     pub(super) fn selected_diff_line(&self) -> Option<u64> {
-        row_line(self.pane_rows().get(self.files_selected)?)
+        row_line(self.row_at(self.files_selected).first()?)
     }
 
     /// Fire-and-forget: guarda la lista de revisados para este proyecto+base.

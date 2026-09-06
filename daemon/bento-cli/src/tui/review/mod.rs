@@ -112,6 +112,8 @@ pub(super) enum Fetched {
 struct ParsedDiffs {
     mark: String,
     rows: std::collections::HashMap<String, Vec<format::DiffRow>>,
+    /// Cuántas filas salen en total, contadas una vez.
+    len: Option<usize>,
     /// Cuántas veces se ha partido un diff, para que las pruebas puedan ver si
     /// se está reaprovechando lo guardado.
     parses: usize,
@@ -1694,6 +1696,104 @@ mod tests {
         state.inline_comments = vec![comment(7, "a.rs", 2, "R0MADEV", "algo")];
 
         assert_eq!(state.pane_rows_len(), state.pane_rows().len());
+    }
+
+    fn state_with_two_open() -> ReviewState {
+        let mut state = state_with_files(&["a.rs", "b.rs", "c.rs"]);
+        state.current_pr = Some(1);
+        state.expanded.insert("a.rs".into(), "@@ -1,0 +1,4 @@\n+uno\n+dos\n+tres\n+cuatro".into());
+        state.expanded.insert("c.rs".into(), "@@ -1,0 +10,2 @@\n+diez\n+once".into());
+        state.inline_comments = vec![comment(7, "a.rs", 2, "R0MADEV", "algo")];
+        state
+    }
+
+    #[test]
+    fn a_window_of_rows_is_the_same_as_cutting_the_whole_list() {
+        // El dibujo arma sólo lo que cabe en pantalla: si la ventana no
+        // coincide con la lista entera, se pinta una fila y se marca otra.
+        let state = state_with_two_open();
+        let all = state.pane_rows();
+
+        for first in 0..all.len() {
+            let window = state.pane_rows_window(first, 3);
+            let expected = &all[first..(first + 3).min(all.len())];
+            assert_eq!(window.len(), expected.len(), "en la fila {first}");
+            for (a, b) in window.iter().zip(expected) {
+                assert_eq!(row_label(a), row_label(b), "en la fila {first}");
+            }
+        }
+    }
+
+    /// Cómo se ve una fila, para comparar dos listas sin exigirles ser iguales.
+    fn row_label(row: &super::visible::PaneRow<'_>) -> String {
+        use super::visible::PaneRow;
+        match row {
+            PaneRow::File(f) => format!("file:{}", f.get("path").and_then(Value::as_str).unwrap_or("")),
+            PaneRow::Diff { path, row } => format!("diff:{path}:{}", row.text),
+            PaneRow::Split { path, row } => {
+                format!("split:{path}:{:?}", row.right.as_ref().map(|r| r.text.clone()))
+            }
+            PaneRow::Comment(c) => format!("comment:{}", c.get("id").and_then(Value::as_u64).unwrap_or(0)),
+        }
+    }
+
+    #[test]
+    fn the_window_also_matches_in_two_columns() {
+        let mut state = state_with_two_open();
+        state.split = true;
+        let all = state.pane_rows();
+
+        let window = state.pane_rows_window(1, all.len());
+
+        assert_eq!(window.len(), all.len() - 1);
+        assert_eq!(row_label(&window[0]), row_label(&all[1]));
+    }
+
+    #[test]
+    fn the_row_count_follows_the_filter_and_the_comments() {
+        // El total se guarda para no recorrer las líneas en cada frame, así
+        // que tiene que caducar con todo lo que lo cambia: el filtro de
+        // estado, las dos columnas y los comentarios que llegan.
+        let mut state = state_with_files(&["a.rs"]);
+        state.files = vec![
+            serde_json::json!({"status": "A", "path": "nuevo.rs"}),
+            serde_json::json!({"status": "M", "path": "viejo.rs"}),
+        ];
+        assert_eq!(state.pane_rows_len(), 2);
+
+        state.file_filter = FileFilter::Added;
+        assert_eq!(state.pane_rows_len(), 1, "el filtro cambia el total");
+
+        state.file_filter = FileFilter::All;
+        state.expanded.insert("nuevo.rs".into(), "@@ -1,0 +1,2 @@\n+uno\n+dos".into());
+        assert_eq!(state.pane_rows_len(), 5, "y el diff desplegado");
+
+        state.inline_comments = vec![comment(7, "nuevo.rs", 1, "x", "y")];
+        assert_eq!(state.pane_rows_len(), 6, "y un comentario que llega");
+    }
+
+    #[test]
+    fn counting_comments_does_not_walk_every_line_for_each_one() {
+        // Se preguntaba por cada línea si tenía comentarios: con veintiocho
+        // mil líneas y siete comentarios eran doscientas mil comparaciones
+        // para contar unas filas, y un gesto de trackpad tardaba un cuarto de
+        // segundo.
+        let mut state = state_with_files(&["a.rs", "b.rs"]);
+        let long: String = std::iter::once("@@ -1,4000 +1,4000 @@".to_string())
+            .chain((0..4000).map(|n| format!("+  linea {n}")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        state.expanded.insert("a.rs".into(), long.clone());
+        state.expanded.insert("b.rs".into(), long);
+        state.inline_comments = (0..7).map(|n| comment(n, "a.rs", n + 1, "x", "y")).collect();
+
+        let start = std::time::Instant::now();
+        for _ in 0..50 {
+            state.parsed.borrow_mut().len = None;
+            let _ = state.pane_rows_len();
+        }
+
+        assert!(start.elapsed().as_millis() < 500, "cincuenta recuentos: {:?}", start.elapsed());
     }
 
     #[test]

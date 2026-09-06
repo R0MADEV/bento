@@ -281,7 +281,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     // El ancho de dentro del marco: las dos columnas se reparten eso.
     let inner_width = area.width.saturating_sub(2);
     let visible = review.visible_files();
-    let rows = review.pane_rows();
+    let total = review.pane_rows_len();
     let inner = Pane {
         title: &format!(
             "ARCHIVOS {}/{} · {} revisados",
@@ -289,7 +289,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         ),
         // En modo tamaño el pie dice qué hacen las flechas, porque dejan de
         // mover la selección.
-        hint: match (resizing, super::visible::comment_id_at(&rows, review.files_selected).is_some()) {
+        hint: match (resizing, review.selected_comment().is_some()) {
             (true, _) => "MODO TAMAÑO · ←/→ raíl · ↑/↓ informe · s o Esc salir",
             // Sobre un comentario, lo que se puede hacer con él: son los
             // botones que el escritorio pone al lado de la burbuja.
@@ -316,8 +316,9 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     // cuarenta, y cada una lleva su resaltado — el desplazamiento iba a
     // tirones porque cada tecla repintaba el diff entero.
     let height = super::mouse::list_height(review, area);
-    let first = review.scroll_offset(review.files_selected, height, rows.len());
-    let last = (first + height).min(rows.len());
+    let first = review.scroll_offset(review.files_selected, height, total);
+    // Sólo las que caben: armarlas copia cada línea de cada diff abierto.
+    let rows = review.pane_rows_window(first, height);
     // Guardada para el ratón: traducir una fila de la pantalla a una de la
     // lista necesita saber por dónde empieza lo que se ve.
     review.files_offset.set(first);
@@ -326,8 +327,8 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
         false => {
             // Una vez por frame, no una por fila: preguntarlo por fila
             // reconstruye las filas cada vez.
-            let marks = super::rows::Marks::of(review, &rows);
-            rows[first..last]
+            let marks = super::rows::Marks::of(review);
+            rows
                 .iter()
                 .enumerate()
                 .flat_map(|(offset, row)| {
@@ -343,7 +344,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
     };
     let mut state = ListState::default();
     if !rows.is_empty() {
-        state.select(Some(review.files_selected - first));
+        state.select(Some(review.files_selected.saturating_sub(first)));
     }
     let list = List::new(items)
         .highlight_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));

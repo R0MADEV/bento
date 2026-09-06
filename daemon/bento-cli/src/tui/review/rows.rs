@@ -384,10 +384,10 @@ pub(super) struct Marks {
 }
 
 impl Marks {
-    pub(super) fn of(review: &ReviewState, rows: &[PaneRow<'_>]) -> Self {
+    pub(super) fn of(review: &ReviewState) -> Self {
         Self {
             has_pr: review.current_pr.is_some(),
-            range: review.comment_range_in(rows),
+            range: review.comment_range(),
             selected: review.files_selected,
         }
     }
