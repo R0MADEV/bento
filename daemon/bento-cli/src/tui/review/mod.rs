@@ -1823,6 +1823,38 @@ mod tests {
         assert!(letters.len() >= 3, "y el código encima con sus colores: {letters:?}");
     }
 
+    #[tokio::test]
+    async fn a_long_drag_selects_every_line_it_crosses() {
+        // Entre un evento y el siguiente la aplicación repinta, y el repintado
+        // centraba la fila marcada: la lista se movía bajo el ratón mientras
+        // arrastrabas, así que el bloque salía cortado o no salía.
+        let mut state = state_with_files(&["a.rs"]);
+        // Bastantes más de las que caben: es cuando la vista se mueve.
+        let lines: Vec<String> = (0..200).map(|n| format!("+  linea {n}")).collect();
+        state.expanded.insert("a.rs".into(), format!("@@ -1,0 +1,200 @@\n{}", lines.join("\n")));
+        state.current_pr = Some(1);
+        state.files_selected = 100;
+        let area = state.files_area(100, 30, 24);
+        let _ = super::draw::tests::screen(&state, 100, 30);
+
+        // Pulsar en una línea y arrastrar diez filas hacia abajo, repintando
+        // en medio como hace la aplicación.
+        state.handle_files_mouse(click(40, 4), area).await;
+        let from = state.selected_diff_line().expect("la línea de partida");
+        for row in 5..=14 {
+            let _ = super::draw::tests::screen(&state, 100, 30);
+            state.handle_files_mouse(drag(40, row), area).await;
+        }
+
+        assert_eq!(state.comment_range(), Some((from, from + 10)), "las once líneas del gesto");
+
+        // Y se ven marcadas: el estado decía "comentando las líneas X-Y" y en
+        // pantalla no había nada señalado.
+        let text = super::draw::tests::screen(&state, 100, 30);
+        let marked = text.lines().filter(|l| l.contains('┃')).count();
+        assert_eq!(marked, 11, "las mismas once, marcadas:\n{text}");
+    }
+
     #[test]
     fn the_rail_action_cancels_while_running_instead_of_starting_another() {
         // The button reads "■ Parar" while running; firing another run there

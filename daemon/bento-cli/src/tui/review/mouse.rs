@@ -64,6 +64,16 @@ impl ReviewState {
     pub(in crate::tui) fn scroll_offset(&self, selected: usize, height: usize, rows: usize) -> usize {
         let height = height.max(1);
         let last = rows.saturating_sub(height);
+        // Mientras arrastras, la vista se queda quieta: si se recentra, la
+        // lista se mueve bajo el ratón y el bloque que estás señalando deja de
+        // ser el que sueltas. Sólo la sigue si el cursor se sale.
+        if self.drag_anchor.is_some() {
+            let current = self.files_offset.get().min(last);
+            let visible = selected >= current && selected < current + height;
+            if visible {
+                return current;
+            }
+        }
         selected.saturating_sub(height / 2).min(last)
     }
 }
