@@ -194,7 +194,6 @@ dependencies = [
  "axum",
  "bento-core",
  "bento-docker",
- "bento-memory",
  "bento-notes",
  "bento-review",
  "futures-util",
@@ -221,17 +220,6 @@ dependencies = [
  "serde",
  "serde_json",
  "ts-rs",
-]
-
-[[package]]
-name = "bento-memory"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "serde",
- "serde_json",
- "time",
- "uuid",
 ]
 
 [[package]]

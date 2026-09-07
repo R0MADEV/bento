@@ -8,7 +8,6 @@ use crate::service::{daemon_install, daemon_restart, daemon_start, daemon_uninst
 
 mod agent;
 mod docker;
-mod memory;
 mod notes;
 
 pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
@@ -146,7 +145,6 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
 
         Some("docker") => docker::run(args).await,
 
-        Some("memory") => memory::run(args).await,
 
         Some("notes") => notes::run(args).await,
 

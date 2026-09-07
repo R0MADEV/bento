@@ -36,7 +36,7 @@ describe('application i18n', () => {
 
   it('translates semantic panel keys and interpolates their values', () => {
     setAppLocale('en')
-    expect(t('memory.deleteManyQuestion', { count: 3 })).toBe('Permanently delete 3 memories?')
+    expect(t('tv.channelCount', { count: 3 })).toBe('3 channels')
     expect(t('docker.noProject')).toBe('No project')
   })
 

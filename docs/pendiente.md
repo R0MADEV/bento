@@ -1,3 +1,8 @@
+> **Nota (2026-09-07).** El panel de memoria y todo su soporte —el crate
+> `bento-memory`, los comandos de Tauri, los de la CLI, el servidor MCP y los
+> hooks de sesión— se han retirado del proyecto. Lo que sigue queda como
+> registro de lo que hubo; no describe nada que exista hoy.
+
 # Lo que queda pendiente
 
 Estado a 1 de septiembre de 2026. Aquí va lo que estaba abierto y por qué

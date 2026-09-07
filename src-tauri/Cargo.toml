@@ -20,7 +20,6 @@ tauri-build = { version = "2", features = [] }
 bento-core = { path = "../daemon/bento-core" }
 bento-db = { path = "../daemon/bento-db" }
 bento-docker = { path = "../daemon/bento-docker", features = ["ts"] }
-bento-memory = { path = "../daemon/bento-memory" }
 bento-notes = { path = "../daemon/bento-notes" }
 bento-review = { path = "../daemon/bento-review", features = ["ts"] }
 bento-sessions = { path = "../daemon/bento-sessions" }

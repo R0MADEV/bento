@@ -13,14 +13,12 @@ import { jiraPanelDefinition } from './panels/jira/definition'
 import { dockerPanelDefinition } from './panels/docker/definition'
 import { vaultPanelDefinition } from './panels/vault/definition'
 import { tasksPanelDefinition } from './panels/tasks/definition'
-import { memoryPanelDefinition } from './panels/memory/definition'
 import { diffPanelDefinition } from './panels/diff/definition'
 import { reviewPanelDefinition } from './panels/review/definition'
 import { remotePanelDefinition } from './panels/remote/definition'
 import { M3UChannelRepository } from './adapters/M3UChannelRepository'
 import { IptvOrgChannelRepository } from './adapters/IptvOrgChannelRepository'
 import { LocalStorageFavoritesRepository } from './adapters/LocalStorageFavoritesRepository'
-import { TauriMemoryRepository } from './adapters/TauriMemoryRepository'
 import { TauriWorkspaceStateRepository } from './adapters/TauriWorkspaceStateRepository'
 import { createSessionManager } from './app/createSessionManager'
 import { createAiChat } from './ui/aiChat'
@@ -77,7 +75,6 @@ if (isMac) {
 const channelRepo = new M3UChannelRepository(tvM3U)
 const worldRepo = new IptvOrgChannelRepository()
 const favoritesRepo = new LocalStorageFavoritesRepository()
-const memoryRepo = new TauriMemoryRepository()
 const stateRepo = new TauriWorkspaceStateRepository()
 
 const panels = createPanelRegistry()
@@ -92,11 +89,10 @@ panels.register(jiraPanelDefinition)
 panels.register(dockerPanelDefinition)
 panels.register(vaultPanelDefinition)
 panels.register(tasksPanelDefinition)
-panels.register(memoryPanelDefinition(memoryRepo))
 panels.register(diffPanelDefinition)
 panels.register(reviewPanelDefinition)
 panels.register(remotePanelDefinition)
 
 const app = document.getElementById('app')!
 app.appendChild(createSessionManager(panels, stateRepo))
-app.appendChild(createAiChat(memoryRepo))
+app.appendChild(createAiChat())

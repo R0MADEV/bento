@@ -161,7 +161,6 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
       { id: 'new-jira', label: appT('newJira'), keywords: ['jira', 'tickets', 'tareas', 'atlassian', 'issues'], run: () => ensureView().addPanel('jira') },
       { id: 'new-docker', label: appT('newDocker'), keywords: ['docker', 'contenedores', 'containers', 'logs'], run: () => ensureView().addPanel('docker') },
       { id: 'new-tasks', label: appT('newTasks'), keywords: ['tareas', 'tasks', 'worktree', 'git', 'paralelo'], run: () => ensureView().addPanel('tasks') },
-      { id: 'new-memory', label: appT('newMemory'), keywords: ['memoria', 'memory', 'contexto', 'decisiones', 'resumen'], run: () => ensureView().addPanel('memory') },
       { id: 'new-diff', label: appT('newDiff'), keywords: ['diff', 'git', 'cambios', 'changes', 'hunk', 'patch'], run: () => ensureView().addPanel('diff') },
       { id: 'new-review', label: appT('newReview'), keywords: ['review', 'tech review', 'revisar', 'ia', 'ai', 'agente', 'cambios'], run: () => ensureView().addPanel('review') },
       {

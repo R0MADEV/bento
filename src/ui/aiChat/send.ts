@@ -1,12 +1,9 @@
 import { AGENT_PROVIDER_ID } from '../../core/ai/providers'
 import { chatEndpoint, runWithTools, streamChat } from '../../core/ai/chatApi'
 import { expandInput } from '../../core/ai/prompts'
-import { buildMemoryContext, selectMemoryForPrompt } from '../../core/memory/aiContext'
 import { getAiKey } from '../../adapters/aiKeys'
 import { vaultStatus } from '../../adapters/aiKeys'
-import { getActiveProjectPath } from '../state/activeProject'
 import type { AiConfig, ChatMessage } from '../../core/ai/config'
-import type { MemoryRepository } from '../../ports/MemoryRepository'
 import type { AiTool } from '../askAi'
 
 // Mandar un mensaje al modelo por HTTP: memoria del proyecto como contexto de
@@ -15,7 +12,6 @@ import type { AiTool } from '../askAi'
 export interface SendDeps {
   input: HTMLTextAreaElement
   settings: HTMLElement
-  memoryRepo: MemoryRepository
   historyReady: Promise<unknown>
   config: () => AiConfig
   messages: () => ChatMessage[]
@@ -59,17 +55,11 @@ export function buildSend(deps: SendDeps): () => Promise<void> {
     deps.messages().push(assistant)
     deps.renderThread()
 
-    // History without the assistant placeholder; the project memory is sent as
-    // private system context and is never added to the visible conversation.
+    // History without the assistant placeholder.
     const history = deps.messages().slice(0, -1)
-    const projectPath = getActiveProjectPath()
-    const memory = projectPath
-      ? await deps.memoryRepo.list(projectPath).then(entries => buildMemoryContext(selectMemoryForPrompt(entries, text), projectPath)).catch(() => null)
-      : null
-    const systemMessages: ChatMessage[] = [
-      ...(deps.config().systemPrompt ? [{ role: 'system' as const, content: deps.config().systemPrompt }] : []),
-      ...(memory ? [{ role: 'system' as const, content: memory }] : []),
-    ]
+    const systemMessages: ChatMessage[] = deps.config().systemPrompt
+      ? [{ role: 'system' as const, content: deps.config().systemPrompt }]
+      : []
     const apiMessages: ChatMessage[] = [...systemMessages, ...history]
 
     deps.beginBusy()

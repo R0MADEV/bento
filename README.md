@@ -120,7 +120,7 @@ bento review file <path> [--base <ref>]  # one file's diff
 bento review run [--agents claude,codex] # a full AI review
 ```
 
-`bento --help` lists the rest: tasks, docker, memory, notes and agent sessions.
+`bento --help` lists the rest: tasks, docker, notes and agent sessions.
 
 `bento daemon install` writes a launchd plist on macOS or a systemd user service on Linux so the daemon starts at login — independent of the Bento app.
 
@@ -250,7 +250,7 @@ bento/
 ├── src/                          # Frontend (TypeScript)
 │   ├── main.ts                   # Composition root — registers panels, mounts app
 │   ├── app/                      # createSessionManager, createWorkspaceView, home
-│   ├── core/                     # Pure, tested logic (git, docker, memory, http, notes…)
+│   ├── core/                     # Pure, tested logic (git, docker, http, notes…)
 │   ├── panels/                   # One folder per panel (tasks/, terminal/, diff/, remote/…)
 │   ├── ui/                       # Shared UI: collapsibleSidebar, icons, commandPalette, aiChat…
 │   ├── adapters/ · ports/        # Repository implementations and interfaces
@@ -267,7 +267,6 @@ bento/
 │       ├── git.rs                # Git operations
 │       ├── docker.rs             # Docker container management
 │       ├── db.rs                 # Database connections
-│       ├── memory.rs             # Persistent memory store
 │       ├── workspace_io.rs       # Workspace state persistence
 │       └── …
 ├── daemon/                       # Background daemon workspace (Rust)
@@ -275,7 +274,7 @@ bento/
 │   ├── bento-daemon/             # TCP IPC server + phone HTTP/WS server
 │   └── bento-cli/                # `bento` CLI binary
 ├── tests/                        # Vitest — unit tests for src/core and src/ui
-└── scripts/                      # Dev scripts (bindings, i18n audit, memory tools)
+└── scripts/                      # Dev scripts (bindings, i18n audit)
 ```
 
 ---
@@ -289,7 +288,7 @@ Pull requests are welcome. Before opening one:
 3. Follow the commit convention: `feat: added …` / `fix: corrected …`
 4. Branch names: `feat/short-description` or `fix/short-description`
 
-About to touch the memory or bundling code? [`docs/pendiente.md`](docs/pendiente.md)
+About to touch the bundling code? [`docs/pendiente.md`](docs/pendiente.md)
 records what was open, how each point was closed and — just as usefully — what
 was looked at and deliberately left alone, so nobody relitigates it.
 

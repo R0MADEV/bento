@@ -11,7 +11,6 @@ mod db;
 mod docker;
 mod git;
 mod jira;
-mod memory;
 mod http;
 mod notes;
 mod pty;
@@ -201,25 +200,8 @@ fn main() {
             jira::jira_accounts_get,
             jira::jira_account_set,
             jira::jira_account_delete,
-            memory::import::memory_import_claude,
-            memory::import::memory_import_codex,
-            memory::memory_list,
-            memory::memory_list_all,
-            memory::memory_create,
-            memory::memory_update,
-            memory::memory_plan_import,
-            memory::memory_merge,
-            memory::memory_remove,
-            memory::memory_migrate,
-            memory::memory_summary_job_list,
-            memory::memory_regenerate_summary,
             review::run::review_run,
             review::run::review_cancel,
-            memory::sources::memory_source_list,
-            memory::sources::memory_source_create,
-            memory::sources::memory_source_remove,
-            memory::sources::memory_source_scan,
-            memory::sources::memory_source_scan_path,
             vault::vault_exists,
             vault::vault_is_unlocked,
             vault::vault_setup,

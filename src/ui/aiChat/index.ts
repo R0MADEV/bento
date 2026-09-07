@@ -15,14 +15,13 @@ import { setAiKey, vaultStatus } from '../../adapters/aiKeys'
 import { renderMarkdown } from '../../core/notes/renderMarkdown'
 import { t as i18nT } from '../../i18n'
 import { AI_ASK_EVENT, type AiAskDetail, type AiQueryRunner, type AiTool } from '../askAi'
-import type { MemoryRepository } from '../../ports/MemoryRepository'
 import { getActiveProjectPath, setActiveProjectPath } from '../state/activeProject'
 import { redact } from '../../core/ai/agentClient'
 import { emptyChatHistory, GLOBAL_CHAT_CONVERSATION, parseChatHistory } from '../../core/ai/chatHistory'
 
 const AI_POSITION_KEY = 'bento.ai.position.v2'
 
-export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
+export function createAiChat(): HTMLElement {
   const root = document.createElement('div')
   root.className = 'ai-chat'
   let dragX = 0
@@ -243,7 +242,7 @@ export function createAiChat(memoryRepo: MemoryRepository): HTMLElement {
 
   // ── Streaming send ───────────────────────────────────────────────────────
   const send = buildSend({
-    input, settings, memoryRepo, historyReady,
+    input, settings, historyReady,
     config: () => cfg,
     messages: () => messages,
     tools: () => tools,
