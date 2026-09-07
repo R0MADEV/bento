@@ -165,6 +165,38 @@ impl ReviewState {
         }
     }
 
+    /// Salta al comentario siguiente, o al anterior. Da la vuelta al llegar
+    /// al final, que es lo que se espera de "el siguiente".
+    ///
+    /// Los ficheros que llevan comentarios se despliegan antes: plegados, sus
+    /// comentarios no son filas a las que saltar.
+    pub(super) async fn jump_to_comment(&mut self, forward: bool) {
+        let with_comments: Vec<String> = self
+            .inline_comments
+            .iter()
+            .filter_map(|c| c.get("path").and_then(Value::as_str).map(String::from))
+            .collect();
+        for path in with_comments {
+            if !self.is_expanded(&path) {
+                self.toggle_file(path).await;
+            }
+        }
+        let rows = self.comment_rows();
+        if rows.is_empty() {
+            self.pr_status = "este PR no tiene comentarios en líneas".into();
+            return;
+        }
+        let at = self.files_selected;
+        let next = match forward {
+            true => rows.iter().find(|row| **row > at).or_else(|| rows.first()),
+            false => rows.iter().rev().find(|row| **row < at).or_else(|| rows.last()),
+        };
+        if let Some(row) = next {
+            self.files_selected = *row;
+            self.drag_anchor = None;
+        }
+    }
+
     /// La rama de git con la que comparar un PR.
     pub(super) fn pr_branch(&self, head_ref: &str) -> String {
         bento_review::branches::branch_for(&self.branches, head_ref)

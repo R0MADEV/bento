@@ -26,6 +26,8 @@ pub(super) fn pane_row_item<'a>(
         PaneRow::Diff { row, path } => ListItem::new(prefixed(marker, unified_line(row, path))),
         PaneRow::Split { row, path } => ListItem::new(prefixed(marker, split_line(row, width, path))),
         PaneRow::Comment(comment) => ListItem::new(comment_line(review, comment)),
+        // La carpeta, tenue y con su barra: es un rótulo, no algo que se abra.
+        PaneRow::Dir(dir) => ListItem::new(Line::from(Span::styled(format!("{dir}/"), DIM))),
     }
 }
 
@@ -74,15 +76,21 @@ fn prefixed(marker: &'static str, line: Line<'static>) -> Line<'static> {
 
 fn file_item<'a>(review: &ReviewState, file: &'a Value) -> ListItem<'a> {
     let status = file.get("status").and_then(Value::as_str).unwrap_or("?");
-    let path = file.get("path").and_then(Value::as_str).unwrap_or("");
+    let full = file.get("path").and_then(Value::as_str).unwrap_or("");
+    // Con el árbol puesto, sin repetir la carpeta que ya está en su cabecera.
+    let path = match review.tree {
+        true => leaf(full),
+        false => full,
+    };
     let added = file.get("added").and_then(Value::as_i64).unwrap_or(0);
     let deleted = file.get("deleted").and_then(Value::as_i64).unwrap_or(0);
-    let checkbox = if review.reviewed.contains(path) { "[x]" } else { "[ ]" };
+    let checkbox = if review.reviewed.contains(full) { "[x]" } else { "[ ]" };
     // El triángulo dice si el diff está desplegado, que es lo único que
     // distingue una fila abierta de una cerrada cuando el diff queda fuera de
     // pantalla.
-    let caret = if review.is_expanded(path) { "▾" } else { "▸" };
-    ListItem::new(format!("{caret} {checkbox} {status}  {path}  +{added}/-{deleted}"))
+    let caret = if review.is_expanded(full) { "▾" } else { "▸" };
+    let indent = if review.tree { "  " } else { "" };
+    ListItem::new(format!("{indent}{caret} {checkbox} {status}  {path}  +{added}/-{deleted}"))
 }
 
 /// El color de una línea según lo que le pasó. Fondo además de letra: es lo
@@ -410,4 +418,39 @@ impl Marks {
             selected: review.files_selected,
         }
     }
+}
+
+/// Una fila de la lista agrupada: la carpeta, o un fichero suyo. Con sesenta
+/// ficheros, una lista plana de rutas largas no dice de qué parte del proyecto
+/// es cada cambio.
+pub(super) enum TreeRow<'a> {
+    Dir(String),
+    File(&'a Value),
+}
+
+/// Los ficheros agrupados por su carpeta, las carpetas en orden y los ficheros
+/// de cada una en el que traían.
+pub(super) fn grouped<'a>(files: &[&'a Value]) -> Vec<TreeRow<'a>> {
+    let mut dirs: Vec<(String, Vec<&Value>)> = Vec::new();
+    for file in files {
+        let path = file.get("path").and_then(Value::as_str).unwrap_or("");
+        let dir = path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+        match dirs.iter_mut().find(|(name, _)| *name == dir) {
+            Some((_, group)) => group.push(file),
+            None => dirs.push((dir, vec![file])),
+        }
+    }
+    dirs.sort_by(|(a, _), (b, _)| a.cmp(b));
+    dirs.into_iter()
+        .flat_map(|(dir, files)| {
+            // La raíz no tiene cabecera: sería una línea en blanco.
+            let head = (!dir.is_empty()).then_some(TreeRow::Dir(dir));
+            head.into_iter().chain(files.into_iter().map(TreeRow::File))
+        })
+        .collect()
+}
+
+/// El nombre de un fichero sin la carpeta, que ya está en su cabecera.
+pub(super) fn leaf(path: &str) -> &str {
+    path.rsplit_once('/').map(|(_, name)| name).unwrap_or(path)
 }

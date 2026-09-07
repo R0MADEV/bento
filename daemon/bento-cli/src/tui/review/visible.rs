@@ -8,6 +8,16 @@ use serde_json::Value;
 use super::{draw, file_matches_filter, FileFilter, ReviewState, SidebarTab};
 
 impl ReviewState {
+    /// Lo que va en la lista: los ficheros, y con el árbol puesto la cabecera
+    /// de cada carpeta antes de los suyos.
+    pub(super) fn listed_files(&self) -> Vec<super::rows::TreeRow<'_>> {
+        let files = self.visible_files();
+        match self.tree {
+            true => super::rows::grouped(&files),
+            false => files.into_iter().map(super::rows::TreeRow::File).collect(),
+        }
+    }
+
     /// Los ficheros que pasan el filtro de estado (`f`) y la búsqueda (`/`).
     /// El escritorio tiene su "Buscar archivos…" encima de la lista; aquí `/`
     /// filtraba ramas y texto pero no esto, así que con noventa ficheros no
@@ -59,6 +69,8 @@ impl ReviewState {
 /// todo junto; esta es esa misma lista.
 pub(super) enum PaneRow<'a> {
     File(&'a Value),
+    /// La cabecera de una carpeta, con el árbol puesto.
+    Dir(String),
     Diff { path: String, row: super::format::DiffRow },
     Split { path: String, row: super::format::SplitRow },
     /// Un comentario ya puesto, bajo la línea de la que habla.
@@ -84,10 +96,21 @@ impl ReviewState {
         let parsed = self.parsed.borrow();
         let mut out: Vec<PaneRow<'_>> = Vec::new();
         let mut at = 0;
-        for file in self.visible_files() {
+        for row in self.listed_files() {
             if out.len() >= count {
                 break;
             }
+            // La cabecera de una carpeta es una fila más, y no despliega nada.
+            let file = match row {
+                super::rows::TreeRow::Dir(dir) => {
+                    if at >= first && out.len() < count {
+                        out.push(PaneRow::Dir(dir));
+                    }
+                    at += 1;
+                    continue;
+                }
+                super::rows::TreeRow::File(file) => file,
+            };
             let path = file.get("path").and_then(Value::as_str).unwrap_or("");
             let diff = parsed.rows.get(path);
             let block = 1 + diff.map(|rows| self.rows_of(path, rows)).unwrap_or(0);
@@ -162,9 +185,10 @@ impl ReviewState {
 
     fn count_rows(&self) -> usize {
         let parsed = self.parsed.borrow();
-        self.visible_files()
+        self.listed_files()
             .iter()
-            .map(|file| {
+            .map(|row| {
+                let super::rows::TreeRow::File(file) = row else { return 1 };
                 let Some(path) = file.get("path").and_then(Value::as_str) else { return 1 };
                 let Some(diff) = parsed.rows.get(path) else { return 1 };
                 1 + self.rows_of(path, diff)
@@ -205,11 +229,12 @@ impl ReviewState {
         // parte un diff, pero sí cuántas filas salen, y el total se guarda con
         // esto mismo.
         format!(
-            "{}|{}|{:?}|{}|{}",
+            "{}|{}|{:?}|{}|{}|{}",
             open.join(","),
             self.file_search,
             self.file_filter,
             self.split,
+            self.tree,
             self.inline_comments.len(),
         )
     }
@@ -264,6 +289,18 @@ impl ReviewState {
         self.select_sidebar(current.saturating_add_signed(delta as isize).min(last));
     }
 
+    /// Las filas que llevan un comentario, en orden. Es lo que hace falta
+    /// para ir al siguiente sin bajar línea a línea: en un PR de sesenta
+    /// ficheros, encontrarlos a mano no es encontrarlos.
+    pub(in crate::tui) fn comment_rows(&self) -> Vec<usize> {
+        self.pane_rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, PaneRow::Comment(_)))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
     /// Si el diff de un fichero está desplegado bajo su fila.
     pub(super) fn is_expanded(&self, path: &str) -> bool {
         self.expanded.contains_key(path)
@@ -306,6 +343,7 @@ impl ReviewState {
             PaneRow::File(file) => file.get("path").and_then(Value::as_str).map(String::from),
             PaneRow::Diff { path, .. } | PaneRow::Split { path, .. } => Some(path.clone()),
             PaneRow::Comment(c) => c.get("path").and_then(Value::as_str).map(String::from),
+            PaneRow::Dir(_) => None,
         }
     }
 
@@ -402,7 +440,7 @@ pub(super) fn row_line(row: &PaneRow<'_>) -> Option<u64> {
     match row {
         PaneRow::Diff { row, .. } => row.line,
         PaneRow::Split { row, .. } => row.right.as_ref().and_then(|r| r.line),
-        PaneRow::File(_) | PaneRow::Comment(_) => None,
+        PaneRow::File(_) | PaneRow::Comment(_) | PaneRow::Dir(_) => None,
     }
 }
 

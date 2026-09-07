@@ -164,6 +164,9 @@ pub(super) struct ReviewState {
     /// Vista partida: el fichero viejo a la izquierda y el nuevo a la derecha,
     /// como el botón de dos columnas del escritorio.
     split: bool,
+    /// Agrupados por carpeta. Con sesenta ficheros, una lista plana de rutas
+    /// largas no dice de qué parte del proyecto es cada cambio.
+    tree: bool,
     file_filter: FileFilter,
     reviewed: std::collections::HashSet<String>,
 
@@ -303,6 +306,7 @@ impl ReviewState {
             files_offset: std::cell::Cell::new(0),
             expanded: std::collections::HashMap::new(),
             split: false,
+            tree: false,
             file_filter: FileFilter::All,
             reviewed: std::collections::HashSet::new(),
             output: String::new(),
@@ -1706,6 +1710,7 @@ mod tests {
                 format!("split:{path}:{:?}", row.right.as_ref().map(|r| r.text.clone()))
             }
             PaneRow::Comment(c) => format!("comment:{}", c.get("id").and_then(Value::as_u64).unwrap_or(0)),
+            PaneRow::Dir(dir) => format!("dir:{dir}"),
         }
     }
 
@@ -1968,6 +1973,83 @@ mod tests {
             "lo dice mientras va: {}",
             state.pr_status,
         );
+    }
+
+    #[tokio::test]
+    async fn dot_jumps_to_the_next_comment_and_comma_to_the_previous() {
+        // En un PR de sesenta ficheros, encontrar los comentarios bajando
+        // línea a línea no es encontrarlos. El escritorio tiene sus flechas.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+        state.current_pr = Some(1);
+        let lines = (1..=40).map(|n| format!("+linea {n}")).collect::<Vec<_>>().join("\n");
+        state.expanded.insert("a.rs".into(), format!("@@ -1,0 +1,40 @@\n{lines}"));
+        state.inline_comments = vec![
+            comment(7, "a.rs", 3, "x", "primero"),
+            comment(9, "a.rs", 30, "x", "segundo"),
+        ];
+
+        state.handle_event(press(KeyCode::Char('.'))).await;
+        assert_eq!(state.selected_comment(), Some(7), "al primero");
+
+        state.handle_event(press(KeyCode::Char('.'))).await;
+        assert_eq!(state.selected_comment(), Some(9), "y al siguiente");
+
+        state.handle_event(press(KeyCode::Char('.'))).await;
+        assert_eq!(state.selected_comment(), Some(7), "y vuelve a empezar");
+
+        state.handle_event(press(KeyCode::Char(','))).await;
+        assert_eq!(state.selected_comment(), Some(9), "hacia atrás, el último");
+    }
+
+    #[tokio::test]
+    async fn jumping_to_a_comment_opens_the_file_it_is_in() {
+        // Si su fichero está plegado, el comentario no es una fila a la que
+        // saltar: hay que abrirlo primero.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+        state.current_pr = Some(1);
+        state.inline_comments = vec![comment(7, "a.rs", 3, "x", "algo")];
+
+        state.handle_event(press(KeyCode::Char('.'))).await;
+
+        assert!(state.is_expanded("a.rs"), "abre el fichero del comentario");
+    }
+
+    #[tokio::test]
+    async fn l_groups_the_files_by_folder() {
+        // Con sesenta ficheros, una lista plana de rutas largas no dice de qué
+        // parte del proyecto es cada cambio. El escritorio los agrupa.
+        let mut state = state_with_files(&[
+            "src/panels/a.ts", "src/panels/b.ts", "src/core/c.ts", "README.md",
+        ]);
+        state.focus = Focus::Files;
+
+        state.handle_event(press(KeyCode::Char('l'))).await;
+
+        let text = super::draw::tests::screen(&state, 100, 20);
+        let lines: Vec<&str> = text.lines().collect();
+        let dirs: Vec<&str> = lines.iter().filter(|l| l.contains("src/panels/") || l.contains("src/core/")).copied().collect();
+
+        assert!(dirs.iter().any(|l| l.contains("src/core/") && !l.contains(".ts")), "la carpeta como cabecera: {text}");
+        // Y el fichero, sin repetir la carpeta que ya está arriba.
+        assert!(lines.iter().any(|l| l.contains("  c.ts") && !l.contains("src/core/c.ts")), "{text}");
+    }
+
+    #[test]
+    fn the_tree_puts_the_files_of_a_folder_together() {
+        let state = state_with_files(&["b/2.ts", "a/1.ts", "b/1.ts"]);
+
+        let rows = super::rows::grouped(&state.visible_files());
+
+        let labels: Vec<String> = rows.iter().map(|r| match r {
+            super::rows::TreeRow::Dir(d) => format!("dir:{d}"),
+            super::rows::TreeRow::File(f) => format!("file:{}", f.get("path").and_then(Value::as_str).unwrap_or("")),
+        }).collect();
+
+        assert_eq!(labels, vec![
+            "dir:a", "file:a/1.ts", "dir:b", "file:b/2.ts", "file:b/1.ts",
+        ], "las carpetas en orden y sus ficheros debajo");
     }
 
     #[test]

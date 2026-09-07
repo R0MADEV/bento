@@ -300,7 +300,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
             // Sobre un comentario, lo que se puede hacer con él: son los
             // botones que el escritorio pone al lado de la burbuja.
             (false, true) => "Enter responder · e editar · d borrar · espacio resolver",
-            (false, false) => "Enter despliega · 2 columnas · arrastra o + para comentar · espacio marcar · f estado · F3 buscar",
+            (false, false) => "Enter despliega · l árbol · 2 columnas · , . comentarios · espacio marcar · f estado · F3 buscar",
         },
         focused: matches!(review.focus, Focus::Files),
     }

@@ -59,6 +59,10 @@ impl ReviewState {
             KeyCode::F(3) | KeyCode::Char('/') => { self.start_search(); false }
             KeyCode::Char('x') => { self.compare = !self.compare; false }
             KeyCode::Char('w') => { self.toggle_drawer(); false }
+            // Al comentario siguiente y al anterior, como las flechas del
+            // escritorio: en un PR grande no se encuentran a mano.
+            KeyCode::Char('.') => { self.jump_to_comment(true).await; false }
+            KeyCode::Char(',') => { self.jump_to_comment(false).await; false }
             // Las acciones del PR, donde se lee el PR. Sólo con uno abierto:
             // sin él, `a` sigue siendo preguntarle a la review.
             KeyCode::Char('y') if self.current_pr.is_some() => {
@@ -82,6 +86,13 @@ impl ReviewState {
                 false
             }
             // Dos columnas: lo que había y lo que hay, una al lado de la otra.
+            // Agrupados por carpeta, como el botón de árbol del escritorio.
+            KeyCode::Char('l') => {
+                self.tree = !self.tree;
+                self.files_selected = 0;
+                self.drag_anchor = None;
+                false
+            }
             KeyCode::Char('2') => {
                 self.split = !self.split;
                 // Partida, una sustitución es una fila y no dos: el cursor se
