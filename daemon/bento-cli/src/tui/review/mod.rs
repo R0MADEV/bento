@@ -167,6 +167,12 @@ pub(super) struct ReviewState {
     /// Agrupados por carpeta. Con sesenta ficheros, una lista plana de rutas
     /// largas no dice de qué parte del proyecto es cada cambio.
     tree: bool,
+    /// Releer la lista sola, como el ojo del escritorio: mientras trabajas en
+    /// la rama, los ficheros cambian y F5 se olvida.
+    auto_refresh: bool,
+    /// Cuándo se releyó por última vez: cada relectura es git y una lista
+    /// nueva, así que no puede ir a cada frame.
+    last_refresh: Option<std::time::Instant>,
     file_filter: FileFilter,
     reviewed: std::collections::HashSet<String>,
 
@@ -307,6 +313,8 @@ impl ReviewState {
             expanded: std::collections::HashMap::new(),
             split: false,
             tree: false,
+            auto_refresh: false,
+            last_refresh: None,
             file_filter: FileFilter::All,
             reviewed: std::collections::HashSet::new(),
             output: String::new(),
@@ -522,6 +530,25 @@ impl ReviewState {
 }
 
 impl ReviewState {
+    /// Si la relectura automática está encendida.
+    pub(in crate::tui) fn auto_refresh(&self) -> bool {
+        self.auto_refresh
+    }
+
+    /// Si toca releer. Cada cinco segundos, como el escritorio.
+    pub(in crate::tui) fn due_for_refresh(&mut self) -> bool {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+        if !self.auto_refresh {
+            return false;
+        }
+        let now = std::time::Instant::now();
+        let due = self.last_refresh.is_none_or(|last| now.duration_since(last) >= EVERY);
+        if due {
+            self.last_refresh = Some(now);
+        }
+        due
+    }
 
     /// Rellena las dos mitades la primera vez que se abre la pestaña: los
     /// ficheros y la lista del raíl. Sin esto, el raíl enseña "Ramas" activa y
@@ -541,6 +568,49 @@ impl ReviewState {
         self.request_sidebar_tab(SidebarTab::Branches);
     }
 
+}
+
+/// Qué se copia de la fila marcada.
+#[derive(Clone, Copy)]
+enum Copy {
+    Diff,
+    Path,
+}
+
+/// Lo escribe de verdad. Va a la salida a mano y no por ratatui: es una orden
+/// al emulador, no algo que se pinte.
+fn copy_to_clipboard(text: &str) -> bool {
+    use std::io::Write;
+
+    let mut out = std::io::stdout();
+    out.write_all(clipboard_sequence(text).as_bytes()).is_ok() && out.flush().is_ok()
+}
+
+/// Lo que hay que escribir en el terminal para dejar algo en el portapapeles.
+/// Un programa de terminal no tiene portapapeles propio: se lo pide al emulador
+/// con un OSC 52, que además viaja por SSH — `pbcopy` sólo valdría en la
+/// máquina de al lado.
+fn clipboard_sequence(text: &str) -> String {
+    format!("\u{1b}]52;c;{}\u{1b}\\", base64(text.as_bytes()))
+}
+
+/// Base64 sin dependencias: son doce líneas y sólo hace falta para lo de
+/// arriba.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let bits = chunk.iter().enumerate().fold(0u32, |acc, (i, b)| acc | u32::from(*b) << (16 - 8 * i));
+        for i in 0..4 {
+            // Los grupos que el trozo no llena van con el relleno de siempre.
+            let full = i <= chunk.len();
+            out.push(match full {
+                true => ALPHABET[(bits >> (18 - 6 * i)) as usize & 0b11_1111] as char,
+                false => '=',
+            });
+        }
+    }
+    out
 }
 
 /// Identifies one review run. Only has to be unique among the runs of a
@@ -2050,6 +2120,79 @@ mod tests {
         assert_eq!(labels, vec![
             "dir:a", "file:a/1.ts", "dir:b", "file:b/2.ts", "file:b/1.ts",
         ], "las carpetas en orden y sus ficheros debajo");
+    }
+
+    #[tokio::test]
+    async fn u_turns_the_auto_refresh_on_and_off() {
+        // El ojo del escritorio: releer la lista sola mientras trabajas en la
+        // rama, sin ir pulsando F5.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+
+        state.handle_event(press(KeyCode::Char('u'))).await;
+        assert!(state.auto_refresh, "encendido");
+
+        state.handle_event(press(KeyCode::Char('u'))).await;
+        assert!(!state.auto_refresh, "y apagado");
+    }
+
+    #[test]
+    fn the_auto_refresh_waits_its_turn_between_readings() {
+        // Cada relectura es git y una lista nueva: a cada frame sería releer
+        // sesenta veces por segundo.
+        let mut state = state_with_files(&["a.rs"]);
+        assert!(!state.due_for_refresh(), "apagado no relee nunca");
+
+        state.auto_refresh = true;
+        assert!(state.due_for_refresh(), "la primera, en cuanto se enciende");
+        assert!(!state.due_for_refresh(), "y la siguiente espera su turno");
+    }
+
+    #[test]
+    fn the_rail_says_whether_the_auto_refresh_is_on() {
+        let mut state = state_with_files(&["a.rs"]);
+        state.auto_refresh = true;
+
+        let text = super::draw::tests::screen(&state, 110, 20);
+
+        assert!(text.contains("Auto: sí"), "{text}");
+    }
+
+    #[test]
+    fn the_clipboard_goes_through_the_terminal_itself() {
+        // Un terminal no tiene portapapeles: se le pide al emulador con una
+        // secuencia OSC 52, que además viaja por SSH — `pbcopy` sólo valdría
+        // en la máquina de al lado.
+        let sequence = super::clipboard_sequence("hola");
+
+        assert!(sequence.starts_with("\u{1b}]52;c;"), "{sequence:?}");
+        assert!(sequence.ends_with("\u{1b}\\"), "{sequence:?}");
+        assert!(sequence.contains("aG9sYQ=="), "el texto en base64: {sequence:?}");
+    }
+
+    #[tokio::test]
+    async fn c_and_r_copy_the_diff_and_the_path_of_the_marked_file() {
+        let mut state = state_with_files(&["src/panel.ts"]);
+        state.focus = Focus::Files;
+        state.expanded.insert("src/panel.ts".into(), "@@ -1,0 +1,1 @@\n+uno".into());
+
+        state.handle_event(press(KeyCode::Char('C'))).await;
+        assert!(state.pr_status.contains("diff"), "dice qué ha copiado: {}", state.pr_status);
+
+        state.handle_event(press(KeyCode::Char('R'))).await;
+        assert!(state.pr_status.contains("src/panel.ts"), "{}", state.pr_status);
+    }
+
+    #[tokio::test]
+    async fn copying_a_file_with_no_diff_open_says_so() {
+        // Sin desplegar no hay diff que copiar, y quedarse callado parece que
+        // la tecla no hace nada.
+        let mut state = state_with_files(&["a.rs"]);
+        state.focus = Focus::Files;
+
+        state.handle_event(press(KeyCode::Char('C'))).await;
+
+        assert!(state.pr_status.contains("despliega"), "{}", state.pr_status);
     }
 
     #[test]

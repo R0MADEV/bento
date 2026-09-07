@@ -428,6 +428,11 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 }
             }
             Mode::Review => {
+                // Releer sola cuando toca, sin esperar a una tecla: mientras
+                // trabajas en la rama, los ficheros cambian solos.
+                if review.due_for_refresh() {
+                    review.request_refresh();
+                }
                 terminal.draw(|f| review::draw(f, &review, sidebar_width, resizing))?;
                 tokio::select! {
                     maybe_event = events.next() => {
@@ -493,6 +498,9 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                     }
                     // Requests run off this loop now, so a slow daemon no
                     // longer stops the redraw or the keys.
+                    // Un latido mientras el auto está encendido: sin él, el
+                    // bucle duerme hasta la siguiente tecla y no relee nunca.
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(500)), if review.auto_refresh() => {}
                     Some(update) = review.next_update() => match update {
                         review::ReviewUpdate::Stream(event) => review.handle_stream_event(event),
                         review::ReviewUpdate::Work(fetched) => review.apply_fetched(fetched),

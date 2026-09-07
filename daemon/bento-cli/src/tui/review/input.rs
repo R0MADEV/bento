@@ -86,6 +86,18 @@ impl ReviewState {
                 false
             }
             // Dos columnas: lo que había y lo que hay, una al lado de la otra.
+            // Al portapapeles, como los dos botones del escritorio. En
+            // mayúscula: `c` es el contexto y `r` corre la review.
+            KeyCode::Char('C') => { self.copy_from_file(super::Copy::Diff); false }
+            // En el editor, como el botón del escritorio.
+            KeyCode::Char('E') => { self.open_in_editor(); false }
+            KeyCode::Char('R') => { self.copy_from_file(super::Copy::Path); false }
+            // Releer sola, como el ojo del escritorio.
+            KeyCode::Char('u') => {
+                self.auto_refresh = !self.auto_refresh;
+                self.last_refresh = None;
+                false
+            }
             // Agrupados por carpeta, como el botón de árbol del escritorio.
             KeyCode::Char('l') => {
                 self.tree = !self.tree;

@@ -2,11 +2,9 @@
 //! compartida con el daemon y el CLI; aquí solo queda abrir el editor, que es
 //! del escritorio.
 
-use std::process::Command;
 
 use bento_review::edit;
 
-use super::login_shell_output;
 use crate::command_error::CommandError;
 
 async fn blocking<T: Send + 'static>(
@@ -55,34 +53,9 @@ pub async fn git_reset(path: String, target: String, mode: Option<String>) -> Re
     blocking(move || edit::reset(&path, &target, mode.as_deref())).await
 }
 
-// Abrir el editor es del escritorio: no tiene sentido por IPC ni en el CLI.
+// La decisión de qué editor abrir vive en `bento_core`: la CLI abre el mismo
+// desde su panel de review, y repetirla sería que cada cliente abriera otro.
 #[tauri::command]
 pub async fn open_in_editor(path: String) -> Result<(), String> {
-    blocking(move || {
-        for editor in &["cursor", "code"] {
-            if let Some(found) = login_shell_output(&format!("command -v {editor}")) {
-                let bin_path = found.trim().to_string();
-                if !bin_path.is_empty() && Command::new(&bin_path).arg(&path).spawn().is_ok() {
-                    return Ok(());
-                }
-            }
-        }
-        #[cfg(target_os = "macos")]
-        Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        #[cfg(target_os = "linux")]
-        Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        #[cfg(target_os = "windows")]
-        Command::new("explorer.exe")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    })
-    .await
+    blocking(move || bento_core::editor::open(&path)).await
 }

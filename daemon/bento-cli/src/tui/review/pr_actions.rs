@@ -197,6 +197,37 @@ impl ReviewState {
         }
     }
 
+    /// Deja en el portapapeles el diff del fichero marcado, o su ruta. Son
+    /// los dos botones que el escritorio tiene en la fila del fichero.
+    pub(super) fn copy_from_file(&mut self, what: super::Copy) {
+        let Some(path) = self.selected_path() else { return };
+        let text = match what {
+            super::Copy::Path => Some(path.clone()),
+            super::Copy::Diff => self.expanded.get(&path).cloned(),
+        };
+        let Some(text) = text else {
+            self.pr_status = "despliega el fichero (Enter) para copiar su diff".into();
+            return;
+        };
+        self.pr_status = match super::copy_to_clipboard(&text) {
+            true => match what {
+                super::Copy::Path => format!("copiado: {path}"),
+                super::Copy::Diff => format!("copiado el diff de {path}"),
+            },
+            false => "no se pudo copiar: el terminal no lo admite".to_string(),
+        };
+    }
+
+    /// Abre el fichero marcado en el editor, el mismo que abre el escritorio.
+    pub(super) fn open_in_editor(&mut self) {
+        let Some(path) = self.selected_path() else { return };
+        let full = format!("{}/{path}", self.cwd);
+        self.pr_status = match bento_core::editor::open(&full) {
+            Ok(()) => format!("abriendo {path}"),
+            Err(error) => format!("no se pudo abrir: {error}"),
+        };
+    }
+
     /// La rama de git con la que comparar un PR.
     pub(super) fn pr_branch(&self, head_ref: &str) -> String {
         bento_review::branches::branch_for(&self.branches, head_ref)

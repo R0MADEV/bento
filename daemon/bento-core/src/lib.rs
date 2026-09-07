@@ -2,6 +2,7 @@
 //! (later) the Tauri app. No Tauri dependencies: output is delivered over a
 //! broadcast channel instead of window events.
 
+pub mod editor;
 pub mod profiles;
 mod pty;
 

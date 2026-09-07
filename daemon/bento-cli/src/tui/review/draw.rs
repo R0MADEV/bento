@@ -143,7 +143,7 @@ fn draw_sidebar(frame: &mut ratatui::Frame, review: &ReviewState, area: ratatui:
 /// from here — a click that assumes a different height selects the wrong row.
 /// En qué línea de la cabecera van las pestañas. El clic las mide por columna
 /// —cada una es su propia zona—, así que necesita saber su fila.
-pub(crate) const TABS_ROW: usize = 10;
+pub(crate) const TABS_ROW: usize = 11;
 
 pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'static>> {
     // Dimmed while compare is off, because that is exactly when they do
@@ -180,6 +180,8 @@ pub(crate) fn sidebar_header(review: &ReviewState, width: u16) -> Vec<Line<'stat
         // El historial no es una pestaña del raíl sino el cajón de la
         // derecha: marcarlo entre las pestañas decía "Reviews" mientras
         // estabas mirando los PRs.
+        // Releer sola: el ojo del escritorio.
+        Line::from(format!("Auto: {} (u)", if review.auto_refresh { "sí" } else { "no" })),
         Line::from(format!(
             "Reviews: {} (h)",
             if review.showing_history { "abiertas" } else { "ver" },
