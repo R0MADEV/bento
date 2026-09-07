@@ -268,6 +268,8 @@ function startReview(){
 // así que marcar aquí y seguir allí es lo mismo.
 let reviewViewed=[];
 let fileFilter='all';
+// Por carpetas o la lista plana, como el árbol del escritorio y del cli.
+let fileTree=false;
 // La última lista cargada: buscar y cambiar de filtro trabajan sobre ella.
 let reviewFiles=[];
 
@@ -298,6 +300,34 @@ function searchedFiles(){
   return reviewFiles.filter(f=>(f.path||'').toLowerCase().includes(needle));
 }
 
+// Por carpetas, con la misma regla que el árbol del cli: la carpeta es todo
+// lo que va antes de la última barra, ordenadas por nombre, y lo que está en
+// la raíz no lleva cabecera —sería una línea en blanco.
+function groupedFiles(files){
+  const dirs=[];
+  for(const file of files){
+    const path=file.path||'';
+    const cut=path.lastIndexOf('/');
+    const dir=cut<0?'':path.slice(0,cut);
+    const found=dirs.find(d=>d.dir===dir);
+    if(found)found.files.push(file);else dirs.push({dir,files:[file]});
+  }
+  dirs.sort((a,b)=>a.dir<b.dir?-1:a.dir>b.dir?1:0);
+  return dirs.flatMap(({dir,files})=>[
+    ...(dir?[{dir}]:[]),
+    ...files.map(file=>({file})),
+  ]);
+}
+
+// El nombre sin la carpeta, que ya está en su cabecera.
+function leafName(path){const cut=path.lastIndexOf('/');return cut<0?path:path.slice(cut+1)}
+
+function toggleFileTree(){
+  fileTree=!fileTree;
+  document.getElementById('rv-files-tree')?.classList.toggle('active',fileTree);
+  renderFiles();
+}
+
 function renderFiles(){
   const el=document.getElementById('rv-files-list');
   const base=document.getElementById('rv-files-base').value.trim()||'main';
@@ -314,19 +344,25 @@ function renderFiles(){
 
   const shown=searched.filter(f=>matchesFileFilter(f.status||'M',fileFilter));
   if(!shown.length){el.innerHTML='<div class="empty">Ningún fichero con ese estado.</div>';return}
-  el.innerHTML=shown.map(f=>{
+  const fileRow=f=>{
     const badge=f.status||'M';
     const add=f.added>0?`<span class="stat-add">+${f.added}</span>`:'';
     const del=f.deleted>0?`<span class="stat-del"> -${f.deleted}</span>`:'';
     const path=esc(JSON.stringify(f.path));
     const mark=isViewed(f.path)?'✓':'○';
-    return `<div class="file-item${isViewed(f.path)?' file-viewed':''}" onclick="openFileDiff(${path},${esc(JSON.stringify(base))})">
+    const name=fileTree?leafName(f.path||''):(f.path||'');
+    return `<div class="file-item${isViewed(f.path)?' file-viewed':''}${fileTree?' file-in-tree':''}" onclick="openFileDiff(${path},${esc(JSON.stringify(base))})">
       <span class="file-viewed-mark" onclick="toggleViewed(${path},event)">${mark}</span>
       <span class="file-badge badge-${badge}">${esc(badge)}</span>
-      <span class="file-path">${esc(f.path)}</span>
+      <span class="file-path">${esc(name)}</span>
       <span class="file-stat">${add}${del}</span>
     </div>`;
-  }).join('');
+  };
+  el.innerHTML=fileTree
+    ? groupedFiles(shown).map(row=>row.dir!==undefined
+        ? `<div class="file-dir">${esc(row.dir)}</div>`
+        : fileRow(row.file)).join('')
+    : shown.map(fileRow).join('');
 }
 
 async function toggleViewed(path,event){
@@ -381,6 +417,25 @@ async function loadFiles(){
   }catch(e){el.innerHTML='<div class="empty err-msg">Error de conexión.</div>'}
 }
 
+// En una columna o en dos. Lo que se está viendo se guarda para repintarlo
+// sin volver a pedir el diff al daemon.
+let splitView=false,openDiff=null;
+
+function toggleSplit(){
+  splitView=!splitView;
+  for(const id of ['rv-split-toggle','rv-pr-split-toggle']){
+    document.getElementById(id)?.classList.toggle('active',splitView);
+  }
+  if(openDiff)paintDiff(openDiff.text,openDiff.path);
+  if(prDiffText)paintPRDiff(prDiffText);
+}
+
+function paintDiff(text,path){
+  openDiff={text,path};
+  document.getElementById('rv-diff-content').innerHTML=
+    splitView?renderDiffSplit(text,path):renderDiff(text,path);
+}
+
 async function openFileDiff(path, base){
   const dir=cwd();
   const overlay=document.getElementById('rv-file-view');
@@ -393,7 +448,8 @@ async function openFileDiff(path, base){
     const r=await fetch('/api/review/file'+q+'&cwd='+encodeURIComponent(dir)+'&base='+encodeURIComponent(base)
       +'&path='+encodeURIComponent(path)+(branch?'&branch='+encodeURIComponent(branch):''));
     const text=await r.text();
-    document.getElementById('rv-diff-content').innerHTML=r.ok ? renderDiff(text, path) : `<span class="dl dl-del">${esc(text)}</span>`;
+    if(r.ok)paintDiff(text,path);
+    else{openDiff=null;document.getElementById('rv-diff-content').innerHTML=`<span class="dl dl-del">${esc(text)}</span>`}
   }catch(e){
     document.getElementById('rv-diff-content').innerHTML='<span class="dl dl-del">Error de conexión.</span>';
   }

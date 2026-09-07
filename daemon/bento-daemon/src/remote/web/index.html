@@ -173,6 +173,7 @@
       <button class="chip" data-filter="added" data-label="Añadidos" onclick="setFileFilter('added')">Añadidos</button>
       <button class="chip" data-filter="modified" data-label="Modificados" onclick="setFileFilter('modified')">Modificados</button>
       <button class="chip" data-filter="deleted" data-label="Borrados" onclick="setFileFilter('deleted')">Borrados</button>
+      <button id="rv-files-tree" class="chip" onclick="toggleFileTree()" title="Agrupar por carpeta">Árbol</button>
       <span id="rv-files-count"></span>
     </div>
     <div id="rv-files-list"><div class="empty">Selecciona un proyecto y pulsa Ver.</div></div>
@@ -201,6 +202,7 @@
   <div class="overlay-topbar">
     <button class="overlay-back" onclick="closeFileDiff()">&#8249;</button>
     <span id="rv-file-title" class="overlay-title"></span>
+    <button id="rv-split-toggle" class="chip" onclick="toggleSplit()" title="Ver en dos columnas">2 col</button>
   </div>
   <div class="diff-scroll">
     <div id="rv-diff-content" class="diff-inner"></div>
@@ -221,6 +223,9 @@
 
   <!-- PR Diff -->
   <div id="rv-pr-page-diff" class="pr-subpage active">
+    <div class="pr-diff-bar">
+      <button id="rv-pr-split-toggle" class="chip" onclick="toggleSplit()" title="Ver en dos columnas">2 col</button>
+    </div>
     <div class="diff-scroll">
       <div id="rv-pr-diff-content" class="diff-inner"></div>
     </div>

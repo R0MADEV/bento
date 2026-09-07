@@ -148,6 +148,39 @@ async function toggleResolved(id){
   await loadPRThreads();loadPRDiff();
 }
 
+// El diff que se está viendo, para repintarlo al cambiar de vista sin volver
+// a pedírselo al daemon.
+let prDiffText=null;
+
+// Lo comentable se marca aquí y no en `renderDiff`, que lo comparten la review
+// y el PR y solo aquí hay un PR al que comentar. En dos columnas la fila que
+// se comenta es la celda de la derecha, que es la del fichero nuevo.
+function paintPRDiff(text){
+  prDiffText=text;
+  const el=document.getElementById('rv-pr-diff-content');
+  el.innerHTML=splitView?renderDiffSplit(text):renderDiff(text);
+
+  const commentsOf=(file,line)=>prLineComments.filter(c=>c.path===file && (c.line??c.original_line)===line);
+  const wire=(row,anchor,under)=>{
+    row.classList.add('dl-commentable');
+    row.onclick=()=>commentOnLine(anchor);
+    const mine=commentsOf(anchor.file,anchor.line);
+    if(mine.length)under.insertAdjacentHTML('afterend',mine.map(commentRow).join(''));
+  };
+
+  if(splitView){
+    for(const cell of el.querySelectorAll('.split-cell[data-line]')){
+      wire(cell,{file:cell.dataset.file,line:parseInt(cell.dataset.line,10)},cell.parentElement);
+    }
+    return;
+  }
+  const anchors=diffAnchors(text);
+  [...el.children].forEach((row,index)=>{
+    const anchor=anchors[index];
+    if(anchor)wire(row,anchor,row);
+  });
+}
+
 async function loadPRDiff(){
   const dir=cwd();
   const el=document.getElementById('rv-pr-diff-content');
@@ -156,20 +189,8 @@ async function loadPRDiff(){
   try{
     const r=await fetch('/api/review/pr/diff'+q+'&cwd='+encodeURIComponent(dir)+'&pr='+currentPR);
     const text=await r.text();
-    if(!r.ok){el.innerHTML=`<span class="dl dl-del">${esc(text)}</span>`;return}
-    el.innerHTML=renderDiff(text);
-    // Las filas comentables se marcan aquí y no en `renderDiff`, que lo
-    // comparten la review y el PR y solo aquí hay un PR al que comentar.
-    const anchors=diffAnchors(text);
-    [...el.children].forEach((row,index)=>{
-      const anchor=anchors[index];
-      if(!anchor)return;
-      row.classList.add('dl-commentable');
-      row.onclick=()=>commentOnLine(anchor);
-      // Y lo que ya se ha dicho de esa línea, justo debajo.
-      const mine=prLineComments.filter(c=>c.path===anchor.file && (c.line??c.original_line)===anchor.line);
-      if(mine.length)row.insertAdjacentHTML('afterend',mine.map(commentRow).join(''));
-    });
+    if(!r.ok){prDiffText=null;el.innerHTML=`<span class="dl dl-del">${esc(text)}</span>`;return}
+    paintPRDiff(text);
   }catch(e){
     el.innerHTML='<span class="dl dl-del">Error de conexión.</span>';
   }

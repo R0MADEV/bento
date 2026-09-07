@@ -188,3 +188,18 @@
 .sh-number { color: #ff9e64; }
 /* El número de línea: tenue y sin poder seleccionarse, que estorba al copiar. */
 .dl-no { display: inline-block; width: 42px; margin-right: 8px; text-align: right; color: var(--dim); opacity: .5; user-select: none; }
+
+/* Dos columnas: lo viejo y lo nuevo lado a lado, como en el escritorio. En un
+   móvil no caben a lo ancho, así que la tabla se desplaza dentro de su marco
+   y no estira la página. */
+.split-row{display:flex;min-width:max-content}
+.split-cell{flex:1 0 50%;padding:1px 12px;white-space:pre;font-family:Menlo,Monaco,monospace}
+.split-left{border-right:1px solid var(--b)}
+.split-del{background:rgba(247,118,142,.08);color:#f7768e}
+.split-add{background:rgba(115,218,202,.08);color:#73daca}
+.split-empty{background:var(--s)}
+
+/* La carpeta a la que pertenecen las filas de debajo. */
+.file-dir{padding:6px 16px;font-size:11px;font-family:Menlo,Monaco,monospace;color:var(--dim);background:var(--s);border-bottom:1px solid var(--b);position:sticky;top:0}
+.file-in-tree{padding-left:28px}
+.pr-diff-bar{display:flex;justify-content:flex-end;padding:6px 12px;border-bottom:1px solid var(--b);flex-shrink:0}

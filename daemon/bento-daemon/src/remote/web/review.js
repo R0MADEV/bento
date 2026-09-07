@@ -223,6 +223,61 @@ function renderDiff(text, path){
   }).join('');
 }
 
+// El mismo diff en dos columnas: lo viejo a la izquierda y lo nuevo a la
+// derecha, con los borrados y los añadidos emparejados en la misma fila. Es lo
+// que hacen el escritorio y el cli; en el móvil la tabla se desplaza a lo
+// ancho, que es lo único que cambia cuando la pantalla no da.
+function renderDiffSplit(text, path){
+  let file=path||'',oldNo=0,newNo=0,inHunk=false;
+  const entries=[];
+  for(const raw of text.split('\n')){
+    const match=raw.match(/^diff --git .* b\/(.+)$/);
+    if(match){file=match[1];inHunk=false;entries.push({kind:'hdr',text:raw});continue}
+    if(raw.startsWith('+++')||raw.startsWith('---')){entries.push({kind:'hdr',text:raw});continue}
+    if(raw.startsWith('@@')){
+      const at=raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)/);
+      if(at){oldNo=parseInt(at[1],10)-1;newNo=parseInt(at[2],10)-1}
+      inHunk=true;entries.push({kind:'hunk',text:raw});continue;
+    }
+    if(!inHunk){entries.push({kind:'hdr',text:raw});continue}
+    if(raw.startsWith('-')){entries.push({kind:'del',no:++oldNo,code:raw.slice(1),file});continue}
+    if(raw.startsWith('+')){entries.push({kind:'add',no:++newNo,code:raw.slice(1),file});continue}
+    entries.push({kind:'ctx',oldNo:++oldNo,no:++newNo,code:raw.slice(1),file});
+  }
+
+  // El lado nuevo lleva a qué fichero y a qué línea corresponde: es lo que
+  // necesita quien comente sin tener que contar filas desde arriba.
+  const cell=(side,extra,no,code,file,anchor)=>{
+    const at=anchor?` data-file="${esc(file)}" data-line="${no}"`:'';
+    return `<div class="split-cell split-${side}${extra}"${at}><span class="dl-no">${no}</span>${highlight(code,file)}</div>`;
+  };
+  const empty=side=>`<div class="split-cell split-${side} split-empty"></div>`;
+
+  const out=[];
+  for(let i=0;i<entries.length;){
+    const entry=entries[i];
+    if(entry.kind==='hdr'){out.push(`<div class="dl dl-hdr">${esc(entry.text)}</div>`);i++;continue}
+    if(entry.kind==='hunk'){out.push(`<div class="dl dl-hunk">${esc(entry.text)}</div>`);i++;continue}
+    if(entry.kind==='ctx'){
+      out.push(`<div class="split-row">${cell('left','',entry.oldNo,entry.code,entry.file)}`+
+        `${cell('right',' split-ctx-right',entry.no,entry.code,entry.file,true)}</div>`);
+      i++;continue;
+    }
+    // Un bloque de borrados seguido de sus añadidos: emparejados por orden,
+    // que es lo que deja la línea vieja al lado de la que la sustituye.
+    const dels=[],adds=[];
+    while(i<entries.length&&entries[i].kind==='del')dels.push(entries[i++]);
+    while(i<entries.length&&entries[i].kind==='add')adds.push(entries[i++]);
+    for(let j=0;j<Math.max(dels.length,adds.length);j++){
+      const del=dels[j],add=adds[j];
+      const left=del?cell('left',' split-del',del.no,del.code,del.file):empty('left');
+      const right=add?cell('right',' split-add',add.no,add.code,add.file,true):empty('right');
+      out.push(`<div class="split-row">${left}${right}</div>`);
+    }
+  }
+  return out.join('');
+}
+
 function mdToHtml(text){
   // Escape first so any HTML in the reviewed content (diff text, AI output) can't
   // inject markup — the markdown syntax below (#, *, `, -) survives esc() untouched.
