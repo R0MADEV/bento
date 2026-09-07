@@ -91,6 +91,8 @@ impl ReviewState {
             KeyCode::Char('C') => { self.copy_from_file(super::Copy::Diff); false }
             // En el editor, como el botón del escritorio.
             KeyCode::Char('E') => { self.open_in_editor(); false }
+            // Comentario al fichero entero, el otro botón de su cabecera.
+            KeyCode::Char('A') => { self.start_file_comment(); false }
             KeyCode::Char('R') => { self.copy_from_file(super::Copy::Path); false }
             // Releer sola, como el ojo del escritorio.
             KeyCode::Char('u') => {
@@ -436,6 +438,7 @@ impl ReviewState {
                         if !self.input.trim().is_empty() { self.start_ask(); }
                     }
                     Some(InputPurpose::PrComment) => self.submit_pr_comment().await,
+                    Some(InputPurpose::FileComment) => self.submit_file_comment().await,
                     Some(InputPurpose::InlineComment(line)) => self.submit_inline_comment(line).await,
                     Some(InputPurpose::CommentReply(id)) => self.submit_comment_reply(id).await,
                     Some(InputPurpose::CommentEdit(id)) => self.submit_comment_edit(id).await,

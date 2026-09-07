@@ -16,6 +16,8 @@ mod rows;
 mod syntax;
 mod run_state;
 mod visible;
+mod clipboard;
+use clipboard::{copy_to_clipboard, Copy};
 
 pub(super) use draw::draw;
 use format::{file_matches_filter, FileFilter};
@@ -60,6 +62,8 @@ enum InputPurpose {
     PrComment,
     /// Comentando una línea del diff: la del fichero nuevo a la que se ancla.
     InlineComment(u64),
+    /// Comentando el fichero entero, no una línea suya.
+    FileComment,
     /// Contestando a un comentario ya puesto, por su id.
     CommentReply(u64),
     /// Corrigiendo uno tuyo, por su id.
@@ -568,49 +572,6 @@ impl ReviewState {
         self.request_sidebar_tab(SidebarTab::Branches);
     }
 
-}
-
-/// Qué se copia de la fila marcada.
-#[derive(Clone, Copy)]
-enum Copy {
-    Diff,
-    Path,
-}
-
-/// Lo escribe de verdad. Va a la salida a mano y no por ratatui: es una orden
-/// al emulador, no algo que se pinte.
-fn copy_to_clipboard(text: &str) -> bool {
-    use std::io::Write;
-
-    let mut out = std::io::stdout();
-    out.write_all(clipboard_sequence(text).as_bytes()).is_ok() && out.flush().is_ok()
-}
-
-/// Lo que hay que escribir en el terminal para dejar algo en el portapapeles.
-/// Un programa de terminal no tiene portapapeles propio: se lo pide al emulador
-/// con un OSC 52, que además viaja por SSH — `pbcopy` sólo valdría en la
-/// máquina de al lado.
-fn clipboard_sequence(text: &str) -> String {
-    format!("\u{1b}]52;c;{}\u{1b}\\", base64(text.as_bytes()))
-}
-
-/// Base64 sin dependencias: son doce líneas y sólo hace falta para lo de
-/// arriba.
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let bits = chunk.iter().enumerate().fold(0u32, |acc, (i, b)| acc | u32::from(*b) << (16 - 8 * i));
-        for i in 0..4 {
-            // Los grupos que el trozo no llena van con el relleno de siempre.
-            let full = i <= chunk.len();
-            out.push(match full {
-                true => ALPHABET[(bits >> (18 - 6 * i)) as usize & 0b11_1111] as char,
-                false => '=',
-            });
-        }
-    }
-    out
 }
 
 /// Identifies one review run. Only has to be unique among the runs of a
@@ -2158,16 +2119,30 @@ mod tests {
         assert!(text.contains("Auto: sí"), "{text}");
     }
 
-    #[test]
-    fn the_clipboard_goes_through_the_terminal_itself() {
-        // Un terminal no tiene portapapeles: se le pide al emulador con una
-        // secuencia OSC 52, que además viaja por SSH — `pbcopy` sólo valdría
-        // en la máquina de al lado.
-        let sequence = super::clipboard_sequence("hola");
+    #[tokio::test]
+    async fn a_comments_the_whole_file_when_no_line_fits_the_remark() {
+        // Hay cosas que no son de una línea —"este fichero sobra"—; el
+        // escritorio tiene su botón en la cabecera del fichero.
+        let mut state = state_with_files(&["src/panel.ts"]);
+        state.focus = Focus::Files;
+        state.current_pr = Some(7);
 
-        assert!(sequence.starts_with("\u{1b}]52;c;"), "{sequence:?}");
-        assert!(sequence.ends_with("\u{1b}\\"), "{sequence:?}");
-        assert!(sequence.contains("aG9sYQ=="), "el texto en base64: {sequence:?}");
+        state.handle_event(press(KeyCode::Char('A'))).await;
+
+        assert!(matches!(state.input_purpose, Some(InputPurpose::FileComment)));
+        assert_eq!(state.current_file.as_deref(), Some("src/panel.ts"));
+        assert!(state.pr_status.contains("src/panel.ts"), "dice de qué fichero: {}", state.pr_status);
+    }
+
+    #[tokio::test]
+    async fn a_file_comment_without_an_open_pr_says_so_instead_of_going_nowhere() {
+        let mut state = state_with_files(&["src/panel.ts"]);
+        state.focus = Focus::Files;
+
+        state.handle_event(press(KeyCode::Char('A'))).await;
+
+        assert!(state.input_purpose.is_none());
+        assert!(state.pr_status.contains("PR"), "{}", state.pr_status);
     }
 
     #[tokio::test]

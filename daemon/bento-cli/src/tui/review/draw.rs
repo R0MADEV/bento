@@ -302,7 +302,7 @@ fn draw_file_browser(frame: &mut ratatui::Frame, review: &ReviewState, area: rat
             // Sobre un comentario, lo que se puede hacer con él: son los
             // botones que el escritorio pone al lado de la burbuja.
             (false, true) => "Enter responder · e editar · d borrar · espacio resolver",
-            (false, false) => "Enter despliega · l árbol · 2 columnas · , . comentarios · espacio marcar · f estado · F3 buscar",
+            (false, false) => "Enter despliega · l árbol · 2 columnas · , . comentarios · espacio marcar · A comentar · E editor · f estado · F3 buscar",
         },
         focused: matches!(review.focus, Focus::Files),
     }
@@ -395,6 +395,7 @@ fn browse_input_label(review: &ReviewState) -> Option<&'static str> {
         Some(InputPurpose::FileSearch) => Some("Buscar archivos (Enter aplicar, Esc cancelar)"),
         Some(InputPurpose::Ask) => Some("Pregunta sobre la review (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrComment) => Some("Comentario en el PR (Enter enviar, Esc cancelar)"),
+        Some(InputPurpose::FileComment) => Some("Comentario al fichero (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("APPROVE")) => Some("Aprobar — texto opcional (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview("REQUEST_CHANGES")) => Some("Pedir cambios — texto (Enter enviar, Esc cancelar)"),
         Some(InputPurpose::PrReview(_)) => Some("Comentario de review (Enter enviar, Esc cancelar)"),

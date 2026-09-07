@@ -285,6 +285,38 @@ impl ReviewState {
         }
     }
 
+    /// Abre el comentario al fichero entero: lo que no es de ninguna línea en
+    /// concreto.
+    pub(super) fn start_file_comment(&mut self) {
+        if self.current_pr.is_none() {
+            self.pr_status = "abre antes el PR (p) para comentar en él".into();
+            return;
+        }
+        let Some(path) = self.selected_path() else { return };
+        self.pr_status = format!("comentando el fichero {path}");
+        self.current_file = Some(path);
+        self.input_purpose = Some(super::InputPurpose::FileComment);
+        self.input.clear();
+    }
+
+    /// Lo manda a la conversación del PR encabezado por la ruta, que es donde
+    /// lo pone el escritorio: GitHub no tiene comentarios de fichero.
+    pub(super) async fn submit_file_comment(&mut self) {
+        let body = std::mem::take(&mut self.input);
+        let (Some(pr), Some(path)) = (self.current_pr, self.current_file.clone()) else { return };
+        if body.trim().is_empty() {
+            return;
+        }
+        let req = json!({
+            "id": "1", "cmd": "review.pr_comment_add", "cwd": self.cwd, "pr": pr,
+            "data": bento_review::pr::file_comment_body(&path, &body),
+        });
+        self.pr_status = match crate::request_data(req).await {
+            Ok(_) => format!("comentario puesto en {path}"),
+            Err(error) => format!("no se pudo comentar: {error}"),
+        };
+    }
+
     /// Manda el comentario a la línea marcada. El sha al que se ancla lo
     /// resuelve el daemon desde la rama, igual que el panel del escritorio.
     pub(super) async fn submit_inline_comment(&mut self, line: u64) {

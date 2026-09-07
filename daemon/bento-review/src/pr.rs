@@ -481,8 +481,22 @@ pub fn reply_review_comment(cwd: &str, pr: u64, id: u64, body: &str) -> Result<S
         .map(|url| url.trim().to_string())
 }
 
+/// El comentario que se deja sobre un fichero entero. GitHub no tiene sitio
+/// para eso en la conversación del PR, así que va como un comentario normal
+/// encabezado por la ruta — es lo que hace el botón del escritorio, y sin
+/// esto la CLI habría inventado otro formato para lo mismo.
+pub fn file_comment_body(path: &str, body: &str) -> String {
+    format!("**{path}**\n\n{}", body.trim())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_file_comment_says_which_file_it_is_about() {
+        let body = super::file_comment_body("src/a.rs", "  esto sobra  ");
+        assert_eq!(body, "**src/a.rs**\n\nesto sobra");
+    }
+
 
 
 
