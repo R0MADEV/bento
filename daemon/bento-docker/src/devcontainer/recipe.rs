@@ -19,6 +19,9 @@ pub fn recipe_files(recipes_dir: &str, project_key: &str) -> Result<Vec<(PathBuf
             .map_err(|error| error.to_string())?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries.into_iter().rev() {
+            if entry.file_name() == ".DS_Store" {
+                continue;
+            }
             let file_type = entry.file_type().map_err(|error| error.to_string())?;
             if file_type.is_symlink() {
                 return Err(format!("recipe symlinks are not supported: {}", entry.path().display()));
@@ -146,6 +149,12 @@ pub fn overlay_recipe_detailed(
         Ok(files) => files,
         Err(error) => { result.errors.push(error); return result; }
     };
+    // A missing recipe must not look like a successful apply: the worktree
+    // would silently lack the files (e.g. `.env`) its devcontainer needs.
+    if !recipe_dir.is_dir() {
+        result.errors.push(format!("recipe not found: {}", recipe_dir.display()));
+        return result;
+    }
     for (source, relative) in files {
         let destination = Path::new(worktree).join(&relative);
         let tracked = git_file_is_tracked(worktree, &relative);
@@ -300,6 +309,37 @@ mod tests {
         let allowed = overlay_recipe_detailed(recipes.to_str().unwrap(), "project", worktree.to_str().unwrap(), true);
         assert_eq!(allowed.applied, vec!["config.local"]);
         assert_eq!(std::fs::read_to_string(worktree.join("config.local")).unwrap(), "recipe\n");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_reports_missing_recipe_instead_of_succeeding_silently() {
+        let root = temporary_directory("recipe-missing");
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let recipes = root.join("recipes/project");
+
+        let result = overlay_recipe_detailed(recipes.to_str().unwrap(), "project", worktree.to_str().unwrap(), false);
+
+        assert!(result.applied.is_empty());
+        let expected = recipes.join("project").display().to_string();
+        assert_eq!(result.errors, vec![format!("recipe not found: {expected}")]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recipe_ignores_finder_metadata() {
+        let root = temporary_directory("recipe-ds-store");
+        let project = root.join("recipes/project/.devcontainer");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("bento-postcreate.sh"), "#!/bin/sh\n").unwrap();
+        std::fs::write(project.join(".DS_Store"), "finder").unwrap();
+        std::fs::write(root.join("recipes/project/.DS_Store"), "finder").unwrap();
+
+        let files = recipe_files(root.join("recipes").to_str().unwrap(), "project").unwrap();
+
+        let relative: Vec<_> = files.into_iter().map(|(_, relative)| relative).collect();
+        assert_eq!(relative, vec![".devcontainer/bento-postcreate.sh"]);
         let _ = std::fs::remove_dir_all(root);
     }
 

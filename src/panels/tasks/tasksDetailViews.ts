@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { open as pickFolder } from '@tauri-apps/plugin-dialog'
 import type { Worktree } from '../../core/git/worktree'
+import { recipesRootFor } from '../../core/docker/recipesDir'
 import { showChanges } from './tasksDiffView'
 import { buildOperationHistoryView } from './OperationHistoryView'
 import type { PrStatus } from '../../core/git/gitTypes'
@@ -88,8 +89,12 @@ export async function showTaskSettings(ctx: TasksPanelCtx): Promise<void> {
     void pickFolder({
       directory: true,
       defaultPath: ctx.appSettings.devcontainerRecipesDir,
-    }).then(picked => {
-      if (typeof picked === 'string') void persist(picked)
+    }).then(async picked => {
+      if (typeof picked !== 'string') return
+      const root = recipesRootFor(picked, projectKey(ctx))
+      await persist(root)
+      const usedParent = root !== picked && status.className === 'tasks-note'
+      if (usedParent) status.textContent = taskT('recipesDirUsedParent', { path: root })
     }).catch(() => {})
   })
   const clear = iconBtn('x', taskT('clearRecipesDir'), () => { void persist(undefined) })

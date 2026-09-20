@@ -125,9 +125,14 @@ export function buildTaskDevcontainerView(deps: TaskDevcontainerDeps) {
       const wrap = document.createElement('div')
       wrap.className = 'tasks-recipe-preview'
       wrap.appendChild(Object.assign(document.createElement('h3'), { textContent: taskT('recipePreview') }))
-      wrap.appendChild(note(preview.recipeExists
-        ? taskT('recipePreviewSummary', { project: projectKey, count: preview.files.length })
-        : taskT('recipeMissingGeneric', { project: projectKey }), 'db-detail-hint'))
+      // With a recipes directory configured, a missing recipe is almost always a
+      // wrong path, not a project without one — show where Bento looked.
+      const isRecipeMissingAtConfiguredPath = !preview.recipeExists && Boolean(preview.recipeDir)
+      wrap.appendChild(isRecipeMissingAtConfiguredPath
+        ? note(taskT('recipeMissingAt', { project: projectKey, path: preview.recipeDir ?? '' }), 'db-detail-error')
+        : note(preview.recipeExists
+          ? taskT('recipePreviewSummary', { project: projectKey, count: preview.files.length })
+          : taskT('recipeMissingGeneric', { project: projectKey }), 'db-detail-hint'))
 
       const selected = document.createElement('select')
       selected.className = 'tasks-settings-input'
