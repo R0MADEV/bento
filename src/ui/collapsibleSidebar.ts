@@ -48,6 +48,9 @@ export function createCollapsibleSidebar(opts: CollapsibleSidebarOptions): Colla
   element.className = 'cs-sidebar'
   if (collapsed) element.classList.add('collapsed')
   element.style.width = `${initialWidth}px`
+  // A width saved on a wider window would otherwise swallow the detail pane
+  // (the sidebar doesn't shrink); CSS keeps the cap live across resizes.
+  element.style.maxWidth = `calc(100% - ${minRemaining}px)`
 
   // ── Header (title + toggle) ──────────────────────────────────────
   const header = document.createElement('div')
