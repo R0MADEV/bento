@@ -66,6 +66,10 @@ fn main() {
             }
             #[cfg(target_os = "macos")]
             app::menu::install_menu(app)?;
+            #[cfg(target_os = "macos")]
+            if let Err(error) = app::global_hotkey::register(app.handle()) {
+                eprintln!("bento: global hotkey not registered ({error})");
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let manager = app.state::<agent::AgentManager>().inner().clone();
                 let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
