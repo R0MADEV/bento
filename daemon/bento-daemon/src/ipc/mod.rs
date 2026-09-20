@@ -128,13 +128,18 @@ async fn handle_conn(socket: TcpStream, manager: PtyManager, remote: RemoteContr
     // tokio task alone does not kill a child process by default.
     let mut review_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
+    // One output forwarder per terminal on this connection. The desktop
+    // subscribes again for every panel that shows an already-open terminal, and
+    // a second forwarder would repeat every chunk to the same client.
+    let mut subscribed: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     let mut lines = BufReader::new(read_half).lines();
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
             continue;
         }
         match serde_json::from_str::<Request>(&line) {
-            Ok(request) => dispatch(request, &manager, &remote, &out, &mut review_tasks),
+            Ok(request) => dispatch(request, &manager, &remote, &out, &mut review_tasks, &mut subscribed),
             Err(error) => {
                 let _ = out.send(json!({"ok": false, "error": format!("bad request: {error}")}).to_string());
             }
@@ -173,7 +178,7 @@ pub(crate) fn spawn_review_stream(out: mpsc::UnboundedSender<String>) -> tokio::
     tx
 }
 
-fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>, review_tasks: &mut Vec<tokio::task::JoinHandle<()>>) {
+fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>, review_tasks: &mut Vec<tokio::task::JoinHandle<()>>, subscribed: &mut std::collections::HashSet<String>) {
     let send = |line: String| { let _ = out.send(line); };
     match req.cmd.as_str() {
         "daemon.status" => send(ok(&req.id, json!({ "terminals": manager.list().len() }))),
@@ -232,7 +237,12 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 cols: req.cols.unwrap_or(0),
             };
             match manager.open(opts) {
-                Ok((id, reattached)) => send(ok(&req.id, json!({ "pty_id": id, "reattached": reattached }))),
+                Ok((id, reattached)) => {
+                    // A brand-new terminal reusing a dead one's id needs a new
+                    // forwarder, so the old subscription must not block it.
+                    if !reattached { subscribed.remove(&id); }
+                    send(ok(&req.id, json!({ "pty_id": id, "reattached": reattached })))
+                }
                 Err(error) => send(fail(&req.id, error)),
             }
         }
@@ -267,8 +277,13 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
         },
 
         "terminal.subscribe" => match &req.pty_id {
+            // Already forwarding this terminal to this client: a second
+            // forwarder would send every chunk twice, and replaying the
+            // scrollback would repaint it on the panels already showing it.
+            Some(id) if subscribed.contains(id) => send(ok(&req.id, json!({ "subscribed": id, "duplicate": true }))),
             Some(id) => match manager.subscribe(id) {
                 Some(mut rx) => {
+                    subscribed.insert(id.clone());
                     if let Some(scrollback) = manager.scrollback(id) {
                         if !scrollback.is_empty() {
                             send(json!({ "event": "terminal.output", "pty_id": id, "data": scrollback }).to_string());
@@ -353,5 +368,56 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
         }
 
         other => send(fail(&req.id, format!("unknown command: {other}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(body: Value) -> Request {
+        serde_json::from_value(body).expect("request")
+    }
+
+    /// The desktop subscribes on every `pty_spawn`, so the same connection asks
+    /// for the same terminal once per panel showing it. Each extra forwarder
+    /// used to repeat every chunk, which painted the shell's echo two or three
+    /// times over itself.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_connection_subscribed_twice_receives_each_chunk_once() {
+        let manager = PtyManager::default();
+        let remote = RemoteControl::default();
+        let (id, _) = manager
+            .open(OpenOptions {
+                command: Some(vec!["/bin/echo".into(), "MARCA".into()]),
+                ..OpenOptions::default()
+            })
+            .expect("pty");
+        let (out, mut out_rx) = mpsc::unbounded_channel();
+        let mut review_tasks = Vec::new();
+        let mut subscribed = std::collections::HashSet::new();
+
+        for _ in 0..2 {
+            dispatch(
+                request(json!({ "cmd": "terminal.subscribe", "pty_id": id })),
+                &manager,
+                &remote,
+                &out,
+                &mut review_tasks,
+                &mut subscribed,
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(600));
+
+        let mut marks = 0;
+        while let Ok(line) = out_rx.try_recv() {
+            let event: Value = serde_json::from_str(&line).expect("json");
+            if event.get("event").and_then(Value::as_str) == Some("terminal.output") {
+                marks += event.get("data").and_then(Value::as_str).unwrap_or("").matches("MARCA").count();
+            }
+        }
+        let _ = manager.close(&id);
+
+        assert_eq!(marks, 1, "the output reached the connection {marks} times");
     }
 }
