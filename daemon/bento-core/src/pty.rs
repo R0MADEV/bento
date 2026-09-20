@@ -403,9 +403,29 @@ fn push_scrollback(buffer: &Arc<Mutex<Vec<u8>>>, data: &[u8]) {
     let mut guard = buffer.lock().unwrap();
     guard.extend_from_slice(data);
     let overflow = guard.len().saturating_sub(SCROLLBACK_CAP);
-    if overflow > 0 {
-        guard.drain(0..overflow);
+    if overflow == 0 {
+        return;
     }
+    let cut = resync_offset(&guard, overflow);
+    guard.drain(0..cut);
+}
+
+/// Moves a scrollback cut forward to the next escape sequence or line, so a
+/// reattaching client never starts reading halfway through one. Cutting on a
+/// byte count alone leaves the tail of a sequence, which the terminal prints
+/// as text ("25l") and which also splits multi-byte characters.
+fn resync_offset(buffer: &[u8], from: usize) -> usize {
+    // Bounded so a screenful of plain text can't push the cut far past the cap.
+    const WINDOW: usize = 8 * 1024;
+    let end = (from + WINDOW).min(buffer.len());
+    for (offset, byte) in buffer[from..end].iter().enumerate() {
+        match byte {
+            0x1b => return from + offset,
+            b'\n' => return from + offset + 1,
+            _ => {}
+        }
+    }
+    from
 }
 
 /// Drains as much valid UTF-8 as possible from `pending`, keeping any incomplete
@@ -427,6 +447,26 @@ fn drain_utf8(pending: &mut Vec<u8>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A reattaching client replays the scrollback verbatim, so a cut in the
+    // middle of an escape sequence makes it print the tail as text ("?25h").
+    #[test]
+    fn scrollback_overflow_cuts_between_escape_sequences() {
+        let mut full = Vec::from(&b"\x1b[?25l\x1b[2J"[..]);
+        full.resize(SCROLLBACK_CAP, b'A');
+        let buffer = Arc::new(Mutex::new(full));
+
+        // Overflows by 3: a plain byte count cuts inside "\x1b[?25l".
+        push_scrollback(&buffer, b"xyz");
+
+        let kept = buffer.lock().unwrap().clone();
+        assert!(kept.len() <= SCROLLBACK_CAP);
+        assert!(
+            kept.starts_with(b"\x1b[2J"),
+            "kept starts mid-sequence: {:?}",
+            String::from_utf8_lossy(&kept[..8.min(kept.len())]),
+        );
+    }
 
     #[test]
     fn drain_utf8_keeps_split_multibyte() {
