@@ -75,7 +75,14 @@ fn main() {
                 let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
                 let closing = Arc::new(AtomicBool::new(false));
                 let close_window = window.clone();
+                let fit_window = window.clone();
                 window.clone().on_window_event(move |event| {
+                    // A display plugged in or removed can leave the window bigger
+                    // than its screen; refit it when it changes screen or comes back.
+                    let changed_screen_or_came_back = matches!(event, tauri::WindowEvent::ScaleFactorChanged { .. } | tauri::WindowEvent::Focused(true));
+                    if changed_screen_or_came_back {
+                        app::window_fit::keep_on_screen(&fit_window);
+                    }
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         if closing.swap(true, Ordering::SeqCst) {
                             return;

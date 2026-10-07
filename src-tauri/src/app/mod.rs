@@ -9,5 +9,6 @@ pub mod settings;
 pub mod system_metrics;
 pub mod traffic_lights;
 pub mod web_panel;
+pub mod window_fit;
 pub mod window_prefs;
 pub mod workspace_io;
