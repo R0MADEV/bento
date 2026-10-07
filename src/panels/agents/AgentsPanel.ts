@@ -10,6 +10,7 @@ import { detectAgentCmd, resolveAgentIdentity } from '../../core/ai/detectAgent'
 import { emitAgentDock, AGENT_ACTIVATE_EVENT, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { buildResumeCmd } from './agentResume'
+import { isDefaultAgentName, nextAgentName } from './agentName'
 
 const MAX_AGENTS = 20
 
@@ -314,11 +315,21 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   }
 
   // ── Add agent ─────────────────────────────────────────────────
+  // Name an agent after the CLI it runs, while it still has its default name.
+  const renameForAgent = (agentSlot: AgentSlot, cmd: string) => {
+    const defaultName = isDefaultAgentName(agentSlot.customName) ? agentSlot.customName : ''
+    const { name } = resolveAgentIdentity(agentSlot.customName, defaultName, cmd)
+    if (name === agentSlot.customName) return
+    agentSlot.customName = name
+    void invoke('pty_set_title', { id: agentSlot.ptyId, title: name })
+    renderSidebar()
+  }
+
   const addAgent = (savedName?: string, savedCwd?: string, savedCmd?: string, savedSessionId?: string, savedSnapshot?: string, savedPtyId?: string) => {
     if (slots.length >= MAX_AGENTS) return
 
     const num = ++agentCounter
-    const defaultName = `Agent ${num}`
+    const defaultName = nextAgentName(slots.map(s => s.customName))
     // Stable id so a reload reattaches to the same daemon terminal instead of
     // spawning a duplicate. Reuse the persisted one on restore; else mint a new one.
     const ptyId = savedPtyId || `pty-agent-${crypto.randomUUID()}`
@@ -410,12 +421,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       // cmd ALWAYS follows the latest agent run in this terminal, so it stays
       // consistent with the session captured for it (else you get e.g.
       // `opencode --session <codex-id>`). Name auto-updates only while default.
-      const { name } = resolveAgentIdentity(agentSlot.customName, defaultName, cmd)
-      if (name !== agentSlot.customName) {
-        agentSlot.customName = name
-        void invoke('pty_set_title', { id: agentSlot.ptyId, title: name })
-        renderSidebar()
-      }
+      renameForAgent(agentSlot, cmd)
       agentSlot.cmd = cmd
       // Restart session capture so the stored sessionId reflects this agent.
       if (agentSlot.sessionId) claimedSessionIds.delete(agentSlot.sessionId)
