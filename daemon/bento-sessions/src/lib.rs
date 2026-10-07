@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+mod running;
 mod scrollback;
+pub use running::{running_agent, RunningAgent};
 pub use scrollback::{chat_load, chat_save, history_clear, history_load, history_save};
 
 /// Margen para el desfase entre el reloj de quien lanza el agente y las marcas
@@ -33,8 +35,13 @@ fn home() -> Option<PathBuf> {
 /// Cómo llama Claude Code a la carpeta del proyecto dentro de
 /// ~/.claude/projects: cada `/` y cada `.` pasan a ser `-`, la barra inicial
 /// incluida (`/Users/x` → `-Users-x`). La barra inicial NO se quita.
-fn claude_project_dir(home: &Path, cwd: &str) -> PathBuf {
-    home.join(".claude/projects").join(cwd.replace(['/', '.'], "-"))
+fn claude_project_dir(root: &Path, cwd: &str) -> PathBuf {
+    root.join("projects").join(cwd.replace(['/', '.'], "-"))
+}
+
+/// Where Claude keeps its data: `CLAUDE_CONFIG_DIR` when set, else ~/.claude.
+fn claude_root(home: &Path, config_dir: Option<&str>) -> PathBuf {
+    config_dir.map_or_else(|| home.join(".claude"), PathBuf::from)
 }
 
 fn modified_ms(path: &Path) -> u64 {
@@ -48,9 +55,9 @@ fn modified_ms(path: &Path) -> u64 {
 
 /// Si el fichero de la sesión de Claude sigue en disco. Se comprueba antes de
 /// `--resume` para no chocar con un "No conversation found".
-pub fn claude_session_exists(cwd: &str, session_id: &str) -> bool {
+pub fn claude_session_exists(cwd: &str, session_id: &str, config_dir: Option<&str>) -> bool {
     let Some(home) = home() else { return false };
-    claude_project_dir(&home, cwd)
+    claude_project_dir(&claude_root(&home, config_dir), cwd)
         .join(format!("{session_id}.jsonl"))
         .exists()
 }
@@ -58,7 +65,7 @@ pub fn claude_session_exists(cwd: &str, session_id: &str) -> bool {
 /// Las sesiones de Claude de un directorio, de la más reciente a la más vieja.
 pub fn claude_sessions(cwd: &str) -> Vec<Session> {
     let Some(home) = home() else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(claude_project_dir(&home, cwd)) else {
+    let Ok(entries) = std::fs::read_dir(claude_project_dir(&claude_root(&home, None), cwd)) else {
         return Vec::new();
     };
     let mut sessions: Vec<Session> = entries
@@ -223,14 +230,23 @@ mod tests {
         // sobrevive como guion. Quitarla apuntaba a una carpeta inexistente →
         // "session not found" → sesión nueva al reanudar.
         assert_eq!(
-            claude_project_dir(Path::new("/home/x"), "/Users/romangomez"),
+            claude_project_dir(Path::new("/home/x/.claude"), "/Users/romangomez"),
             PathBuf::from("/home/x/.claude/projects/-Users-romangomez"),
         );
         // Temporales de macOS: /var/folders/wq/b7t.ffxd/T
         assert_eq!(
-            claude_project_dir(Path::new("/h"), "/var/folders/wq/b7t.ffxd/T"),
+            claude_project_dir(Path::new("/h/.claude"), "/var/folders/wq/b7t.ffxd/T"),
             PathBuf::from("/h/.claude/projects/-var-folders-wq-b7t-ffxd-T"),
         );
+    }
+
+    // Un alias como `CLAUDE_CONFIG_DIR=~/.claude-pro claude` guarda las
+    // sesiones en esa carpeta, no en ~/.claude.
+    #[test]
+    fn the_claude_root_follows_its_config_dir() {
+        let home = Path::new("/home/x");
+        assert_eq!(claude_root(home, Some("/home/x/.claude-pro")), PathBuf::from("/home/x/.claude-pro"));
+        assert_eq!(claude_root(home, None), PathBuf::from("/home/x/.claude"));
     }
 
     #[test]

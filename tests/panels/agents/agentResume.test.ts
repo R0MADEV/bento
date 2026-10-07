@@ -34,6 +34,25 @@ describe('claude', () => {
     mocks.invoke.mockRejectedValue(new Error('daemon unreachable'))
     expect(await buildResumeCmd('claude', '/repo', 's1')).toBe('claude')
   })
+
+  // Launched through an alias like `CLAUDE_CONFIG_DIR=~/.claude-pro claude`:
+  // the session lives in that account, so it must resume in it too.
+  it('resumes in the account it ran with', async () => {
+    mocks.invoke.mockResolvedValue(true)
+    expect(await buildResumeCmd('claude', '/repo', 's1', '/Users/x/.claude-pro'))
+      .toBe(`CLAUDE_CONFIG_DIR='/Users/x/.claude-pro' claude --resume s1`)
+    expect(mocks.invoke).toHaveBeenCalledWith('agent_claude_session_exists', { cwd: '/repo', sessionId: 's1', configDir: '/Users/x/.claude-pro' })
+  })
+
+  it('keeps the account on a plain launch', async () => {
+    expect(await buildResumeCmd('claude', '/repo', undefined, '/Users/x/.claude-max'))
+      .toBe(`CLAUDE_CONFIG_DIR='/Users/x/.claude-max' claude`)
+  })
+
+  it('quotes the account dir for the shell', async () => {
+    expect(await buildResumeCmd('claude', '/repo', undefined, `/tmp/it's here`))
+      .toBe(`CLAUDE_CONFIG_DIR='/tmp/it'\\''s here' claude`)
+  })
 })
 
 describe('opencode', () => {
