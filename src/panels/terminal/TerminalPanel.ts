@@ -326,14 +326,15 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   }
 
   // Drag files/folders from Finder → paste shell-quoted paths at the cursor.
-  // Uses tauri://drag-drop (dragDropEnabled: true) to get real OS paths; checks
-  // that the drop landed inside this terminal by comparing position to its rect.
+  // Uses tauri://drag-drop (dragDropEnabled: true) to get real OS paths. Every
+  // terminal hears the drop, so only the one actually under the cursor takes it:
+  // agent terminals are stacked on the same rect (inactive ones just hidden), so
+  // a rect check let all of them paste. Hit testing skips hidden elements.
   listenTo<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', event => {
     const { paths, position } = event.payload
     if (!paths.length) return
-    const rect = root.getBoundingClientRect()
-    const isOver = position.x >= rect.left && position.x <= rect.right &&
-                   position.y >= rect.top  && position.y <= rect.bottom
+    const target = document.elementFromPoint(position.x, position.y)
+    const isOver = target !== null && root.contains(target)
     if (!isOver) return
     const quoted = paths.map(p =>
       /[ "'\\$`!#&;()|<>]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p
