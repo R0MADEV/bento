@@ -33,6 +33,8 @@ export function createSessionManager(panels: PanelRegistry, stateRepo: Workspace
   // (or macOS traffic lights) and the panel launcher — the workspace navigation.
   const bar = document.createElement('div')
   bar.className = 'session-bar'
+  // WKWebView ignores the CSS -webkit-app-region: Tauri only drags from this attribute.
+  bar.setAttribute('data-tauri-drag-region', '')
 
   // Window controls in the hover strip. macOS uses the native traffic lights,
   // but ONLY while the window is decorated — turning decorations off (frameless)
