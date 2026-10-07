@@ -63,9 +63,9 @@ pub fn claude_session_exists(cwd: &str, session_id: &str, config_dir: Option<&st
 }
 
 /// Las sesiones de Claude de un directorio, de la más reciente a la más vieja.
-pub fn claude_sessions(cwd: &str) -> Vec<Session> {
+pub fn claude_sessions(cwd: &str, config_dir: Option<&str>) -> Vec<Session> {
     let Some(home) = home() else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(claude_project_dir(&claude_root(&home, None), cwd)) else {
+    let Ok(entries) = std::fs::read_dir(claude_project_dir(&claude_root(&home, config_dir), cwd)) else {
         return Vec::new();
     };
     let mut sessions: Vec<Session> = entries
@@ -190,8 +190,8 @@ pub fn opencode_sessions(cwd: &str) -> Vec<Session> {
 /// Todo lo que se puede reanudar en un directorio, lo más reciente primero.
 /// Codex no queda fuera por capricho: sus rollouts no guardan el directorio, así
 /// que no hay forma de saber cuáles son de aquí.
-pub fn list(cwd: &str) -> Vec<Session> {
-    let mut sessions = claude_sessions(cwd);
+pub fn list(cwd: &str, claude_config_dir: Option<&str>) -> Vec<Session> {
+    let mut sessions = claude_sessions(cwd, claude_config_dir);
     sessions.extend(opencode_sessions(cwd));
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
@@ -247,6 +247,19 @@ mod tests {
         let home = Path::new("/home/x");
         assert_eq!(claude_root(home, Some("/home/x/.claude-pro")), PathBuf::from("/home/x/.claude-pro"));
         assert_eq!(claude_root(home, None), PathBuf::from("/home/x/.claude"));
+    }
+
+    #[test]
+    fn claude_sessions_are_listed_from_its_config_dir() {
+        let root = std::env::temp_dir().join(format!("bento-claude-{}", std::process::id()));
+        let project = claude_project_dir(&root, "/repo/app");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("abc-123.jsonl"), b"{}").unwrap();
+
+        let sessions = claude_sessions("/repo/app", root.to_str());
+        let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
+        assert_eq!(ids, ["abc-123"]);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
