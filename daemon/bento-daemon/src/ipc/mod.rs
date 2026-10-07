@@ -268,6 +268,22 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             None => send(fail(&req.id, "pty_id required".into())),
         },
 
+        // Which agent the terminal is running and on which session, so the app
+        // can resume it after a restart. Null while it's just the shell.
+        "terminal.agent" => match &req.pty_id {
+            // Off the socket loop: it reads the process table and may run lsof.
+            Some(id) => {
+                let (manager, out, id, req_id) = (manager.clone(), out.clone(), id.clone(), req.id.clone());
+                tokio::task::spawn_blocking(move || {
+                    let agent = manager
+                        .foreground_process(&id)
+                        .and_then(|process| bento_sessions::running_agent(process.pid, &process.argv, &process.env));
+                    let _ = out.send(ok(&req_id, json!(agent)));
+                });
+            }
+            None => send(fail(&req.id, "pty_id required".into())),
+        },
+
         "terminal.close" => match &req.pty_id {
             Some(id) => match manager.close(id) {
                 Ok(()) => send(ok(&req.id, Value::Null)),

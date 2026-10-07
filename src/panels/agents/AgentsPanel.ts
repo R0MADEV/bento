@@ -10,6 +10,7 @@ import { detectAgentCmd, resolveAgentIdentity } from '../../core/ai/detectAgent'
 import { emitAgentDock, AGENT_ACTIVATE_EVENT, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { buildResumeCmd } from './agentResume'
+import { applyRunningAgent, type RunningAgent } from './runningAgent'
 import { isDefaultAgentName, nextAgentName } from './agentName'
 
 const MAX_AGENTS = 20
@@ -26,7 +27,7 @@ export interface AgentsPanelOptions {
 // herdr-style split: the small, critical resume metadata (agent list + session
 // refs) is persisted separately from the large, optional scrollback history, so
 // a huge/over-quota snapshot can never evict or corrupt the resume info.
-interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string; ptyId?: string }
+interface SavedSession { name: string; cwd: string; cmd?: string; sessionId?: string; ptyId?: string; configDir?: string }
 
 const STATUS_ICON: Record<string, string> = {
   working: '●',
@@ -41,6 +42,8 @@ export interface AgentSlot {
   customName: string
   cmd?: string
   sessionId?: string
+  // CLAUDE_CONFIG_DIR the agent ran with: the account to resume it in.
+  configDir?: string
   // Stable, persisted pty id so a reload reattaches to the same daemon terminal.
   ptyId: string
   handle: TerminalPanelHandle
@@ -118,6 +121,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       cmd: slot.cmd,
       sessionId: slot.sessionId,
       ptyId: slot.ptyId,
+      configDir: slot.configDir,
     }))
     try { localStorage.setItem(sessionsKey, JSON.stringify(sessions)) }
     catch { /* metadata is tiny; nothing we can do if even this fails */ }
@@ -325,7 +329,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     renderSidebar()
   }
 
-  const addAgent = (savedName?: string, savedCwd?: string, savedCmd?: string, savedSessionId?: string, savedSnapshot?: string, savedPtyId?: string) => {
+  const addAgent = (savedName?: string, savedCwd?: string, savedCmd?: string, savedSessionId?: string, savedSnapshot?: string, savedPtyId?: string, savedConfigDir?: string) => {
     if (slots.length >= MAX_AGENTS) return
 
     const num = ++agentCounter
@@ -356,6 +360,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       customName: savedName || defaultName,
       cmd: savedCmd,
       sessionId: savedSessionId,
+      configDir: savedConfigDir,
       ptyId,
       handle,
       slot,
@@ -389,7 +394,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
         // double it. The daemon replays the live scrollback for us.
         if (reattached) return
         if (savedCmd) {
-          void buildResumeCmd(savedCmd, savedCwd || projectPath, savedSessionId).then(cmd => {
+          void buildResumeCmd(savedCmd, savedCwd || projectPath, savedSessionId, savedConfigDir).then(cmd => {
             // If the command contains --resume / --session the stored sessionId is
             // still valid and capture can be skipped.  Otherwise the session file no
             // longer exists (or was never captured) — clear the stale ID so the
@@ -517,7 +522,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
         if (s.sessionId) claimedSessionIds.add(s.sessionId)
         // One bad entry must not abort the whole restore — otherwise the rest are
         // lost and the panel reopens with 1.
-        try { addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, history[i], s.ptyId) }
+        try { addAgent(s.name, s.cwd || projectPath, s.cmd, s.sessionId, history[i], s.ptyId, s.configDir) }
         catch { /* skip this agent, keep restoring the others */ }
       })
       if (slots.length === 0) addAgent()
@@ -566,7 +571,30 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       }
     } catch { /* daemon not ready */ }
   }
-  const adoptInterval = setInterval(adoptDaemonTerminals, 4000)
+  // Ask the daemon which agent each terminal runs and on which session. Read
+  // from the process, so it catches agents launched any way (an alias like
+  // `claude20`, history, autocomplete), which typed-input detection misses —
+  // and without it nothing is saved to resume them after a restart.
+  const probeRunningAgents = async () => {
+    if (!initialized) return
+    for (const agentSlot of slots.filter(s => !s.exited)) {
+      const running = await invoke<RunningAgent | null>('pty_agent', { id: agentSlot.ptyId }).catch(() => null)
+      const previousCmd = agentSlot.cmd
+      const previousSessionId = agentSlot.sessionId
+      if (!applyRunningAgent(agentSlot, running)) continue
+      if (previousSessionId && previousSessionId !== agentSlot.sessionId) claimedSessionIds.delete(previousSessionId)
+      if (agentSlot.sessionId) claimedSessionIds.add(agentSlot.sessionId)
+      const cmd = agentSlot.cmd
+      const isNewAgent = cmd !== undefined && cmd !== previousCmd
+      if (isNewAgent) {
+        renameForAgent(agentSlot, cmd)
+        // OpenCode's session isn't visible from its process: find it on disk.
+        if (!agentSlot.sessionId) captureSession(agentSlot, cmd, agentSlot.handle.getCwd() || projectPath, Date.now())
+      }
+      persistNow()
+    }
+  }
+  const adoptInterval = setInterval(() => { void adoptDaemonTerminals(); void probeRunningAgents() }, 4000)
 
   // Flush current agents to storage without tearing them down. Lets an embedding
   // host (e.g. the Tasks worktree terminal) save on navigation, so idle agents

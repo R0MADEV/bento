@@ -150,6 +150,7 @@ fn main() {
             pty::pty_spawn,
             pty::pty_set_title,
             pty::pty_list,
+            pty::pty_agent,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,

@@ -12,6 +12,7 @@ bento-core = { path = "../bento-core" }
 bento-docker = { path = "../bento-docker" }
 bento-notes = { path = "../bento-notes" }
 bento-review = { path = "../bento-review" }
+bento-sessions = { path = "../bento-sessions" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "process"] }
 tokio-stream = "0.1"
 serde = { version = "1.0", features = ["derive"] }

@@ -67,6 +67,13 @@ pub async fn pty_list(state: tauri::State<'_, Arc<PtyManager>>) -> Result<Vec<Pt
     }).collect())
 }
 
+/// The agent a terminal is running (`{ agent, sessionId, configDir }`), or
+/// null while it's just the shell.
+#[tauri::command]
+pub async fn pty_agent(id: String, state: tauri::State<'_, Arc<PtyManager>>) -> Result<Value, String> {
+    state.request(json!({ "cmd": "terminal.agent", "pty_id": id })).await
+}
+
 #[tauri::command]
 pub fn pty_write(id: String, data: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
     state.send(json!({ "cmd": "terminal.write", "pty_id": id, "data": data }).to_string())

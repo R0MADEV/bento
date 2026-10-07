@@ -196,6 +196,7 @@ dependencies = [
  "bento-docker",
  "bento-notes",
  "bento-review",
+ "bento-sessions",
  "futures-util",
  "getrandom 0.2.17",
  "serde",

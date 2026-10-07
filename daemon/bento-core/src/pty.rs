@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
 use tokio::sync::broadcast;
 
 /// How to open a PTY. If `command` is set it is run directly (argv); otherwise
@@ -36,6 +36,14 @@ pub struct PtyInfo {
     pub id: String,
     pub title: String,
     pub cwd: String,
+}
+
+/// The process a terminal is running in the foreground.
+#[derive(Clone, Debug)]
+pub struct ForegroundProcess {
+    pub pid: u32,
+    pub argv: Vec<String>,
+    pub env: Vec<String>,
 }
 
 struct Instance {
@@ -278,6 +286,23 @@ impl PtyManager {
                 cwd: instance.cwd.clone(),
             })
             .collect()
+    }
+
+    /// The process in the terminal's foreground (the shell, or whatever it is
+    /// running): its pid, argv and environment.
+    pub fn foreground_process(&self, id: &str) -> Option<ForegroundProcess> {
+        let leader = self.instances.lock().unwrap().get(id)?.master.process_group_leader()?;
+        let pid = Pid::from_u32(u32::try_from(leader).ok()?);
+        let mut system = System::new();
+        // refresh_process alone loads neither argv nor the environment.
+        let kind = ProcessRefreshKind::new().with_cmd(UpdateKind::Always).with_environ(UpdateKind::Always);
+        system.refresh_process_specifics(pid, kind);
+        let process = system.process(pid)?;
+        Some(ForegroundProcess {
+            pid: pid.as_u32(),
+            argv: process.cmd().to_vec(),
+            env: process.environ().to_vec(),
+        })
     }
 
     pub fn subscribe(&self, id: &str) -> Option<broadcast::Receiver<PtyEvent>> {

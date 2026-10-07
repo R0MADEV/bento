@@ -1,15 +1,19 @@
 import { invoke } from '@tauri-apps/api/core'
 
+const shellQuote = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
+
 /**
  * Builds the exact resume command for one of the known agent CLIs, verifying
  * the session still exists on disk before using --resume to avoid
  * "No conversation found" errors. Unrecognized commands pass through unchanged.
  */
-export async function buildResumeCmd(cmd: string, cwd: string, sessionId?: string): Promise<string> {
+export async function buildResumeCmd(cmd: string, cwd: string, sessionId?: string, configDir?: string): Promise<string> {
   if (cmd === 'claude') {
-    if (!sessionId) return 'claude'
-    const exists = await invoke<boolean>('agent_claude_session_exists', { cwd, sessionId }).catch(() => false)
-    return exists ? `claude --resume ${sessionId}` : 'claude'
+    // The account it ran with (an alias like `CLAUDE_CONFIG_DIR=… claude`).
+    const claude = configDir ? `CLAUDE_CONFIG_DIR=${shellQuote(configDir)} claude` : 'claude'
+    if (!sessionId) return claude
+    const exists = await invoke<boolean>('agent_claude_session_exists', { cwd, sessionId, configDir }).catch(() => false)
+    return exists ? `${claude} --resume ${sessionId}` : claude
   }
   if (cmd === 'opencode') return sessionId ? `opencode --session ${sessionId}` : 'opencode'
   if (cmd === 'codex') {

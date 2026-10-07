@@ -6,4 +6,4 @@ pub mod editor;
 pub mod profiles;
 mod pty;
 
-pub use pty::{OpenOptions, PtyEvent, PtyInfo, PtyManager};
+pub use pty::{ForegroundProcess, OpenOptions, PtyEvent, PtyInfo, PtyManager};

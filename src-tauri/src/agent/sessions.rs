@@ -12,8 +12,8 @@ pub fn agent_codex_session_exists(session_id: String) -> bool {
 }
 
 #[tauri::command]
-pub fn agent_claude_session_exists(cwd: String, session_id: String) -> bool {
-    bento_sessions::claude_session_exists(&cwd, &session_id)
+pub fn agent_claude_session_exists(cwd: String, session_id: String, config_dir: Option<String>) -> bool {
+    bento_sessions::claude_session_exists(&cwd, &session_id, config_dir.as_deref())
 }
 
 #[tauri::command]
