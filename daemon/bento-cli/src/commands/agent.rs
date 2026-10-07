@@ -9,7 +9,8 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
     match args.get(1).map(String::as_str) {
         Some("run") => {
             let rest = &args[2..];
-            let pty_id = request_data(build_agent_open_cmd(rest)).await?;
+            let open = with_claude_config_dir(build_agent_open_cmd(rest), claude_config_dir(rest));
+            let pty_id = request_data(open).await?;
             let id = pty_id.get("pty_id").and_then(Value::as_str).unwrap_or("?");
             println!("agent started: {id}");
             if rest.contains(&"--attach".to_string()) {
@@ -26,12 +27,12 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
         // así que esto no pasa por el daemon; retomar una sí, que abre un PTY.
         Some("sessions") => {
             let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
-            print_sessions(&bento_sessions::list(&cwd));
+            print_sessions(&bento_sessions::list(&cwd, claude_config_dir(args).as_deref()));
             Ok(())
         }
         Some("resume") => match (args.get(2), args.get(3)) {
             (Some(agent), Some(session)) => resume_session(args, agent, session).await,
-            _ => { eprintln!("usage: bento agent resume <claude|codex|opencode> <id> [--cwd <dir>] [--attach]"); Ok(()) }
+            _ => { eprintln!("usage: bento agent resume <claude|codex|opencode> <id> [--cwd <dir>] [--config-dir <dir>] [--attach]"); Ok(()) }
         },
         _ => { print_help(); Ok(()) }
     }
@@ -47,13 +48,30 @@ async fn resume_session(args: &[String], agent: &str, session: &str) -> std::io:
     };
     let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
     let body = json!({ "id": "1", "cmd": "terminal.open", "command": command, "cwd": cwd });
-    let opened = request_data(body).await?;
+    let opened = request_data(with_claude_config_dir(body, claude_config_dir(args))).await?;
     let pty_id = opened.get("pty_id").and_then(Value::as_str).unwrap_or("?");
     println!("resumed {agent} session {session}: {pty_id}");
     if args.contains(&"--attach".to_string()) {
         attach::attach(pty_id).await?;
     }
     Ok(())
+}
+
+/// The Claude account to use: `--config-dir`, else the `CLAUDE_CONFIG_DIR` the
+/// CLI itself runs with. `None` leaves Claude on its default ~/.claude.
+fn claude_config_dir(args: &[String]) -> Option<String> {
+    flag(args, "--config-dir")
+        .or_else(|| std::env::var("CLAUDE_CONFIG_DIR").ok())
+        .filter(|dir| !dir.is_empty())
+}
+
+/// Adds the account to a `terminal.open`: the daemon spawns the agent with its
+/// own environment, not the CLI's, so it has to be passed along.
+fn with_claude_config_dir(mut open: Value, config_dir: Option<String>) -> Value {
+    if let Some(dir) = config_dir {
+        open["env"] = json!({ "CLAUDE_CONFIG_DIR": dir });
+    }
+    open
 }
 
 /// Una sesión por línea: qué agente, cuándo se tocó por última vez y su id, que
@@ -114,6 +132,20 @@ fn build_agent_open_cmd(args: &[String]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_agent_opens_in_the_claude_account_asked_for() {
+        let open = json!({ "id": "1", "cmd": "terminal.open", "command": ["claude"] });
+        let cmd = with_claude_config_dir(open, Some("/Users/x/.claude-pro".to_string()));
+        assert_eq!(cmd["env"], json!({ "CLAUDE_CONFIG_DIR": "/Users/x/.claude-pro" }));
+        assert_eq!(cmd["command"], json!(["claude"]));
+    }
+
+    #[test]
+    fn an_agent_opens_without_env_when_no_account_is_asked_for() {
+        let open = json!({ "id": "1", "cmd": "terminal.open", "command": ["claude"] });
+        assert!(with_claude_config_dir(open, None)["env"].is_null());
+    }
 
     #[test]
     fn agent_run_claude_interactive() {
