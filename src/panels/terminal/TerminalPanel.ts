@@ -428,16 +428,27 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   root.addEventListener('click', () => term.focus())
   setTimeout(() => term.focus(), 100)
 
+  // Output written while hidden makes xterm 5.3 size its scroll area with a 0px
+  // viewport, and nothing re-measures it on show: the wheel jumps hundreds of
+  // lines or can't reach the bottom. Reassigning scrollback forces a re-measure.
+  const resyncViewport = () => {
+    const scrollback = term.options.scrollback ?? 0
+    term.options.scrollback = scrollback + 1
+    term.options.scrollback = scrollback
+  }
+
   // Only forward a resize to the PTY when the cell size changes: a repeated
   // SIGWINCH with the same size makes TUIs (Ink) flicker by fully repainting.
   let lastDims: Dims = { rows: 0, cols: 0 }
+  let wasHidden = false
   const fit = () => {
     // requestAnimationFrame ensures the container already has its final size
     requestAnimationFrame(() => {
       // Skip entirely when hidden (display:none → 0×0 px). Calling fitAddon.fit()
       // on an invisible container corrupts xterm's internal state and can send a
       // 0-row SIGWINCH to the PTY, crashing TUI processes like OpenCode.
-      if (root.offsetWidth === 0 && root.offsetHeight === 0) return
+      if (root.offsetWidth === 0 && root.offsetHeight === 0) { wasHidden = true; return }
+      if (wasHidden) { wasHidden = false; resyncViewport() }
       fitAddon.fit()
       const dims: Dims = { rows: term.rows, cols: term.cols }
       if (dims.rows === 0 || dims.cols === 0) return
