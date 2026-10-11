@@ -35,8 +35,6 @@ const STATUS_ICON: Record<string, string> = {
   idle: '○',
 }
 
-// Agents whose herdr hooks report the exact session_id via the Bento socket
-// (keyed by HERDR_PANE_ID). This is the reliable path.
 export interface AgentSlot {
   num: number
   customName: string

@@ -53,7 +53,6 @@ fn main() {
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder
         .setup(|app| {
-            app.manage(agent::socket::start(app.handle()));
             // Terminals live in the bento-daemon; connect and forward its output.
             {
                 let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
@@ -123,7 +122,6 @@ fn main() {
             agent::history::agent_history_load,
             agent::history::agent_history_save,
             agent::history::agent_history_clear,
-            agent::socket::agent_get_session,
             review::review_branch_context_prepare,
             review::review_branch_context_check,
             review::review_branch_context_update,

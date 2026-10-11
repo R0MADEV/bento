@@ -87,7 +87,7 @@ impl Default for RemoteControl {
 }
 
 impl RemoteControl {
-    pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>, use_tailscale: bool, herdr_socket: Option<String>) -> Result<RemoteInfo, String> {
+    pub async fn start(&self, manager: PtyManager, port: u16, token: Option<String>, use_tailscale: bool) -> Result<RemoteInfo, String> {
         {
             let guard = self.0.active.lock().unwrap();
             if let Some(active) = &*guard {
@@ -119,7 +119,7 @@ impl RemoteControl {
             return Ok(RemoteInfo { running: false, addr: String::new(), token: String::new(), url: String::new() });
         }
 
-        let state = Arc::new(RemoteState { manager, token, herdr_socket });
+        let state = Arc::new(RemoteState { manager, token });
         let app = Router::new()
             .merge(assets::routes())
             .route("/api/terminals", get(terminals::terminals))
@@ -248,7 +248,6 @@ pub fn tailscale_ip() -> Option<String> {
 pub(super) struct RemoteState {
     pub manager: PtyManager,
     pub token: String,
-    pub herdr_socket: Option<String>,
 }
 
 #[derive(Deserialize)]

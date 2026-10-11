@@ -19,15 +19,8 @@ pub async fn pty_spawn(
     command: Option<Vec<String>>,
     title: Option<String>,
     state: tauri::State<'_, Arc<PtyManager>>,
-    agent_socket: tauri::State<'_, Arc<crate::agent::socket::AgentSocket>>,
 ) -> Result<bool, String> {
-    let socket_path = agent_socket.socket_path.clone();
     let manager = state.inner().clone();
-    let env = json!({
-        "HERDR_ENV": "1",
-        "HERDR_SOCKET_PATH": socket_path,
-        "HERDR_PANE_ID": id,
-    });
     let open = json!({
         "cmd": "terminal.open",
         "pty_id": id,
@@ -36,7 +29,6 @@ pub async fn pty_spawn(
         "cwd": cwd,
         "rows": rows,
         "cols": cols,
-        "env": env,
     });
     let data = manager.request(open).await?;
     let reattached = data.get("reattached").and_then(Value::as_bool).unwrap_or(false);
@@ -103,10 +95,8 @@ pub async fn remote_start(
     token: Option<String>,
     use_tailscale: Option<bool>,
     state: tauri::State<'_, Arc<PtyManager>>,
-    agent_socket: tauri::State<'_, Arc<crate::agent::socket::AgentSocket>>,
 ) -> Result<RemoteStatus, String> {
-    let socket_path = agent_socket.socket_path.clone();
-    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879), "token": token, "use_tailscale": use_tailscale.unwrap_or(false), "herdr_socket": socket_path })).await?;
+    let data = state.request(json!({ "cmd": "remote.start", "port": port.unwrap_or(7879), "token": token, "use_tailscale": use_tailscale.unwrap_or(false) })).await?;
     Ok(RemoteStatus {
         running: data.get("running").and_then(Value::as_bool).unwrap_or(true),
         url:   data.get("url").and_then(Value::as_str).map(String::from),
