@@ -87,6 +87,17 @@ fn is_foreign_session_var(key: &str) -> bool {
     is_herdr_pane || is_claude_code_session
 }
 
+/// A generated id that no terminal is using. A restored terminal keeps the id
+/// it had, so the counter alone could hand out one that is already taken.
+fn next_free_id(counter: &AtomicU64, is_taken: impl Fn(&str) -> bool) -> String {
+    loop {
+        let id = format!("pty-{}", counter.fetch_add(1, Ordering::SeqCst) + 1);
+        if !is_taken(&id) {
+            return id;
+        }
+    }
+}
+
 fn default_title(requested: Option<String>, cwd: &str, id: &str) -> String {
     if let Some(title) = requested.filter(|t| !t.trim().is_empty()) {
         return title;
@@ -192,7 +203,7 @@ impl PtyManager {
         let id = opts
             .id
             .filter(|id| !id.is_empty())
-            .unwrap_or_else(|| format!("pty-{}", self.counter.fetch_add(1, Ordering::SeqCst) + 1));
+            .unwrap_or_else(|| next_free_id(&self.counter, |id| self.instances.lock().unwrap().contains_key(id)));
         let (tx, _rx) = broadcast::channel(OUTPUT_BUFFER);
         let scrollback = Arc::new(Mutex::new(Vec::<u8>::new()));
         let cwd = start_dir.unwrap_or_default();
@@ -518,6 +529,17 @@ mod tests {
         // Settings, not session marks: the user's own choice, kept.
         assert!(!is_foreign_session_var("CLAUDE_CONFIG_DIR"));
         assert!(!is_foreign_session_var("CLAUDE_EFFORT"));
+    }
+
+    // A restored agent keeps the id it had ("pty-1"), and the counter starts
+    // over with the daemon: handing that id out again made the new terminal
+    // silently become the restored one.
+    #[test]
+    fn a_generated_id_skips_the_ones_already_taken() {
+        let counter = AtomicU64::new(0);
+        let taken = ["pty-1", "pty-2"];
+        assert_eq!(next_free_id(&counter, |id| taken.contains(&id)), "pty-3");
+        assert_eq!(next_free_id(&counter, |_| false), "pty-4");
     }
 
     // A reattaching client replays the scrollback verbatim, so a cut in the

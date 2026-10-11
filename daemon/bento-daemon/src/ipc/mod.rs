@@ -89,9 +89,13 @@ pub(crate) struct Request {
     pub(crate) resolved: Option<bool>,
 }
 
-pub async fn serve(addr: &str, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
+pub async fn bind(addr: &str) -> std::io::Result<TcpListener> {
     let listener = TcpListener::bind(addr).await?;
     eprintln!("bento-daemon listening on {addr}");
+    Ok(listener)
+}
+
+pub async fn serve(listener: TcpListener, manager: PtyManager, remote: RemoteControl) -> std::io::Result<()> {
     loop {
         let (socket, _) = listener.accept().await?;
         let manager = manager.clone();
@@ -182,11 +186,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
         "daemon.status" => send(ok(&req.id, json!({ "terminals": manager.list().len() }))),
 
         "terminals.list" => {
-            let list: Vec<Value> = manager
-                .list()
-                .into_iter()
-                .map(|info| json!({ "pty_id": info.id, "title": info.title, "cwd": info.cwd }))
-                .collect();
+            let list: Vec<Value> = manager.list().iter().map(crate::agents::describe).collect();
             send(ok(&req.id, json!(list)));
         }
 

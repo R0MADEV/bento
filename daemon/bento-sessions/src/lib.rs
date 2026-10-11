@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+mod registry;
 mod running;
 mod scrollback;
+pub use registry::{load_records, registry_path, resume_folder, resume_line, save_records, updated_record, verified_resume_line, AgentRecord};
 pub use running::{running_agent, RunningAgent};
 pub use scrollback::{chat_load, chat_save, history_clear, history_load, history_save};
 
@@ -60,6 +62,37 @@ pub fn claude_session_exists(cwd: &str, session_id: &str, config_dir: Option<&st
     claude_project_dir(&claude_root(&home, config_dir), cwd)
         .join(format!("{session_id}.jsonl"))
         .exists()
+}
+
+/// The folder a Claude conversation is filed under, wherever that is. Claude
+/// files it by the folder it is working in, which is not always the one its
+/// terminal was opened in, and `--resume` only finds it from that folder.
+pub fn claude_session_folder(session_id: &str, config_dir: Option<&str>) -> Option<String> {
+    claude_session_folder_in(&claude_root(&home()?, config_dir), session_id)
+}
+
+fn claude_session_folder_in(root: &Path, session_id: &str) -> Option<String> {
+    use std::io::BufRead;
+
+    if !running::is_safe_id(session_id) {
+        return None;
+    }
+    let transcript = std::fs::read_dir(root.join("projects"))
+        .ok()?
+        .flatten()
+        .map(|project| project.path().join(format!("{session_id}.jsonl")))
+        .find(|path| path.is_file())?;
+    let project = transcript.parent()?.to_path_buf();
+    // Each line records the folder it was written in; the one this project
+    // folder is named after is the one to resume from.
+    std::io::BufReader::new(std::fs::File::open(&transcript).ok()?)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|line| {
+            let entry: serde_json::Value = serde_json::from_str(&line).ok()?;
+            let cwd = entry.get("cwd")?.as_str()?;
+            (claude_project_dir(root, cwd) == project).then(|| cwd.to_string())
+        })
 }
 
 /// Las sesiones de Claude de un directorio, de la más reciente a la más vieja.
@@ -259,6 +292,28 @@ mod tests {
         let sessions = claude_sessions("/repo/app", root.to_str());
         let ids: Vec<&str> = sessions.iter().map(|session| session.id.as_str()).collect();
         assert_eq!(ids, ["abc-123"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Claude files a conversation under the folder it is working in, which is
+    // not always the one its terminal was opened in: looking only there found
+    // nothing and the agent came back as a new, empty conversation.
+    #[test]
+    fn a_claude_session_is_found_in_whatever_folder_it_was_filed_under() {
+        let root = std::env::temp_dir().join(format!("bento-claude-folder-{}", std::process::id()));
+        let project = claude_project_dir(&root, "/repo/app");
+        std::fs::create_dir_all(&project).unwrap();
+        let lines = concat!(
+            r#"{"type":"summary","summary":"x"}"#, "\n",
+            r#"{"type":"user","cwd":"/somewhere/else","message":{}}"#, "\n",
+            r#"{"type":"user","cwd":"/repo/app","message":{}}"#, "\n",
+        );
+        std::fs::write(project.join("abc-123.jsonl"), lines).unwrap();
+
+        assert_eq!(claude_session_folder_in(&root, "abc-123").as_deref(), Some("/repo/app"));
+        assert_eq!(claude_session_folder_in(&root, "missing-1"), None);
+        // The id ends up in a path: nothing that could walk out of the folder.
+        assert_eq!(claude_session_folder_in(&root, "../abc-123"), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 

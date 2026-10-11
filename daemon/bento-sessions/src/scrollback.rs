@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-fn config_dir() -> Result<PathBuf, String> {
+pub(crate) fn config_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "no home dir".to_string())?;
@@ -90,7 +90,7 @@ fn load(path: &Path, fallbacks: &[PathBuf]) -> Result<String, String> {
 /// Escritura atómica: fichero temporal y rename, para que una caída a mitad no
 /// deje el historial corrupto. Con `keep_backup` se guarda además la copia
 /// anterior, que es de donde tira `chat_load` si la buena se rompe.
-fn save(path: &Path, content: &str, keep_backup: bool) -> Result<(), String> {
+pub(crate) fn save(path: &Path, content: &str, keep_backup: bool) -> Result<(), String> {
     let temporary = path.with_extension("json.tmp");
     let mut file = fs::File::create(&temporary).map_err(|error| error.to_string())?;
     file.write_all(content.as_bytes()).map_err(|error| error.to_string())?;

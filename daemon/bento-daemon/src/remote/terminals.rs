@@ -30,8 +30,16 @@ pub(super) async fn terminals(
         .list()
         .into_iter()
         .map(|info| {
-            let branch = if info.cwd.is_empty() { None } else { git_branch(&info.cwd) };
-            json!({ "id": info.id, "title": info.title, "cwd": info.cwd, "branch": branch })
+            // An agent's folder and branch win over the ones the terminal was
+            // born in: it is what the app and the CLI show too.
+            let agent = crate::agents::of(&info.id);
+            let cwd = agent.as_ref().and_then(|agent| agent.cwd.clone()).unwrap_or_else(|| info.cwd.clone());
+            let branch = match agent.as_ref().and_then(|agent| agent.branch.clone()) {
+                Some(branch) => Some(branch),
+                None if cwd.is_empty() => None,
+                None => git_branch(&cwd),
+            };
+            json!({ "id": info.id, "title": info.title, "cwd": cwd, "branch": branch, "agent": agent.map(|agent| agent.agent) })
         })
         .collect();
     Json(list).into_response()

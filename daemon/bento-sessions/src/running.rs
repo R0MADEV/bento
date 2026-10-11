@@ -59,7 +59,7 @@ pub fn codex_session_id(lsof_output: &str) -> Option<String> {
 }
 
 /// Ids end up in a command line (`claude --resume <id>`), so only plain ones.
-fn is_safe_id(id: &str) -> bool {
+pub(crate) fn is_safe_id(id: &str) -> bool {
     !id.is_empty() && !id.starts_with('-') && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 

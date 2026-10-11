@@ -2,6 +2,7 @@
 //! them over a localhost line-delimited JSON protocol. The CLI and the Tauri
 //! app and the phone HTTP server all connect here.
 
+mod agents;
 mod ipc;
 mod remote;
 
@@ -27,7 +28,19 @@ async fn main() {
         }
     }
 
-    if let Err(error) = ipc::serve(&addr, manager, remote).await {
+    // Only once the address is ours: a second daemon that fails to bind must
+    // not resume the agents the first one is already running.
+    let listener = match ipc::bind(&addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("bento-daemon: {error}");
+            std::process::exit(1);
+        }
+    };
+    agents::restore(&manager);
+    agents::watch(manager.clone());
+
+    if let Err(error) = ipc::serve(listener, manager, remote).await {
         eprintln!("bento-daemon: {error}");
         std::process::exit(1);
     }
