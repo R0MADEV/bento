@@ -18,6 +18,8 @@ pub(super) struct TerminalInfo {
     pub(super) pty_id: String,
     title: String,
     pub(super) cwd: String,
+    /// Branch of the folder its agent runs in; none for a plain shell.
+    branch: Option<String>,
 }
 
 /// Con qué perfil abrir la siguiente, dando la vuelta a la lista: primero
@@ -65,6 +67,8 @@ pub(super) struct ListState<'a> {
     pub(super) resizing: bool,
     /// El nombre que se está escribiendo, mientras se renombra una.
     pub(super) renaming: Option<&'a str>,
+    /// The selected terminal, live, to show instead of the "Enter to connect" card.
+    pub(super) preview: Option<&'a super::screen::Screen>,
 }
 
 /// Lo que la cabecera necesita saber del terminal conectado. Fuera de él nada
@@ -102,7 +106,7 @@ fn draw_chrome(
                 true => format!("{} {}", index + 1, t.title),
                 false => t.title.clone(),
             },
-            detail: short_cwd(&t.cwd, sidebar_width),
+            detail: location(&t.cwd, t.branch.as_deref(), sidebar_width),
             status: ItemStatus::Active,
         })
         .collect();
@@ -158,7 +162,7 @@ pub(super) fn draw_attached(
     searching: Option<&str>,
 ) {
     let attachment = Attachment { looking_back: screen.is_scrolled_back(), searching };
-    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment), ListState { profile: None, resizing: false, renaming: None });
+    draw_chrome(frame, items, selected, sidebar_width, status, Some(attachment), ListState { profile: None, resizing: false, renaming: None, preview: None });
     let area = terminal_area(frame.area(), sidebar_width, status);
     screen.render(frame, area);
     if let Some((x, y)) = screen.cursor_in(area) {
@@ -191,18 +195,44 @@ fn draw_detail(frame: &mut ratatui::Frame, current: Option<&TerminalInfo>, area:
         None => vec![Line::from(Span::styled("Abrí un terminal desde Bento.", dim))],
     };
     let inner = Pane {
-        title: "",
+        title: match (list.preview, current) {
+            (Some(_), Some(terminal)) => terminal.title.as_str(),
+            _ => "",
+        },
         // En modo tamaño lo dice, porque las flechas dejan de mover la
         // selección: pulsar `s` y no ver nada es no haber pulsado nada.
         hint: &match (list.renaming, list.resizing) {
             (Some(name), _) => format!("nombre: {name}▏ (Enter guardar · Esc cancelar)"),
             (None, true) => "MODO TAMAÑO · ←/→ ancho del raíl · s o Esc salir".to_string(),
+            // Looking does not resize the terminal under whoever is using it,
+            // so one bigger than this panel is seen only in part.
+            (None, false) if list.preview.is_some_and(|screen| is_cropped(screen.size(), area)) =>
+                "vista recortada (está abierto más grande en otro lado) · Enter para ajustarlo a este panel y usarlo".to_string(),
             (None, false) => "1-9/↑↓ elegir · Enter conectar · n nuevo · r renombrar · k cerrar · p perfil · s tamaño · Tab review · q salir".to_string(),
         },
         focused: false,
     }
     .render(frame, area);
-    frame.render_widget(Paragraph::new(body), inner);
+    match list.preview {
+        Some(screen) => screen.render(frame, inner),
+        None => frame.render_widget(Paragraph::new(body), inner),
+    }
+}
+
+/// Where a terminal's agent is working: its folder and, in a repository, the
+/// branch — the same line the app and the phone show. The folder gives way to
+/// the branch when the rail is too narrow for both.
+fn location(cwd: &str, branch: Option<&str>, sidebar_width: u16) -> String {
+    let Some(branch) = branch else { return short_cwd(cwd, sidebar_width) };
+    let branch_width = branch.chars().count() as u16 + 3;
+    format!("{} · {branch}", short_cwd(cwd, sidebar_width.saturating_sub(branch_width)))
+}
+
+/// Whether a terminal of `size` (rows, cols) is too big to be seen whole in
+/// the pane drawn at `area`, borders included.
+fn is_cropped(size: (u16, u16), area: Rect) -> bool {
+    let (rows, cols) = size;
+    rows > area.height.saturating_sub(2) || cols > area.width.saturating_sub(2)
 }
 
 /// `~` for home and a leading ellipsis for anything long: the rail is narrow,
@@ -308,6 +338,7 @@ pub(super) async fn fetch_terminals() -> std::io::Result<Vec<TerminalInfo>> {
             pty_id: v.get("pty_id").and_then(Value::as_str).unwrap_or_default().to_string(),
             title: v.get("title").and_then(Value::as_str).unwrap_or_default().to_string(),
             cwd: v.get("cwd").and_then(Value::as_str).unwrap_or_default().to_string(),
+            branch: v.get("branch").and_then(Value::as_str).map(str::to_string),
         })
         .collect();
     Ok(items)
@@ -319,13 +350,65 @@ pub(super) async fn fetch_terminals() -> std::io::Result<Vec<TerminalInfo>> {
 pub(super) struct Session {
     pty_id: String,
     out_tx: tokio::sync::mpsc::UnboundedSender<String>,
-    pub(super) output_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    /// What the terminal does, in the order it happened: output only makes
+    /// sense drawn at the size announced before it.
+    pub(super) events_rx: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
     pub(super) exit_rx: tokio::sync::oneshot::Receiver<()>,
+    /// The size that fits this panel, and the one the terminal really has. The
+    /// same terminal can be open in the app and on the phone: it has ONE size,
+    /// every client draws at it, and the one being used asks for its own.
+    own: (u16, u16),
+    pub(super) shared: Option<(u16, u16)>,
     writer: tokio::task::JoinHandle<()>,
+}
+
+pub(super) enum SessionEvent {
+    Output(Vec<u8>),
+    /// The size the daemon says the terminal has now.
+    Size(u16, u16),
+}
+
+/// Whether this client must ask for its own size before sending input: the
+/// terminal is known to be at another client's.
+fn needs_claim(own: (u16, u16), shared: Option<(u16, u16)>) -> bool {
+    shared.is_some_and(|size| size != own)
+}
+
+/// The selected terminal shown live while only browsing the list. Read-only,
+/// and it never asks for a size: looking at a terminal must not resize it under
+/// the client that is using it.
+pub(super) struct Preview {
+    pub(super) pty_id: String,
+    session: Session,
+    pub(super) screen: super::screen::Screen,
+}
+
+impl Preview {
+    pub(super) async fn open(pty_id: &str) -> Option<Self> {
+        let session = Session::open(pty_id, None).await.ok()?;
+        Some(Self { pty_id: pty_id.to_string(), session, screen: super::screen::Screen::new(0, 0) })
+    }
+
+    /// Applies the next thing the terminal does. Without a preview (or once its
+    /// terminal is gone) there is nothing to wait for, so it never resolves.
+    pub(super) async fn changed(preview: &mut Option<Self>) {
+        let Some(preview) = preview else { return std::future::pending().await };
+        match preview.session.events_rx.recv().await {
+            Some(SessionEvent::Output(bytes)) => preview.screen.feed(&bytes),
+            Some(SessionEvent::Size(rows, cols)) => { preview.screen.resize(rows, cols); }
+            None => std::future::pending().await,
+        }
+    }
 }
 
 impl Session {
     pub(super) async fn connect(id: &str, rows: u16, cols: u16) -> std::io::Result<Self> {
+        Self::open(id, Some((rows, cols))).await
+    }
+
+    /// Subscribes to a terminal. With `claim` it also asks the terminal to take
+    /// that size, which is what a client that is going to be used does.
+    async fn open(id: &str, claim: Option<(u16, u16)>) -> std::io::Result<Self> {
         let stream = TcpStream::connect(crate::addr()).await?;
         let (read_half, write_half) = stream.into_split();
 
@@ -341,9 +424,11 @@ impl Session {
         let _ = out_tx.send(json!({ "id": "1", "cmd": "terminal.subscribe", "pty_id": id }).to_string());
         // Sized to the panel's inner area, not the whole window: the remote
         // program must wrap its lines to the box it is drawn in.
-        let _ = out_tx.send(json!({ "cmd": "terminal.resize", "pty_id": id, "rows": rows, "cols": cols }).to_string());
+        if let Some((rows, cols)) = claim {
+            let _ = out_tx.send(json!({ "cmd": "terminal.resize", "pty_id": id, "rows": rows, "cols": cols }).to_string());
+        }
 
-        let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
         let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
             let mut lines = BufReader::new(read_half).lines();
@@ -352,7 +437,13 @@ impl Session {
                 match value.get("event").and_then(Value::as_str) {
                     Some("terminal.output") => {
                         if let Some(data) = value.get("data").and_then(Value::as_str) {
-                            if output_tx.send(data.as_bytes().to_vec()).is_err() { break; }
+                            if events_tx.send(SessionEvent::Output(data.as_bytes().to_vec())).is_err() { break; }
+                        }
+                    }
+                    Some("terminal.size") => {
+                        let cells = |key: &str| value.get(key).and_then(Value::as_u64).and_then(|n| u16::try_from(n).ok());
+                        if let (Some(rows), Some(cols)) = (cells("rows"), cells("cols")) {
+                            let _ = events_tx.send(SessionEvent::Size(rows, cols));
                         }
                     }
                     Some("terminal.exit") => break,
@@ -362,7 +453,7 @@ impl Session {
             let _ = exit_tx.send(());
         });
 
-        Ok(Self { pty_id: id.to_string(), out_tx, output_rx, exit_rx, writer })
+        Ok(Self { pty_id: id.to_string(), out_tx, events_rx, exit_rx, own: claim.unwrap_or_default(), shared: None, writer })
     }
 
     pub(super) fn send_key(&self, key: KeyEvent) {
@@ -375,6 +466,11 @@ impl Session {
         if bytes.is_empty() {
             return;
         }
+        // Typing here makes this the client in use: take the terminal back to
+        // this panel's size if another client had it at its own.
+        if needs_claim(self.own, self.shared) {
+            self.send_size();
+        }
         if let Ok(text) = String::from_utf8(bytes) {
             let _ = self
                 .out_tx
@@ -382,10 +478,27 @@ impl Session {
         }
     }
 
-    pub(super) fn resize(&self, rows: u16, cols: u16) {
+    /// The panel changed size: ask the terminal to follow it.
+    pub(super) fn resize(&mut self, rows: u16, cols: u16) {
+        self.own = (rows, cols);
+        self.send_size();
+    }
+
+    fn send_size(&self) {
+        let (rows, cols) = self.own;
         let _ = self
             .out_tx
             .send(json!({ "cmd": "terminal.resize", "pty_id": self.pty_id, "rows": rows, "cols": cols }).to_string());
+    }
+
+    pub(super) fn own_size(&self) -> (u16, u16) {
+        self.own
+    }
+
+    /// The grid to draw: the terminal's real size once known, so what an agent
+    /// paints for another client's size lands in the same cells here.
+    pub(super) fn grid(&self) -> (u16, u16) {
+        self.shared.unwrap_or(self.own)
     }
 }
 
@@ -616,15 +729,44 @@ mod tests {
     /// Renders the whole list view and returns the screen as text, so a test
     /// can assert on what the user actually ends up seeing.
     fn render_list(items: &[TerminalInfo], status: &str) -> String {
+        render_list_with(items, status, None)
+    }
+
+    fn render_list_with(items: &[TerminalInfo], status: &str, preview: Option<&super::super::screen::Screen>) -> String {
         let (width, height) = (70u16, 12u16);
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| draw_list(frame, items, 0, 24, status, ListState { profile: None, resizing: false, renaming: None })).unwrap();
+        terminal.draw(|frame| draw_list(frame, items, 0, 24, status, ListState { profile: None, resizing: false, renaming: None, preview })).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..height)
             .map(|y| (0..width).map(|x| buffer[(x, y)].symbol().to_string()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    // Choosing a row shows that terminal live, as the app does: what was asked
+    // in it from another client must be readable without connecting first.
+    #[test]
+    fn the_selected_terminal_is_shown_live_while_browsing_the_list() {
+        let mut live = super::super::screen::Screen::new(8, 40);
+        live.feed(b"pregunta hecha en la app");
+        let items = [TerminalInfo { pty_id: "1".into(), title: "agente".into(), cwd: "/repo".into(), branch: None }];
+
+        let screen = render_list_with(&items, "", Some(&live));
+
+        assert!(screen.contains("pregunta hecha en la app"), "se tiene que ver lo que hay en el terminal:\n{screen}");
+    }
+
+    // Looking at a terminal does not resize it under whoever is using it, so a
+    // bigger one is seen in part — and has to say so, or it just looks broken.
+    #[test]
+    fn a_preview_too_big_for_the_pane_says_it_is_cropped() {
+        let live = super::super::screen::Screen::new(64, 224);
+        let items = [TerminalInfo { pty_id: "1".into(), title: "agente".into(), cwd: "/repo".into(), branch: None }];
+
+        let screen = render_list_with(&items, "", Some(&live));
+
+        assert!(screen.contains("vista recortada"), "tiene que avisar de que no se ve entero:\n{screen}");
     }
 
     #[test]
@@ -685,6 +827,35 @@ mod tests {
     }
 
     #[test]
+    fn input_takes_the_terminal_back_only_from_another_clients_size() {
+        assert!(needs_claim((40, 120), Some((24, 80))));
+        assert!(!needs_claim((40, 120), Some((40, 120))));
+        // Unknown size: the connect already asked for ours.
+        assert!(!needs_claim((40, 120), None));
+    }
+
+    #[test]
+    fn a_terminal_bigger_than_the_pane_is_reported_as_cropped() {
+        let pane = Rect::new(0, 0, 100, 30);
+        assert!(is_cropped((64, 224), pane));
+        assert!(is_cropped((28, 120), pane));
+        assert!(!is_cropped((28, 98), pane));
+    }
+
+    #[test]
+    fn an_agent_shows_its_folder_and_branch() {
+        assert_eq!(location("/tmp/bento", Some("main"), 40), "/tmp/bento · main");
+        assert_eq!(location("/tmp/bento", None, 40), "/tmp/bento");
+    }
+
+    #[test]
+    fn a_long_branch_shortens_the_folder_instead_of_running_off_the_rail() {
+        let shown = location("/opt/una/ruta/bastante/larga/proyecto", Some("feat/login"), 30);
+        assert!(shown.ends_with(" · feat/login"));
+        assert!(shown.starts_with('…'));
+    }
+
+    #[test]
     fn an_empty_cwd_stays_empty_rather_than_becoming_a_lone_tilde() {
         assert_eq!(short_cwd("", 24), "");
     }
@@ -719,7 +890,7 @@ mod tests {
     }
 
     fn info(cwd: &str) -> TerminalInfo {
-        TerminalInfo { pty_id: "1".into(), title: "t".into(), cwd: cwd.into() }
+        TerminalInfo { pty_id: "1".into(), title: "t".into(), cwd: cwd.into(), branch: None }
     }
 
     #[test]

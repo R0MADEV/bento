@@ -111,9 +111,25 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
     let mut profile: Option<usize> = None;
     let mut status = String::new();
 
+    // The selected terminal, shown live while browsing the list.
+    let mut preview: Option<terminals::Preview> = None;
+
     loop {
+        if !matches!(mode, Mode::List) {
+            preview = None;
+        }
         match &mut mode {
             Mode::List => {
+                // Choosing a row shows that terminal as it is right now, like
+                // the app does; Enter is only needed to type in it.
+                let wanted = items.get(selected).map(|item| item.pty_id.as_str());
+                let is_showing_it = preview.as_ref().map(|shown| shown.pty_id.as_str()) == wanted;
+                if !is_showing_it {
+                    preview = match wanted {
+                        Some(pty_id) => terminals::Preview::open(pty_id).await,
+                        None => None,
+                    };
+                }
                 terminal.draw(|f| {
                     terminals::draw_list(
                         f, &items, selected, sidebar_width, &status,
@@ -121,10 +137,12 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             profile: profile.map(|index| profiles[index].name.as_str()),
                             resizing,
                             renaming: renaming.as_deref(),
+                            preview: preview.as_ref().map(|shown| &shown.screen),
                         },
                     )
                 })?;
                 tokio::select! {
+                    _ = terminals::Preview::changed(&mut preview) => {}
                     _ = refresh.tick() => {
                         items = terminals::fetch_terminals().await.unwrap_or_default();
                         if selected >= items.len() {
@@ -303,9 +321,13 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                 // The pty must wrap to the box it is painted in, and that box
                 // changes whenever the window or the rail does.
                 let area = terminals::terminal_area(terminal.size()?.into(), sidebar_width, &status);
-                if screen.resize(area.height, area.width) {
+                if session.own_size() != (area.height, area.width) {
                     session.resize(area.height, area.width);
                 }
+                // Drawn at the size the terminal really has, which is another
+                // client's while that one is the one in use.
+                let (rows, cols) = session.grid();
+                screen.resize(rows, cols);
 
                 tokio::select! {
                     maybe_event = events.next() => {
@@ -417,7 +439,15 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             _ => {}
                         }
                     }
-                    Some(bytes) = session.output_rx.recv() => screen.feed(&bytes),
+                    Some(event) = session.events_rx.recv() => match event {
+                        terminals::SessionEvent::Output(bytes) => screen.feed(&bytes),
+                        // Applied in order: the output that follows was
+                        // painted for this size.
+                        terminals::SessionEvent::Size(rows, cols) => {
+                            session.shared = Some((rows, cols));
+                            screen.resize(rows, cols);
+                        }
+                    },
                     _ = &mut session.exit_rx => {
                         mode = Mode::List;
                         items = terminals::fetch_terminals().await.unwrap_or_default();
