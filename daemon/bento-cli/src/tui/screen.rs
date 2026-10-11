@@ -99,9 +99,7 @@ impl Screen {
         true
     }
 
-    /// Only the tests read this back; the panel drives the size rather than
-    /// asking for it.
-    #[cfg(test)]
+    /// (rows, cols) of the emulated screen.
     pub(crate) fn size(&self) -> (u16, u16) {
         self.parser.screen().size()
     }
