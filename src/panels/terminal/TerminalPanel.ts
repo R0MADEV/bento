@@ -23,6 +23,7 @@ import { createTerminalProfileControls } from './profileControls'
 import { takeRequestedProfile } from '../../core/terminal/profiles'
 import { askAi } from '../../ui/askAi'
 import type { PanelApi } from '../registry'
+import { correctPointerForZoom } from './zoomedPointer'
 import 'xterm/css/xterm.css'
 
 const CWD_KEY = (id: string) => `bento.terminal.cwd.${id}`
@@ -432,6 +433,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   }, { passive: false, capture: true })
 
   root.addEventListener('click', () => { term.focus(); claimSize() })
+  eventUnlisteners.push(correctPointerForZoom(root))
   setTimeout(() => term.focus(), 100)
 
   // Output written while hidden makes xterm 5.3 size its scroll area with a 0px
