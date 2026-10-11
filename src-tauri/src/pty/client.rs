@@ -126,6 +126,15 @@ impl PtyManager {
                                 let _ = app.emit(&format!("pty-title-{id}"), title.to_string());
                             }
                         }
+                        "terminal.size" => {
+                            if let (Some(id), Some(rows), Some(cols)) = (
+                                value.get("pty_id").and_then(Value::as_str),
+                                value.get("rows").and_then(Value::as_u64),
+                                value.get("cols").and_then(Value::as_u64),
+                            ) {
+                                let _ = app.emit(&format!("pty-size-{id}"), json!({ "rows": rows, "cols": cols }));
+                            }
+                        }
                         "terminal.exit" => {
                             if let Some(id) = value.get("pty_id").and_then(Value::as_str) {
                                 let _ = app.emit(&format!("pty-exit-{id}"), ());

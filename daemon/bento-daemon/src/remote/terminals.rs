@@ -164,6 +164,14 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
     let Some(mut rx) = manager.subscribe(&id) else { return };
     let (mut sender, mut receiver) = socket.split();
 
+    // The size first: the replay only makes sense drawn at it.
+    let size_message = |rows: u16, cols: u16| Message::Text(json!({ "type": "size", "rows": rows, "cols": cols }).to_string());
+    if let Some((rows, cols)) = manager.size(&id) {
+        if sender.send(size_message(rows, cols)).await.is_err() {
+            return;
+        }
+    }
+
     if let Some(scrollback) = manager.scrollback(&id) {
         if !scrollback.is_empty() && sender.send(Message::Text(scrollback)).await.is_err() {
             return;
@@ -173,6 +181,9 @@ async fn bridge(socket: WebSocket, manager: PtyManager, id: String) {
     let outgoing = tokio::spawn(async move {
         loop {
             match rx.recv().await {
+                Ok(PtyEvent::Resized { rows, cols }) => {
+                    if sender.send(size_message(rows, cols)).await.is_err() { break; }
+                }
                 Ok(PtyEvent::Output(text)) => {
                     if sender.send(Message::Text(text)).await.is_err() { break; }
                 }

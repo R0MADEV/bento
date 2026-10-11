@@ -10,7 +10,7 @@ import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { getTheme, themeNames } from '../../core/terminal/themes'
 import { mix, isDark } from '../../core/terminal/color'
-import { dimsChanged, type Dims } from '../../core/terminal/dims'
+import { dimsChanged, gridToDraw, needsClaim, type Dims } from '../../core/terminal/dims'
 import { splitAtSyncBoundary } from '../../core/terminal/syncOutput'
 import { getThemeName, onThemeChange } from './themePreference'
 import { nextTheme } from '../../core/terminal/nextTheme'
@@ -301,6 +301,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   let inputBuffer = ''
 
   term.onData(data => {
+    claimSize()
     invoke('pty_write', { id, data }).catch(() => {})
     if (!inputCallback) return
     if (data === '\r' || data === '\n') {
@@ -430,7 +431,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     setFontSize((term.options.fontSize ?? BASE_FONT_SIZE) + delta)
   }, { passive: false, capture: true })
 
-  root.addEventListener('click', () => term.focus())
+  root.addEventListener('click', () => { term.focus(); claimSize() })
   setTimeout(() => term.focus(), 100)
 
   // Output written while hidden makes xterm 5.3 size its scroll area with a 0px
@@ -442,9 +443,29 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     term.options.scrollback = scrollback
   }
 
-  // Only forward a resize to the PTY when the cell size changes: a repeated
-  // SIGWINCH with the same size makes TUIs (Ink) flicker by fully repainting.
-  let lastDims: Dims = { rows: 0, cols: 0 }
+  // The same terminal can be open in the CLI and on the phone too, and it has
+  // ONE size: the daemon reports it and every client draws at it, so what the
+  // agent paints lands in the same cells everywhere. This panel asks for its own
+  // size when it is the one in use: when it is laid out or resized, and when the
+  // user clicks or types in it. The daemon ignores a size it already has, so no
+  // SIGWINCH (and no full repaint of a TUI) is sent for nothing.
+  let ownDims: Dims = { rows: 0, cols: 0 }
+  let sharedDims: Dims | null = null
+  const drawAtSharedSize = () => {
+    const grid = gridToDraw(ownDims, sharedDims)
+    const isDrawable = grid.rows > 0 && grid.cols > 0
+    const isAnotherGrid = dimsChanged({ rows: term.rows, cols: term.cols }, grid)
+    if (isDrawable && isAnotherGrid) term.resize(grid.cols, grid.rows)
+  }
+  const claimSize = () => {
+    if (!needsClaim(ownDims, sharedDims)) return
+    invoke('pty_resize', { id, ...ownDims }).catch(() => {})
+  }
+  listenTo<Dims>(`pty-size-${id}`, event => {
+    sharedDims = { rows: event.payload.rows, cols: event.payload.cols }
+    drawAtSharedSize()
+  })
+
   let wasHidden = false
   const fit = () => {
     // requestAnimationFrame ensures the container already has its final size
@@ -454,12 +475,16 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
       // 0-row SIGWINCH to the PTY, crashing TUI processes like OpenCode.
       if (root.offsetWidth === 0 && root.offsetHeight === 0) { wasHidden = true; return }
       if (wasHidden) { wasHidden = false; resyncViewport() }
-      fitAddon.fit()
-      const dims: Dims = { rows: term.rows, cols: term.cols }
-      if (dims.rows === 0 || dims.cols === 0) return
-      if (!dimsChanged(lastDims, dims)) return
-      lastDims = dims
-      invoke('pty_resize', { id, ...dims }).catch(() => {})
+      const fitting = fitAddon.proposeDimensions()
+      const fits = fitting !== undefined && fitting.rows > 0 && fitting.cols > 0
+      if (!fits) return
+      const dims: Dims = { rows: fitting.rows, cols: fitting.cols }
+      if (dimsChanged(ownDims, dims)) {
+        ownDims = dims
+        // Ask even if the daemon last reported this very size to someone else.
+        invoke('pty_resize', { id, ...dims }).catch(() => {})
+      }
+      drawAtSharedSize()
     })
   }
 
