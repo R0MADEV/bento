@@ -56,6 +56,9 @@ struct Instance {
     tx: broadcast::Sender<PtyEvent>,
     // Recent output, replayed to a client that (re)attaches so it isn't blank.
     scrollback: Arc<Mutex<Vec<u8>>>,
+    /// The modes the program has on (mouse, alternate screen…): the replay alone
+    /// rarely still holds the switch, so a late client is told separately.
+    modes: Arc<Mutex<crate::modes::Modes>>,
     title: String,
     cwd: String,
     /// (rows, cols). One size for every client: the last one to ask sets it.
@@ -210,6 +213,7 @@ impl PtyManager {
             .unwrap_or_else(|| next_free_id(&self.counter, |id| self.instances.lock().unwrap().contains_key(id)));
         let (tx, _rx) = broadcast::channel(OUTPUT_BUFFER);
         let scrollback = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let modes = Arc::new(Mutex::new(crate::modes::Modes::default()));
         let cwd = start_dir.unwrap_or_default();
         let title = default_title(opts.title, &cwd, &id);
 
@@ -231,6 +235,7 @@ impl PtyManager {
                     child,
                     tx: tx.clone(),
                     scrollback: scrollback.clone(),
+                    modes: modes.clone(),
                     title,
                     cwd,
                     size: (rows, cols),
@@ -252,6 +257,7 @@ impl PtyManager {
                         let text = drain_utf8(&mut pending);
                         if !text.is_empty() {
                             push_scrollback(&scrollback, text.as_bytes());
+                            modes.lock().unwrap().feed(text.as_bytes());
                             let _ = tx.send(PtyEvent::Output(text));
                         }
                     }
@@ -270,7 +276,11 @@ impl PtyManager {
             .lock()
             .unwrap()
             .get(id)
-            .map(|instance| String::from_utf8_lossy(&instance.scrollback.lock().unwrap()).into_owned())
+            .map(|instance| {
+                let modes = instance.modes.lock().unwrap().restore();
+                let recent = instance.scrollback.lock().unwrap();
+                format!("{modes}{}", String::from_utf8_lossy(&recent))
+            })
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
