@@ -28,6 +28,8 @@ pub enum PtyEvent {
     Output(String),
     Exit(Option<i32>),
     TitleChanged(String),
+    /// The terminal changed size: every client draws it at this one.
+    Resized { rows: u16, cols: u16 },
 }
 
 /// Public metadata about an open terminal.
@@ -56,6 +58,8 @@ struct Instance {
     scrollback: Arc<Mutex<Vec<u8>>>,
     title: String,
     cwd: String,
+    /// (rows, cols). One size for every client: the last one to ask sets it.
+    size: (u16, u16),
 }
 
 /// Manages the lifetime of every PTY. Cheap to clone (shared internally).
@@ -229,6 +233,7 @@ impl PtyManager {
                     scrollback: scrollback.clone(),
                     title,
                     cwd,
+                    size: (rows, cols),
                 },
             );
         }
@@ -279,8 +284,12 @@ impl PtyManager {
     }
 
     pub fn resize(&self, id: &str, rows: u16, cols: u16) -> Result<(), String> {
-        let guard = self.instances.lock().unwrap();
-        let instance = guard.get(id).ok_or("pty not found")?;
+        let mut guard = self.instances.lock().unwrap();
+        let instance = guard.get_mut(id).ok_or("pty not found")?;
+        // Same size: no SIGWINCH, so a client can ask as often as it likes.
+        if instance.size == (rows, cols) {
+            return Ok(());
+        }
         instance
             .master
             .resize(PtySize {
@@ -289,7 +298,15 @@ impl PtyManager {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        instance.size = (rows, cols);
+        let _ = instance.tx.send(PtyEvent::Resized { rows, cols });
+        Ok(())
+    }
+
+    /// The terminal's current (rows, cols).
+    pub fn size(&self, id: &str) -> Option<(u16, u16)> {
+        self.instances.lock().unwrap().get(id).map(|instance| instance.size)
     }
 
     pub fn close(&self, id: &str) -> Result<(), String> {
@@ -594,11 +611,38 @@ mod tests {
             match rx.recv().await {
                 Ok(PtyEvent::Output(text)) => got.push_str(&text),
                 Ok(PtyEvent::Exit(_)) => break,
-                Ok(PtyEvent::TitleChanged(_)) => {}
+                Ok(PtyEvent::TitleChanged(_) | PtyEvent::Resized { .. }) => {}
                 Err(_) => break,
             }
         }
         assert!(got.contains("hello"), "unexpected output: {got:?}");
+    }
+
+    // Every client draws the terminal at the size the daemon reports, so a
+    // resize has to reach all of them. An unchanged one must reach nobody: a
+    // TUI would repaint its whole screen (into every scrollback) for nothing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_resize_is_announced_to_the_clients_only_when_the_size_changes() {
+        let manager = PtyManager::new();
+        let (id, _) = manager
+            .open(OpenOptions {
+                command: Some(vec!["/bin/sleep".into(), "5".into()]),
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            })
+            .unwrap();
+        let mut events = manager.subscribe(&id).unwrap();
+        assert_eq!(manager.size(&id), Some((24, 80)));
+
+        manager.resize(&id, 24, 80).unwrap();
+        manager.resize(&id, 30, 100).unwrap();
+
+        assert_eq!(manager.size(&id), Some((30, 100)));
+        let first = events.recv().await.unwrap();
+        assert!(matches!(first, PtyEvent::Resized { rows: 30, cols: 100 }), "got {first:?}");
+        let _ = manager.close(&id);
     }
 
     #[cfg(unix)]

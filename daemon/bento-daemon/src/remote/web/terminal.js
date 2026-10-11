@@ -26,7 +26,7 @@ function onSearchKey(e){
 
 // ── Terminals ─────────────────────────────────────────────────────────────────
 
-function s(d){if(ws&&ws.readyState===1)ws.send(d)}
+function s(d){claimSizeIfTaken();if(ws&&ws.readyState===1)ws.send(d)}
 
 function sendInp(){
   const inp=document.getElementById('inp');
@@ -56,9 +56,26 @@ async function load(){
   }catch(e){el.innerHTML='<div class="empty err-msg">No se pudo conectar al daemon.</div>'}
 }
 
+// La misma terminal puede estar abierta en la app y en el CLI: tiene UN solo
+// tamaño, el que dice el daemon (`sharedSize`), y todos la pintan a ese para que
+// lo que dibuja el agente caiga en las mismas celdas. Este cliente pide el suyo
+// (`ownSize`) cuando es el que se está usando: al abrir, al girar la pantalla y
+// al escribir.
+let ownSize=null,sharedSize=null;
+function sameSize(a,b){return !!a&&!!b&&a.rows===b.rows&&a.cols===b.cols}
+function drawAtSharedSize(){
+  const grid=sharedSize||ownSize;
+  if(term&&grid&&(term.rows!==grid.rows||term.cols!==grid.cols))term.resize(grid.cols,grid.rows);
+}
 function sendResize(){
-  if(ws&&ws.readyState===1&&term)
-    ws.send(JSON.stringify({type:'resize',rows:term.rows,cols:term.cols}));
+  const fitting=fit&&fit.proposeDimensions();
+  if(fitting&&fitting.rows>0&&fitting.cols>0)ownSize={rows:fitting.rows,cols:fitting.cols};
+  if(ws&&ws.readyState===1&&ownSize)
+    ws.send(JSON.stringify({type:'resize',rows:ownSize.rows,cols:ownSize.cols}));
+  drawAtSharedSize();
+}
+function claimSizeIfTaken(){
+  if(sharedSize&&ownSize&&!sameSize(sharedSize,ownSize))sendResize();
 }
 
 function connect(id){
@@ -72,6 +89,7 @@ function connect(id){
         const msg=JSON.parse(e.data);
         if(msg.type==='title'){activeTitle=msg.value;document.getElementById('ttitle').textContent=msg.value;return}
         if(msg.type==='exit'){goBack();return}
+        if(msg.type==='size'){sharedSize={rows:msg.rows,cols:msg.cols};drawAtSharedSize();return}
       }catch(_){}
       term&&term.write(e.data);
     }else{term&&term.write(new Uint8Array(e.data))}
@@ -119,7 +137,7 @@ function enableTouchScroll(el){
 }
 
 function attach(id,title){
-  leaving=false;activeId=id;activeTitle=title;reconnDelay=1000;
+  leaving=false;activeId=id;activeTitle=title;reconnDelay=1000;ownSize=null;sharedSize=null;
   document.getElementById('page-terminals').style.display='none';
   document.getElementById('tabbar').style.display='none';
   const viewEl=document.getElementById('view');
@@ -138,7 +156,7 @@ function attach(id,title){
   term.open(con);fit.fit();
   enableTouchScroll(con);
   term.onData(d=>s(d));
-  ro=new ResizeObserver(()=>{if(fit){fit.fit();sendResize()}});
+  ro=new ResizeObserver(()=>{if(fit)sendResize()});
   ro.observe(con);
   connect(id);
 }

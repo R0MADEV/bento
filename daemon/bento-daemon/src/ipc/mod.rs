@@ -298,6 +298,12 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             Some(id) => match manager.subscribe(id) {
                 Some(mut rx) => {
                     subscribed.insert(id.clone());
+                    // The size the terminal has now, which may be another
+                    // client's: this one draws at it until it claims its own.
+                    // Before the replay, which only makes sense at that size.
+                    if let Some((rows, cols)) = manager.size(id) {
+                        send(json!({ "event": "terminal.size", "pty_id": id, "rows": rows, "cols": cols }).to_string());
+                    }
                     if let Some(scrollback) = manager.scrollback(id) {
                         if !scrollback.is_empty() {
                             send(json!({ "event": "terminal.output", "pty_id": id, "data": scrollback }).to_string());
@@ -320,6 +326,11 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                                 Ok(PtyEvent::TitleChanged(title)) => {
                                     let _ = out.send(
                                         json!({ "event": "terminal.title", "pty_id": pty_id, "title": title }).to_string(),
+                                    );
+                                }
+                                Ok(PtyEvent::Resized { rows, cols }) => {
+                                    let _ = out.send(
+                                        json!({ "event": "terminal.size", "pty_id": pty_id, "rows": rows, "cols": cols }).to_string(),
                                     );
                                 }
                                 Ok(PtyEvent::Exit(code)) => {
