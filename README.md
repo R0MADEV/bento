@@ -46,8 +46,8 @@ Runs natively on **macOS, Linux, and Windows**.
 Bento detects running AI agent sessions (Claude Code, Codex, OpenCode) and shows their status in the sidebar. When you reopen a workspace, agents that were running are automatically resumed — no copy-pasting session IDs.
 
 Session detection and resume:
-- **Claude Code** — herdr IPC socket reports the session ID; `--resume <id>` is verified against `~/.claude/projects/` before use
-- **Codex** — herdr IPC socket; stale thread-writer lock cleaned up automatically so `codex resume` never fails
+- **Claude Code** — the session ID is read from the running process; `--resume <id>` is verified against `~/.claude/projects/` before use
+- **Codex** — the session ID is read from the rollout the process has open; stale thread-writer lock cleaned up automatically so `codex resume` never fails
 - **OpenCode** — SQLite session DB at `~/.local/share/opencode/opencode.db`, matched by cwd + creation time
 
 No API key required on Bento's side. Each agent manages its own credentials.
@@ -263,7 +263,6 @@ bento/
 │       ├── main.rs               # Tauri commands + app setup
 │       ├── pty.rs                # Thin daemon client (spawn, kill, IPC relay)
 │       ├── agent_sessions.rs     # Session restore for Claude / Codex / OpenCode
-│       ├── agent_socket.rs       # herdr IPC socket (session ID reporting)
 │       ├── git.rs                # Git operations
 │       ├── docker.rs             # Docker container management
 │       ├── db.rs                 # Database connections

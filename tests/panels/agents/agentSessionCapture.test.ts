@@ -27,13 +27,22 @@ describe('agent session capture', () => {
     return { onCaptured, claimed }
   }
 
-  it('claims the session a socket agent reports', async () => {
-    mocks.invoke.mockImplementation(async (cmd: string) => (cmd === 'agent_get_session' ? 'sess-1' : null))
+  it('claims the session it finds on disk', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => (cmd === 'agent_find_opencode_session' ? 'sess-1' : null))
     const slot = makeSlot()
-    const { onCaptured, claimed } = await runCapture(slot, 'claude')
+    const { onCaptured, claimed } = await runCapture(slot, 'opencode')
     expect(slot.sessionId).toBe('sess-1')
     expect(claimed.has('sess-1')).toBe(true)
     expect(onCaptured).toHaveBeenCalled()
+  })
+
+  // Claude and Codex are read from their process (the running-agent probe), not
+  // asked for here: nothing in a terminal reports back to Bento any more.
+  it('leaves the agents read from their process alone', async () => {
+    for (const cmd of ['claude', 'codex']) {
+      await runCapture(makeSlot(), cmd)
+    }
+    expect(mocks.invoke).not.toHaveBeenCalled()
   })
 
   it('ignores a session another agent in the panel already claimed', async () => {
@@ -41,7 +50,7 @@ describe('agent session capture', () => {
     // reanudar uno reanudaría la conversación del otro.
     mocks.invoke.mockImplementation(async () => 'sess-1')
     const slot = makeSlot()
-    const { onCaptured } = await runCapture(slot, 'claude', new Set(['sess-1']))
+    const { onCaptured } = await runCapture(slot, 'opencode', new Set(['sess-1']))
     expect(slot.sessionId).toBeNull()
     expect(onCaptured).not.toHaveBeenCalled()
   })
@@ -56,7 +65,7 @@ describe('agent session capture', () => {
     mocks.invoke.mockImplementation(async () => null)
     const slot = makeSlot()
     const capture = buildSessionCapture({ slots: () => [], claimedSessionIds: new Set(), onCaptured: vi.fn() })
-    await capture(slot, 'claude', '/repo', 0)
+    await capture(slot, 'opencode', '/repo', 0)
     expect(mocks.invoke).not.toHaveBeenCalled()
   })
 

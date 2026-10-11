@@ -119,19 +119,12 @@ pub(super) async fn new_terminal(
     // en un proyecto no vale de nada.
     let home = open_cwd(params.get("cwd").cloned(), &home);
     let id = format!("pty-mobile-{}", uuid_v4());
-    let mut env = vec![];
-    if let Some(socket) = &state.herdr_socket {
-        env.push(("HERDR_ENV".into(), "1".into()));
-        env.push(("HERDR_SOCKET_PATH".into(), socket.clone()));
-        env.push(("HERDR_PANE_ID".into(), id.clone()));
-    }
     let opts = bento_core::OpenOptions {
         id: Some(id.clone()),
         shell: Some(shell),
         cwd: Some(home),
         rows: 24,
         cols: 80,
-        env,
         ..Default::default()
     };
     match state.manager.open(opts) {

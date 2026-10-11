@@ -132,7 +132,6 @@ mod tests {
         Arc::new(RemoteState {
             manager: PtyManager::new(),
             token: token.to_string(),
-            herdr_socket: None,
         })
     }
 

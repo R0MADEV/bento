@@ -75,6 +75,18 @@ const SCROLLBACK_CAP: usize = 256 * 1024;
 /// escritorio manda el nombre del panel o del agente—, y si no, vale más el
 /// directorio en el que está que su identificador: `bento` dice dónde estás,
 /// `pty-19` y `pty-mobile-233d02e8` no dicen nada.
+/// Variables that mark a process as living inside someone else's session: a
+/// herdr pane, or a shell that Claude Code is running. A Bento terminal is
+/// neither, so they must not leak in when Bento itself was started from one —
+/// with Claude Code's, every `claude` in Bento would take itself for a child of
+/// that session and stop saving its conversation. Settings such as
+/// `CLAUDE_CONFIG_DIR` are the user's choice and stay.
+fn is_foreign_session_var(key: &str) -> bool {
+    let is_herdr_pane = key.starts_with("HERDR_");
+    let is_claude_code_session = key == "CLAUDECODE" || key == "CLAUDE_PID" || key.starts_with("CLAUDE_CODE_");
+    is_herdr_pane || is_claude_code_session
+}
+
 fn default_title(requested: Option<String>, cwd: &str, id: &str) -> String {
     if let Some(title) = requested.filter(|t| !t.trim().is_empty()) {
         return title;
@@ -154,6 +166,9 @@ impl PtyManager {
             }
         };
         cmd.env("TERM", "xterm-256color");
+        for (key, _) in std::env::vars().filter(|(key, _)| is_foreign_session_var(key)) {
+            cmd.env_remove(key);
+        }
         for (key, value) in &opts.env {
             cmd.env(key, value);
         }
@@ -477,6 +492,33 @@ fn drain_utf8(pending: &mut Vec<u8>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Bento launched from inside herdr inherits its pane variables; passing them
+    // on would make `herdr` (and its agent hooks) treat a Bento terminal as one
+    // of herdr's own panes.
+    #[test]
+    fn another_multiplexers_pane_variables_are_not_inherited() {
+        assert!(is_foreign_session_var("HERDR_ENV"));
+        assert!(is_foreign_session_var("HERDR_SOCKET_PATH"));
+        assert!(is_foreign_session_var("HERDR_PANE_ID"));
+        assert!(!is_foreign_session_var("HOME"));
+        assert!(!is_foreign_session_var("CLAUDE_CONFIG_DIR"));
+    }
+
+    // Bento opened from a shell that Claude Code is running inherits the marks
+    // of that session. With them, every `claude` started in a Bento terminal
+    // takes itself for a child of it and stops saving its conversation.
+    #[test]
+    fn the_marks_of_a_claude_code_session_are_not_inherited() {
+        assert!(is_foreign_session_var("CLAUDECODE"));
+        assert!(is_foreign_session_var("CLAUDE_PID"));
+        assert!(is_foreign_session_var("CLAUDE_CODE_CHILD_SESSION"));
+        assert!(is_foreign_session_var("CLAUDE_CODE_SESSION_ID"));
+        assert!(is_foreign_session_var("CLAUDE_CODE_MESSAGING_SOCKET"));
+        // Settings, not session marks: the user's own choice, kept.
+        assert!(!is_foreign_session_var("CLAUDE_CONFIG_DIR"));
+        assert!(!is_foreign_session_var("CLAUDE_EFFORT"));
+    }
 
     // A reattaching client replays the scrollback verbatim, so a cut in the
     // middle of an escape sequence makes it print the tail as text ("?25h").

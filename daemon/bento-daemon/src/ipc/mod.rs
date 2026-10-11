@@ -44,8 +44,6 @@ pub(crate) struct Request {
     #[serde(default)]
     pub(crate) title: Option<String>,
     #[serde(default)]
-    pub(crate) herdr_socket: Option<String>,
-    #[serde(default)]
     pub(crate) base: Option<String>,
     #[serde(default)]
     pub(crate) pr: Option<u64>,
@@ -354,11 +352,10 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             let manager = manager.clone();
             let token = req.token.clone();
             let use_tailscale = req.use_tailscale.unwrap_or(false);
-            let herdr_socket = req.herdr_socket.clone();
             let out = out.clone();
             let id = req.id.clone();
             tokio::spawn(async move {
-                match remote.start(manager, port, token, use_tailscale, herdr_socket).await {
+                match remote.start(manager, port, token, use_tailscale).await {
                     Ok(info) => { let _ = out.send(ok(&id, serde_json::to_value(&info).unwrap_or(Value::Null))); }
                     Err(e) => { let _ = out.send(fail(&id, e)); }
                 }
