@@ -14,6 +14,8 @@ pub struct RunningAgent {
     pub session_id: Option<String>,
     /// `CLAUDE_CONFIG_DIR` the agent runs with: the account it must resume in.
     pub config_dir: Option<String>,
+    /// Folder the agent was launched from: where its session must resume.
+    pub cwd: Option<String>,
 }
 
 const AGENTS: [&str; 3] = ["claude", "codex", "opencode"];
@@ -63,7 +65,7 @@ fn is_safe_id(id: &str) -> bool {
 
 /// The agent running as `pid` (a terminal's foreground process), if any.
 /// OpenCode leaves no per-process trace, so its session stays `None`.
-pub fn running_agent(pid: u32, argv: &[String], env: &[String]) -> Option<RunningAgent> {
+pub fn running_agent(pid: u32, argv: &[String], env: &[String], cwd: Option<String>) -> Option<RunningAgent> {
     let agent = agent_from_argv(argv)?;
     let config_dir = config_dir_from_env(env);
     let session_id = match agent {
@@ -78,7 +80,7 @@ pub fn running_agent(pid: u32, argv: &[String], env: &[String]) -> Option<Runnin
             .and_then(|out| codex_session_id(&String::from_utf8_lossy(&out.stdout))),
         _ => None,
     };
-    Some(RunningAgent { agent: agent.to_string(), session_id, config_dir })
+    Some(RunningAgent { agent: agent.to_string(), session_id, config_dir, cwd })
 }
 
 #[cfg(test)]
@@ -107,6 +109,14 @@ mod tests {
         assert_eq!(agent_from_argv(&args(&["-zsh"])), None);
         assert_eq!(agent_from_argv(&args(&["vim", "claude.md"])), None);
         assert_eq!(agent_from_argv(&[]), None);
+    }
+
+    // The folder the agent was launched from: where its session must resume.
+    #[test]
+    fn reports_the_folder_the_agent_runs_in() {
+        let agent = running_agent(u32::MAX, &args(&["opencode"]), &[], Some("/Users/x/repo".into())).unwrap();
+        assert_eq!(agent.cwd.as_deref(), Some("/Users/x/repo"));
+        assert_eq!(running_agent(u32::MAX, &args(&["-zsh"]), &[], Some("/Users/x".into())), None);
     }
 
     #[test]

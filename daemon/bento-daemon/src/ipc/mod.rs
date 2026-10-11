@@ -277,7 +277,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                 tokio::task::spawn_blocking(move || {
                     let agent = manager
                         .foreground_process(&id)
-                        .and_then(|process| bento_sessions::running_agent(process.pid, &process.argv, &process.env));
+                        .and_then(|process| bento_sessions::running_agent(process.pid, &process.argv, &process.env, process.cwd.clone()));
                     let _ = out.send(ok(&req_id, json!(agent)));
                 });
             }
