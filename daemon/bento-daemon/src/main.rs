@@ -9,6 +9,28 @@ mod remote;
 use bento_core::PtyManager;
 use remote::RemoteControl;
 
+/// Keeps the computer from going to sleep on its own while the daemon runs:
+/// asleep, the agents stop and the phone can no longer reach them. Putting it
+/// to sleep by hand, or closing the lid, still works. `caffeinate -w` waits
+/// for this process and ends with it, however it dies, so nothing is left
+/// holding the machine awake.
+#[cfg(target_os = "macos")]
+fn stay_awake() {
+    use std::process::{Command, Stdio};
+    let spawned = Command::new("/usr/bin/caffeinate")
+        .args(["-i", "-w", &std::process::id().to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if let Err(error) = spawned {
+        eprintln!("bento-daemon: the computer may go to sleep (caffeinate: {error})");
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stay_awake() {}
+
 #[tokio::main]
 async fn main() {
     let addr = std::env::var("BENTO_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:7877".into());
@@ -37,6 +59,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    stay_awake();
     agents::restore(&manager);
     agents::watch(manager.clone());
 
