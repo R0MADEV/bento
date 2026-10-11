@@ -5,12 +5,12 @@ import { appT } from '../../core/i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { createAgentStore } from '../../core/terminal/agentStore'
-import { createTerminalPanel, type TerminalPanelHandle } from '../terminal/TerminalPanel'
+import { createTerminalPanel, forgetTerminalCwd, type TerminalPanelHandle } from '../terminal/TerminalPanel'
 import { detectAgentCmd, resolveAgentIdentity } from '../../core/ai/detectAgent'
 import { emitAgentDock, AGENT_ACTIVATE_EVENT, type AgentAttention } from '../../core/terminal/agentDockState'
 import { createCollapsibleSidebar } from '../../ui/collapsibleSidebar'
 import { buildResumeCmd } from './agentResume'
-import { applyRunningAgent, type RunningAgent } from './runningAgent'
+import { agentLocation, applyRunningAgent, type RunningAgent } from './runningAgent'
 import { isDefaultAgentName, nextAgentName } from './agentName'
 
 const MAX_AGENTS = 20
@@ -44,6 +44,9 @@ export interface AgentSlot {
   sessionId?: string
   // CLAUDE_CONFIG_DIR the agent ran with: the account to resume it in.
   configDir?: string
+  // Folder the agent was launched from, and the branch it is on there.
+  cwd?: string
+  branch?: string
   // Stable, persisted pty id so a reload reattaches to the same daemon terminal.
   ptyId: string
   handle: TerminalPanelHandle
@@ -82,6 +85,10 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
   //              the agent resumes output (the silence was a false alarm).
   const attention = new Map<string, AgentAttention>()
 
+  // An agent shows the folder it was launched from; a plain shell, its title.
+  const locationOf = (slot: AgentSlot, title: string): string =>
+    slot.cwd ? agentLocation(slot.cwd, slot.branch) : title
+
   const publishDock = (): void => {
     if (!publishToDock) return
     const entries = store.getAll().flatMap((entry, index) => {
@@ -92,7 +99,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       return [{
         id: entry.id,
         name: slot.customName ?? entry.title,
-        cwd: entry.title,
+        cwd: locationOf(slot, entry.title),
         cmd: slot.cmd,
         status: entry.status,
         attention: attention.get(entry.id),
@@ -117,7 +124,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     const entries = store.getAll()
     const sessions: SavedSession[] = slots.map((slot, i) => ({
       name: slot.customName,
-      cwd: slot.handle.getCwd() || entries[i]?.title || '',
+      cwd: slot.cwd || slot.handle.getCwd() || entries[i]?.title || '',
       cmd: slot.cmd,
       sessionId: slot.sessionId,
       ptyId: slot.ptyId,
@@ -263,8 +270,9 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
 
       const cwd = document.createElement('div')
       cwd.className = 'agents-sidebar-cwd'
-      cwd.textContent = entry.title
-      cwd.title = entry.title
+      const location = locationOf(slot, entry.title)
+      cwd.textContent = location
+      cwd.title = location
 
       info.append(nameRow, cwd)
       li.append(icon, info)
@@ -342,8 +350,14 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     slot.className = 'agents-term-slot'
     termArea.appendChild(slot)
 
+    // An agent's session only resumes in the folder it was launched from, so
+    // that folder beats whatever directory this terminal remembered.
+    const panelId = `agent-${num}`
+    const resumesInItsFolder = Boolean(savedCmd && savedCwd)
+    if (resumesInItsFolder) forgetTerminalCwd(panelId)
+
     const handle = createTerminalPanel(
-      `agent-${num}`,
+      panelId,
       savedCwd || projectPath,
       // Process exited: mark the slot (herdr keeps the pane), don't remove it.
       () => markAgentExited(slots.findIndex(s => s.handle === handle)),
@@ -361,6 +375,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       cmd: savedCmd,
       sessionId: savedSessionId,
       configDir: savedConfigDir,
+      cwd: savedCmd ? savedCwd : undefined,
       ptyId,
       handle,
       slot,
@@ -571,6 +586,15 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       }
     } catch { /* daemon not ready */ }
   }
+  // The branch of the folder the agent runs in. Returns whether it changed.
+  const refreshBranch = async (agentSlot: AgentSlot): Promise<boolean> => {
+    if (!agentSlot.cwd) return false
+    const branch = await invoke<string>('git_current_branch', { path: agentSlot.cwd }).catch(() => '')
+    if (branch === agentSlot.branch) return false
+    agentSlot.branch = branch
+    return true
+  }
+
   // Ask the daemon which agent each terminal runs and on which session. Read
   // from the process, so it catches agents launched any way (an alias like
   // `claude20`, history, autocomplete), which typed-input detection misses —
@@ -581,7 +605,10 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       const running = await invoke<RunningAgent | null>('pty_agent', { id: agentSlot.ptyId }).catch(() => null)
       const previousCmd = agentSlot.cmd
       const previousSessionId = agentSlot.sessionId
-      if (!applyRunningAgent(agentSlot, running)) continue
+      const changed = applyRunningAgent(agentSlot, running)
+      const branchChanged = await refreshBranch(agentSlot)
+      if (changed || branchChanged) renderSidebar()
+      if (!changed) continue
       if (previousSessionId && previousSessionId !== agentSlot.sessionId) claimedSessionIds.delete(previousSessionId)
       if (agentSlot.sessionId) claimedSessionIds.add(agentSlot.sessionId)
       const cmd = agentSlot.cmd

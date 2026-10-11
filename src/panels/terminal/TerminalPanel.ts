@@ -27,6 +27,11 @@ import 'xterm/css/xterm.css'
 
 const CWD_KEY = (id: string) => `bento.terminal.cwd.${id}`
 
+// Drops the directory remembered for a terminal, so it opens where it is told to.
+export const forgetTerminalCwd = (panelId: string): void => {
+  try { localStorage.removeItem(CWD_KEY(panelId)) } catch { /* storage unavailable */ }
+}
+
 let ptyCounter = 0
 
 function showCommandDoneToast(termRoot: HTMLElement): void {

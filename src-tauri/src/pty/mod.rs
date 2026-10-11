@@ -67,7 +67,7 @@ pub async fn pty_list(state: tauri::State<'_, Arc<PtyManager>>) -> Result<Vec<Pt
     }).collect())
 }
 
-/// The agent a terminal is running (`{ agent, sessionId, configDir }`), or
+/// The agent a terminal is running (`{ agent, sessionId, configDir, cwd }`), or
 /// null while it's just the shell.
 #[tauri::command]
 pub async fn pty_agent(id: String, state: tauri::State<'_, Arc<PtyManager>>) -> Result<Value, String> {

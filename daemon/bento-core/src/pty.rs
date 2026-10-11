@@ -44,6 +44,7 @@ pub struct ForegroundProcess {
     pub pid: u32,
     pub argv: Vec<String>,
     pub env: Vec<String>,
+    pub cwd: Option<String>,
 }
 
 struct Instance {
@@ -289,19 +290,23 @@ impl PtyManager {
     }
 
     /// The process in the terminal's foreground (the shell, or whatever it is
-    /// running): its pid, argv and environment.
+    /// running): its pid, argv, environment and working directory.
     pub fn foreground_process(&self, id: &str) -> Option<ForegroundProcess> {
         let leader = self.instances.lock().unwrap().get(id)?.master.process_group_leader()?;
         let pid = Pid::from_u32(u32::try_from(leader).ok()?);
         let mut system = System::new();
-        // refresh_process alone loads neither argv nor the environment.
-        let kind = ProcessRefreshKind::new().with_cmd(UpdateKind::Always).with_environ(UpdateKind::Always);
+        // refresh_process alone loads none of argv, the environment or the cwd.
+        let kind = ProcessRefreshKind::new()
+            .with_cmd(UpdateKind::Always)
+            .with_environ(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always);
         system.refresh_process_specifics(pid, kind);
         let process = system.process(pid)?;
         Some(ForegroundProcess {
             pid: pid.as_u32(),
             argv: process.cmd().to_vec(),
             env: process.environ().to_vec(),
+            cwd: process.cwd().map(|dir| dir.to_string_lossy().into_owned()),
         })
     }
 
