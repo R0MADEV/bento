@@ -3,6 +3,7 @@
 //! broadcast channel instead of window events.
 
 pub mod editor;
+mod modes;
 pub mod profiles;
 mod pty;
 
