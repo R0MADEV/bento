@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use super::output_batch::{OutputBatch, BATCH_CAP};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
@@ -103,19 +104,36 @@ impl PtyManager {
         let pending = self.pending.clone();
         let tx_slot = self.tx.clone();
         tauri::async_runtime::spawn(async move {
-            let mut lines = BufReader::new(read_half).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            let mut reader = BufReader::with_capacity(BATCH_CAP, read_half);
+            let mut batch = OutputBatch::default();
+            let mut line = String::new();
+            loop {
+                // Whatever is already in the socket buffer joins the batch; it
+                // goes out once the buffer runs dry, so no latency is added.
+                let nothing_waiting = reader.buffer().is_empty();
+                if batch.is_full() || nothing_waiting {
+                    flush_output(&app, &mut batch);
+                }
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
                 let Ok(value) = serde_json::from_str::<Value>(&line) else {
                     continue;
                 };
                 if let Some(event) = value.get("event").and_then(Value::as_str) {
+                    if event != "terminal.output" {
+                        // Output that came first must paint first (an exit closes the panel).
+                        flush_output(&app, &mut batch);
+                    }
                     match event {
                         "terminal.output" => {
                             if let (Some(id), Some(data)) = (
                                 value.get("pty_id").and_then(Value::as_str),
                                 value.get("data").and_then(Value::as_str),
                             ) {
-                                let _ = app.emit(&format!("pty-output-{id}"), data.to_string());
+                                batch.push(id, data);
                             }
                         }
                         "terminal.title" => {
@@ -148,6 +166,7 @@ impl PtyManager {
                     }
                 }
             }
+            flush_output(&app, &mut batch);
             // Daemon disconnected — clear tx so the next request auto-reconnects.
             *tx_slot.lock().unwrap() = None;
         });
@@ -223,6 +242,12 @@ impl PtyManager {
                 Err("bento-daemon did not respond".into())
             }
         }
+    }
+}
+
+fn flush_output(app: &AppHandle, batch: &mut OutputBatch) {
+    for (id, data) in batch.take() {
+        let _ = app.emit(&format!("pty-output-{id}"), data);
     }
 }
 

@@ -2,6 +2,7 @@
 //! (`bento-core`); esto solo habla con él a través de `client`.
 
 mod client;
+mod output_batch;
 
 pub use client::{kill_all, PtyManager};
 
