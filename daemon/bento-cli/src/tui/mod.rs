@@ -383,28 +383,22 @@ async fn run_app(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()>
                             Event::Key(key) => session.send_key(key),
                             // Handed to the remote program while it has asked
                             // for the mouse: vim and htop are unusable without
-                            // it. The rail's own mouse waits until they give
-                            // it back.
-                            Event::Mouse(mouse) if screen.wants_mouse() => {
-                                let area = terminals::terminal_area(
-                                    terminal.size()?.into(), sidebar_width, &status,
-                                );
-                                let inside = mouse.column >= area.x
-                                    && mouse.row >= area.y
-                                    && mouse.column < area.x + area.width
-                                    && mouse.row < area.y + area.height;
-                                if inside {
-                                    if let Some(bytes) = screen::encode_mouse(
-                                        mouse.kind, mouse.column - area.x, mouse.row - area.y,
-                                    ) {
-                                        session.write(bytes);
-                                    }
+                            // it. Only on its own screen: the rail keeps its
+                            // clicks, so another terminal can still be chosen.
+                            Event::Mouse(mouse) if terminals::is_for_program(
+                                screen.wants_mouse(),
+                                mouse,
+                                terminals::terminal_area(terminal.size()?.into(), sidebar_width, &status),
+                            ) => {
+                                let area = terminals::terminal_area(terminal.size()?.into(), sidebar_width, &status);
+                                if let Some(bytes) = screen::encode_mouse(mouse.kind, mouse.column - area.x, mouse.row - area.y) {
+                                    session.write(bytes);
                                 }
                             }
                             // Sin un programa que pida el ratón, la rueda es
                             // lo mismo que ⇧RePág: mirar lo que ya salió. El
                             // scrollback cuenta al revés, hacia atrás.
-                            Event::Mouse(mouse) if is_wheel(mouse) => {
+                            Event::Mouse(mouse) if is_wheel(mouse) && !screen.wants_mouse() => {
                                 let (burst, _) = drain_wheel(&mut events, mouse).await;
                                 if let Some(step) = wheel.add(burst) {
                                     screen.scroll_back(-i32::from(step));

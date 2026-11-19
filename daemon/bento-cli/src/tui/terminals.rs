@@ -228,6 +228,14 @@ fn location(cwd: &str, branch: Option<&str>, sidebar_width: u16) -> String {
     format!("{} · {branch}", short_cwd(cwd, sidebar_width.saturating_sub(branch_width)))
 }
 
+/// Whether a mouse event belongs to the program in the terminal rather than
+/// to the panel: it asked for the mouse and the pointer is on its screen. The
+/// rail stays the panel's, or no other terminal could be chosen with a click
+/// while an agent that tracks the mouse is open.
+pub(super) fn is_for_program(wants_mouse: bool, mouse: crossterm::event::MouseEvent, terminal: Rect) -> bool {
+    wants_mouse && terminal.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+}
+
 /// Whether a terminal of `size` (rows, cols) is too big to be seen whole in
 /// the pane drawn at `area`, borders included.
 fn is_cropped(size: (u16, u16), area: Rect) -> bool {
@@ -832,6 +840,19 @@ mod tests {
         assert!(!needs_claim((40, 120), Some((40, 120))));
         // Unknown size: the connect already asked for ours.
         assert!(!needs_claim((40, 120), None));
+    }
+
+    // An agent that asked for the mouse gets the clicks on its own screen, not
+    // the ones on the rail: those still choose another terminal.
+    #[test]
+    fn a_click_on_the_rail_is_not_handed_to_the_program_that_wants_the_mouse() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let click = |column, row| MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column, row, modifiers: KeyModifiers::NONE };
+        let terminal = Rect::new(30, 1, 50, 20);
+
+        assert!(is_for_program(true, click(40, 5), terminal));
+        assert!(!is_for_program(true, click(5, 5), terminal));
+        assert!(!is_for_program(false, click(40, 5), terminal));
     }
 
     #[test]
