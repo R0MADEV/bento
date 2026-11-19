@@ -38,15 +38,18 @@ pub(crate) async fn run(args: &[String]) -> std::io::Result<()> {
     }
 }
 
-/// Retoma una sesión de agente en su propio PTY. El comando lo arma
-/// `bento_sessions`, que sabe cómo lo llama cada agente (y de paso quita el
-/// lock que Codex se deja puesto).
+/// Resumes an agent session in a terminal of its own. `bento_sessions` gives
+/// the command and the folder by the rules the app and the daemon resume
+/// with: the session has to be on disk, and Claude's only resumes from the
+/// folder it is filed under, wherever this was run from.
 async fn resume_session(args: &[String], agent: &str, session: &str) -> std::io::Result<()> {
-    let command = match bento_sessions::resume_command(agent, session) {
+    let asked_in = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+    let record = bento_sessions::AgentRecord::to_resume(agent, Some(session.to_string()), claude_config_dir(args), asked_in.clone());
+    let command = match bento_sessions::resume_command(&record) {
         Ok(command) => command,
         Err(error) => { eprintln!("bento: {error}"); return Ok(()) }
     };
-    let cwd = flag(args, "--cwd").unwrap_or_else(current_dir_string);
+    let cwd = bento_sessions::resume_folder(&record).unwrap_or(asked_in);
     let body = json!({ "id": "1", "cmd": "terminal.open", "command": command, "cwd": cwd });
     let opened = request_data(with_claude_config_dir(body, claude_config_dir(args))).await?;
     let pty_id = opened.get("pty_id").and_then(Value::as_str).unwrap_or("?");
