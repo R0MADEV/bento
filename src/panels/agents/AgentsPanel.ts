@@ -3,7 +3,7 @@ import { buildAgentRename } from './agentRename'
 import { buildSessionCapture } from './agentSessionCapture'
 import { appT } from '../../core/i18n'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { createListenerScope } from '../../adapters/listenerScope'
 import { createAgentStore } from '../../core/terminal/agentStore'
 import { createTerminalPanel, forgetTerminalCwd, type TerminalPanelHandle } from '../terminal/TerminalPanel'
 import { detectAgentCmd, resolveAgentIdentity } from '../../core/ai/detectAgent'
@@ -383,14 +383,14 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
     // Renombrado desde la CLI o el móvil: el nombre del agente y el título del
     // pty son el mismo nombre, y hasta ahora solo viajaba de aquí hacia fuera
     // (`pty_set_title`). Al volver, la lista se quedaba con el viejo.
-    let offRemoteTitle = (): void => {}
-    void listen<string>(`pty-title-${ptyId}`, event => {
+    const remoteTitle = createListenerScope()
+    void remoteTitle.listen<string>(`pty-title-${ptyId}`, event => {
       const name = event.payload.trim()
       if (!name || name === agentSlot.customName) return
       agentSlot.customName = name
       persistNow()
       renderSidebar()
-    }).then(un => { offRemoteTitle = un })
+    })
     // Bell from a background agent = it wants the user's eyes → flag immediately.
     const offBell = handle.onBell(() => {
       const id = handle.getPtyId()
@@ -398,7 +398,7 @@ export function createAgentsPanel(projectPath = '', opts: AgentsPanelOptions = {
       attention.set(id, 'bell')
       renderSidebar()
     })
-    agentSlot.titleCleanup = () => { offTitle(); offBell(); offRemoteTitle() }
+    agentSlot.titleCleanup = () => { offTitle(); offBell(); remoteTitle.close() }
 
     if (savedCmd || savedSnapshot) {
       void handle.spawned.then(reattached => {

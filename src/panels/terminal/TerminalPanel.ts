@@ -7,7 +7,8 @@ import { Unicode11Addon } from 'xterm-addon-unicode11'
 import { SerializeAddon } from 'xterm-addon-serialize'
 import { invoke } from '@tauri-apps/api/core'
 import { createOutputAcks } from '../../core/terminal/outputAcks'
-import { listen } from '@tauri-apps/api/event'
+import type { EventCallback } from '@tauri-apps/api/event'
+import { createListenerScope } from '../../adapters/listenerScope'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { getTheme, themeNames } from '../../core/terminal/themes'
 import { mix, isDark } from '../../core/terminal/color'
@@ -199,14 +200,12 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   const id = stablePtyId || `pty-${++ptyCounter}`
   store?.register(id, projectPath || 'Terminal')
   let disposed = false
-  const eventUnlisteners: Array<() => void> = []
-
-  const listenTo = <T>(eventName: string, handler: Parameters<typeof listen<T>>[1]): void => {
-    void listen<T>(eventName, handler).then(unlisten => {
-      if (disposed) unlisten()
-      else eventUnlisteners.push(unlisten)
-    }).catch(() => {})
-  }
+  const listeners = createListenerScope()
+  const listenTo = <T>(eventName: string, handler: EventCallback<T>): void => { void listeners.listen<T>(eventName, handler) }
+  // The PTY starts only once its output listener is in: output sent before it
+  // would never be painted, nor acked to the daemon's flow control.
+  let markOutputListening = (): void => {}
+  const outputListening = new Promise<void>(resolve => { markOutputListening = resolve })
 
   // Restore the directory the terminal was in last session, so the (restored)
   // prompt matches reality and `lexis ask` / commands run in the right project.
@@ -219,7 +218,8 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
 
   const spawnShell = (shellPath: string): Promise<boolean> => {
     const resolved = shellPath === 'auto' ? (navigator.platform.includes('Win') ? 'powershell.exe' : '/bin/sh') : shellPath
-    return invoke<boolean>('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null, command: execCommand ?? null, title: ptyTitle ?? null })
+    return outputListening
+      .then(() => invoke<boolean>('pty_spawn', { id, shell: resolved, rows: term.rows, cols: term.cols, cwd: lastCwd || null, command: execCommand ?? null, title: ptyTitle ?? null }))
       .catch(err => { term.writeln(`\r\n\x1b[31mError PTY: ${err}\x1b[0m`); return false })
   }
 
@@ -274,7 +274,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   // Acked once painted: the daemon pauses a flooding program meanwhile.
   const acks = createOutputAcks(chars => { invoke('pty_ack', { id, chars }).catch(() => {}) })
   const paint = (text: string) => term.write(text, () => acks.painted(text.length))
-  listenTo<string>(`pty-output-${id}`, event => {
+  void listeners.listen<string>(`pty-output-${id}`, event => {
     if (!firstOutputSeen) { firstOutputSeen = true; setTimeout(markShellReady, 150) }
     pending += event.payload
     const { flush, keep } = splitAtSyncBoundary(pending)
@@ -287,7 +287,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
     if (safety) clearTimeout(safety)
     // Never hold an unterminated frame indefinitely (spec uses a ~150ms cap).
     safety = pending ? setTimeout(() => { paint(pending); pending = '' }, 150) : undefined
-  })
+  }).then(markOutputListening)
 
   // The shell exited on its own (the user typed `exit`): close the panel. Skip
   // if we're already disposing (closing the panel kills the PTY, firing this too).
@@ -437,7 +437,7 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   }, { passive: false, capture: true })
 
   root.addEventListener('click', () => { term.focus(); claimSize() })
-  eventUnlisteners.push(correctPointerForZoom(root))
+  const stopZoomPointerFix = correctPointerForZoom(root)
   setTimeout(() => term.focus(), 100)
 
   // Output written while hidden makes xterm 5.3 size its scroll area with a 0px
@@ -503,7 +503,8 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
       try { localStorage.setItem(CWD_KEY(panelId), lastCwd) } catch { /* storage full */ }
     }
     observer.disconnect()
-    eventUnlisteners.splice(0).forEach(unlisten => unlisten())
+    listeners.close()
+    stopZoomPointerFix()
     unsubscribeTheme()
     root.removeEventListener('focusin', onRootFocus)
     agentStatus.dispose()
