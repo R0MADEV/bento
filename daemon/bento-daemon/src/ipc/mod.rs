@@ -193,7 +193,12 @@ pub(crate) type Subscriptions = std::collections::HashMap<String, Option<Arc<ben
 fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>, review_tasks: &mut Vec<tokio::task::JoinHandle<()>>, subscribed: &mut Subscriptions) {
     let send = |line: String| { let _ = out.send(line); };
     match req.cmd.as_str() {
-        "daemon.status" => send(ok(&req.id, json!({ "terminals": manager.list().len() }))),
+        "daemon.status" => send(ok(&req.id, json!({
+            "terminals": manager.list().len(),
+            "stale": bento_core::daemon_process::running_binary_replaced(*crate::STARTED_AT),
+            "protocol": bento_core::daemon_process::PROTOCOL,
+            "pid": std::process::id(),
+        }))),
 
         "terminals.list" => {
             let list: Vec<Value> = manager.list().iter().map(crate::agents::describe).collect();
@@ -507,5 +512,30 @@ mod tests {
         assert!(unacked > 0, "no output at all");
         assert!(unacked < 2_000_000, "{unacked} chars sent without any ack");
         assert!(after_ack > 0, "the ack did not resume the terminal");
+    }
+
+    /// Clients reuse a running daemon instead of replacing it, so they need to
+    /// know when it is running a binary that has since been rebuilt.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_status_says_whether_the_running_binary_was_replaced() {
+        let manager = PtyManager::default();
+        let remote = RemoteControl::default();
+        let (out, mut out_rx) = mpsc::unbounded_channel();
+
+        dispatch(
+            request(json!({ "id": "1", "cmd": "daemon.status" })),
+            &manager,
+            &remote,
+            &out,
+            &mut Vec::new(),
+            &mut Subscriptions::new(),
+        );
+
+        let reply: Value = serde_json::from_str(&out_rx.try_recv().expect("reply")).expect("json");
+        // This test binary was built before it started, so it is current.
+        assert_eq!(reply["data"]["stale"], json!(false));
+        // Clients replace a daemon that speaks another protocol, and stop it by pid.
+        assert_eq!(reply["data"]["protocol"], json!(bento_core::daemon_process::PROTOCOL));
+        assert_eq!(reply["data"]["pid"], json!(std::process::id()));
     }
 }

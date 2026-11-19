@@ -29,8 +29,6 @@ pub struct PtyManager {
     counter: AtomicU64,
     /// Stored so `ensure_connected` can reconnect without needing an AppHandle parameter.
     app: Arc<Mutex<Option<AppHandle>>>,
-    /// Child handle of the daemon we spawned — used to kill it on shutdown.
-    daemon_child: Arc<Mutex<Option<std::process::Child>>>,
     /// Serializes connect attempts: the app-startup connect and any command
     /// racing in via `ensure_connected` must not both kill+respawn the daemon
     /// concurrently, or whichever's server lands on the loser's daemon dies
@@ -47,7 +45,6 @@ impl Default for PtyManager {
             pending: Arc::new(Mutex::new(HashMap::new())),
             counter: AtomicU64::new(0),
             app: Arc::new(Mutex::new(None)),
-            daemon_child: Arc::new(Mutex::new(None)),
             connect_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -55,8 +52,10 @@ impl Default for PtyManager {
 
 impl PtyManager {
     /// Connect to the daemon and start forwarding its output to the frontend.
-    /// Always kills any running daemon first so the freshly compiled binary is used.
-    /// Safe to call again after a disconnect — replaces the old connection.
+    /// Reuses the daemon already running — whoever started it, CLI or app — so
+    /// its terminals and phone server carry on; it is replaced only when its
+    /// binary was rebuilt since it started. Safe to call again after a
+    /// disconnect — replaces the old connection.
     pub async fn connect(&self, app: AppHandle) -> Result<(), String> {
         let _guard = self.connect_lock.lock().await;
         self.connect_locked(app).await
@@ -65,25 +64,7 @@ impl PtyManager {
     async fn connect_locked(&self, app: AppHandle) -> Result<(), String> {
         *self.app.lock().unwrap() = Some(app.clone());
 
-        // Kill any daemon we started in this session.
-        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        // Kill any orphaned daemon from a previous session.
-        kill_existing_daemon();
-        // Brief pause so the port is freed before we try to bind again.
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        if let Some(child) = spawn_daemon() {
-            *self.daemon_child.lock().unwrap() = Some(child);
-        }
-        for _ in 0..40 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            if TcpStream::connect(&self.addr).await.is_ok() {
-                break;
-            }
-        }
+        self.start_daemon_unless_current().await;
         let stream = TcpStream::connect(&self.addr)
             .await
             .map_err(|e| e.to_string())?;
@@ -173,6 +154,18 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Leave a current daemon alone; stop an outdated one; start one when none
+    /// is answering.
+    async fn start_daemon_unless_current(&self) {
+        match decide(&probe(&self.addr).await) {
+            Action::Reuse => return,
+            Action::Replace { pid } => stop_daemon(&self.addr, pid).await,
+            Action::Start => {}
+        }
+        spawn_daemon();
+        wait_until(&self.addr, true).await;
+    }
+
     /// Reconnect to the daemon if the connection is gone. No-op when already connected.
     /// Guarded by the same lock as `connect` so a command racing in while the
     /// app-startup connect is still in flight waits for it instead of also
@@ -204,17 +197,6 @@ impl PtyManager {
             *self.tx.lock().unwrap() = None;
         }
         result.map_err(|_| "bento-daemon disconnected".to_string())
-    }
-
-    /// Kill the daemon process. Reliable even if the IPC channel is gone.
-    pub fn send_shutdown(&self) {
-        if let Some(mut child) = self.daemon_child.lock().unwrap().take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        } else {
-            // Fallback: daemon was started by a previous session.
-            kill_existing_daemon();
-        }
     }
 
     /// Send a command and await its reply. Auto-reconnects if the daemon died.
@@ -251,20 +233,111 @@ fn flush_output(app: &AppHandle, batch: &mut OutputBatch) {
     }
 }
 
-/// Terminals live in the daemon, so app shutdown no longer kills them.
-pub fn kill_all(_manager: &PtyManager) {}
-
-/// Kill any running bento-daemon process.
-fn kill_existing_daemon() {
-    #[cfg(unix)]
-    let _ = std::process::Command::new("pkill").args(["-f", "bento-daemon"]).output();
-    #[cfg(windows)]
-    let _ = std::process::Command::new("taskkill").args(["/F", "/IM", "bento-daemon.exe"]).output();
+/// What a look at the daemon's port found.
+#[derive(Debug, PartialEq)]
+enum Probe {
+    /// Nothing is listening.
+    Absent,
+    /// Something is listening but did not answer `daemon.status` in time.
+    NoReply,
+    /// Its `daemon.status`.
+    Answered(Value),
 }
 
-/// Launch the daemon and return the child handle so we can kill it on shutdown.
-fn spawn_daemon() -> Option<std::process::Child> {
-    daemon_binary().and_then(|b| std::process::Command::new(b).spawn().ok())
+#[derive(Debug, PartialEq)]
+enum Action {
+    Reuse,
+    Replace { pid: Option<u32> },
+    Start,
+}
+
+/// Reuse a daemon that speaks this app's protocol on a current binary. Replace
+/// one running a rebuilt binary, another protocol, or too old to say. A daemon
+/// that is slow to answer is never replaced: it may be busy, and replacing it
+/// would take the user's terminals with it.
+fn decide(probe: &Probe) -> Action {
+    let status = match probe {
+        Probe::Absent => return Action::Start,
+        Probe::NoReply => return Action::Reuse,
+        Probe::Answered(status) => status,
+    };
+    let is_stale = status.get("stale").and_then(Value::as_bool).unwrap_or(true);
+    let protocol = status.get("protocol").and_then(Value::as_u64);
+    let speaks_our_protocol = protocol == Some(u64::from(bento_core::daemon_process::PROTOCOL));
+    if !is_stale && speaks_our_protocol {
+        return Action::Reuse;
+    }
+    let pid = status.get("pid").and_then(Value::as_u64).and_then(|pid| u32::try_from(pid).ok());
+    Action::Replace { pid }
+}
+
+/// Ask the daemon on `addr` for its status, giving a busy one a few chances.
+async fn probe(addr: &str) -> Probe {
+    for _ in 0..3 {
+        let Ok(mut stream) = TcpStream::connect(addr).await else { return Probe::Absent };
+        let ask = async {
+            stream.write_all(b"{\"id\":\"status\",\"cmd\":\"daemon.status\"}\n").await.ok()?;
+            let line = BufReader::new(&mut stream).lines().next_line().await.ok()??;
+            serde_json::from_str::<Value>(&line).ok()?.get("data").cloned()
+        };
+        if let Ok(Some(status)) = tokio::time::timeout(Duration::from_secs(2), ask).await {
+            return Probe::Answered(status);
+        }
+    }
+    Probe::NoReply
+}
+
+/// Ask the daemon to exit and wait for its port to free; kill that one process
+/// if it will not go. Its terminals go with it: they are its child processes.
+async fn stop_daemon(addr: &str, pid: Option<u32>) {
+    if let Ok(mut stream) = TcpStream::connect(addr).await {
+        let _ = stream.write_all(b"{\"id\":\"stop\",\"cmd\":\"daemon.shutdown\"}\n").await;
+    }
+    if wait_until(addr, false).await {
+        return;
+    }
+    let Some(pid) = pid else {
+        eprintln!("bento: the old daemon did not stop and did not say its pid");
+        return;
+    };
+    kill_process(pid);
+    wait_until(addr, false).await;
+}
+
+fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+    #[cfg(windows)]
+    let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
+}
+
+/// Poll for up to four seconds until the daemon is answering (or has
+/// stopped answering); reports whether it got there.
+async fn wait_until(addr: &str, answering: bool) -> bool {
+    for _ in 0..40 {
+        if TcpStream::connect(addr).await.is_ok() == answering {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    false
+}
+
+/// Launch the daemon detached, so it keeps serving the CLI and the phone after
+/// the app quits.
+fn spawn_daemon() {
+    let Some(binary) = daemon_binary() else {
+        eprintln!("bento: bento-daemon binary not found");
+        return;
+    };
+    match bento_core::daemon_process::spawn_detached(std::process::Command::new(binary)) {
+        // Reap it if it exits while the app is still open, so it does not
+        // linger as a zombie; once the app quits, launchd/init adopts it.
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(error) => eprintln!("bento: could not start bento-daemon ({error})"),
+    }
 }
 
 /// Locate the bento-daemon binary: explicit override → bundled sidecar → dev workspace.
@@ -307,4 +380,51 @@ fn dev_daemon(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
         .join(profile)
         .join(name);
     candidate.exists().then_some(candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bento_core::daemon_process::PROTOCOL;
+
+    fn status(body: Value) -> Probe {
+        Probe::Answered(body)
+    }
+
+    #[test]
+    fn a_current_daemon_is_reused() {
+        let probe = status(json!({ "stale": false, "protocol": PROTOCOL, "pid": 7 }));
+        assert_eq!(decide(&probe), Action::Reuse);
+    }
+
+    #[test]
+    fn a_daemon_running_a_rebuilt_binary_is_replaced() {
+        let probe = status(json!({ "stale": true, "protocol": PROTOCOL, "pid": 7 }));
+        assert_eq!(decide(&probe), Action::Replace { pid: Some(7) });
+    }
+
+    /// A daemon started from another build (the CLI's, say) is not stale by
+    /// its own binary, but it may not understand what this app sends.
+    #[test]
+    fn a_daemon_speaking_another_protocol_is_replaced() {
+        let probe = status(json!({ "stale": false, "protocol": PROTOCOL - 1, "pid": 7 }));
+        assert_eq!(decide(&probe), Action::Replace { pid: Some(7) });
+    }
+
+    /// Daemons from before `stale`/`protocol` existed cannot say, and they are old code.
+    #[test]
+    fn a_daemon_that_cannot_tell_is_replaced() {
+        assert_eq!(decide(&status(json!({ "terminals": 2 }))), Action::Replace { pid: None });
+    }
+
+    /// Slow is not dead: a busy daemon holds the user's terminals.
+    #[test]
+    fn a_daemon_that_does_not_answer_in_time_is_left_alone() {
+        assert_eq!(decide(&Probe::NoReply), Action::Reuse);
+    }
+
+    #[test]
+    fn with_no_daemon_one_is_started() {
+        assert_eq!(decide(&Probe::Absent), Action::Start);
+    }
 }

@@ -4,7 +4,7 @@
 mod client;
 mod output_batch;
 
-pub use client::{kill_all, PtyManager};
+pub use client::PtyManager;
 
 use std::sync::Arc;
 

@@ -71,7 +71,8 @@ fn main() {
             }
             if let Some(window) = app.get_webview_window("main") {
                 let manager = app.state::<agent::AgentManager>().inner().clone();
-                let pty_manager = app.state::<Arc<pty::PtyManager>>().inner().clone();
+                // The daemon is left running on close: the CLI and the phone
+                // keep using its terminals, and the next launch reattaches.
                 let closing = Arc::new(AtomicBool::new(false));
                 let close_window = window.clone();
                 let fit_window = window.clone();
@@ -88,12 +89,9 @@ fn main() {
                         }
                         api.prevent_close();
                         let manager = manager.clone();
-                        let pty_manager = pty_manager.clone();
                         let window = close_window.clone();
                         tauri::async_runtime::spawn(async move {
                             agent::cancel_all(&manager).await;
-                            pty_manager.send_shutdown();
-                            pty::kill_all(&pty_manager);
                             let _ = window.close();
                         });
                     }

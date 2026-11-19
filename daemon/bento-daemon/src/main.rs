@@ -9,6 +9,11 @@ mod remote;
 use bento_core::PtyManager;
 use remote::RemoteControl;
 
+/// When this daemon started: a binary modified after it is a newer build than
+/// the code running, which `daemon.status` reports as `stale`.
+static STARTED_AT: std::sync::LazyLock<std::time::SystemTime> =
+    std::sync::LazyLock::new(std::time::SystemTime::now);
+
 /// Keeps the computer from going to sleep on its own while the daemon runs:
 /// asleep, the agents stop and the phone can no longer reach them. Putting it
 /// to sleep by hand, or closing the lid, still works. `caffeinate -w` waits
@@ -33,6 +38,7 @@ fn stay_awake() {}
 
 #[tokio::main]
 async fn main() {
+    std::sync::LazyLock::force(&STARTED_AT);
     let addr = std::env::var("BENTO_DAEMON_ADDR").unwrap_or_else(|_| "127.0.0.1:7877".into());
     let manager = PtyManager::new();
     let remote = RemoteControl::default();

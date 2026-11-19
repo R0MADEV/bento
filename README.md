@@ -88,7 +88,10 @@ npm run tauri:dev            # 3. the desktop app
 The phone has no command of its own: turn its server on from the desktop's
 Phone Remote panel, which is what asks the daemon to start it.
 
-The desktop app starts the daemon itself when none is answering. The CLI does
+The desktop app starts the daemon itself when none is answering, reuses the one
+already running otherwise, and leaves it running when you quit — the CLI and
+the phone keep their terminals. It only replaces a daemon whose binary was
+rebuilt since it started (`bento daemon status` shows that as `stale`). The CLI does
 not: run `bento daemon start` first, or `bento daemon install` once and let
 launchd/systemd keep it up — that is also what brings it back if it dies.
 
