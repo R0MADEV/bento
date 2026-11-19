@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => {
   })
   const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === 'chat_history_load') return loadedHistory
-    if (command === 'agent_claude_session_exists' || command === 'agent_codex_session_exists') return true
+    if (command === 'agent_resumable_session') return (args as { sessionId: string }).sessionId
     if (command === 'review_branch_context_prepare') {
       return {
         path: `/managed/${args?.reference}`,

@@ -19,11 +19,10 @@ interface ReviewBranchContextResult {
   stale: boolean
 }
 
-async function verifyResumableSession(agent: AgentType, cwd: string, sessionId: string): Promise<string | null> {
-  if (agent === 'claude') return (await invoke<boolean>('agent_claude_session_exists', { cwd, sessionId }).catch(() => false)) ? sessionId : null
-  if (agent === 'codex') return (await invoke<boolean>('agent_codex_session_exists', { sessionId }).catch(() => false)) ? sessionId : null
-  return sessionId
-}
+// The session the agent can continue in `cwd`, by the rule shared with the
+// daemon (`bento_sessions::resumable_in_place`); null means starting afresh.
+const verifyResumableSession = (agent: AgentType, cwd: string, sessionId: string): Promise<string | null> =>
+  invoke<string | null>('agent_resumable_session', { agent, cwd, sessionId }).catch(() => null)
 
 // Orden en el que ir cayendo cuando un agente se queda sin capacidad (custom
 // no entra: necesita un ejecutable explícito). La transcripción lleva el

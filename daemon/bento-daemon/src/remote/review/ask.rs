@@ -42,7 +42,12 @@ pub(crate) async fn ask(cwd: &str, base: &str, agent: &str, question: &str, tx: 
     let session_id = cp.session_id.clone();
     let session_agent = cp.session_agent.clone().unwrap_or_else(|| agent.to_string());
 
-    if let Some(sid) = session_id {
+    // A session that is no longer on disk cannot be continued: asking it would
+    // only fail, so the question falls back to the saved analysis, as in the app.
+    let resumable = session_id.and_then(|sid| {
+        bento_sessions::resumable_in_place(&bento_sessions::AgentRecord::to_resume(&session_agent, Some(sid), None, cwd.to_string()))
+    });
+    if let Some(sid) = resumable {
         // Resume the actual synthesis session — it already has full review context
         resume_agent(&session_agent, cwd, &sid, question, &tx).await;
     } else {

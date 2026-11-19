@@ -9,7 +9,7 @@ use serde::Serialize;
 mod registry;
 mod running;
 mod scrollback;
-pub use registry::{load_records, registry_path, resume_folder, resume_line, save_records, updated_record, verified_resume_line, AgentRecord};
+pub use registry::{load_records, registry_path, resumable_in_place, resume_command, resume_folder, resume_line, resume_line_for_shell, save_records, updated_record, verified_resume_line, AgentRecord};
 pub use running::{running_agent, RunningAgent};
 pub use scrollback::{chat_load, chat_save, history_clear, history_load, history_save};
 
@@ -230,29 +230,6 @@ pub fn list(cwd: &str, claude_config_dir: Option<&str>) -> Vec<Session> {
     sessions
 }
 
-/// Con qué comando se retoma una sesión. Cada agente lo llama a su manera.
-pub fn resume_command(agent: &str, session_id: &str) -> Result<Vec<String>, String> {
-    // El guion inicial es lo que importa: `--dangerously-skip-permissions` pasa
-    // el filtro de caracteres y el agente lo leería como opción, no como id.
-    let is_safe_id = !session_id.is_empty()
-        && !session_id.starts_with('-')
-        && session_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-    if !is_safe_id {
-        return Err(format!("id de sesión inválido: {session_id}"));
-    }
-    match agent {
-        "claude" => Ok(vec!["claude".into(), "--resume".into(), session_id.into()]),
-        "codex" => {
-            codex_clear_lock(session_id);
-            Ok(vec!["codex".into(), "resume".into(), session_id.into()])
-        }
-        "opencode" => Ok(vec!["opencode".into(), "--session".into(), session_id.into()]),
-        other => Err(format!("agente desconocido: {other}")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,30 +310,5 @@ mod tests {
     #[test]
     fn a_missing_sessions_dir_is_false_and_not_a_panic() {
         assert!(!dir_has_session(Path::new("/no/such/codex/sessions"), "any-id", 0));
-    }
-
-    #[test]
-    fn resuming_names_the_flag_each_agent_understands() {
-        assert_eq!(
-            resume_command("claude", "abc-123").unwrap(),
-            vec!["claude", "--resume", "abc-123"]
-        );
-        assert_eq!(
-            resume_command("opencode", "ses_1").unwrap(),
-            vec!["opencode", "--session", "ses_1"]
-        );
-        assert_eq!(
-            resume_command("codex", "abc").unwrap(),
-            vec!["codex", "resume", "abc"]
-        );
-    }
-
-    #[test]
-    fn an_unknown_agent_or_a_forged_session_id_is_refused() {
-        // El id llega de fuera y acaba en una línea de comandos.
-        assert!(resume_command("claude", "").is_err());
-        assert!(resume_command("claude", "--dangerously-skip-permissions").is_err());
-        assert!(resume_command("claude", "a b").is_err());
-        assert!(resume_command("gemini", "abc").is_err());
     }
 }

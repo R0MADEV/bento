@@ -23,6 +23,22 @@ pub struct AgentRecord {
     pub branch: Option<String>,
 }
 
+impl AgentRecord {
+    /// A record for an agent that is about to be brought back in `cwd`, not
+    /// one read from the registry: it has no terminal yet.
+    pub fn to_resume(agent: &str, session_id: Option<String>, config_dir: Option<String>, cwd: String) -> Self {
+        Self {
+            pty_id: String::new(),
+            title: String::new(),
+            agent: agent.to_string(),
+            session_id,
+            config_dir,
+            cwd: Some(cwd),
+            branch: None,
+        }
+    }
+}
+
 /// What a terminal's record becomes after looking at what runs in it now.
 /// `None` is a terminal that never ran an agent.
 pub fn updated_record(
@@ -68,28 +84,32 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-/// The shell line that brings an agent back, on `session_id` when there is one.
-/// `None` for anything that is not a known agent: the line is typed into a
-/// shell, so nothing from the file may end up running as code.
-pub fn resume_line(agent: &str, session_id: Option<&str>, config_dir: Option<&str>) -> Option<String> {
-    let session = session_id.filter(|id| is_safe_id(id));
-    let line = match (agent, session) {
-        ("claude", session) => {
-            let claude = match config_dir {
-                Some(dir) => format!("CLAUDE_CONFIG_DIR={} claude", shell_quote(dir)),
-                None => "claude".to_string(),
-            };
-            match session {
-                Some(id) => format!("{claude} --resume {id}"),
-                None => claude,
-            }
-        }
-        ("codex", Some(id)) => format!("codex resume {id}"),
-        ("opencode", Some(id)) => format!("opencode --session {id}"),
-        ("codex" | "opencode", None) => agent.to_string(),
+/// The words that bring an agent back, on `session_id` when there is one: the
+/// one place that knows how each agent calls it. `None` for anything that is
+/// not a known agent, and a session that is not a plain id is left out: these
+/// words end up in a command line, so nothing from outside may run as code.
+fn resume_argv(agent: &str, session_id: Option<&str>) -> Option<Vec<String>> {
+    let flag = match agent {
+        "claude" => "--resume",
+        "codex" => "resume",
+        "opencode" => "--session",
         _ => return None,
     };
-    Some(line)
+    let mut argv = vec![agent.to_string()];
+    if let Some(id) = session_id.filter(|id| is_safe_id(id)) {
+        argv.extend([flag.to_string(), id.to_string()]);
+    }
+    Some(argv)
+}
+
+/// `resume_argv` as a line to type into a shell, in the account Claude ran with.
+pub fn resume_line(agent: &str, session_id: Option<&str>, config_dir: Option<&str>) -> Option<String> {
+    let command = resume_argv(agent, session_id)?.join(" ");
+    let account = config_dir.filter(|_| agent == "claude");
+    Some(match account {
+        Some(dir) => format!("CLAUDE_CONFIG_DIR={} {command}", shell_quote(dir)),
+        None => command,
+    })
 }
 
 /// The folder to reopen an agent in. For Claude it is the one its conversation
@@ -103,14 +123,24 @@ pub fn resume_folder(record: &AgentRecord) -> Option<String> {
     filed_under.or_else(|| record.cwd.clone())
 }
 
-/// `resume_line` for a record, resuming only a session that is still on disk:
-/// `--resume` on one that is gone fails with "No conversation found".
-pub fn verified_resume_line(record: &AgentRecord) -> Option<String> {
-    let folder = resume_folder(record).unwrap_or_default();
-    let cwd = folder.as_str();
+/// The record's session when it can still be resumed: `--resume` on one that
+/// is gone fails with "No conversation found".
+fn resumable_session(record: &AgentRecord) -> Option<&str> {
+    session_on_disk(record, &resume_folder(record).unwrap_or_default())
+}
+
+/// The session to continue when the agent runs in the record's own folder
+/// with no shell to take it elsewhere, as a review's follow-up question does:
+/// only one that is filed under that folder.
+pub fn resumable_in_place(record: &AgentRecord) -> Option<String> {
+    session_on_disk(record, record.cwd.as_deref().unwrap_or_default()).map(str::to_string)
+}
+
+/// The record's session when it is a plain id still on disk, Claude's under `folder`.
+fn session_on_disk<'a>(record: &'a AgentRecord, folder: &str) -> Option<&'a str> {
     let config_dir = record.config_dir.as_deref();
     let is_on_disk = |id: &str| match record.agent.as_str() {
-        "claude" => crate::claude_session_exists(cwd, id, config_dir),
+        "claude" => crate::claude_session_exists(folder, id, config_dir),
         "codex" => crate::codex_session_exists(id),
         _ => true,
     };
@@ -121,7 +151,45 @@ pub fn verified_resume_line(record: &AgentRecord) -> Option<String> {
     if let Some(id) = codex_session {
         crate::codex_clear_lock(id);
     }
-    resume_line(&record.agent, session, config_dir)
+    session
+}
+
+/// `resume_line` for a record, resuming only a session that is still on disk.
+pub fn verified_resume_line(record: &AgentRecord) -> Option<String> {
+    resume_line(&record.agent, resumable_session(record), record.config_dir.as_deref())
+}
+
+/// The command for someone who asked for that very session, as
+/// `bento agent resume` does: unlike `verified_resume_line`, it refuses
+/// instead of quietly starting the agent on an empty conversation.
+pub fn resume_command(record: &AgentRecord) -> Result<Vec<String>, String> {
+    let id = record.session_id.as_deref().unwrap_or_default();
+    if !is_safe_id(id) {
+        return Err(format!("id de sesión inválido: {id}"));
+    }
+    let Some(argv) = resume_argv(&record.agent, Some(id)) else {
+        return Err(format!("agente desconocido: {}", record.agent));
+    };
+    if resumable_session(record).is_none() {
+        return Err(format!("no hay ninguna sesión guardada de {} con el id {id}", record.agent));
+    }
+    Ok(argv)
+}
+
+/// What to type to bring an agent back in a shell sitting in `shell_dir`: its
+/// `verified_resume_line`, going first to the folder the session resumes from
+/// when the shell is somewhere else.
+pub fn resume_line_for_shell(record: &AgentRecord, shell_dir: &str) -> Option<String> {
+    let line = verified_resume_line(record)?;
+    Some(from_folder(line, resume_folder(record).as_deref(), shell_dir))
+}
+
+fn from_folder(line: String, folder: Option<&str>, shell_dir: &str) -> String {
+    let elsewhere = folder.filter(|folder| !folder.is_empty() && *folder != shell_dir);
+    match elsewhere {
+        Some(folder) => format!("cd {} && {line}", shell_quote(folder)),
+        None => line,
+    }
 }
 
 #[cfg(test)]
@@ -243,6 +311,70 @@ mod tests {
             resume_line("claude", None, Some("/tmp/it's here")).as_deref(),
             Some("CLAUDE_CONFIG_DIR='/tmp/it'\\''s here' claude"),
         );
+    }
+
+    // A session only resumes from the folder it is filed under, and the shell
+    // the line is typed into may be sitting somewhere else.
+    #[test]
+    fn the_command_first_moves_the_shell_to_the_agents_folder() {
+        let agent = record("opencode", Some("ses_1"));
+        assert_eq!(resume_line_for_shell(&agent, "/elsewhere").as_deref(), Some("cd '/repo' && opencode --session ses_1"));
+        assert_eq!(resume_line_for_shell(&agent, "/repo").as_deref(), Some("opencode --session ses_1"));
+    }
+
+    #[test]
+    fn the_folder_is_quoted_for_the_shell() {
+        assert_eq!(from_folder("codex".into(), Some("/tmp/it's here"), "/repo"), "cd '/tmp/it'\\''s here' && codex");
+        assert_eq!(from_folder("codex".into(), None, "/repo"), "codex");
+    }
+
+    #[test]
+    fn there_is_no_command_for_something_that_is_not_an_agent() {
+        assert_eq!(resume_line_for_shell(&record("vim", None), "/repo"), None);
+    }
+
+    // The app, the daemon and `bento agent resume` all start from these words,
+    // so an agent comes back the same way whoever brings it back.
+    #[test]
+    fn every_way_of_resuming_names_the_flag_each_agent_understands() {
+        let words = |agent, session| resume_argv(agent, session).map(|argv| argv.join(" "));
+        assert_eq!(words("claude", Some("abc-123")).as_deref(), Some("claude --resume abc-123"));
+        assert_eq!(words("codex", Some("abc")).as_deref(), Some("codex resume abc"));
+        assert_eq!(words("opencode", Some("ses_1")).as_deref(), Some("opencode --session ses_1"));
+        assert_eq!(words("claude", None).as_deref(), Some("claude"));
+        assert_eq!(words("gemini", Some("abc")), None);
+    }
+
+    #[test]
+    fn an_explicit_resume_gives_the_command_to_run() {
+        let asked = AgentRecord::to_resume("opencode", Some("ses_1".into()), None, "/repo".into());
+        assert_eq!(resume_command(&asked).unwrap(), vec!["opencode", "--session", "ses_1"]);
+    }
+
+    // The id comes from outside and ends up in a command line. The leading dash
+    // is what matters: `--dangerously-skip-permissions` passes the character
+    // filter and the agent would read it as an option, not as an id.
+    #[test]
+    fn an_explicit_resume_refuses_what_it_cannot_resume() {
+        let asked = |agent: &str, session: &str| AgentRecord::to_resume(agent, Some(session.into()), None, "/repo".into());
+        assert!(resume_command(&asked("claude", "")).is_err());
+        assert!(resume_command(&asked("claude", "--dangerously-skip-permissions")).is_err());
+        assert!(resume_command(&asked("claude", "a b")).is_err());
+        assert!(resume_command(&asked("gemini", "abc")).is_err());
+        assert!(resume_command(&AgentRecord::to_resume("opencode", None, None, "/repo".into())).is_err());
+        // A session that is not on disk would only start an empty conversation.
+        assert!(resume_command(&asked("claude", "bento-test-no-such-session")).is_err());
+    }
+
+    // Run with no shell around it, as a review's follow-up question is, an
+    // agent can only continue a session filed under the folder it runs in.
+    #[test]
+    fn a_session_continues_in_place_only_when_it_is_there() {
+        let here = |agent: &str, session: &str| AgentRecord::to_resume(agent, Some(session.into()), None, "/repo".into());
+        assert_eq!(resumable_in_place(&here("opencode", "ses_1")).as_deref(), Some("ses_1"));
+        assert_eq!(resumable_in_place(&here("claude", "bento-test-no-such-session")), None);
+        assert_eq!(resumable_in_place(&here("codex", "bento-test-no-such-session")), None);
+        assert_eq!(resumable_in_place(&here("opencode", "--help")), None);
     }
 
     // The line is typed into a shell: nothing from the file may run as code.
