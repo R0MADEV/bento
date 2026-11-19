@@ -149,6 +149,7 @@ fn main() {
             pty::pty_list,
             pty::pty_agent,
             pty::pty_write,
+            pty::pty_ack,
             pty::pty_resize,
             pty::pty_kill,
             pty::remote_start,

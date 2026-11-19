@@ -6,6 +6,7 @@ import { SearchAddon } from 'xterm-addon-search'
 import { Unicode11Addon } from 'xterm-addon-unicode11'
 import { SerializeAddon } from 'xterm-addon-serialize'
 import { invoke } from '@tauri-apps/api/core'
+import { createOutputAcks } from '../../core/terminal/outputAcks'
 import { listen } from '@tauri-apps/api/event'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { getTheme, themeNames } from '../../core/terminal/themes'
@@ -270,19 +271,22 @@ export function createTerminalPanel(panelId = '', projectPath = '', onExit?: () 
   // buffer and only write complete frames (see splitAtSyncBoundary).
   let pending = ''
   let safety: ReturnType<typeof setTimeout> | undefined
+  // Acked once painted: the daemon pauses a flooding program meanwhile.
+  const acks = createOutputAcks(chars => { invoke('pty_ack', { id, chars }).catch(() => {}) })
+  const paint = (text: string) => term.write(text, () => acks.painted(text.length))
   listenTo<string>(`pty-output-${id}`, event => {
     if (!firstOutputSeen) { firstOutputSeen = true; setTimeout(markShellReady, 150) }
     pending += event.payload
     const { flush, keep } = splitAtSyncBoundary(pending)
     pending = keep
     if (flush) {
-      term.write(flush)
+      paint(flush)
       tracker.onOutput(root.contains(document.activeElement))
       agentStatus.onOutput()
     }
     if (safety) clearTimeout(safety)
     // Never hold an unterminated frame indefinitely (spec uses a ~150ms cap).
-    safety = pending ? setTimeout(() => { term.write(pending); pending = '' }, 150) : undefined
+    safety = pending ? setTimeout(() => { paint(pending); pending = '' }, 150) : undefined
   })
 
   // The shell exited on its own (the user typed `exit`): close the panel. Skip

@@ -32,7 +32,7 @@ pub async fn pty_spawn(
     });
     let data = manager.request(open).await?;
     let reattached = data.get("reattached").and_then(Value::as_bool).unwrap_or(false);
-    manager.send(json!({ "cmd": "terminal.subscribe", "pty_id": id }).to_string())?;
+    manager.send(json!({ "cmd": "terminal.subscribe", "pty_id": id, "flow": true }).to_string())?;
     Ok(reattached)
 }
 
@@ -69,6 +69,12 @@ pub async fn pty_agent(id: String, state: tauri::State<'_, Arc<PtyManager>>) -> 
 #[tauri::command]
 pub fn pty_write(id: String, data: String, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
     state.send(json!({ "cmd": "terminal.write", "pty_id": id, "data": data }).to_string())
+}
+
+/// xterm painted `chars` (UTF-16 units) of this terminal's output.
+#[tauri::command]
+pub fn pty_ack(id: String, chars: u64, state: tauri::State<Arc<PtyManager>>) -> Result<(), String> {
+    state.send(json!({ "cmd": "terminal.ack", "pty_id": id, "chars": chars }).to_string())
 }
 
 #[tauri::command]

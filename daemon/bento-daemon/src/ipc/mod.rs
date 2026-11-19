@@ -5,6 +5,7 @@ mod tasks;
 use crate::remote::RemoteControl;
 use bento_core::{OpenOptions, PtyEvent, PtyManager};
 use serde::Deserialize;
+use std::sync::Arc;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -31,6 +32,11 @@ pub(crate) struct Request {
     pub(crate) paths: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) force: Option<bool>,
+    #[serde(default)]
+    pub(crate) flow: Option<bool>,
+    /// `terminal.ack`: output painted, in UTF-16 units.
+    #[serde(default)]
+    pub(crate) chars: Option<u64>,
     #[serde(default)]
     pub(crate) rows: Option<u16>,
     #[serde(default)]
@@ -133,7 +139,7 @@ async fn handle_conn(socket: TcpStream, manager: PtyManager, remote: RemoteContr
     // One output forwarder per terminal on this connection. The desktop
     // subscribes again for every panel that shows an already-open terminal, and
     // a second forwarder would repeat every chunk to the same client.
-    let mut subscribed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut subscribed = Subscriptions::new();
 
     let mut lines = BufReader::new(read_half).lines();
     while let Some(line) = lines.next_line().await? {
@@ -180,7 +186,11 @@ pub(crate) fn spawn_review_stream(out: mpsc::UnboundedSender<String>) -> tokio::
     tx
 }
 
-fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>, review_tasks: &mut Vec<tokio::task::JoinHandle<()>>, subscribed: &mut std::collections::HashSet<String>) {
+/// Terminals this connection already forwards, with its flow seat when it
+/// asked for flow control.
+pub(crate) type Subscriptions = std::collections::HashMap<String, Option<Arc<bento_core::FlowClient>>>;
+
+fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mpsc::UnboundedSender<String>, review_tasks: &mut Vec<tokio::task::JoinHandle<()>>, subscribed: &mut Subscriptions) {
     let send = |line: String| { let _ = out.send(line); };
     match req.cmd.as_str() {
         "daemon.status" => send(ok(&req.id, json!({ "terminals": manager.list().len() }))),
@@ -258,6 +268,13 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             _ => send(fail(&req.id, "pty_id and data required".into())),
         },
 
+        "terminal.ack" => {
+            let flow = req.pty_id.as_ref().and_then(|id| subscribed.get(id)).and_then(Option::as_ref);
+            if let (Some(flow), Some(chars)) = (flow, req.chars) {
+                flow.ack(chars as usize);
+            }
+        }
+
         "terminal.resize" => match &req.pty_id {
             Some(id) => match manager.resize(id, req.rows.unwrap_or(24), req.cols.unwrap_or(80)) {
                 Ok(()) => send(ok(&req.id, Value::Null)),
@@ -294,10 +311,11 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
             // Already forwarding this terminal to this client: a second
             // forwarder would send every chunk twice, and replaying the
             // scrollback would repaint it on the panels already showing it.
-            Some(id) if subscribed.contains(id) => send(ok(&req.id, json!({ "subscribed": id, "duplicate": true }))),
+            Some(id) if subscribed.contains_key(id) => send(ok(&req.id, json!({ "subscribed": id, "duplicate": true }))),
             Some(id) => match manager.subscribe(id) {
                 Some(mut rx) => {
-                    subscribed.insert(id.clone());
+                    let flow = req.flow.unwrap_or(false).then(|| manager.flow_client(id)).flatten().map(Arc::new);
+                    subscribed.insert(id.clone(), flow.clone());
                     // The size the terminal has now, which may be another
                     // client's: this one draws at it until it claims its own.
                     // Before the replay, which only makes sense at that size.
@@ -306,6 +324,7 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                     }
                     if let Some(scrollback) = manager.scrollback(id) {
                         if !scrollback.is_empty() {
+                            if let Some(flow) = &flow { flow.sent(scrollback.encode_utf16().count()) }
                             send(json!({ "event": "terminal.output", "pty_id": id, "data": scrollback }).to_string());
                         }
                     }
@@ -316,9 +335,11 @@ fn dispatch(req: Request, manager: &PtyManager, remote: &RemoteControl, out: &mp
                         loop {
                             match rx.recv().await {
                                 Ok(PtyEvent::Output(text)) => {
-                                    let _ = out.send(
-                                        json!({ "event": "terminal.output", "pty_id": pty_id, "data": text }).to_string(),
-                                    );
+                                    if let Some(flow) = &flow { flow.sent(text.encode_utf16().count()) }
+                                    // The connection is gone: stop, so its flow seat
+                                    // is released instead of pausing the terminal.
+                                    let line = json!({ "event": "terminal.output", "pty_id": pty_id, "data": text }).to_string();
+                                    if out.send(line).is_err() { break }
                                 }
                                 // Renombrar desde un cliente tiene que verse en
                                 // los otros: el HTTP ya lo mandaba y por aquí se
@@ -419,7 +440,7 @@ mod tests {
             .expect("pty");
         let (out, mut out_rx) = mpsc::unbounded_channel();
         let mut review_tasks = Vec::new();
-        let mut subscribed = std::collections::HashSet::new();
+        let mut subscribed = Subscriptions::new();
 
         for _ in 0..2 {
             dispatch(
@@ -443,5 +464,48 @@ mod tests {
         let _ = manager.close(&id);
 
         assert_eq!(marks, 1, "the output reached the connection {marks} times");
+    }
+
+    fn drain_output(out_rx: &mut mpsc::UnboundedReceiver<String>) -> usize {
+        let mut chars = 0;
+        while let Ok(line) = out_rx.try_recv() {
+            let event: Value = serde_json::from_str(&line).expect("json");
+            if event.get("event").and_then(Value::as_str) == Some("terminal.output") {
+                chars += event.get("data").and_then(Value::as_str).unwrap_or("").encode_utf16().count();
+            }
+        }
+        chars
+    }
+
+    /// A program that floods the terminal used to queue everything in the
+    /// desktop's webview (>1 GB). With flow control the daemon stops reading
+    /// until the client acks what it painted.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_flow_client_that_does_not_ack_stops_the_flood() {
+        let manager = PtyManager::default();
+        let remote = RemoteControl::default();
+        let (id, _) = manager
+            .open(OpenOptions {
+                command: Some(vec!["/bin/sh".into(), "-c".into(), "head -c 8000000 /dev/zero | tr '\\0' a".into()]),
+                ..OpenOptions::default()
+            })
+            .expect("pty");
+        let (out, mut out_rx) = mpsc::unbounded_channel();
+        let mut review_tasks = Vec::new();
+        let mut subscribed = Subscriptions::new();
+        let mut run = |body: Value| dispatch(request(body), &manager, &remote, &out, &mut review_tasks, &mut subscribed);
+
+        run(json!({ "cmd": "terminal.subscribe", "pty_id": id, "flow": true }));
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let unacked = drain_output(&mut out_rx);
+
+        run(json!({ "cmd": "terminal.ack", "pty_id": id, "chars": unacked }));
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let after_ack = drain_output(&mut out_rx);
+        let _ = manager.close(&id);
+
+        assert!(unacked > 0, "no output at all");
+        assert!(unacked < 2_000_000, "{unacked} chars sent without any ack");
+        assert!(after_ack > 0, "the ack did not resume the terminal");
     }
 }

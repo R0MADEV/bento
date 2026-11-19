@@ -59,6 +59,8 @@ struct Instance {
     /// The modes the program has on (mouse, alternate screen…): the replay alone
     /// rarely still holds the switch, so a late client is told separately.
     modes: Arc<Mutex<crate::modes::Modes>>,
+    /// Clients that ack what they paint; the reader waits on the slowest.
+    flow: Arc<crate::flow::FlowControl>,
     title: String,
     cwd: String,
     /// (rows, cols). One size for every client: the last one to ask sets it.
@@ -214,6 +216,7 @@ impl PtyManager {
         let (tx, _rx) = broadcast::channel(OUTPUT_BUFFER);
         let scrollback = Arc::new(Mutex::new(Vec::<u8>::new()));
         let modes = Arc::new(Mutex::new(crate::modes::Modes::default()));
+        let flow = Arc::new(crate::flow::FlowControl::default());
         let cwd = start_dir.unwrap_or_default();
         let title = default_title(opts.title, &cwd, &id);
 
@@ -236,6 +239,7 @@ impl PtyManager {
                     tx: tx.clone(),
                     scrollback: scrollback.clone(),
                     modes: modes.clone(),
+                    flow: flow.clone(),
                     title,
                     cwd,
                     size: (rows, cols),
@@ -259,6 +263,7 @@ impl PtyManager {
                             push_scrollback(&scrollback, text.as_bytes());
                             modes.lock().unwrap().feed(text.as_bytes());
                             let _ = tx.send(PtyEvent::Output(text));
+                            flow.wait_for_clients();
                         }
                     }
                 }
@@ -361,6 +366,13 @@ impl PtyManager {
             env: process.environ().to_vec(),
             cwd: process.cwd().map(|dir| dir.to_string_lossy().into_owned()),
         })
+    }
+
+    /// A flow-controlled seat on the terminal: report what was sent and acked
+    /// through it, and the reader pauses while this client is too far behind.
+    pub fn flow_client(&self, id: &str) -> Option<crate::FlowClient> {
+        let flow = self.instances.lock().unwrap().get(id)?.flow.clone();
+        Some(crate::FlowClient::join(flow))
     }
 
     pub fn subscribe(&self, id: &str) -> Option<broadcast::Receiver<PtyEvent>> {
