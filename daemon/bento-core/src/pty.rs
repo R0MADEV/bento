@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
 use tokio::sync::broadcast;
 
+use crate::output::{drain_utf8, push_scrollback};
+use crate::process_tree::terminate_process_tree;
+
 /// How to open a PTY. If `command` is set it is run directly (argv); otherwise
 /// the user's login shell (or `shell`) is started interactively.
 #[derive(Default, Clone)]
@@ -77,8 +80,6 @@ pub struct PtyManager {
 // Bounded so a slow subscriber can't grow memory without limit; a lagging
 // subscriber loses the oldest output (RecvError::Lagged) rather than blocking.
 const OUTPUT_BUFFER: usize = 2048;
-// Recent output kept per terminal so a reattaching client sees context.
-const SCROLLBACK_CAP: usize = 256 * 1024;
 
 /// Cómo se llama una terminal recién abierta. Quien la abre puede decirlo —el
 /// escritorio manda el nombre del panel o del agente—, y si no, vale más el
@@ -425,120 +426,6 @@ fn terminate_instance(mut instance: Instance) {
     let _ = instance.child.wait();
 }
 
-#[cfg(unix)]
-fn terminate_process_tree(root: u32) {
-    let session = Pid::from_u32(root);
-    let members = |system: &System| -> Vec<i32> {
-        system
-            .processes()
-            .iter()
-            .filter_map(|(pid, process)| {
-                (process.session_id() == Some(session)).then_some(pid.as_u32() as i32)
-            })
-            .collect()
-    };
-
-    let system = System::new_all();
-    for pid in members(&system) {
-        // SAFETY: the PID comes from the current system process snapshot.
-        unsafe { libc::kill(pid, libc::SIGTERM) };
-    }
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    let system = System::new_all();
-    for pid in members(&system) {
-        // Agents may ignore SIGTERM; SIGKILL guarantees their memory is released.
-        unsafe { libc::kill(pid, libc::SIGKILL) };
-    }
-}
-
-#[cfg(windows)]
-fn terminate_process_tree(root: u32) {
-    use std::ffi::c_void;
-
-    type Handle = *mut c_void;
-    const PROCESS_TERMINATE: u32 = 0x0001;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
-        fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
-        fn CloseHandle(handle: Handle) -> i32;
-    }
-
-    let system = System::new_all();
-    let mut tree = vec![Pid::from_u32(root)];
-    loop {
-        let before = tree.len();
-        for (pid, process) in system.processes() {
-            if process
-                .parent()
-                .is_some_and(|parent| tree.contains(&parent))
-                && !tree.contains(pid)
-            {
-                tree.push(*pid);
-            }
-        }
-        if tree.len() == before {
-            break;
-        }
-    }
-
-    for pid in tree.into_iter().rev() {
-        // SAFETY: handles are checked and closed; PROCESS_TERMINATE is minimal.
-        unsafe {
-            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid.as_u32());
-            if !handle.is_null() {
-                TerminateProcess(handle, 1);
-                CloseHandle(handle);
-            }
-        }
-    }
-}
-
-fn push_scrollback(buffer: &Arc<Mutex<Vec<u8>>>, data: &[u8]) {
-    let mut guard = buffer.lock().unwrap();
-    guard.extend_from_slice(data);
-    let overflow = guard.len().saturating_sub(SCROLLBACK_CAP);
-    if overflow == 0 {
-        return;
-    }
-    let cut = resync_offset(&guard, overflow);
-    guard.drain(0..cut);
-}
-
-/// Moves a scrollback cut forward to the next escape sequence or line, so a
-/// reattaching client never starts reading halfway through one. Cutting on a
-/// byte count alone leaves the tail of a sequence, which the terminal prints
-/// as text ("25l") and which also splits multi-byte characters.
-fn resync_offset(buffer: &[u8], from: usize) -> usize {
-    // Bounded so a screenful of plain text can't push the cut far past the cap.
-    const WINDOW: usize = 8 * 1024;
-    let end = (from + WINDOW).min(buffer.len());
-    for (offset, byte) in buffer[from..end].iter().enumerate() {
-        match byte {
-            0x1b => return from + offset,
-            b'\n' => return from + offset + 1,
-            _ => {}
-        }
-    }
-    from
-}
-
-/// Drains as much valid UTF-8 as possible from `pending`, keeping any incomplete
-/// trailing multi-byte sequence for the next read (PTY reads can split a glyph
-/// across the buffer boundary).
-fn drain_utf8(pending: &mut Vec<u8>) -> String {
-    let valid = match std::str::from_utf8(pending) {
-        Ok(_) => pending.len(),
-        Err(e) if e.valid_up_to() == 0 && e.error_len().is_some() => {
-            pending.remove(0);
-            0
-        }
-        Err(e) => e.valid_up_to(),
-    };
-    let rest = pending.split_off(valid);
-    String::from_utf8(std::mem::replace(pending, rest)).unwrap()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,36 +466,6 @@ mod tests {
         let taken = ["pty-1", "pty-2"];
         assert_eq!(next_free_id(&counter, |id| taken.contains(&id)), "pty-3");
         assert_eq!(next_free_id(&counter, |_| false), "pty-4");
-    }
-
-    // A reattaching client replays the scrollback verbatim, so a cut in the
-    // middle of an escape sequence makes it print the tail as text ("?25h").
-    #[test]
-    fn scrollback_overflow_cuts_between_escape_sequences() {
-        let mut full = Vec::from(&b"\x1b[?25l\x1b[2J"[..]);
-        full.resize(SCROLLBACK_CAP, b'A');
-        let buffer = Arc::new(Mutex::new(full));
-
-        // Overflows by 3: a plain byte count cuts inside "\x1b[?25l".
-        push_scrollback(&buffer, b"xyz");
-
-        let kept = buffer.lock().unwrap().clone();
-        assert!(kept.len() <= SCROLLBACK_CAP);
-        assert!(
-            kept.starts_with(b"\x1b[2J"),
-            "kept starts mid-sequence: {:?}",
-            String::from_utf8_lossy(&kept[..8.min(kept.len())]),
-        );
-    }
-
-    #[test]
-    fn drain_utf8_keeps_split_multibyte() {
-        let mut p = vec![0xE2, 0x94];
-        assert_eq!(drain_utf8(&mut p), "");
-        assert_eq!(p, vec![0xE2, 0x94]);
-        p.push(0x80);
-        assert_eq!(drain_utf8(&mut p), "─");
-        assert!(p.is_empty());
     }
 
     #[cfg(unix)]

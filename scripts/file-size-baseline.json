@@ -1,1 +1,6 @@
-{}
+{
+  "daemon/bento-cli/src/tui/terminals.rs": 457,
+  "src/panels/agents/AgentsPanel.ts": 445,
+  "src/panels/terminal/TerminalPanel.ts": 424,
+  "daemon/bento-cli/src/tui/mod.rs": 413
+}

@@ -6,6 +6,8 @@ pub mod daemon_process;
 pub mod editor;
 mod flow;
 mod modes;
+mod output;
+mod process_tree;
 pub mod profiles;
 mod pty;
 
