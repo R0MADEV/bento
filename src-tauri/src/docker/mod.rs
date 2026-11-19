@@ -83,8 +83,9 @@ pub fn docker_logs_follow(
         return Err("contenedor inválido".into());
     }
     // Replace any existing stream for this container.
-    if let Some(mut child) = state.0.lock().unwrap().remove(&id) {
-        let _ = child.kill();
+    let previous = state.0.lock().unwrap().remove(&id);
+    if let Some(child) = previous {
+        stop_stream(child);
     }
     let bin = docker_bin().ok_or("docker no encontrado")?;
     let tail = tail.to_string();
@@ -107,8 +108,9 @@ pub fn docker_logs_follow(
 
 #[tauri::command]
 pub fn docker_logs_stop(id: String, state: tauri::State<LogStreams>) -> Result<(), String> {
-    if let Some(mut child) = state.0.lock().unwrap().remove(&id) {
-        let _ = child.kill();
+    let previous = state.0.lock().unwrap().remove(&id);
+    if let Some(child) = previous {
+        stop_stream(child);
     }
     Ok(())
 }
@@ -203,8 +205,9 @@ pub fn docker_compose_logs_follow(
     state: tauri::State<LogStreams>,
 ) -> Result<(), String> {
     let key = format!("compose:{}", worktree_path);
-    if let Some(mut child) = state.0.lock().unwrap().remove(&key) {
-        let _ = child.kill();
+    let previous = state.0.lock().unwrap().remove(&key);
+    if let Some(child) = previous {
+        stop_stream(child);
     }
     let bin = docker_bin().ok_or("docker no encontrado")?;
     let tail_s = tail.to_string();
@@ -236,8 +239,40 @@ pub fn docker_compose_logs_stop(
     state: tauri::State<LogStreams>,
 ) -> Result<(), String> {
     let key = format!("compose:{}", worktree_path);
-    if let Some(mut child) = state.0.lock().unwrap().remove(&key) {
-        let _ = child.kill();
+    let previous = state.0.lock().unwrap().remove(&key);
+    if let Some(child) = previous {
+        stop_stream(child);
     }
     Ok(())
+}
+
+/// Kills a log stream and reaps it; without the wait() every stop leaves a zombie.
+fn stop_stream(mut child: Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pid_exists(pid: u32) -> bool {
+        // `kill -0` still succeeds on an unreaped zombie, so this catches a missing wait().
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn stop_stream_reaps_the_child() {
+        let child = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+
+        stop_stream(child);
+
+        assert!(!pid_exists(pid), "child {pid} left as a zombie");
+    }
 }

@@ -11,15 +11,22 @@ use std::process::Command;
 pub fn open(path: &str) -> Result<(), String> {
     for editor in ["cursor", "code"] {
         let Some(found) = which(editor) else { continue };
-        if Command::new(&found).arg(path).spawn().is_ok() {
+        if spawn_reaped(Command::new(&found).arg(path)).is_ok() {
             return Ok(());
         }
     }
-    Command::new(fallback())
-        .arg(path)
-        .spawn()
+    spawn_reaped(Command::new(fallback()).arg(path))
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Launches without blocking and waits on a thread: launchers like `code` or
+/// `open` exit right away, and a dropped Child would linger as a zombie.
+fn spawn_reaped(command: &mut Command) -> std::io::Result<u32> {
+    let mut child = command.spawn()?;
+    let pid = child.id();
+    std::thread::spawn(move || child.wait());
+    Ok(pid)
 }
 
 /// Con qué abre el sistema lo que no sabe abrir de otra forma.
@@ -51,6 +58,24 @@ mod tests {
         // Sin editor instalado se abre con lo del sistema; quedarse sin nada
         // que ejecutar sería no abrir nada y no decirlo.
         assert!(!super::fallback().is_empty());
+    }
+
+    #[test]
+    fn a_launched_editor_is_reaped_when_it_exits() {
+        // `kill -0` still succeeds on an unreaped zombie, so this catches a dropped Child.
+        let pid = super::spawn_reaped(&mut std::process::Command::new("true")).unwrap();
+        let is_alive = || {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        let reaped = (0..50).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            !is_alive()
+        });
+        assert!(reaped, "editor launcher {pid} left as a zombie");
     }
 
     #[test]
